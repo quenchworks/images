@@ -1,0 +1,51 @@
+# Assembles the mariadb runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - busybox                      # the bootstrap entrypoint needs a tiny shell
+    - quench-mariadb@local
+
+accounts:
+  groups:
+    - groupname: mysql
+      gid: 1001
+  users:
+    - username: mysql
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/local/bin/docker-entrypoint.sh
+
+work-dir: /var/lib/mysql
+
+paths:
+  - path: /var/lib/mysql
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+  - path: /run/mysqld
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-mariadb"
+  org.opencontainers.image.licenses: "GPL-2.0-only"

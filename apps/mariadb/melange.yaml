@@ -1,0 +1,120 @@
+# Builds the mariadb server + client from source onto Wolfi.
+# Output is a signed APK in Quenchworks' own repo. No upstream distro binaries.
+package:
+  name: quench-mariadb
+  version: 11.4.9
+  epoch: 0
+  description: "Quenchworks hardened MariaDB, built from source on Wolfi"
+  copyright:
+    - license: GPL-2.0-only
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - cmake
+      - bison
+      - ncurses-dev
+      - openssl-dev
+      - zlib-dev
+      - libaio-dev
+      - linux-headers
+      - pkgconf
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://archive.mariadb.org/mariadb-${{package.version}}/source/mariadb-${{package.version}}.tar.gz
+      expected-sha256: 8e481ca29b5a740444d45451c8ea2d93711cf525d6fa5d27bc9512cf8973b075
+  - runs: |
+      # Lean server: InnoDB stays (default); the heavy/optional engines and tooling
+      # are disabled to cut build time and image size.
+      cmake -B build -G "Unix Makefiles" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr \
+        -DMYSQL_DATADIR=/var/lib/mysql \
+        -DMYSQL_UNIX_ADDR=/run/mysqld/mysqld.sock \
+        -DWITH_SSL=system \
+        -DWITH_ZLIB=system \
+        -DWITH_PCRE=bundled \
+        -DWITH_UNIT_TESTS=OFF \
+        -DWITH_MARIABACKUP=OFF \
+        -DSKIP_TESTS=ON \
+        -DPLUGIN_MROONGA=NO \
+        -DPLUGIN_ROCKSDB=NO \
+        -DPLUGIN_TOKUDB=NO \
+        -DPLUGIN_SPIDER=NO \
+        -DPLUGIN_OQGRAPH=NO \
+        -DPLUGIN_SPHINX=NO \
+        -DPLUGIN_COLUMNSTORE=NO \
+        -DPLUGIN_CONNECT=NO \
+        -DCONC_WITH_UNIT_TESTS=OFF
+      make -C build -j"$(nproc)"
+      make -C build DESTDIR="${{targets.destdir}}" install
+      # trim test/sql-bench/data baggage that the install drops in
+      rm -rf "${{targets.destdir}}/usr/mysql-test" "${{targets.destdir}}/usr/sql-bench" || true
+  - runs: |
+      install -d "${{targets.destdir}}/usr/local/bin"
+      cat > "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh" <<'SCRIPT'
+      #!/bin/sh
+      set -eu
+      # mariadb-install-db lives in /usr/scripts, not /usr/bin
+      export PATH="/usr/scripts:/usr/bin:/usr/sbin:$PATH"
+      DATADIR=/var/lib/mysql
+      SOCK=/run/mysqld/mysqld.sock
+
+      if [ ! -d "$DATADIR/mysql" ]; then
+        if [ -z "${MARIADB_ROOT_PASSWORD:-}" ]; then
+          echo "MARIADB_ROOT_PASSWORD is required for first initialization" >&2
+          exit 1
+        fi
+        mariadb-install-db --datadir="$DATADIR" \
+          --auth-root-authentication-method=normal --skip-test-db >/dev/null
+
+        # temporary local-only server to apply setup SQL
+        # (mariadbd --bootstrap cannot run GRANT/CREATE USER)
+        mariadbd --datadir="$DATADIR" --socket="$SOCK" --skip-networking >/tmp/mdb-init.log 2>&1 &
+        pid=$!
+        for i in $(seq 1 30); do
+          mariadb-admin --socket="$SOCK" -uroot ping >/dev/null 2>&1 && break
+          [ "$i" = 30 ] && { echo "init server did not start" >&2; cat /tmp/mdb-init.log >&2; exit 1; }
+          sleep 1
+        done
+
+        SQL="$(mktemp)"
+        {
+          printf "ALTER USER 'root'@'localhost' IDENTIFIED BY '%s';\n" "$MARIADB_ROOT_PASSWORD"
+          printf "CREATE USER IF NOT EXISTS 'root'@'%%' IDENTIFIED BY '%s';\n" "$MARIADB_ROOT_PASSWORD"
+          printf "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%%' WITH GRANT OPTION;\n"
+          [ -n "${MARIADB_DATABASE:-}" ] && printf "CREATE DATABASE IF NOT EXISTS \`%s\`;\n" "$MARIADB_DATABASE"
+          if [ -n "${MARIADB_USER:-}" ]; then
+            printf "CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s';\n" "$MARIADB_USER" "${MARIADB_PASSWORD:-}"
+            printf "GRANT ALL PRIVILEGES ON \`%s\`.* TO '%s'@'%%';\n" "${MARIADB_DATABASE:-*}" "$MARIADB_USER"
+          fi
+          printf "FLUSH PRIVILEGES;\n"
+        } > "$SQL"
+        mariadb --socket="$SOCK" -uroot < "$SQL"
+        rm -f "$SQL"
+
+        mariadb-admin --socket="$SOCK" -uroot -p"$MARIADB_ROOT_PASSWORD" shutdown
+        wait "$pid" 2>/dev/null || true
+      fi
+
+      exec mariadbd --datadir="$DATADIR" --socket="$SOCK"
+      SCRIPT
+      chmod 0755 "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        mariadbd --version
+        mariadb --version
