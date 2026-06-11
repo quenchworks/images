@@ -30,16 +30,12 @@ pipeline:
     with:
       # Official release tarball. GitHub auto-archive checksums are not stable; this one is.
       uri: https://download.redis.io/releases/redis-${{package.version}}.tar.gz
-      expected-sha256: REPLACE_WITH_REAL_SHA256_AT_PIN_TIME
+      expected-sha256: e2c1cb9dd4180a35b943b85dfc7dcdd42566cdbceca37d0d0b14c21731582d3e
   - runs: |
       make BUILD_TLS=yes MALLOC=libc USE_SYSTEMD=no -j"$(nproc)"
       make PREFIX="${{targets.destdir}}/usr" install
-  - runs: |
-      # non-root system user baked into the package
-      mkdir -p "${{targets.destdir}}/etc"
-      echo "redis:x:1001:1001:redis:/data:/sbin/nologin" >> "${{targets.destdir}}/etc/passwd"
-      echo "redis:x:1001:" >> "${{targets.destdir}}/etc/group"
-      install -d -m 0755 "${{targets.destdir}}/data"
+  # The redis user and the /data directory are provided by apko (accounts + paths),
+  # not by the package, to avoid conflicting with wolfi-baselayout's /etc files.
   # redis-cli stays in the main package on purpose: the chart readiness probe uses it.
 
 test:

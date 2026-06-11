@@ -24,8 +24,9 @@ echo "PING ok; checking SET/GET and identity"
 docker exec "$NAME" redis-cli set qw hello >/dev/null
 [ "$(docker exec "$NAME" redis-cli get qw)" = "hello" ] || { echo "SET/GET failed"; exit 1; }
 
-# must run as the nonroot redis user (uid 1001)
-uid="$(docker exec "$NAME" id -u)"
-[ "$uid" = "1001" ] || { echo "expected uid 1001, got $uid"; exit 1; }
+# must run as the nonroot redis user (uid 1001). The image has no shell or coreutils
+# by design, so check the configured user rather than exec'ing `id`.
+user="$(docker inspect "$IMAGE" --format '{{.Config.User}}')"
+[ "$user" = "1001" ] || { echo "expected user 1001, got '$user'"; exit 1; }
 
-echo "smoke test passed"
+echo "smoke test passed (nonroot user: $user)"
