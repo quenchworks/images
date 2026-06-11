@@ -1,0 +1,72 @@
+# Builds RabbitMQ from source onto Wolfi. Output is a signed APK in Quenchworks'
+# own repo. The source-dist tarball bundles the Erlang deps; we compile it into a
+# generic-unix release and run it on Wolfi's Erlang runtime.
+package:
+  name: quench-rabbitmq
+  version: 4.3.1
+  epoch: 0
+  description: "Quenchworks hardened RabbitMQ, built from source on Wolfi"
+  copyright:
+    - license: MPL-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - erlang-27          # the BEAM runtime RabbitMQ runs on
+      - bash               # the rabbitmq sbin scripts are bash
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - erlang-27
+      - erlang-27-dev
+      - elixir-1.18
+      - make
+      - zip
+      - rsync
+      - perl
+      - git              # the build uses git for version info
+      - 7zip             # erlang.mk zips the CLI escripts with 7z
+      - python3          # codegens the AMQP framing headers
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/rabbitmq/rabbitmq-server/releases/download/v${{package.version}}/rabbitmq-server-${{package.version}}.tar.xz
+      expected-sha256: 2ea367adb30ee5d6439d4d9ee323213ff76e78f87a11337501472a9fbfb9dede
+  - runs: |
+      # erlang.mk calls `7z`, but Wolfi's 7zip ships it as `7zz`; bridge the name.
+      ln -sf "$(command -v 7zz)" /usr/bin/7z
+      # the release archive is not a git checkout and lacks packaging/, so the
+      # generic-unix packaging target does not apply; `make install` is the right
+      # path. It compiles the broker and the Elixir CLI, then installs them.
+      make install \
+        PREFIX=/usr \
+        RMQ_ROOTDIR=/usr/lib/rabbitmq \
+        DESTDIR="${{targets.destdir}}" \
+        PROJECT_VERSION=${{package.version}}
+      # expose the server + CLI on PATH (Wolfi is usr-merged: /usr/bin, not /usr/sbin).
+      # Use thin wrappers, not symlinks: the rabbitmq scripts source rabbitmq-env via
+      # their own dir and do not resolve symlinks, so they must run by their real path.
+      appdir="/usr/lib/rabbitmq/lib/rabbitmq_server-${{package.version}}"
+      install -d "${{targets.destdir}}/usr/bin"
+      for b in rabbitmq-server rabbitmqctl rabbitmq-plugins rabbitmq-diagnostics rabbitmq-queues rabbitmq-streams rabbitmq-upgrade; do
+        if [ -e "${{targets.destdir}}${appdir}/sbin/$b" ]; then
+          # make install already drops a symlink here; drop it so we write a real
+          # file, otherwise printf follows the symlink and never replaces it.
+          rm -f "${{targets.destdir}}/usr/bin/$b"
+          printf '#!/bin/sh\nexec "%s/sbin/%s" "$@"\n' "$appdir" "$b" > "${{targets.destdir}}/usr/bin/$b"
+          chmod 0755 "${{targets.destdir}}/usr/bin/$b"
+        fi
+      done
+
+test:
+  pipeline:
+    - runs: |
+        rabbitmqctl --version
