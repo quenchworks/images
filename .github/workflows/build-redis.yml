@@ -59,6 +59,13 @@ jobs:
           severity: CRITICAL,HIGH,MEDIUM,LOW
           vuln-type: os,library
 
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Publish to GHCR (only after the gate passes)
         id: publish
         uses: chainguard-images/actions/apko-publish@main
