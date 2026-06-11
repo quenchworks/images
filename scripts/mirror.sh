@@ -6,7 +6,7 @@ set -euo pipefail
 APP="${1:?usage: mirror.sh <app> <sha256:...>}"
 SHA="${2:?usage: mirror.sh <app> <sha256:...>}"
 
-SRC="ghcr.io/quenchworks/${APP}@${SHA}"
+SRC="ghcr.io/quenchworks/images/${APP}@${SHA}"
 DST="docker.io/quenchworks/${APP}@${SHA}"
 
 echo "copying ${SRC} -> ${DST}"
