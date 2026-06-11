@@ -2,7 +2,7 @@
 # Used as the hardened metrics sidecar for the redis chart.
 package:
   name: quench-redis-exporter
-  version: 1.69.0
+  version: 1.86.0
   epoch: 0
   description: "Quenchworks hardened redis_exporter, built from source on Wolfi"
   copyright:
@@ -27,7 +27,7 @@ pipeline:
   - uses: fetch
     with:
       uri: https://github.com/oliver006/redis_exporter/archive/refs/tags/v${{package.version}}.tar.gz
-      expected-sha256: 6c0a5f072b263205050b50b89c5bdcb237c5f78d35b7eb7ac7d38b062253073a
+      expected-sha256: "688ef89043766d981b7b8fff5d964ead1c39f5a1a90f1c9b2716e3123a4126d7"
   - runs: |
       export CGO_ENABLED=0
       go build -trimpath -ldflags "-s -w -X main.BuildVersion=${{package.version}}" \

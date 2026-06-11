@@ -2,7 +2,7 @@
 # Quenchworks' own repo. No upstream distro binaries.
 package:
   name: quench-valkey
-  version: 8.1.8
+  version: 9.1.0
   epoch: 0
   description: "Quenchworks hardened Valkey, built from source on Wolfi"
   copyright:
@@ -32,7 +32,7 @@ pipeline:
     with:
       repository: https://github.com/valkey-io/valkey
       tag: ${{package.version}}
-      expected-commit: 9b4ab3bed968426c169d0b674d5cd067fa66dfc1
+      expected-commit: c9e8005e9d0ec817e26c7db318861cb821409249
   - runs: |
       make BUILD_TLS=yes MALLOC=libc USE_SYSTEMD=no -j"$(nproc)"
       make PREFIX="${{targets.destdir}}/usr" install

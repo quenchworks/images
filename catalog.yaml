@@ -2,14 +2,14 @@
 # Add a row per app. Tier controls rebuild cadence (critical=daily, standard=weekly, low=monthly).
 catalog:
   - name: redis
-    version: "8.2.1"
-    source: https://download.redis.io/releases/redis-8.2.1.tar.gz
+    version: "8.8.0"
+    source: https://download.redis.io/releases/redis-8.8.0.tar.gz
     license: AGPL-3.0-only # Redis 8.x ships under AGPLv3 (OSI). Use Valkey if you need BSD.
     tier: critical
     status: pilot
 
   - name: redis-exporter
-    version: "1.69.0"
+    version: "1.86.0"
     source: https://github.com/oliver006/redis_exporter
     license: MIT
     tier: critical
@@ -17,15 +17,15 @@ catalog:
 
   # next targets, not yet built
   - name: valkey
-    version: "8.1.8"
+    version: "9.1.0"
     source: https://github.com/valkey-io/valkey
     license: BSD-3-Clause # BSD cache, QuenchWorks default over Redis
     tier: critical
     status: built # 0-CVE multi-arch, nonroot; built from the git tag pinned to its commit
 
   - name: postgresql
-    version: "17.6"
-    source: https://ftp.postgresql.org/pub/source/v17.6/postgresql-17.6.tar.bz2
+    version: "18.4"
+    source: https://ftp.postgresql.org/pub/source/v18.4/postgresql-18.4.tar.bz2
     license: PostgreSQL
     tier: critical
     status: built # 0-CVE multi-arch, nonroot; built from the official source tarball, initdb bootstrap entrypoint
@@ -45,18 +45,18 @@ catalog:
     status: built       # 0-CVE multi-arch, nonroot; Go static (etcd + etcdctl + etcdutl), env-configured
 
   - name: mariadb
-    version: "11.4.9"
-    source: https://archive.mariadb.org/mariadb-11.4.9/source/mariadb-11.4.9.tar.gz
+    version: "11.8.8"
+    source: https://archive.mariadb.org/mariadb-11.8.8/source/mariadb-11.8.8.tar.gz
     license: GPL-2.0-only
     tier: critical
-    status: built       # 0-CVE multi-arch, nonroot; CMake build (InnoDB only), mariadb-install-db bootstrap entrypoint
+    status: built       # 0-CVE multi-arch, nonroot; newest LTS (11.8); CMake build (InnoDB only), mariadb-install-db bootstrap entrypoint
 
   - name: mysql
-    version: "8.4.6"
-    source: https://dev.mysql.com/get/Downloads/MySQL-8.4/mysql-8.4.6.tar.gz
+    version: "9.7.0"
+    source: https://dev.mysql.com/get/Downloads/MySQL-9.7/mysql-9.7.0.tar.gz
     license: GPL-2.0-only
     tier: critical
-    status: built       # CMake build (DOWNLOAD_BOOST, -include cstdint for GCC 16), mysqld --initialize-insecure bootstrap entrypoint
+    status: built       # latest LTS (9.7); CMake build (DOWNLOAD_BOOST, -include cstdint for GCC 16), mysqld --initialize-insecure bootstrap entrypoint
 
   - name: rabbitmq
     version: "4.3.1"

@@ -2,7 +2,7 @@
 # Quenchworks' own repo. No upstream distro binaries.
 package:
   name: quench-redis
-  version: 8.2.1
+  version: 8.8.0
   epoch: 0
   description: "Quenchworks hardened Redis, built from source on Wolfi"
   copyright:
@@ -30,7 +30,7 @@ pipeline:
     with:
       # Official release tarball. GitHub auto-archive checksums are not stable; this one is.
       uri: https://download.redis.io/releases/redis-${{package.version}}.tar.gz
-      expected-sha256: e2c1cb9dd4180a35b943b85dfc7dcdd42566cdbceca37d0d0b14c21731582d3e
+      expected-sha256: "88422181efb0c9c0abba332e3e391d409e1e13714b838931669235e5796f704b"
   - runs: |
       make BUILD_TLS=yes MALLOC=libc USE_SYSTEMD=no -j"$(nproc)"
       make PREFIX="${{targets.destdir}}/usr" install
