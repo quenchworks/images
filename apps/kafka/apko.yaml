@@ -1,0 +1,57 @@
+# Assembles the Kafka runtime image: hardened Wolfi JRE + the Kafka distribution.
+# Minimal, nonroot, multi-arch, SBOM by apko. KRaft mode (no Zookeeper).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - openjdk-21-jre
+    - bash
+    - busybox
+    - quench-kafka@local
+
+accounts:
+  groups:
+    - groupname: kafka
+      gid: 1001
+  users:
+    - username: kafka
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/docker-entrypoint.sh
+
+environment:
+  # openjdk-21-jre installs under /usr/lib/jvm with no /usr/bin/java symlink, so the
+  # kafka launchers need JAVA_HOME (kafka-run-class.sh runs $JAVA_HOME/bin/java).
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  KAFKA_HEAP_OPTS: "-Xmx1G -Xms1G"
+  LOG_DIR: /var/lib/kafka/logs        # kafka writes its own logs here, not the read-only root
+  PATH: /usr/lib/jvm/java-21-openjdk/bin:/usr/bin:/opt/kafka/bin
+
+work-dir: /var/lib/kafka
+
+paths:
+  - path: /var/lib/kafka
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-kafka"
+  org.opencontainers.image.licenses: "Apache-2.0"
