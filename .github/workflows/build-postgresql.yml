@@ -1,0 +1,103 @@
+name: build-postgresql
+
+# The heartbeat. Runs on change and daily on a schedule, because a 0-CVE image
+# is only 0-CVE for about a day.
+on:
+  push:
+    paths:
+      - "apps/postgresql/**"
+      - ".github/workflows/build-postgresql.yml"
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write        # push to GHCR
+  id-token: write        # cosign keyless
+
+env:
+  GHCR_IMAGE: ghcr.io/quenchworks/images/postgresql
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/postgresql
+    steps:
+      # NOTE: pin third-party actions to commit SHAs before going public (renovate.json).
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU (cross-arch builds)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Install melange and apko
+        working-directory: ${{ github.workspace }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y bubblewrap
+          # Ubuntu 24.04 runners restrict unprivileged user namespaces, which breaks
+          # melange's bubblewrap runner. Re-enable it (chainguard-dev/melange#1508).
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          MELANGE_VER=v0.53.0
+          curl -fsSL "https://github.com/chainguard-dev/melange/releases/download/${MELANGE_VER}/melange_${MELANGE_VER#v}_linux_amd64.tar.gz" \
+            | sudo tar xz --strip-components=1 -C /usr/local/bin
+          APKO_VER="$(curl -fsSL https://api.github.com/repos/chainguard-dev/apko/releases/latest | grep -m1 '"tag_name"' | cut -d'"' -f4)"
+          curl -fsSL "https://github.com/chainguard-dev/apko/releases/download/${APKO_VER}/apko_${APKO_VER#v}_linux_amd64.tar.gz" \
+            | sudo tar xz --strip-components=1 -C /usr/local/bin
+          melange version | head -1
+          apko version | head -1
+
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Build package from source (melange, multi-arch)
+        run: |
+          melange keygen melange.rsa
+          melange build melange.yaml --arch x86_64,aarch64 --signing-key melange.rsa --out-dir ./packages
+
+      - name: Assemble single-arch image for the scan gate
+        run: apko build apko.yaml "${GHCR_IMAGE}:scan" image.tar --arch x86_64
+
+      - name: Scan, the hard 0-CVE gate (before publish)
+        uses: aquasecurity/trivy-action@master
+        with:
+          input: apps/postgresql/image.tar
+          format: table
+          exit-code: "1"            # fail on any fixable finding
+          ignore-unfixed: true      # 0-CVE means 0 fixable CVEs
+          severity: CRITICAL,HIGH,MEDIUM,LOW
+          scanners: vuln
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish multi-arch image to GHCR (only after the gate passes)
+        id: publish
+        run: |
+          apko publish apko.yaml "${GHCR_IMAGE}:latest" --arch x86_64,aarch64 | tee publish.txt
+          echo "ref=$(tail -n1 publish.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Sign the digest (cosign keyless)
+        run: cosign sign --yes "${{ steps.publish.outputs.ref }}"
+
+      - name: Write digest manifest and notify the charts repo
+        env:
+          GH_TOKEN: ${{ secrets.CHARTS_DISPATCH_TOKEN }}
+        run: |
+          REF="${{ steps.publish.outputs.ref }}"
+          SHA="${REF##*@}"
+          mkdir -p ../../manifests
+          cat > ../../manifests/postgresql.json <<EOF
+          { "repository": "${GHCR_IMAGE}", "digest": "${SHA}", "builtAt": "$(date -u +%FT%TZ)" }
+          EOF
+          gh api repos/quenchworks/charts/dispatches \
+            -f event_type=image-published \
+            -F client_payload[app]=postgresql \
+            -F client_payload[repository]="${GHCR_IMAGE}" \
+            -F client_payload[digest]="${SHA}"
