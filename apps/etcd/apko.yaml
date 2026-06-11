@@ -1,0 +1,49 @@
+# Assembles the etcd runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# etcd is configured entirely via ETCD_* env vars, so no entrypoint script is needed.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-etcd@local
+
+accounts:
+  groups:
+    - groupname: etcd
+      gid: 1001
+  users:
+    - username: etcd
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/etcd
+
+environment:
+  ETCD_DATA_DIR: /data
+
+work-dir: /data
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-etcd"
+  org.opencontainers.image.licenses: "Apache-2.0"

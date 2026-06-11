@@ -4,7 +4,7 @@ catalog:
   - name: redis
     version: "8.2.1"
     source: https://download.redis.io/releases/redis-8.2.1.tar.gz
-    license: AGPL-3.0-only      # Redis 8.x ships under AGPLv3 (OSI). Use Valkey if you need BSD.
+    license: AGPL-3.0-only # Redis 8.x ships under AGPLv3 (OSI). Use Valkey if you need BSD.
     tier: critical
     status: pilot
 
@@ -13,28 +13,37 @@ catalog:
     source: https://github.com/oliver006/redis_exporter
     license: MIT
     tier: critical
-    status: pilot       # hardened metrics sidecar for the redis chart
+    status: pilot # hardened metrics sidecar for the redis chart
 
   # next targets, not yet built
   - name: valkey
     version: "8.1.8"
     source: https://github.com/valkey-io/valkey
-    license: BSD-3-Clause      # BSD cache, QuenchWorks default over Redis
+    license: BSD-3-Clause # BSD cache, QuenchWorks default over Redis
     tier: critical
-    status: built       # 0-CVE multi-arch, nonroot; built from the git tag pinned to its commit
+    status: built # 0-CVE multi-arch, nonroot; built from the git tag pinned to its commit
+
   - name: postgresql
     version: "17.6"
     source: https://ftp.postgresql.org/pub/source/v17.6/postgresql-17.6.tar.bz2
     license: PostgreSQL
     tier: critical
-    status: built       # 0-CVE multi-arch, nonroot; built from the official source tarball, initdb bootstrap entrypoint
+    status: built # 0-CVE multi-arch, nonroot; built from the official source tarball, initdb bootstrap entrypoint
 
   - name: postgres-exporter
     version: "0.19.1"
     source: https://github.com/prometheus-community/postgres_exporter
     license: Apache-2.0
     tier: critical
-    status: built       # hardened metrics sidecar for the postgresql chart
+    status: built # hardened metrics sidecar for the postgresql chart
+
+  - name: etcd
+    version: "3.6.12"
+    source: https://github.com/etcd-io/etcd
+    license: Apache-2.0
+    tier: critical
+    status: built       # 0-CVE multi-arch, nonroot; Go static (etcd + etcdctl + etcdutl), env-configured
+
   - name: nginx
     version: "1.27.3"
     source: https://github.com/nginx/nginx

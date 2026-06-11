@@ -1,0 +1,45 @@
+# Builds etcd (server + etcdctl + etcdutl) from source onto Wolfi.
+# Output is a signed APK in Quenchworks' own repo. No upstream distro binaries.
+package:
+  name: quench-etcd
+  version: 3.6.12
+  epoch: 0
+  description: "Quenchworks hardened etcd, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/etcd-io/etcd/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: 43b78c492dd5dd5f012d14af85adf1ea15b25384cd2f8de04d7d68e418e4907a
+  - runs: |
+      export CGO_ENABLED=0
+      export GOWORK=off          # build each module via its own go.mod
+      # repo is multi-module: server -> etcd, plus etcdctl and etcdutl
+      for pair in server:etcd etcdctl:etcdctl etcdutl:etcdutl; do
+        dir="${pair%%:*}"; bin="${pair##*:}"
+        ( cd "$dir" && go build -trimpath -ldflags "-s -w" \
+            -o "${{targets.destdir}}/usr/bin/${bin}" . )
+      done
+
+test:
+  pipeline:
+    - runs: |
+        etcd --version
+        etcdctl version
