@@ -27,15 +27,13 @@ pipeline:
   - uses: fetch
     with:
       uri: https://github.com/oliver006/redis_exporter/archive/refs/tags/v${{package.version}}.tar.gz
-      expected-sha256: REPLACE_WITH_REAL_SHA256_AT_PIN_TIME
+      expected-sha256: 6c0a5f072b263205050b50b89c5bdcb237c5f78d35b7eb7ac7d38b062253073a
   - runs: |
       export CGO_ENABLED=0
       go build -trimpath -ldflags "-s -w -X main.BuildVersion=${{package.version}}" \
         -o "${{targets.destdir}}/usr/bin/redis_exporter" .
-  - runs: |
-      mkdir -p "${{targets.destdir}}/etc"
-      echo "exporter:x:1001:1001:exporter:/:/sbin/nologin" >> "${{targets.destdir}}/etc/passwd"
-      echo "exporter:x:1001:" >> "${{targets.destdir}}/etc/group"
+  # The exporter user is provided by apko (accounts), not the package, to avoid
+  # conflicting with wolfi-baselayout's /etc files.
 
 test:
   pipeline:
