@@ -1,0 +1,42 @@
+# Builds the redis_exporter Prometheus exporter from source onto Wolfi.
+# Used as the hardened metrics sidecar for the redis chart.
+package:
+  name: quench-redis-exporter
+  version: 1.69.0
+  epoch: 0
+  description: "Quenchworks hardened redis_exporter, built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/oliver006/redis_exporter/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: REPLACE_WITH_REAL_SHA256_AT_PIN_TIME
+  - runs: |
+      export CGO_ENABLED=0
+      go build -trimpath -ldflags "-s -w -X main.BuildVersion=${{package.version}}" \
+        -o "${{targets.destdir}}/usr/bin/redis_exporter" .
+  - runs: |
+      mkdir -p "${{targets.destdir}}/etc"
+      echo "exporter:x:1001:1001:exporter:/:/sbin/nologin" >> "${{targets.destdir}}/etc/passwd"
+      echo "exporter:x:1001:" >> "${{targets.destdir}}/etc/group"
+
+test:
+  pipeline:
+    - runs: redis_exporter -version

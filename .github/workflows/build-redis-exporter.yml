@@ -1,0 +1,83 @@
+name: build-redis-exporter
+
+on:
+  push:
+    paths:
+      - "apps/redis-exporter/**"
+      - ".github/workflows/build-redis-exporter.yml"
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+env:
+  GHCR_IMAGE: ghcr.io/quenchworks/redis-exporter
+  DOCKERHUB_IMAGE: docker.io/quenchworks/redis-exporter
+  APP_DIR: apps/redis-exporter
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/redis-exporter
+    steps:
+      # pin actions to SHAs before going public (renovate)
+      - uses: actions/checkout@v4
+
+      - name: Build package from source (melange)
+        uses: chainguard-dev/actions/melange-build@main
+        with:
+          config: apps/redis-exporter/melange.yaml
+          archs: x86_64,aarch64
+          sign-with-temporary-key: true
+
+      - name: Assemble image locally (apko, no publish yet)
+        uses: chainguard-images/actions/apko-build@main
+        with:
+          config: apps/redis-exporter/apko.yaml
+          tag: ${{ env.GHCR_IMAGE }}:${{ github.sha }}
+          archs: x86_64,aarch64
+          output: image.tar
+
+      - name: Scan, the hard 0-CVE gate (before publish)
+        uses: aquasecurity/trivy-action@master
+        with:
+          input: ${{ env.APP_DIR }}/image.tar
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH,MEDIUM,LOW
+          vuln-type: os,library
+
+      - name: Publish to GHCR (only after the gate passes)
+        id: publish
+        uses: chainguard-images/actions/apko-publish@main
+        with:
+          config: apps/redis-exporter/apko.yaml
+          tag: ${{ env.GHCR_IMAGE }}:latest
+          archs: x86_64,aarch64
+
+      - name: Sign the GHCR digest (cosign keyless)
+        run: cosign sign --yes "${{ steps.publish.outputs.digest }}"
+
+      - name: Mirror to Docker Hub
+        run: |
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" | cosign login docker.io -u "${{ secrets.DOCKERHUB_USER }}" --password-stdin
+          SHA="${{ steps.publish.outputs.digest }}"; SHA="${SHA##*@}"
+          cosign copy "${{ env.GHCR_IMAGE }}@${SHA}" "${{ env.DOCKERHUB_IMAGE }}@${SHA}"
+
+      - name: Notify the charts repo
+        env:
+          GH_TOKEN: ${{ secrets.CHARTS_DISPATCH_TOKEN }}
+        run: |
+          SHA="${{ steps.publish.outputs.digest }}"; SHA="${SHA##*@}"
+          gh api repos/quenchworks/charts/dispatches \
+            -f event_type=image-published \
+            -F client_payload[app]=redis-exporter \
+            -F client_payload[repository]="${GHCR_IMAGE}" \
+            -F client_payload[digest]="${SHA}"
