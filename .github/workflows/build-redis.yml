@@ -1,0 +1,94 @@
+name: build-redis
+
+# The heartbeat. Runs on change and daily on a schedule, because a 0-CVE image
+# is only 0-CVE for about a day.
+on:
+  push:
+    paths:
+      - "apps/redis/**"
+      - ".github/workflows/build-redis.yml"
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write        # push to GHCR
+  id-token: write        # cosign keyless
+
+env:
+  GHCR_IMAGE: ghcr.io/quenchworks/redis
+  DOCKERHUB_IMAGE: docker.io/quenchworks/redis
+  APP_DIR: apps/redis
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/redis
+    steps:
+      # NOTE: every third-party action below must be pinned to a commit SHA before
+      # this repo goes public. Renovate (renovate.json) keeps the SHAs current.
+      - uses: actions/checkout@v4
+
+      - name: Build package from source (melange)
+        uses: chainguard-dev/actions/melange-build@main
+        with:
+          config: apps/redis/melange.yaml
+          archs: x86_64,aarch64
+          sign-with-temporary-key: true
+
+      - name: Assemble image locally (apko, no publish yet)
+        uses: chainguard-images/actions/apko-build@main
+        with:
+          config: apps/redis/apko.yaml
+          tag: ${{ env.GHCR_IMAGE }}:${{ github.sha }}
+          archs: x86_64,aarch64
+          # produces an OCI tar we can scan before anything is pushed
+          output: image.tar
+
+      - name: Scan, the hard 0-CVE gate (before publish)
+        uses: aquasecurity/trivy-action@master
+        with:
+          input: ${{ env.APP_DIR }}/image.tar
+          format: table
+          exit-code: "1"            # fail on any fixable finding
+          ignore-unfixed: true      # 0-CVE means 0 fixable CVEs
+          severity: CRITICAL,HIGH,MEDIUM,LOW
+          vuln-type: os,library
+
+      - name: Publish to GHCR (only after the gate passes)
+        id: publish
+        uses: chainguard-images/actions/apko-publish@main
+        with:
+          config: apps/redis/apko.yaml
+          tag: ${{ env.GHCR_IMAGE }}:latest
+          archs: x86_64,aarch64
+
+      - name: Sign the GHCR digest (cosign keyless)
+        run: cosign sign --yes "${{ steps.publish.outputs.digest }}"
+
+      - name: Mirror to Docker Hub (same digest, signature copied)
+        run: |
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" | cosign login docker.io -u "${{ secrets.DOCKERHUB_USER }}" --password-stdin
+          SHA="${{ steps.publish.outputs.digest }}"
+          SHA="${SHA##*@}"
+          cosign copy "${{ env.GHCR_IMAGE }}@${SHA}" "${{ env.DOCKERHUB_IMAGE }}@${SHA}"
+
+      - name: Write digest manifest and notify the charts repo
+        env:
+          GH_TOKEN: ${{ secrets.CHARTS_DISPATCH_TOKEN }}
+        run: |
+          DIGEST="${{ steps.publish.outputs.digest }}"
+          SHA="${DIGEST##*@}"
+          mkdir -p ../../manifests
+          cat > ../../manifests/redis.json <<EOF
+          { "repository": "${GHCR_IMAGE}", "digest": "${SHA}", "builtAt": "$(date -u +%FT%TZ)" }
+          EOF
+          # tell the charts repo to bump and re-release the redis chart
+          gh api repos/quenchworks/charts/dispatches \
+            -f event_type=image-published \
+            -F client_payload[app]=redis \
+            -F client_payload[repository]="${GHCR_IMAGE}" \
+            -F client_payload[digest]="${SHA}"

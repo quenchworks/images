@@ -1,0 +1,49 @@
+# Builds the redis package from source onto Wolfi. Output is a signed APK in
+# Quenchworks' own repo. No upstream distro binaries.
+package:
+  name: quench-redis
+  version: 8.2.1
+  epoch: 0
+  description: "Quenchworks hardened Redis, built from source on Wolfi"
+  copyright:
+    - license: AGPL-3.0-only
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - openssl-dev
+      - linux-headers
+      - pkgconf
+
+pipeline:
+  - uses: fetch
+    with:
+      # Official release tarball. GitHub auto-archive checksums are not stable; this one is.
+      uri: https://download.redis.io/releases/redis-${{package.version}}.tar.gz
+      expected-sha256: REPLACE_WITH_REAL_SHA256_AT_PIN_TIME
+  - runs: |
+      make BUILD_TLS=yes MALLOC=libc USE_SYSTEMD=no -j"$(nproc)"
+      make PREFIX="${{targets.destdir}}/usr" install
+  - runs: |
+      # non-root system user baked into the package
+      mkdir -p "${{targets.destdir}}/etc"
+      echo "redis:x:1001:1001:redis:/data:/sbin/nologin" >> "${{targets.destdir}}/etc/passwd"
+      echo "redis:x:1001:" >> "${{targets.destdir}}/etc/group"
+      install -d -m 0755 "${{targets.destdir}}/data"
+  # redis-cli stays in the main package on purpose: the chart readiness probe uses it.
+
+test:
+  pipeline:
+    - runs: |
+        redis-server --version
+        redis-cli --version
