@@ -1,0 +1,116 @@
+# Builds the mysql server + client from source onto Wolfi.
+# Output is a signed APK in Quenchworks' own repo. No upstream distro binaries.
+package:
+  name: quench-mysql
+  version: 8.4.6
+  epoch: 0
+  description: "Quenchworks hardened MySQL, built from source on Wolfi"
+  copyright:
+    - license: GPL-2.0-only
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - cmake
+      - bison
+      - ncurses-dev
+      - openssl-dev
+      - zlib-dev
+      - libaio-dev
+      - libtirpc-dev
+      - rpcsvc-proto
+      - linux-headers
+      - pkgconf
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://dev.mysql.com/get/Downloads/MySQL-8.4/mysql-${{package.version}}.tar.gz
+      expected-sha256: a1e523dc8be96d18a5ade106998661285ca01b6f5b46c08b2654110e40df2fb7
+  - runs: |
+      # Lean server: InnoDB stays; the X protocol, router, and tests are off to cut
+      # build time and image size. CMake downloads the matching Boost into ./boost.
+      cmake -B build -G "Unix Makefiles" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr \
+        -DCMAKE_CXX_FLAGS="-include cstdint" \
+        -DCMAKE_C_FLAGS="-include stdint.h" \
+        -DMYSQL_DATADIR=/var/lib/mysql \
+        -DMYSQL_UNIX_ADDR=/run/mysqld/mysqld.sock \
+        -DSYSCONFDIR=/etc \
+        -DDOWNLOAD_BOOST=1 \
+        -DWITH_BOOST=boost \
+        -DWITH_SSL=system \
+        -DWITH_ZLIB=system \
+        -DWITH_UNIT_TESTS=OFF \
+        -DWITH_ROUTER=OFF \
+        -DWITH_MYSQLX=OFF \
+        -DINSTALL_MYSQLTESTDIR=
+      make -C build -j"$(nproc)"
+      make -C build DESTDIR="${{targets.destdir}}" install
+      # trim test/debug baggage the install drops in
+      rm -rf "${{targets.destdir}}/usr/mysql-test" "${{targets.destdir}}/usr/share/mysql-test" || true
+  - runs: |
+      install -d "${{targets.destdir}}/usr/local/bin"
+      cat > "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh" <<'SCRIPT'
+      #!/bin/sh
+      set -eu
+      export PATH="/usr/sbin:/usr/bin:/usr/local/bin:$PATH"
+      DATADIR=/var/lib/mysql
+      SOCK=/run/mysqld/mysqld.sock
+
+      if [ ! -d "$DATADIR/mysql" ]; then
+        if [ -z "${MYSQL_ROOT_PASSWORD:-}" ]; then
+          echo "MYSQL_ROOT_PASSWORD is required for first initialization" >&2
+          exit 1
+        fi
+        # create the data dir; root@localhost starts with an empty password
+        mysqld --initialize-insecure --datadir="$DATADIR"
+
+        # temporary local server to apply setup SQL
+        mysqld --datadir="$DATADIR" --socket="$SOCK" >/tmp/mysql-init.log 2>&1 &
+        pid=$!
+        for i in $(seq 1 60); do
+          mysqladmin --socket="$SOCK" -uroot ping >/dev/null 2>&1 && break
+          [ "$i" = 60 ] && { echo "init server did not start" >&2; cat /tmp/mysql-init.log >&2; exit 1; }
+          sleep 1
+        done
+
+        SQL="$(mktemp)"
+        {
+          printf "ALTER USER 'root'@'localhost' IDENTIFIED BY '%s';\n" "$MYSQL_ROOT_PASSWORD"
+          printf "CREATE USER IF NOT EXISTS 'root'@'%%' IDENTIFIED BY '%s';\n" "$MYSQL_ROOT_PASSWORD"
+          printf "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%%' WITH GRANT OPTION;\n"
+          [ -n "${MYSQL_DATABASE:-}" ] && printf "CREATE DATABASE IF NOT EXISTS \`%s\`;\n" "$MYSQL_DATABASE"
+          if [ -n "${MYSQL_USER:-}" ]; then
+            printf "CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s';\n" "$MYSQL_USER" "${MYSQL_PASSWORD:-}"
+            printf "GRANT ALL PRIVILEGES ON \`%s\`.* TO '%s'@'%%';\n" "${MYSQL_DATABASE:-*}" "$MYSQL_USER"
+          fi
+          printf "FLUSH PRIVILEGES;\n"
+        } > "$SQL"
+        mysql --socket="$SOCK" -uroot < "$SQL"
+        rm -f "$SQL"
+
+        mysqladmin --socket="$SOCK" -uroot -p"$MYSQL_ROOT_PASSWORD" shutdown
+        wait "$pid" 2>/dev/null || true
+      fi
+
+      exec mysqld --datadir="$DATADIR" --socket="$SOCK"
+      SCRIPT
+      chmod 0755 "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        mysqld --version
+        mysql --version
