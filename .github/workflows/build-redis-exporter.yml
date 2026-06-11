@@ -35,13 +35,15 @@ jobs:
           archs: x86_64,aarch64
           sign-with-temporary-key: true
 
-      - name: Assemble image locally (apko, no publish yet)
+      - name: Assemble image locally for the scan (single-arch, no publish yet)
         uses: chainguard-images/actions/apko-build@main
         with:
           config: apps/redis-exporter/apko.yaml
           tag: ${{ env.GHCR_IMAGE }}:${{ github.sha }}
-          archs: x86_64,aarch64
-          output: image.tar
+          # single arch so Trivy can read the tar directly; the publish step
+          # below builds the full multi-arch image.
+          archs: x86_64
+          output: ${{ env.APP_DIR }}/image.tar
 
       - name: Scan, the hard 0-CVE gate (before publish)
         uses: aquasecurity/trivy-action@master
