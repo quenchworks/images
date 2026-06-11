@@ -18,7 +18,6 @@ permissions:
 
 env:
   GHCR_IMAGE: ghcr.io/quenchworks/images/redis
-  DOCKERHUB_IMAGE: docker.io/quenchworks/redis
   APP_DIR: apps/redis
 
 jobs:
@@ -68,13 +67,6 @@ jobs:
 
       - name: Sign the GHCR digest (cosign keyless)
         run: cosign sign --yes "${{ steps.publish.outputs.digest }}"
-
-      - name: Mirror to Docker Hub (same digest, signature copied)
-        run: |
-          echo "${{ secrets.DOCKERHUB_TOKEN }}" | cosign login docker.io -u "${{ secrets.DOCKERHUB_USER }}" --password-stdin
-          SHA="${{ steps.publish.outputs.digest }}"
-          SHA="${SHA##*@}"
-          cosign copy "${{ env.GHCR_IMAGE }}@${SHA}" "${{ env.DOCKERHUB_IMAGE }}@${SHA}"
 
       - name: Write digest manifest and notify the charts repo
         env:
