@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Smoke test for a built valkey image. Usage: test.sh <image-ref>
+set -euo pipefail
+
+IMAGE="${1:?usage: test.sh <image-ref>}"
+NAME="quench-valkey-smoke-$$"
+
+cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
+trap cleanup EXIT
+
+echo "starting $IMAGE"
+docker run -d --name "$NAME" --read-only --tmpfs /tmp "$IMAGE" >/dev/null
+
+# wait for the server to accept connections
+for i in $(seq 1 30); do
+  if docker exec "$NAME" valkey-cli ping 2>/dev/null | grep -q PONG; then
+    break
+  fi
+  [ "$i" = 30 ] && { echo "valkey did not become ready"; docker logs "$NAME"; exit 1; }
+  sleep 1
+done
+
+echo "PING ok; checking SET/GET and identity"
+docker exec "$NAME" valkey-cli set qw hello >/dev/null
+[ "$(docker exec "$NAME" valkey-cli get qw)" = "hello" ] || { echo "SET/GET failed"; exit 1; }
+
+# must run as the nonroot valkey user (uid 1001). The image has no shell or coreutils
+# by design, so check the configured user rather than exec'ing `id`.
+user="$(docker inspect "$IMAGE" --format '{{.Config.User}}')"
+[ "$user" = "1001" ] || { echo "expected user 1001, got '$user'"; exit 1; }
+
+echo "smoke test passed (nonroot user: $user)"

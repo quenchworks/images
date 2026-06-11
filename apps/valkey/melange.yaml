@@ -1,0 +1,47 @@
+# Builds the valkey package from source onto Wolfi. Output is a signed APK in
+# Quenchworks' own repo. No upstream distro binaries.
+package:
+  name: quench-valkey
+  version: 8.1.8
+  epoch: 0
+  description: "Quenchworks hardened Valkey, built from source on Wolfi"
+  copyright:
+    - license: BSD-3-Clause
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - openssl-dev
+      - linux-headers
+      - pkgconf
+
+pipeline:
+  # Valkey does not attach a stable source tarball to releases, so pin the git
+  # tag to its commit SHA for a reproducible, verifiable checkout.
+  - uses: git-checkout
+    with:
+      repository: https://github.com/valkey-io/valkey
+      tag: ${{package.version}}
+      expected-commit: 9b4ab3bed968426c169d0b674d5cd067fa66dfc1
+  - runs: |
+      make BUILD_TLS=yes MALLOC=libc USE_SYSTEMD=no -j"$(nproc)"
+      make PREFIX="${{targets.destdir}}/usr" install
+  # The valkey user and the /data directory are provided by apko (accounts + paths),
+  # not by the package, to avoid conflicting with wolfi-baselayout's /etc files.
+  # valkey-cli stays in the main package on purpose: the chart readiness probe uses it.
+
+test:
+  pipeline:
+    - runs: |
+        valkey-server --version
+        valkey-cli --version
