@@ -1,0 +1,41 @@
+# Builds the postgres_exporter Prometheus exporter from source onto Wolfi.
+# Used as the hardened metrics sidecar for the postgresql chart.
+package:
+  name: quench-postgres-exporter
+  version: 0.19.1
+  epoch: 0
+  description: "Quenchworks hardened postgres_exporter, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/prometheus-community/postgres_exporter/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: 4b71d7d7950aac017df6ec41e815cbb3f50c20e23b19d82fe367eda9e8447a5c
+  - runs: |
+      export CGO_ENABLED=0
+      go build -trimpath \
+        -ldflags "-s -w -X github.com/prometheus/common/version.Version=${{package.version}}" \
+        -o "${{targets.destdir}}/usr/bin/postgres_exporter" ./cmd/postgres_exporter
+  # The exporter user is provided by apko (accounts), not the package, to avoid
+  # conflicting with wolfi-baselayout's /etc files.
+
+test:
+  pipeline:
+    - runs: postgres_exporter --version
