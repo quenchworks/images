@@ -16,7 +16,6 @@ permissions:
 
 env:
   GHCR_IMAGE: ghcr.io/quenchworks/images/redis-exporter
-  APP_DIR: apps/redis-exporter
 
 jobs:
   build:
@@ -25,35 +24,46 @@ jobs:
       run:
         working-directory: apps/redis-exporter
     steps:
-      # pin actions to SHAs before going public (renovate)
+      # NOTE: pin third-party actions to commit SHAs before going public (renovate.json).
       - uses: actions/checkout@v4
 
-      - name: Build package from source (melange)
-        uses: chainguard-dev/actions/melange-build@main
+      - name: Set up QEMU (cross-arch builds)
+        uses: docker/setup-qemu-action@v3
         with:
-          config: apps/redis-exporter/melange.yaml
-          archs: x86_64,aarch64
-          sign-with-temporary-key: true
+          platforms: arm64
 
-      - name: Assemble image locally for the scan (single-arch, no publish yet)
-        uses: chainguard-images/actions/apko-build@main
-        with:
-          config: apps/redis-exporter/apko.yaml
-          tag: ${{ env.GHCR_IMAGE }}:${{ github.sha }}
-          # single arch so Trivy can read the tar directly; the publish step
-          # below builds the full multi-arch image.
-          archs: x86_64
-          output: ${{ env.APP_DIR }}/image.tar
+      - name: Install melange and apko
+        working-directory: ${{ github.workspace }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y bubblewrap
+          MELANGE_VER=v0.53.0
+          curl -fsSL "https://github.com/chainguard-dev/melange/releases/download/${MELANGE_VER}/melange_${MELANGE_VER#v}_linux_amd64.tar.gz" \
+            | sudo tar xz --strip-components=1 -C /usr/local/bin
+          APKO_VER="$(curl -fsSL https://api.github.com/repos/chainguard-dev/apko/releases/latest | grep -m1 '"tag_name"' | cut -d'"' -f4)"
+          curl -fsSL "https://github.com/chainguard-dev/apko/releases/download/${APKO_VER}/apko_${APKO_VER#v}_linux_amd64.tar.gz" \
+            | sudo tar xz --strip-components=1 -C /usr/local/bin
+          melange version | head -1
+          apko version | head -1
+
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Build package from source (melange, multi-arch)
+        run: |
+          melange keygen melange.rsa
+          melange build melange.yaml --arch x86_64,aarch64 --signing-key melange.rsa --out-dir ./packages
+
+      - name: Assemble single-arch image for the scan gate
+        run: apko build apko.yaml "${GHCR_IMAGE}:scan" image.tar --arch x86_64
 
       - name: Scan, the hard 0-CVE gate (before publish)
         uses: aquasecurity/trivy-action@master
         with:
-          input: ${{ env.APP_DIR }}/image.tar
+          input: apps/redis-exporter/image.tar
           format: table
           exit-code: "1"
           ignore-unfixed: true
           severity: CRITICAL,HIGH,MEDIUM,LOW
-          vuln-type: os,library
+          scanners: vuln
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -62,22 +72,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish to GHCR (only after the gate passes)
+      - name: Publish multi-arch image to GHCR (only after the gate passes)
         id: publish
-        uses: chainguard-images/actions/apko-publish@main
-        with:
-          config: apps/redis-exporter/apko.yaml
-          tag: ${{ env.GHCR_IMAGE }}:latest
-          archs: x86_64,aarch64
+        run: |
+          apko publish apko.yaml "${GHCR_IMAGE}:latest" --arch x86_64,aarch64 | tee publish.txt
+          echo "ref=$(tail -n1 publish.txt)" >> "$GITHUB_OUTPUT"
 
-      - name: Sign the GHCR digest (cosign keyless)
-        run: cosign sign --yes "${{ steps.publish.outputs.digest }}"
+      - name: Sign the digest (cosign keyless)
+        run: cosign sign --yes "${{ steps.publish.outputs.ref }}"
 
       - name: Notify the charts repo
         env:
           GH_TOKEN: ${{ secrets.CHARTS_DISPATCH_TOKEN }}
         run: |
-          SHA="${{ steps.publish.outputs.digest }}"; SHA="${SHA##*@}"
+          REF="${{ steps.publish.outputs.ref }}"
+          SHA="${REF##*@}"
           gh api repos/quenchworks/charts/dispatches \
             -f event_type=image-published \
             -F client_payload[app]=redis-exporter \
