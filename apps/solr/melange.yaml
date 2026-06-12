@@ -8,7 +8,7 @@
 # bundles, so a single tarball serves both amd64 and arm64. No per-arch fetch needed.
 package:
   name: quench-solr
-  version: 9.10.1
+  version: 10.0.0
   epoch: 0
   description: "Quenchworks hardened Apache Solr, packaged on Wolfi"
   copyright:
@@ -33,8 +33,10 @@ environment:
 pipeline:
   - uses: fetch
     with:
-      uri: https://downloads.apache.org/solr/solr/${{package.version}}/solr-${{package.version}}.tgz
-      expected-sha512: "23915ba0c9eba81d9ed7dd46bf3dfa748a1cf12cfd1d2bc3c37e3022893b8d45a6d6dc078ee79e33c0367191c3e4f2d1df3c6f5705331ccfe13d6b1287812eb0"
+      # archive.apache.org is the permanent mirror (downloads.apache.org only keeps the
+      # current release, which would break the daily rebuild once 10.0.x/11 lands).
+      uri: https://archive.apache.org/dist/solr/solr/${{package.version}}/solr-${{package.version}}.tgz
+      expected-sha512: "825ab4e92a839802d9f5d570600b622881ddfe4f700cab569afb7d8220590a59d11088f4e10d4dcf9395073c35d73a420cc275a9ed7b18e2f84178bfcb49ae82"
       strip-components: 1
   - runs: |
       # install the distribution under /opt/solr. Ship the runtime pieces: bin (the
@@ -88,9 +90,18 @@ pipeline:
 
       SOLR_PORT="${SOLR_PORT:-8983}"
 
-      # Standalone single-node by default. SolrCloud is opt-in: set SOLR_ZK_HOST to a
-      # ZooKeeper connect string (the bin/solr launcher reads SOLR_ZK_HOST natively).
+      # Standalone (user-managed) single-node by default. Solr 10 flipped the default
+      # start mode to SolrCloud (embedded ZooKeeper) — without --user-managed it brings
+      # up cloud, where cores need a ZK-assigned coreNodeName and the Cores API fails
+      # with "coreNodeName missing". Pass --user-managed for the standalone cores model.
+      # SolrCloud is opt-in: set SOLR_ZK_HOST to a ZK connect string (then we run cloud,
+      # NOT user-managed, and bin/solr reads SOLR_ZK_HOST / the -z arg natively).
       START_ARGS=()
+      if [ -n "${SOLR_ZK_HOST:-}" ]; then
+        START_ARGS+=("-z" "${SOLR_ZK_HOST}")
+      else
+        START_ARGS+=("--user-managed")
+      fi
       if [ -n "${SOLR_OPTS_EXTRA:-}" ]; then
         export SOLR_OPTS="${SOLR_OPTS:-} ${SOLR_OPTS_EXTRA}"
       fi
