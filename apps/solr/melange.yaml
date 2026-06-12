@@ -1,0 +1,116 @@
+# Packages Apache Solr onto Wolfi. Solr is a Lucene-based JVM search server: we ship
+# the upstream binary distribution (prebuilt jars) on a hardened Wolfi JRE, which is
+# the CVE surface the Trivy gate scans (a bundled JDK would escape attribution). Solr 9
+# supports JDK 11/17/21, so this runs on openjdk-21-jre -- the shared base the JVM tier
+# (kafka/opensearch/zookeeper) uses.
+#
+# The binary dist is arch-independent: Solr/Lucene are pure JVM with no per-arch native
+# bundles, so a single tarball serves both amd64 and arm64. No per-arch fetch needed.
+package:
+  name: quench-solr
+  version: 9.10.1
+  epoch: 0
+  description: "Quenchworks hardened Apache Solr, packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-21-jre     # the JRE Solr runs on (the scanned CVE surface)
+      - bash               # Solr's bin/solr launcher is bash
+      - busybox
+      - procps             # bin/solr requires a full `ps -p` (busybox ps lacks -p)
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://downloads.apache.org/solr/solr/${{package.version}}/solr-${{package.version}}.tgz
+      expected-sha512: "23915ba0c9eba81d9ed7dd46bf3dfa748a1cf12cfd1d2bc3c37e3022893b8d45a6d6dc078ee79e33c0367191c3e4f2d1df3c6f5705331ccfe13d6b1287812eb0"
+      strip-components: 1
+  - runs: |
+      # install the distribution under /opt/solr. Ship the runtime pieces: bin (the
+      # bash launcher + post/postlogs tools), server (Jetty + solr-webapp + default
+      # SOLR_HOME under server/solr), lib, modules, licenses. Drop docs/example (not
+      # needed at runtime) and the Windows .cmd launchers.
+      dest="${{targets.destdir}}/opt/solr"
+      install -d "$dest"
+      cp -r bin server lib modules licenses LICENSE.txt NOTICE.txt README.txt "$dest/"
+      # Drop the Windows launchers (we run on bash only).
+      find "$dest/bin" -name '*.cmd' -delete
+      # the dist ships configs/launchers with restrictive perms; the nonroot runtime
+      # user must read the default SOLR_HOME (to seed the writable mount) and exec the
+      # launchers.
+      chmod -R a+rX "$dest"
+
+      # bake a config-from-env entrypoint. A read-only rootfs means SOLR_HOME (cores,
+      # configsets), logs, the PID dir and java.io.tmpdir all live under writable
+      # mounts; SOLR_* env overrides every default. Single-node standalone by default;
+      # SolrCloud (-z <zkhost>) is env-gated.
+      install -d "${{targets.destdir}}/usr/bin"
+      cat > "${{targets.destdir}}/usr/bin/docker-entrypoint.sh" <<'EOS'
+      #!/bin/bash
+      set -euo pipefail
+
+      SOLR_INSTALL=/opt/solr
+
+      # Writable mounts (read-only rootfs). bin/solr otherwise defaults SOLR_HOME to
+      # $SOLR_INSTALL/server/solr, SOLR_PID_DIR to $SOLR_INSTALL/bin and the logs dir
+      # under the install tree -- all on the read-only rootfs. Relocate them all.
+      export SOLR_HOME="${SOLR_HOME:-/var/solr/data}"
+      export SOLR_LOGS_DIR="${SOLR_LOGS_DIR:-/var/solr/logs}"
+      export SOLR_PID_DIR="${SOLR_PID_DIR:-/var/solr}"
+      # bin/solr resolves -Djava.io.tmpdir from $TMPDIR; point it at a writable dir so
+      # the JVM does not try to write under the read-only /tmp.
+      export TMPDIR="${SOLR_TMP_DIR:-/var/solr/tmp}"
+      mkdir -p "$SOLR_HOME" "$SOLR_LOGS_DIR" "$SOLR_PID_DIR" "$TMPDIR"
+
+      # Seed SOLR_HOME from the dist's default once (solr.xml + the _default configset
+      # cores are created from). Solr 9 falls back to a built-in solr.xml if absent,
+      # but seeding the shipped solr.xml + configsets keeps core creation self-contained.
+      if [ ! -f "$SOLR_HOME/solr.xml" ]; then
+        cp -r "$SOLR_INSTALL"/server/solr/. "$SOLR_HOME"/
+      fi
+
+      # Bind to all interfaces (bin/solr defaults SOLR_JETTY_HOST to 127.0.0.1, which is
+      # unreachable from outside the container).
+      export SOLR_JETTY_HOST="${SOLR_JETTY_HOST:-0.0.0.0}"
+
+      export SOLR_JAVA_HOME="${SOLR_JAVA_HOME:-${JAVA_HOME:-/usr/lib/jvm/java-21-openjdk}}"
+
+      SOLR_PORT="${SOLR_PORT:-8983}"
+
+      # Standalone single-node by default. SolrCloud is opt-in: set SOLR_ZK_HOST to a
+      # ZooKeeper connect string (the bin/solr launcher reads SOLR_ZK_HOST natively).
+      START_ARGS=()
+      if [ -n "${SOLR_OPTS_EXTRA:-}" ]; then
+        export SOLR_OPTS="${SOLR_OPTS:-} ${SOLR_OPTS_EXTRA}"
+      fi
+
+      # Optional: precreate a core on first boot when SOLR_CORE is set. Done via the
+      # core's instance dir + the _default configset so it is ready before start.
+      if [ -n "${SOLR_CORE:-}" ] && [ ! -d "$SOLR_HOME/${SOLR_CORE}" ]; then
+        mkdir -p "$SOLR_HOME/${SOLR_CORE}"
+        cp -r "$SOLR_INSTALL"/server/solr/configsets/_default/. "$SOLR_HOME/${SOLR_CORE}/"
+        printf 'name=%s\n' "${SOLR_CORE}" > "$SOLR_HOME/${SOLR_CORE}/core.properties"
+      fi
+
+      # Run Solr in the foreground (-f) as PID 1.
+      exec "$SOLR_INSTALL/bin/solr" start -f -p "$SOLR_PORT" "${START_ARGS[@]}"
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /opt/solr/bin/solr
+        test -x /usr/bin/docker-entrypoint.sh
+        test -f /opt/solr/server/solr/solr.xml

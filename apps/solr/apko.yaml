@@ -1,0 +1,71 @@
+# Assembles the Apache Solr runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Configured by SOLR_* env (the entrypoint relocates SOLR_HOME/logs/pid/tmp to writable
+# mounts and seeds SOLR_HOME). HTTP API on 8983. Single-node standalone by default;
+# SolrCloud is opt-in via SOLR_ZK_HOST. Solr ships no auth by default -- the
+# NetworkPolicy is the boundary.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-solr@local
+
+accounts:
+  groups:
+    - groupname: solr
+      gid: 1001
+  users:
+    - username: solr
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/docker-entrypoint.sh
+
+environment:
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  SOLR_JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  SOLR_HOME: /var/solr/data
+  SOLR_LOGS_DIR: /var/solr/logs
+  SOLR_PID_DIR: /var/solr
+  SOLR_PORT: "8983"
+  SOLR_JETTY_HOST: 0.0.0.0
+  # keep the smoke/default footprint modest; override in the chart via SOLR_HEAP
+  SOLR_HEAP: 512m
+  PATH: /usr/lib/jvm/java-21-openjdk/bin:/usr/bin:/opt/solr/bin
+
+work-dir: /opt/solr
+
+paths:
+  - path: /var/solr
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/solr/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/solr/logs
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-solr"
+  org.opencontainers.image.licenses: "Apache-2.0"
