@@ -139,10 +139,15 @@ pipeline:
       else
         PW_TAG="<password></password>"
       fi
+      # replace="replace": fully replace the user node rather than merge it. Without
+      # this, configuring the built-in `default` user collides with users.xml's empty
+      # <password></password> (ClickHouse rejects a node carrying two auth fields and
+      # exits). Replacing the whole node lets CLICKHOUSE_USER=default work with a real
+      # password and leaves no passwordless superuser behind.
       cat > "$CONF/users.d/quench-user.xml" <<XML
       <clickhouse>
           <users>
-              <${CH_USER}>
+              <${CH_USER} replace="replace">
                   ${PW_TAG}
                   <networks><ip>::/0</ip></networks>
                   <profile>default</profile>
