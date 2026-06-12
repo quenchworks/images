@@ -1,0 +1,75 @@
+# Builds VictoriaMetrics single-node from source onto Wolfi. Single static Go
+# binary, no CGO. Output is a signed APK in Quenchworks' own repo. No upstream
+# distro binaries.
+#
+# VictoriaMetrics is a Prometheus-compatible time-series database. This package
+# is the single-node `victoria-metrics` server binary (not the cluster vminsert/
+# vmselect/vmstorage components, not enterprise).
+package:
+  name: quench-victoriametrics
+  version: 1.145.0
+  epoch: 0
+  description: "Quenchworks hardened VictoriaMetrics (single-node TSDB), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      # go.mod requires go >= 1.26.4; pin the matching toolchain rather than the
+      # bare `go` meta (which can lag a major behind).
+      - go-1.26
+
+pipeline:
+  # git-checkout, not fetch: building from the pinned git tag avoids the
+  # codeload.github.com CDN entirely (some upstream CDNs 403 GitHub Actions IPs),
+  # and is the robust source for a repo this size.
+  - uses: git-checkout
+    with:
+      repository: https://github.com/VictoriaMetrics/VictoriaMetrics
+      tag: v${{package.version}}
+      expected-commit: 979d6b16239c9e6cc9e3413a60ef0f7490bfad65
+  - runs: |
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local
+      # buildinfo.Version is consumed by `-version` and the HTTP UI; its
+      # ShortVersion regex extracts the v1.x.x token. Mirror upstream's
+      # "<app>-<date>-<tag>" shape so `victoria-metrics -version` reports v1.145.0.
+      LDFLAGS="-s -w -X github.com/VictoriaMetrics/VictoriaMetrics/lib/buildinfo.Version=victoria-metrics-quench-v${{package.version}}"
+      go build -trimpath -ldflags "${LDFLAGS}" \
+        -o "${{targets.destdir}}/usr/bin/victoria-metrics" ./app/victoria-metrics
+  - runs: |
+      # Thin entrypoint. VictoriaMetrics writes to -storageDataPath (default
+      # ./victoria-metrics-data in CWD), which fails on a read-only rootfs.
+      # Pin it to a writable mount (VM_STORAGE, default /storage) and the HTTP
+      # API to :8428. Ensure the dir exists, then exec the server so it is PID 1
+      # and receives signals directly. Extra flags pass through via "$@".
+      install -d "${{targets.destdir}}/usr/local/bin"
+      cat > "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh" <<'SCRIPT'
+      #!/bin/sh
+      set -eu
+      VM_STORAGE="${VM_STORAGE:-/storage}"
+      VM_HTTP_LISTEN="${VM_HTTP_LISTEN:-:8428}"
+      mkdir -p "${VM_STORAGE}"
+      exec /usr/bin/victoria-metrics \
+        -storageDataPath="${VM_STORAGE}" \
+        -httpListenAddr="${VM_HTTP_LISTEN}" \
+        "$@"
+      SCRIPT
+      chmod 0755 "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        victoria-metrics -version
