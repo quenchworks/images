@@ -48,8 +48,11 @@ pipeline:
         *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
       esac
 
-      # 1) the per-arch static binary
-      binurl="https://packages.clickhouse.com/tgz/lts/clickhouse-common-static-${VER}-${charch}.tgz"
+      # 1) the per-arch static binary. Fetch from the GitHub release assets, NOT
+      #    packages.clickhouse.com — that CDN returns 403 to GitHub Actions runner IPs
+      #    (works from residential IPs, which is why a local build passes but CI fails).
+      #    The GitHub release tarballs are byte-identical (same published artifacts).
+      binurl="https://github.com/ClickHouse/ClickHouse/releases/download/v${VER}-lts/clickhouse-common-static-${VER}-${charch}.tgz"
       curl -fsSL -o ch-common.tgz "$binurl"
       echo "${sha}  ch-common.tgz" | sha512sum -c -
       tar -xzf ch-common.tgz
@@ -66,7 +69,7 @@ pipeline:
       # 2) the default server config (arch-independent — amd64 tgz is fine for both),
       #    shipped read-only under /opt; the entrypoint seeds a writable copy from it.
       SRVSHA=c71156af5dba80d6b5fec9fbdf7ede35c505a9a3293325747068235e2cfa90ca8d119b64a87f24feba3b72f15385a428f680bdbf169da7f110408ef9d3478d54
-      curl -fsSL -o ch-server.tgz "https://packages.clickhouse.com/tgz/lts/clickhouse-server-${VER}-amd64.tgz"
+      curl -fsSL -o ch-server.tgz "https://github.com/ClickHouse/ClickHouse/releases/download/v${VER}-lts/clickhouse-server-${VER}-amd64.tgz"
       echo "${SRVSHA}  ch-server.tgz" | sha512sum -c -
       tar -xzf ch-server.tgz
       dflt="${{targets.destdir}}/opt/clickhouse/config-defaults"
