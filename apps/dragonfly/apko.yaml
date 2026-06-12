@@ -1,0 +1,78 @@
+# ============================================================================
+# LICENSE WARNING — Dragonfly is BSL-1.1 (Business Source License).
+#   *** NOT OSI-APPROVED OPEN SOURCE. *** Converts to Apache-2.0 some years
+#   after each release. Do NOT represent Dragonfly as open source.
+#   CLEAN ALTERNATIVE: Valkey (BSD-3-Clause, already shipped) covers the same
+#   Redis-compatible cache slot with a true open-source license. Caution tier.
+# ============================================================================
+#
+# Assembles the Dragonfly runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Ships upstream's official precompiled binary (Redis/Memcached-compatible in-memory
+# datastore). Service port 6379 (RESP). Configured by DRAGONFLY_* env; the entrypoint
+# builds the dragonfly arg list (writable --dir, --force_epoll default, optional
+# --maxmemory / --requirepass). No auth by default — NetworkPolicy is the boundary.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - bash               # entrypoint is bash
+    - busybox            # entrypoint shell utilities (mkdir/printf)
+    - ca-certificates-bundle
+    - tzdata
+    - quench-dragonfly@local
+
+accounts:
+  groups:
+    - groupname: dragonfly
+      gid: 1001
+  users:
+    - username: dragonfly
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/docker-entrypoint.sh
+
+environment:
+  DRAGONFLY_DATA_DIR: /data
+  DRAGONFLY_PORT: "6379"
+  DRAGONFLY_BIND: 0.0.0.0
+  # io_uring is often unavailable/restricted under nonroot/kind/seccomp; default
+  # to epoll. Set DRAGONFLY_FORCE_EPOLL=0 to let Dragonfly attempt io_uring.
+  DRAGONFLY_FORCE_EPOLL: "1"
+  # in-memory cache cap; a sane container default. Override per workload.
+  DRAGONFLY_MAXMEMORY: 512mb
+  # Dragonfly requires maxmemory >= proactor_threads * 256MiB or it refuses to start.
+  # It auto-sizes threads to all host CPUs by default, so on a many-core node the
+  # 512mb cap would be rejected. Pin 2 threads to keep the default self-consistent;
+  # raise both together (e.g. 8 threads -> >=2gb) for higher throughput.
+  DRAGONFLY_PROACTOR_THREADS: "2"
+  PATH: /usr/bin:/bin
+
+work-dir: /data
+
+paths:
+  # writable mount for a read-only rootfs: snapshot/persistence dir (--dir)
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-dragonfly"
+  # BUSL-1.1 — NOT open source. Clean alternative: Valkey (BSD-3-Clause).
+  org.opencontainers.image.licenses: "BUSL-1.1"

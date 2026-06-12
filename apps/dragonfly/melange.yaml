@@ -1,0 +1,117 @@
+# ============================================================================
+# LICENSE WARNING — Dragonfly is BSL-1.1 (Business Source License).
+#   *** THIS IS NOT OSI-APPROVED OPEN SOURCE. ***
+# The Business Source License (BUSL-1.1) restricts using Dragonfly to offer a
+# competing managed/commercial DB-as-a-service. Each release converts to
+# Apache-2.0 only some years after its publication. Do NOT represent Dragonfly
+# as open source.
+#   CLEAN ALTERNATIVE: Valkey (BSD-3-Clause, already shipped in this catalog)
+#   covers the same Redis-compatible cache slot with a true open-source license.
+# Caution tier. SPDX: BUSL-1.1.
+# ============================================================================
+#
+# Packaging note: Dragonfly is NOT built from source here. A from-source build
+# is a very heavy C++/CMake job (helio + a large submodule tree, clang, lots of
+# RAM/CPU) — infeasible on a 2-core hosted runner (same situation as ClickHouse/
+# ScyllaDB/CockroachDB). Instead we ship Dragonfly's OWN official precompiled
+# per-arch release binary and harden it on a minimal Wolfi/apko base, gated
+# 0-CVE by Trivy. This is the upstream-published artifact (clean-room consistent:
+# not a Bitnami chart), and the scan still fully applies.
+#
+# The release binary links ONLY glibc (libc/libm/librt/libdl/libpthread) + libz
+# (verified via readelf NEEDED) — no libstdc++/libunwind at runtime — so the
+# runtime surface is small: glibc + zlib.
+package:
+  name: quench-dragonfly
+  version: 1.39.0
+  epoch: 0
+  description: "Quenchworks hardened Dragonfly (BUSL-1.1, NOT open source), packaged on Wolfi"
+  copyright:
+    - license: BUSL-1.1
+  dependencies:
+    runtime:
+      - bash               # the entrypoint is bash
+      - busybox            # mkdir/printf used by the entrypoint
+      - glibc              # the binary links glibc (libc/libm/librt/libdl/libpthread)
+      - zlib               # provides libz.so.1 (NEEDED by the binary)
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - curl
+      - ca-certificates-bundle
+
+pipeline:
+  # Dragonfly publishes separate per-arch release tarballs. Fetch the one matching
+  # the build arch by uname -m, with the arch-matching SHA256 (using the wrong arch
+  # yields a non-executable / wrong-arch binary). The release ships no checksum file,
+  # so the SHA256 below was computed from the downloaded GitHub release assets and
+  # pinned here. GitHub release asset IPs are not CDN-blocked from Actions runners.
+  # The tarball extracts a binary literally named `dragonfly-<arch>` (plus LICENSE.md);
+  # there is also a `*-dbgsym` debug variant we deliberately do NOT ship.
+  - runs: |
+      VER="${{package.version}}"
+      case "$(uname -m)" in
+        x86_64)  dfarch=x86_64;  sha=81f88cfd0096c550e415a700c97eb5bf606db1df6106cc03584e878fd7aa126a ;;
+        aarch64) dfarch=aarch64; sha=52a14e88cd8bd9d086a3a4794b8cb4e60efe8e2c61fb4d9ea3f141bcd27982e3 ;;
+        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+      esac
+
+      binurl="https://github.com/dragonflydb/dragonfly/releases/download/v${VER}/dragonfly-${dfarch}.tar.gz"
+      curl -fsSL -o dragonfly.tar.gz "$binurl"
+      echo "${sha}  dragonfly.tar.gz" | sha256sum -c -
+      tar -xzf dragonfly.tar.gz
+
+      # install the release binary (NOT the dbgsym debug variant) as /usr/bin/dragonfly
+      install -Dm0755 "dragonfly-${dfarch}" "${{targets.destdir}}/usr/bin/dragonfly"
+
+      # config-from-env entrypoint. Read-only rootfs friendly: every writable area
+      # (snapshot --dir) lives under a mount. io_uring may be unavailable/restricted
+      # under nonroot/kind/seccomp, so default to --force_epoll (overridable).
+      install -d "${{targets.destdir}}/usr/bin"
+      cat > "${{targets.destdir}}/usr/bin/docker-entrypoint.sh" <<'EOS'
+      #!/bin/bash
+      # Dragonfly is BSL-1.1 (NOT open source). Clean alt: Valkey (BSD).
+      set -euo pipefail
+
+      DATA="${DRAGONFLY_DATA_DIR:-/data}"
+      PORT="${DRAGONFLY_PORT:-6379}"
+      BIND="${DRAGONFLY_BIND:-0.0.0.0}"
+      MAXMEM="${DRAGONFLY_MAXMEMORY:-}"
+      # io_uring is often restricted under nonroot/kind/seccomp; default to epoll.
+      # Set DRAGONFLY_FORCE_EPOLL=0 (or false) to let Dragonfly attempt io_uring.
+      FORCE_EPOLL="${DRAGONFLY_FORCE_EPOLL:-1}"
+      REQUIREPASS="${DRAGONFLY_REQUIREPASS:-}"
+      # Dragonfly pre-checks that maxmemory >= proactor_threads * 256MiB and EXITS if
+      # not. By default it spins one proactor per host CPU, so on a many-core node a
+      # small --maxmemory makes it refuse to start. Pin a sane container default so the
+      # memory cap is self-consistent; override via DRAGONFLY_PROACTOR_THREADS (empty
+      # = let Dragonfly auto-size to all CPUs, requiring a correspondingly large cap).
+      THREADS="${DRAGONFLY_PROACTOR_THREADS:-2}"
+
+      # read-only rootfs: snapshots/persistence land in --dir, which must be writable.
+      mkdir -p "$DATA"
+
+      set -- --dir="$DATA" --bind "$BIND" --port "$PORT"
+      case "$FORCE_EPOLL" in 1|true|TRUE|yes|on) set -- "$@" --force_epoll ;; esac
+      [ -n "$THREADS" ]     && set -- "$@" --proactor_threads="$THREADS"
+      [ -n "$MAXMEM" ]      && set -- "$@" --maxmemory="$MAXMEM"
+      [ -n "$REQUIREPASS" ] && set -- "$@" --requirepass="$REQUIREPASS"
+
+      # append any extra args passed to the container (env overrides + CLI flags)
+      exec dragonfly "$@"
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/bin/dragonfly
+        dragonfly --version
+        test -x /usr/bin/docker-entrypoint.sh
