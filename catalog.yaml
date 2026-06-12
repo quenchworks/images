@@ -121,6 +121,13 @@ catalog:
     tier: standard
     status: built       # JVM on the shared openjdk-21-jre base; bundled JDK stripped, single-node, security plugin off by default, config/data/logs on writable mounts
 
+  - name: cassandra
+    version: "5.0.8"
+    source: https://downloads.apache.org/cassandra/5.0.8/apache-cassandra-5.0.8-bin.tar.gz
+    license: Apache-2.0
+    tier: standard
+    status: building    # JVM wide-column store on openjdk-17-jre (Cassandra 5.0 = JDK 11/17, NOT 21); arch-independent binary dist (bundles lib/x86_64 + lib/aarch64), env-driven cassandra.yaml, data/commitlog/saved_caches/hints/logs/conf on writable mounts
+
   - name: nginx
     version: "1.27.3"
     source: https://github.com/nginx/nginx

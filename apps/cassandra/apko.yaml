@@ -1,0 +1,74 @@
+# Assembles the Cassandra runtime image: hardened Wolfi JDK17 JRE + the Cassandra
+# distribution. Minimal, nonroot, multi-arch, SBOM by apko. Configured by CASSANDRA_*
+# env (the entrypoint writes cassandra.yaml). CQL on 9042; internode 7000 (7001 TLS);
+# JMX 7199. Single-node by default (seeds = self).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - openjdk-17-jre
+    - bash
+    - busybox
+    - quench-cassandra@local
+
+accounts:
+  groups:
+    - groupname: cassandra
+      gid: 1001
+  users:
+    - username: cassandra
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/docker-entrypoint.sh
+
+environment:
+  # openjdk-17-jre installs under /usr/lib/jvm with no /usr/bin/java symlink, so the
+  # cassandra launchers need JAVA_HOME (cassandra.in.sh runs $JAVA_HOME/bin/java).
+  JAVA_HOME: /usr/lib/jvm/java-17-openjdk
+  CASSANDRA_CONF: /conf
+  CASSANDRA_DATA: /var/lib/cassandra
+  CASSANDRA_LOGDIR: /var/log/cassandra
+  CASSANDRA_RPC_ADDRESS: "0.0.0.0"
+  # keep the smoke/default footprint modest; override in the chart.
+  MAX_HEAP_SIZE: "512M"
+  HEAP_NEWSIZE: "128M"
+  PATH: /usr/lib/jvm/java-17-openjdk/bin:/usr/bin:/opt/cassandra/bin
+
+work-dir: /var/lib/cassandra
+
+paths:
+  - path: /conf
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/lib/cassandra
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+  - path: /var/log/cassandra
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-cassandra"
+  org.opencontainers.image.licenses: "Apache-2.0"

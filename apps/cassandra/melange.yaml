@@ -1,0 +1,162 @@
+# Packages Apache Cassandra onto Wolfi. Cassandra is a JVM app: we ship the upstream
+# binary distribution (prebuilt jars) on a hardened Wolfi JRE, which is the CVE surface
+# the Trivy gate scans (a bundled JDK would escape attribution). Cassandra 5.0 supports
+# JDK 11 and 17 only -- NOT 21 -- so this runs on openjdk-17-jre, breaking from the
+# openjdk-21 base the rest of the JVM tier (kafka/opensearch/zookeeper) uses.
+#
+# The binary dist is arch-independent: it bundles BOTH lib/x86_64 and lib/aarch64 native
+# jars (netty-tcnative/epoll) and cassandra.in.sh selects lib/$(uname -m) at runtime, so a
+# single tarball serves amd64 and arm64 natively. No per-arch fetch needed.
+package:
+  name: quench-cassandra
+  version: 5.0.8
+  epoch: 0
+  description: "Quenchworks hardened Apache Cassandra, packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-17-jre     # Cassandra 5.0 runs on JDK 17 (the scanned CVE surface)
+      - bash               # the cassandra bin/*.sh launchers are bash
+      - busybox
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://downloads.apache.org/cassandra/${{package.version}}/apache-cassandra-${{package.version}}-bin.tar.gz
+      expected-sha512: "06b7af18c8f41dc13dbfdae186d565a5f91e71ea413c3c5373aec8a4e5074c6dee5632a0e5e98c21665f08f7291d7ca384f61a323c02610c6bca51e074b5a0c4"
+      strip-components: 1
+  - runs: |
+      # install the distribution under /opt/cassandra. There are no Windows .bat
+      # launchers in the Unix bin/ dist; ship bin, conf, lib, pylib, tools + license.
+      dest="${{targets.destdir}}/opt/cassandra"
+      install -d "$dest"
+      cp -r bin conf lib pylib tools LICENSE.txt NOTICE.txt CHANGES.txt NEWS.txt "$dest/"
+      # Drop lib/sigar-bin entirely. Sigar is an optional legacy system-info native lib
+      # (Cassandra logs "Sigar could not be initialized" and runs fine without it). The
+      # dist bundles foreign-OS sigar .so files (freebsd/solaris/aix) whose ELF NEEDED
+      # entries make melange emit unsatisfiable so:libc.so.6.1 / so:libkstat / so:libkvm
+      # / so:libnsl runtime deps that nothing on Wolfi provides (apko fails to solve).
+      # There is no aarch64 sigar lib shipped at all, so sigar is already non-functional
+      # on arm64 -- removing it keeps the image consistent across both arches.
+      rm -rf "$dest/lib/sigar-bin"
+      # the dist ships conf/ and launchers with restrictive perms; the nonroot runtime
+      # user must read the config (to seed the writable conf dir) and exec the launchers.
+      chmod -R a+rX "$dest"
+
+      # bake a config-from-env entrypoint. A read-only rootfs means conf, data, commitlog,
+      # saved_caches, hints and logs all live under writable mounts; CASSANDRA_* env
+      # overrides every default. Single-node by default (seeds = self).
+      install -d "${{targets.destdir}}/usr/bin"
+      cat > "${{targets.destdir}}/usr/bin/docker-entrypoint.sh" <<'EOS'
+      #!/bin/bash
+      set -euo pipefail
+
+      CASSANDRA_HOME=/opt/cassandra
+      CONF="${CASSANDRA_CONF:-/conf}"
+      # cassandra_storagedir is read by cassandra.in.sh and becomes the base for the
+      # (commented-out, therefore defaulted) data/commitlog/saved_caches/hints/cdc_raw
+      # dirs -- relocating all of them to a writable mount in one move.
+      DATA="${CASSANDRA_DATA:-/var/lib/cassandra}"
+      LOGS="${CASSANDRA_LOGDIR:-/var/log/cassandra}"
+      mkdir -p "$CONF" "$DATA" "$LOGS"
+
+      # seed the config dir from the distribution once (cassandra-env.sh, jvm*.options,
+      # logback.xml, rackdc, etc. all live alongside cassandra.yaml and are sourced).
+      if [ ! -f "$CONF/cassandra.yaml" ]; then
+        cp -r "$CASSANDRA_HOME"/conf/. "$CONF"/
+      fi
+
+      # The rootfs is read-only so /tmp is not writable; point the JVM tmpdir at the
+      # writable data mount (jamm/native extraction and any java.io.tmpdir writes).
+      TMPDIR="${CASSANDRA_TMPDIR:-$DATA/tmp}"
+      mkdir -p "$TMPDIR"
+
+      # resolve listen/rpc addresses: default to the pod/container IP (auto), seeds=self.
+      LISTEN="${CASSANDRA_LISTEN_ADDRESS:-auto}"
+      if [ "$LISTEN" = "auto" ]; then
+        LISTEN="$(hostname -i 2>/dev/null | awk '{print $1}')"
+        [ -n "$LISTEN" ] || LISTEN="127.0.0.1"
+      fi
+      RPC="${CASSANDRA_RPC_ADDRESS:-0.0.0.0}"
+      SEEDS="${CASSANDRA_SEEDS:-$LISTEN}"
+      # rpc_address 0.0.0.0 requires broadcast_rpc_address to be set explicitly.
+      BROADCAST_RPC="${CASSANDRA_BROADCAST_RPC_ADDRESS:-$LISTEN}"
+
+      # generate cassandra.yaml from env by editing the seeded dist yaml in place.
+      # These keys all exist (uncommented) in the shipped file, so sed targets them.
+      CY="$CONF/cassandra.yaml"
+      sed -i \
+        -e "s/^cluster_name:.*/cluster_name: '${CASSANDRA_CLUSTER_NAME:-Quench Cluster}'/" \
+        -e "s/^num_tokens:.*/num_tokens: ${CASSANDRA_NUM_TOKENS:-16}/" \
+        -e "s/^endpoint_snitch:.*/endpoint_snitch: ${CASSANDRA_ENDPOINT_SNITCH:-SimpleSnitch}/" \
+        -e "s/^listen_address:.*/listen_address: ${LISTEN}/" \
+        -e "s/^rpc_address:.*/rpc_address: ${RPC}/" \
+        -e "s/^authenticator:.*/authenticator: ${CASSANDRA_AUTHENTICATOR:-AllowAllAuthenticator}/" \
+        -e "s/^authorizer:.*/authorizer: ${CASSANDRA_AUTHORIZER:-AllowAllAuthorizer}/" \
+        -e "s#- seeds:.*#- seeds: \"${SEEDS}\"#" \
+        "$CY"
+
+      # The storage dirs ship commented-out, so by default they fall back to
+      # cassandra.storagedir (=$CASSANDRA_HOME/data, on the read-only rootfs) -- and
+      # cassandra.in.sh unconditionally resets cassandra_storagedir, so an env override
+      # is clobbered. Write the dirs explicitly into the yaml, pointing at $DATA. Append
+      # once (keys are commented in the dist, so no duplicate-key conflict).
+      if ! grep -q "^data_file_directories:" "$CY"; then
+        {
+          echo "data_file_directories:"
+          echo "    - ${DATA}/data"
+          echo "commitlog_directory: ${DATA}/commitlog"
+          echo "saved_caches_directory: ${DATA}/saved_caches"
+          echo "hints_directory: ${DATA}/hints"
+          echo "cdc_raw_directory: ${DATA}/cdc_raw"
+        } >> "$CY"
+        mkdir -p "${DATA}/data" "${DATA}/commitlog" "${DATA}/saved_caches" "${DATA}/hints" "${DATA}/cdc_raw"
+      fi
+
+      # broadcast_rpc_address is commented in the dist; append only when rpc binds 0.0.0.0.
+      if [ "$RPC" = "0.0.0.0" ] && ! grep -q "^broadcast_rpc_address:" "$CY"; then
+        echo "broadcast_rpc_address: ${BROADCAST_RPC}" >> "$CY"
+      fi
+      # optional DC/rack for GossipingPropertyFileSnitch.
+      if [ -n "${CASSANDRA_DC:-}" ] || [ -n "${CASSANDRA_RACK:-}" ]; then
+        {
+          echo "dc=${CASSANDRA_DC:-dc1}"
+          echo "rack=${CASSANDRA_RACK:-rack1}"
+        } > "$CONF/cassandra-rackdc.properties"
+      fi
+      # append any extra raw yaml (chart escape hatch).
+      if [ -n "${CASSANDRA_YAML_EXTRA:-}" ]; then printf '%s\n' "${CASSANDRA_YAML_EXTRA}" >> "$CY"; fi
+
+      export JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/java-17-openjdk}"
+      export CASSANDRA_CONF="$CONF"
+      export CASSANDRA_HOME
+      export CASSANDRA_LOG_DIR="$LOGS"
+      # storagedir (used by cassandra.in.sh) -> data/commitlog/saved_caches/hints base.
+      export cassandra_storagedir="$DATA"
+      # writable JVM tmpdir + a heap-dump path off the read-only root.
+      export JVM_OPTS="${JVM_OPTS:-} -Djava.io.tmpdir=${TMPDIR} -XX:HeapDumpPath=${LOGS}"
+      export MAX_HEAP_SIZE="${MAX_HEAP_SIZE:-512M}"
+      export HEAP_NEWSIZE="${HEAP_NEWSIZE:-128M}"
+
+      # run in the foreground (-f) as PID 1. We run as nonroot (uid 1001) so the
+      # script's root guard never trips -- no -R needed.
+      exec "$CASSANDRA_HOME/bin/cassandra" -f
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /opt/cassandra/bin/cassandra
+        test -x /usr/bin/docker-entrypoint.sh

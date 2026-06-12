@@ -1,0 +1,125 @@
+name: build-cassandra
+
+# JVM build. One NATIVE job per architecture (no QEMU emulation), then a merge
+# job assembles the multi-arch index, signs it, and notifies the charts repo.
+on:
+  push:
+    paths:
+      - "apps/cassandra/**"
+      - ".github/workflows/build-cassandra.yml"
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write        # push to GHCR
+  id-token: write        # cosign keyless
+
+env:
+  GHCR_IMAGE: ghcr.io/quenchworks/images/cassandra
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            platform: amd64
+            runner: ubuntu-latest
+          - arch: aarch64
+            platform: arm64
+            runner: ubuntu-24.04-arm     # native arm64, free for public repos
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        working-directory: apps/cassandra
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install melange and apko (native ${{ matrix.platform }})
+        working-directory: ${{ github.workspace }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y bubblewrap
+          # Ubuntu 24.04 restricts unprivileged user namespaces, which breaks melange's
+          # bubblewrap runner (chainguard-dev/melange#1508). Re-enable it.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          MELANGE_VER=v0.53.0
+          curl -fsSL "https://github.com/chainguard-dev/melange/releases/download/${MELANGE_VER}/melange_${MELANGE_VER#v}_linux_${{ matrix.platform }}.tar.gz" \
+            | sudo tar xz --strip-components=1 -C /usr/local/bin
+          APKO_VER="$(curl -fsSL https://api.github.com/repos/chainguard-dev/apko/releases/latest | grep -m1 '"tag_name"' | cut -d'"' -f4)"
+          curl -fsSL "https://github.com/chainguard-dev/apko/releases/download/${APKO_VER}/apko_${APKO_VER#v}_linux_${{ matrix.platform }}.tar.gz" \
+            | sudo tar xz --strip-components=1 -C /usr/local/bin
+          melange version | head -1
+          apko version | head -1
+
+      - name: Build package from source (native ${{ matrix.arch }})
+        run: |
+          melange keygen melange.rsa
+          melange build melange.yaml --arch ${{ matrix.arch }} --signing-key melange.rsa --out-dir ./packages
+
+      - name: Assemble single-arch image for the scan gate
+        run: apko build apko.yaml "${GHCR_IMAGE}:scan-${{ matrix.platform }}" image.tar --arch ${{ matrix.arch }}
+
+      - name: Scan, the hard 0-CVE gate (before publish)
+        uses: aquasecurity/trivy-action@master
+        with:
+          input: apps/cassandra/image.tar
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH,MEDIUM,LOW
+          scanners: vuln
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read the app version (tag images by version, not latest)
+        run: echo "VERSION=$(awk '/^  version:/{print $2; exit}' melange.yaml)" >> "$GITHUB_ENV"
+
+      - name: Publish the single-arch image
+        run: apko publish apko.yaml "${GHCR_IMAGE}:${VERSION}-${{ matrix.platform }}" --arch ${{ matrix.arch }}
+
+  merge:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Read the app version
+        run: echo "VERSION=$(awk '/^  version:/{print $2; exit}' apps/cassandra/melange.yaml)" >> "$GITHUB_ENV"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Assemble the multi-arch index
+        id: merge
+        run: |
+          docker buildx imagetools create -t "${GHCR_IMAGE}:${VERSION}" \
+            "${GHCR_IMAGE}:${VERSION}-amd64" "${GHCR_IMAGE}:${VERSION}-arm64"
+          digest="$(docker buildx imagetools inspect "${GHCR_IMAGE}:${VERSION}" --format '{{.Manifest.Digest}}')"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          echo "published ${GHCR_IMAGE}@${digest}"
+
+      - name: Sign the multi-arch index (cosign keyless)
+        run: cosign sign --yes "${GHCR_IMAGE}@${{ steps.merge.outputs.digest }}"
+
+      - name: Notify the charts repo
+        env:
+          GH_TOKEN: ${{ secrets.CHARTS_DISPATCH_TOKEN }}
+        run: |
+          gh api repos/quenchworks/charts/dispatches \
+            -f event_type=image-published \
+            -F client_payload[app]=cassandra \
+            -F client_payload[repository]="${GHCR_IMAGE}" \
+            -F client_payload[digest]="${{ steps.merge.outputs.digest }}"
