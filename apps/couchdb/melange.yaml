@@ -1,0 +1,220 @@
+# Builds Apache CouchDB from source onto Wolfi. Output is a signed APK in
+# Quenchworks' own repo. CouchDB is an Erlang/OTP application; we compile it into
+# a self-contained Erlang release (rel/couchdb) and run it on Wolfi's Erlang runtime.
+#
+# JS view server: we build with the BUNDLED QuickJS engine (--js-engine=quickjs,
+# --disable-spidermonkey). QuickJS ships inside the CouchDB source tree (no system
+# mozjs dependency), so the JS view server is compiled from source here and there is
+# NO SpiderMonkey/mozjs on the runtime image -- that removes the entire mozjs CVE
+# surface. The release's couchjs binary is the QuickJS one (src/couch_quickjs).
+#
+# Fauxton (web UI, needs Node/npm) and docs (need Python/Sphinx) are disabled to
+# keep those toolchains off the scan surface. The clustered HTTP API is on 5984.
+package:
+  name: quench-couchdb
+  version: 3.5.2
+  epoch: 0
+  description: "Quenchworks hardened Apache CouchDB, built from source on Wolfi (QuickJS view server)"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - erlang-27          # the BEAM runtime CouchDB runs on
+      - icu-libs           # libicu: CouchDB's collation (couch_ejson_compare)
+      - bash               # the bin/couchdb launcher + entrypoint wrapper are sh/bash
+      - busybox            # mkdir/grep/seq/dirname etc for the entrypoint
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - erlang-27
+      - erlang-27-dev
+      - icu-dev            # ICU headers for couch_ejson_compare NIF
+      - make
+      - pkgconf
+      - perl               # used by the build tooling
+      - git                # version stamping
+      - python3            # configure runs a couple of python helpers (not the docs build)
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://archive.apache.org/dist/couchdb/source/${{package.version}}/apache-couchdb-${{package.version}}.tar.gz
+      expected-sha256: e561102aaadfdda1e499e6e9e12d2473433291b608bcd390bcbcf590bbb6cf68
+      strip-components: 1
+
+  - name: Configure (QuickJS engine, no SpiderMonkey/Fauxton/docs)
+    runs: |
+      set -eu
+      # --disable-spidermonkey: don't look for system mozjs; the bundled QuickJS
+      #   engine (src/couch_quickjs) is built from source instead.
+      # --js-engine=quickjs: select QuickJS as the view server.
+      # --disable-fauxton / --disable-docs: keep Node + Python/Sphinx off the build.
+      ./configure \
+        --disable-spidermonkey \
+        --js-engine=quickjs \
+        --disable-fauxton \
+        --disable-docs \
+        --user couchdb
+
+  - name: Build the self-contained Erlang release (compiles QuickJS view server)
+    runs: |
+      set -eu
+      # `make release` runs `all` (couch-core + escriptize; fauxton/docs are no-ops
+      # since they're disabled) then `rebar generate` into rel/couchdb. The
+      # couch_quickjs app's rebar pre-hook runs `make -C quickjs libquickjs.a qjsc`
+      # and build_js.escript to produce the QuickJS-backed couchjs binary.
+      make release
+
+  - name: Install the release into /opt/couchdb
+    runs: |
+      set -eu
+      install -d "${{targets.destdir}}/opt/couchdb"
+      cp -R rel/couchdb/. "${{targets.destdir}}/opt/couchdb/"
+      # The release ships its own etc/{default.ini,default.d,local.ini,local.d} and
+      # bin/couchdb launcher. Expose the launcher + CLI helpers on PATH (Wolfi is
+      # usr-merged). Thin wrappers, not symlinks: bin/couchdb resolves its own dir.
+      # Sanity: the QuickJS view-server binary must be present in the release. With
+      # the QuickJS engine there is NO bin/couchjs; the binary is couch_quickjs's
+      # priv/couchjs_mainjs (resolved at runtime via code:priv_dir(couch_quickjs)).
+      qjs="$(find "${{targets.destdir}}/opt/couchdb/lib" -name 'couchjs_mainjs' -type f | head -1)"
+      [ -n "$qjs" ] || { echo "ERROR: QuickJS couchjs_mainjs not found in release"; exit 1; }
+      echo "QuickJS view server: $qjs"
+      install -d "${{targets.destdir}}/usr/bin"
+      for b in couchdb remsh weatherreport; do
+        if [ -e "${{targets.destdir}}/opt/couchdb/bin/$b" ]; then
+          printf '#!/bin/sh\nexec "/opt/couchdb/bin/%s" "$@"\n' "$b" > "${{targets.destdir}}/usr/bin/$b"
+          chmod 0755 "${{targets.destdir}}/usr/bin/$b"
+        fi
+      done
+
+  - name: Install the entrypoint wrapper
+    runs: |
+      set -eu
+      install -d "${{targets.destdir}}/usr/bin"
+      cat > "${{targets.destdir}}/usr/bin/docker-entrypoint.sh" <<'EOS'
+      #!/bin/bash
+      # Quenchworks Apache CouchDB entrypoint (read-only rootfs friendly, nonroot uid 1001).
+      #
+      # The image rootfs is read-only; all writable state lives under COUCHDB_STATE_DIR
+      # (default /var/lib/couchdb, created 1001-owned by apko). We layer config so the
+      # read-only /opt/couchdb defaults apply first, then a writable local.ini/local.d
+      # under the state dir holds the admin, bind address and relocated data dirs.
+      # This mirrors the official couchdb image's docker.ini/local.d scheme.
+      set -euo pipefail
+
+      : "${COUCHDB_STATE_DIR:=/var/lib/couchdb}"
+      CONF_DIR="${COUCHDB_STATE_DIR}/etc"
+      LOCALD_DIR="${CONF_DIR}/local.d"
+      DATA_DIR="${COUCHDB_DATA_DIR:-${COUCHDB_STATE_DIR}/data}"
+
+      mkdir -p "${LOCALD_DIR}" "${DATA_DIR}" "${COUCHDB_STATE_DIR}/tmp"
+
+      # Erlang writes its cookie and runtime files relative to $HOME; point it at the
+      # writable state dir so a read-only rootfs doesn't break BEAM startup.
+      export HOME="${COUCHDB_STATE_DIR}"
+
+      # A writable local.ini is required: CouchDB persists runtime config writes to the
+      # last file in the ini chain, and the _users/_replicator system DBs creation on
+      # single-node setup writes config. Seed an empty one if absent.
+      LOCAL_INI="${CONF_DIR}/local.ini"
+      [ -f "${LOCAL_INI}" ] || printf '; Quenchworks writable local.ini (runtime config persists here)\n' > "${LOCAL_INI}"
+
+      # Layer the ini chain: read-only defaults from /opt/couchdb, then writable
+      # overrides under the state dir. CouchDB accepts directories (reads *.ini within).
+      export COUCHDB_INI_FILES="/opt/couchdb/etc/default.ini /opt/couchdb/etc/default.d /opt/couchdb/etc/local.ini /opt/couchdb/etc/local.d ${LOCAL_INI} ${LOCALD_DIR}"
+
+      # docker.ini: the writable override we manage. Relocate data dirs to the writable
+      # mount, bind the clustered HTTP API to all interfaces, enable QuickJS.
+      DOCKER_INI="${LOCALD_DIR}/docker.ini"
+      {
+        echo "[chttpd]"
+        echo "bind_address = ${COUCHDB_BIND_ADDRESS:-0.0.0.0}"
+        echo "port = ${COUCHDB_PORT:-5984}"
+        echo
+        echo "[couchdb]"
+        echo "database_dir = ${DATA_DIR}"
+        echo "view_index_dir = ${DATA_DIR}"
+        echo "js_engine = quickjs"
+        echo
+        echo "[couch_httpd_auth]"
+        echo "; node-local backend port stays on loopback"
+      } > "${DOCKER_INI}"
+
+      # First-run admin: CouchDB 3.x refuses to run in admin-party mode. Write an
+      # [admins] entry from env on first boot (only if not already configured).
+      if [ -n "${COUCHDB_USER:-}" ] && [ -n "${COUCHDB_PASSWORD:-}" ]; then
+        if ! grep -Eq "^[[:space:]]*${COUCHDB_USER}[[:space:]]*=" "${LOCAL_INI}" "${DOCKER_INI}" 2>/dev/null; then
+          printf '\n[admins]\n%s = %s\n' "${COUCHDB_USER}" "${COUCHDB_PASSWORD}" >> "${DOCKER_INI}"
+        fi
+      fi
+
+      # Optional shared secret for proxy/cookie auth.
+      if [ -n "${COUCHDB_SECRET:-}" ]; then
+        printf '\n[chttpd_auth]\nsecret = %s\n' "${COUCHDB_SECRET}" >> "${DOCKER_INI}"
+      fi
+
+      # Build the vm.args we actually launch with: start from the release's read-only
+      # copy, then append the node name and (optionally) the Erlang cookie. The release
+      # vm.args binds Erlang distribution to loopback, which is correct for single node.
+      ARGS_FILE="${CONF_DIR}/vm.args"
+      cp -f /opt/couchdb/etc/vm.args "${ARGS_FILE}"
+      NODENAME="${COUCHDB_NODENAME:-127.0.0.1}"
+      if ! grep -q '^-name ' "${ARGS_FILE}"; then
+        echo "-name couchdb@${NODENAME}" >> "${ARGS_FILE}"
+      fi
+      COOKIE="${COUCHDB_ERLANG_COOKIE:-${ERLANG_COOKIE:-}}"
+      if [ -n "${COOKIE}" ] && ! grep -q '^-setcookie ' "${ARGS_FILE}"; then
+        echo "-setcookie ${COOKIE}" >> "${ARGS_FILE}"
+      fi
+      export COUCHDB_ARGS_FILE="${ARGS_FILE}"
+
+      # Fail fast (like the official image) if no admin is configured anywhere.
+      # busybox grep has no -z (null-data); the official check relies on GNU grep's
+      # -Pzoqr multiline. Use awk instead: scan every candidate ini for a real
+      # `name = value` entry inside an [admins] section.
+      has_admin() {
+        for f in "${LOCAL_INI}" "${DOCKER_INI}" \
+                 /opt/couchdb/etc/local.ini \
+                 /opt/couchdb/etc/local.d/*.ini \
+                 "${LOCALD_DIR}"/*.ini; do
+          [ -f "$f" ] || continue
+          awk '
+            /^[[:space:]]*\[admins\][[:space:]]*$/ { in_a=1; next }
+            /^[[:space:]]*\[/                        { in_a=0 }
+            in_a && /^[[:space:]]*[^;[:space:]][^=]*=/ { found=1 }
+            END { exit(found?0:1) }
+          ' "$f" && return 0
+        done
+        return 1
+      }
+      if ! has_admin; then
+        echo "ERROR: CouchDB 3.x will not run in admin-party mode." >&2
+        echo "       Set COUCHDB_USER and COUCHDB_PASSWORD (chart injects these via a Secret)." >&2
+        exit 1
+      fi
+
+      # If invoked with flags/no command, launch the server.
+      if [ "$#" -eq 0 ] || [ "${1#-}" != "$1" ]; then
+        set -- /opt/couchdb/bin/couchdb "$@"
+      fi
+      exec "$@"
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/docker-entrypoint.sh"
+
+# No in-build `test:` block beyond a version probe: the functional smoke (HTTP API
+# on a read-only rootfs, admin auth, doc roundtrip, QuickJS map view) runs on the
+# assembled image via test.sh.
+test:
+  pipeline:
+    - runs: |
+        test -x /opt/couchdb/bin/couchdb
+        find /opt/couchdb/lib -name 'couchjs_mainjs' -type f | grep -q .

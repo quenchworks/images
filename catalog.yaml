@@ -135,6 +135,13 @@ catalog:
     tier: standard
     status: done        # image + chart both shipped. InfluxDB 2.x (v2 storage engine, Go); influxd built from source + influx CLI (influx-cli v2.7.5). libflux (Rust) compiled from the vendored flux crate via the influxdata pkg-config cgo wrapper (rust-1.72 for the 2023-era crate). Web UI = official prebuilt influxdata/ui OSS-v2.7.12 bundle, checksum-verified + embedded via go-bindata (assets tag) — server from source, only the browser bundle is prebuilt (no Node in the scan surface). Built with go-1.26 + bumped grpc/oauth2/crypto/otel/jsonparser/aws-sdk/mqtt/retryablehttp to clear all fixable Go CVEs (0-CVE multi-arch, nonroot 1001). HTTP API 8086; read-only rootfs with writable /var/lib/influxdb2 + /etc/influxdb2 + /tmp; first-run setup via DOCKER_INFLUXDB_INIT_* env. Published multi-arch 0-CVE: ghcr.io/quenchworks/images/influxdb:2.7.12@sha256:e078ebc612344016ac015cbc2369881af1977c7c8b1dd966b1cc49a6b210e3ec. HTTP API 8086.
 
+  - name: couchdb
+    version: "3.5.2"
+    source: https://github.com/apache/couchdb
+    license: Apache-2.0
+    tier: standard
+    status: built       # 0-CVE multi-arch, nonroot 1001; Erlang/OTP app built from source on Wolfi erlang-27. JS view server = the BUNDLED QuickJS engine (--js-engine=quickjs --disable-spidermonkey), so there is NO system mozjs/SpiderMonkey on the image (entire mozjs CVE surface removed); couchjs is couch_quickjs's priv/couchjs_mainjs. Fauxton (Node) + docs (Sphinx) disabled to keep those toolchains off the scan. Read-only rootfs with writable /var/lib/couchdb (data + writable local.ini/local.d layered over /opt/couchdb read-only defaults); entrypoint writes first-run admin from COUCHDB_USER/PASSWORD, relocates data_dir/view_index_dir, sets Erlang cookie (COUCHDB_ERLANG_COOKIE) + node name. Single-node setup creates _users/_replicator/_global_changes. HTTP API 5984.
+
   - name: nginx
     version: "1.27.3"
     source: https://github.com/nginx/nginx

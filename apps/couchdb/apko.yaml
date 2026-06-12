@@ -1,0 +1,63 @@
+# Assembles the Apache CouchDB runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# CouchDB is config/env-driven; a thin entrypoint layers a writable local.ini/local.d over
+# the read-only /opt/couchdb defaults, relocates data dirs to a writable mount, writes the
+# first-run admin from COUCHDB_USER/PASSWORD, and sets the Erlang cookie + node name.
+# Clustered HTTP API on 5984. JS view server is the bundled QuickJS engine (no mozjs).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - erlang-27          # the BEAM runtime CouchDB runs on
+    - icu-libs           # libicu for CouchDB collation
+    - bash               # launcher + entrypoint
+    - busybox            # coreutils for the entrypoint
+    - quench-couchdb@local
+
+accounts:
+  groups:
+    - groupname: couchdb
+      gid: 1001
+  users:
+    - username: couchdb
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/docker-entrypoint.sh
+
+environment:
+  # BEAM/CouchDB CLI mishandle unicode (db/doc names) under the default latin1
+  # locale; pin a UTF-8 locale (C.UTF-8 ships in Wolfi's glibc).
+  LANG: C.UTF-8
+  LC_ALL: C.UTF-8
+  # All writable state lives here (apko creates it 1001-owned); safe on read-only rootfs.
+  COUCHDB_STATE_DIR: /var/lib/couchdb
+  HOME: /var/lib/couchdb
+  PATH: /opt/couchdb/bin:/usr/bin:/bin
+
+work-dir: /var/lib/couchdb
+
+paths:
+  - path: /var/lib/couchdb
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-couchdb"
+  org.opencontainers.image.licenses: "Apache-2.0"
