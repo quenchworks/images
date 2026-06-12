@@ -33,6 +33,11 @@ environment:
       - linux-headers
       - pkgconf
       - curl-dev           # MySQL 9.x requires system libcurl (WITH_CURL=system)
+      # MySQL 9.x bundles abseil 20250814, which does not compile under GCC 16; use
+      # Wolfi's system protobuf + abseil (WITH_PROTOBUF=system) instead.
+      - protobuf-dev
+      - abseil-cpp-dev
+      - re2-dev
 
 pipeline:
   - uses: fetch
@@ -54,9 +59,11 @@ pipeline:
         -DWITH_BOOST=boost \
         -DWITH_SSL=system \
         -DWITH_ZLIB=system \
+        -DWITH_PROTOBUF=system \
         -DWITH_UNIT_TESTS=OFF \
         -DWITH_ROUTER=OFF \
         -DWITH_MYSQLX=OFF \
+        -DWITH_NDBCLUSTER=OFF \
         -DINSTALL_MYSQLTESTDIR=
       make -C build -j"$(nproc)"
       make -C build DESTDIR="${{targets.destdir}}" install
