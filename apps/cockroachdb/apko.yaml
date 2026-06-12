@@ -1,0 +1,71 @@
+# Assembles the CockroachDB runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Ships upstream's official precompiled `cockroach` binary (from-source is infeasible on
+# a hosted runner) plus its bundled geos spatial libs. Configured by COCKROACH_* env; the
+# entrypoint runs a single-node insecure cluster by default and relocates the store to a
+# writable mount for a read-only rootfs. SQL (Postgres wire) on 26257, HTTP admin/health
+# on 8080.
+#
+# LICENSE: CockroachDB is BSL-1.1 (Business Source License) — NOT OSI-approved open
+# source; converts to Apache-2.0 three years after each release. Caution tier.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - bash               # the entrypoint is bash
+    - busybox            # entrypoint shell utilities (mkdir/hostname/awk/sed)
+    - glibc              # the cockroach binary dynamically links glibc
+    - ca-certificates-bundle
+    - tzdata
+    - quench-cockroachdb@local
+
+accounts:
+  groups:
+    - groupname: cockroach
+      gid: 1001
+  users:
+    - username: cockroach
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/docker-entrypoint.sh
+
+environment:
+  COCKROACH_DATA_DIR: /cockroach/cockroach-data
+  COCKROACH_SPATIAL_LIBS: /usr/lib/cockroach
+  PATH: /usr/bin:/bin
+
+work-dir: /cockroach
+
+paths:
+  # the work-dir parent is auto-created 0700 root:root, which blocks the nonroot uid
+  # from traversing into the data mount below — own it 1001 and make it traversable.
+  - path: /cockroach
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  # writable mount for a read-only rootfs: the store/data tree (server writes here).
+  - path: /cockroach/cockroach-data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-cockroachdb"
+  # BSL-1.1: Business Source License 1.1 — NOT OSI open source; converts to Apache-2.0 after 3y.
+  org.opencontainers.image.licenses: "BUSL-1.1"

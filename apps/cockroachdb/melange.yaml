@@ -1,0 +1,168 @@
+# Packages CockroachDB onto Wolfi. CockroachDB is NOT built from source here: an
+# upstream from-source build is a heavy Go + TypeScript UI + CGO C-deps (geos) build
+# with a huge module/submodule tree — infeasible on a 2-core/7GB GitHub runner. Instead
+# we ship CockroachDB's OWN official precompiled per-arch binary (the same upstream-
+# artifact pattern clickhouse/scylladb use), then harden it on a minimal apko base and
+# gate it 0-CVE with Trivy. This is clean-room-consistent: it is upstream's published
+# artifact, not a Bitnami chart, and the scan still fully applies. The `cockroach`
+# binary is multi-call (server/SQL-client/init/etc.) and links only glibc
+# (libc/libm/libdl/librt/libresolv/libpthread); the tarball also ships lib/libgeos*.so
+# for spatial (PostGIS-style) operations, which we install and point cockroach at.
+#
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+# !!  LICENSE: CockroachDB is BSL-1.1 (Business Source License 1.1) — this is NOT an  !!
+# !!  OSI-approved open-source license. Each BSL version automatically converts to    !!
+# !!  Apache-2.0 three years after its release date. Do NOT represent CockroachDB as  !!
+# !!  open source. SPDX identifier: BUSL-1.1. This image is CAUTION-TIER for the       !!
+# !!  catalog; the chart README/NOTES must carry this license note prominently.        !!
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+package:
+  name: quench-cockroachdb
+  version: "25.4.11"
+  epoch: 0
+  description: "Quenchworks hardened CockroachDB (BSL-1.1, not OSI open source), packaged on Wolfi"
+  copyright:
+    - license: BUSL-1.1   # Business Source License 1.1 — NOT OSI; converts to Apache-2.0 after 3y
+  dependencies:
+    runtime:
+      - bash               # the entrypoint is bash
+      - busybox            # mkdir/hostname/awk/sed used by the entrypoint
+      - glibc              # the binary dynamically links glibc (libc/libm/libdl/librt/...)
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - curl
+      - ca-certificates-bundle
+
+pipeline:
+  # CockroachDB publishes separate linux-amd64/linux-arm64 tarballs of the self-contained
+  # binary, so fetch the one matching the build arch by uname -m (x86_64->amd64,
+  # aarch64->arm64) with the arch-matching sha256 (binaries.cockroachdb.com publishes a
+  # .tgz.sha256sum next to each). Using the wrong arch yields a non-executable binary.
+  - runs: |
+      VER="${{package.version}}"
+      case "$(uname -m)" in
+        x86_64)  crarch=amd64; sha=8e82c43700dbf4e0c6f26ecea7381cc0accddad6c472cf1a39c215409b4f0d5f ;;
+        aarch64) crarch=arm64; sha=1ab5423893cdf9ed6dfad49b5af3d56fb9028632380704178ada88144b88cba0 ;;
+        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+      esac
+
+      # Primary source is the official CDN binaries.cockroachdb.com. If the CDN returns a
+      # 403 to a GitHub Actions runner IP range (it can rate-limit/block CI egress), fall
+      # back to the byte-identical GitHub release asset. Verify the SAME sha256 either way.
+      tgz="cockroach-v${VER}.linux-${crarch}.tgz"
+      cdnurl="https://binaries.cockroachdb.com/${tgz}"
+      ghurl="https://github.com/cockroachdb/cockroach/releases/download/v${VER}/${tgz}"
+      echo "fetching ${cdnurl}"
+      if ! curl -fsSL --retry 5 --retry-delay 5 -o crdb.tgz "$cdnurl"; then
+        echo "CDN fetch failed; falling back to GitHub release asset ${ghurl}"
+        curl -fsSL --retry 5 --retry-delay 5 -o crdb.tgz "$ghurl"
+      fi
+      echo "${sha}  crdb.tgz" | sha256sum -c -
+      tar -xzf crdb.tgz                          # extracts ./cockroach-v${VER}.linux-${crarch}/...
+      src="cockroach-v${VER}.linux-${crarch}"
+
+      # 1) the cockroach binary -> /usr/bin/cockroach
+      install -Dm0755 "${src}/cockroach" "${{targets.destdir}}/usr/bin/cockroach"
+
+      # 2) the spatial (geos) libraries, if present. libgeos_c.so depends on libgeos.so;
+      #    neither carries an rpath, so set an rpath on libgeos_c.so to its own dir and
+      #    point cockroach at this dir via --spatial-libs (set in the entrypoint). Core
+      #    SQL does NOT need these — only spatial/GEOGRAPHY/GEOMETRY ops — but we ship them
+      #    to be complete. patchelf is in the build env via the `build-base`/wolfi tooling;
+      #    use it if available, otherwise rely on LD_LIBRARY_PATH from the entrypoint.
+      libdir="${{targets.destdir}}/usr/lib/cockroach"
+      if [ -d "${src}/lib" ]; then
+        install -d "$libdir"
+        for so in "${src}"/lib/*.so; do
+          [ -e "$so" ] || continue
+          install -Dm0755 "$so" "$libdir/$(basename "$so")"
+        done
+        if command -v patchelf >/dev/null 2>&1 && [ -f "$libdir/libgeos_c.so" ]; then
+          patchelf --set-rpath '$ORIGIN' "$libdir/libgeos_c.so" || true
+        fi
+      fi
+
+      # 3) carry upstream LICENSE + THIRD-PARTY-NOTICES for attribution (BSL-1.1).
+      licdir="${{targets.destdir}}/usr/share/doc/cockroachdb"
+      install -d "$licdir"
+      [ -f "${src}/LICENSE" ] && install -Dm0644 "${src}/LICENSE" "$licdir/LICENSE" || true
+      [ -f "${src}/THIRD-PARTY-NOTICES.txt" ] && install -Dm0644 "${src}/THIRD-PARTY-NOTICES.txt" "$licdir/THIRD-PARTY-NOTICES.txt" || true
+
+      # 4) the read-only-rootfs entrypoint
+      install -d "${{targets.destdir}}/usr/bin"
+      cat > "${{targets.destdir}}/usr/bin/docker-entrypoint.sh" <<'EOS'
+      #!/bin/bash
+      set -euo pipefail
+
+      # Data/store dir must live on a writable mount (read-only rootfs). Everything
+      # CockroachDB writes (the store, logs, temp) goes under here.
+      DATA="${COCKROACH_DATA_DIR:-/cockroach/cockroach-data}"
+      mkdir -p "$DATA"
+
+      # spatial (geos) libraries shipped alongside the binary.
+      SPATIAL_LIBS="${COCKROACH_SPATIAL_LIBS:-/usr/lib/cockroach}"
+      if [ -d "$SPATIAL_LIBS" ]; then
+        export LD_LIBRARY_PATH="${SPATIAL_LIBS}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+      fi
+
+      # advertise address: default to the container IP so a single node advertises a
+      # routable address (cockroach refuses to advertise 0.0.0.0). Override with
+      # COCKROACH_ADVERTISE_ADDR.
+      ADV="${COCKROACH_ADVERTISE_ADDR:-}"
+      if [ -z "$ADV" ]; then
+        ADV="$(hostname -i 2>/dev/null | awk '{print $1}')"
+        [ -n "$ADV" ] || ADV="127.0.0.1"
+      fi
+
+      SQL_PORT="${COCKROACH_SQL_PORT:-26257}"
+      HTTP_PORT="${COCKROACH_HTTP_PORT:-8080}"
+
+      # If the operator passes their own args (e.g. a multi-node `start --join ...`),
+      # honor them verbatim and skip the single-node default.
+      if [ "$#" -gt 0 ]; then
+        exec cockroach "$@"
+      fi
+
+      # Multi-node opt-in: set COCKROACH_JOIN to a comma-separated join list to run a
+      # cluster member with `cockroach start` instead of the single-node default. NOTE:
+      # a `start` cluster still needs `cockroach init` run once against the cluster.
+      if [ -n "${COCKROACH_JOIN:-}" ]; then
+        exec cockroach start \
+          "--insecure" \
+          --store="$DATA" \
+          --listen-addr="0.0.0.0:${SQL_PORT}" \
+          --http-addr="0.0.0.0:${HTTP_PORT}" \
+          --advertise-addr="$ADV" \
+          --join="${COCKROACH_JOIN}" \
+          --spatial-libs="$SPATIAL_LIBS" \
+          ${COCKROACH_EXTRA_ARGS:-}
+      fi
+
+      # Default: single-node, insecure (no TLS/auth — the NetworkPolicy is the boundary;
+      # secure mode with certs is a follow-up). This is CockroachDB's documented dev/
+      # single-node default. SQL on 26257 (Postgres wire), HTTP admin UI/health on 8080.
+      exec cockroach start-single-node \
+        "--insecure" \
+        --store="$DATA" \
+        --listen-addr="0.0.0.0:${SQL_PORT}" \
+        --http-addr="0.0.0.0:${HTTP_PORT}" \
+        --advertise-addr="$ADV" \
+        --spatial-libs="$SPATIAL_LIBS" \
+        ${COCKROACH_EXTRA_ARGS:-}
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/bin/cockroach
+        test -x /usr/bin/docker-entrypoint.sh
+        cockroach version
