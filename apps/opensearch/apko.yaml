@@ -1,0 +1,66 @@
+# Assembles the OpenSearch runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Configured by OPENSEARCH_* env (the entrypoint writes opensearch.yml). HTTP API on
+# 9200, transport on 9300. Single-node with the security plugin off by default.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-opensearch@local
+
+accounts:
+  groups:
+    - groupname: opensearch
+      gid: 1001
+  users:
+    - username: opensearch
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/docker-entrypoint.sh
+
+environment:
+  OPENSEARCH_JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  OPENSEARCH_PATH_CONF: /conf
+  OPENSEARCH_PATH_DATA: /data
+  OPENSEARCH_PATH_LOGS: /var/log/opensearch
+  # keep the smoke/default footprint modest; override in the chart
+  OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+  PATH: /usr/lib/jvm/java-21-openjdk/bin:/usr/bin:/opt/opensearch/bin
+
+work-dir: /opt/opensearch
+
+paths:
+  - path: /conf
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+  - path: /var/log/opensearch
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-opensearch"
+  org.opencontainers.image.licenses: "Apache-2.0"

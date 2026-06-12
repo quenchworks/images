@@ -1,0 +1,96 @@
+# Packages OpenSearch onto Wolfi. OpenSearch is a JVM app: we ship the upstream
+# distribution's jars but drop its bundled JDK and run on the hardened openjdk-21-jre
+# base the Kafka build established, so the JRE stays the CVE surface the Trivy gate
+# scans (a bundled JDK would escape attribution).
+package:
+  name: quench-opensearch
+  version: 3.7.0
+  epoch: 0
+  description: "Quenchworks hardened OpenSearch, packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-21-jre     # the JRE OpenSearch runs on (the scanned CVE surface)
+      - bash               # the opensearch bin/*.sh launchers are bash
+      - busybox
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://artifacts.opensearch.org/releases/bundle/opensearch/${{package.version}}/opensearch-${{package.version}}-linux-x64.tar.gz
+      expected-sha512: "9e481db6495cbdacd6704a19c6ed7679e1138d40dbe283642c599bf70441c968bbd7f6faf7ecfa6c9ecf0685141037079b53647c5df3595bd5b9647bcbad1a04"
+      strip-components: 1
+  - runs: |
+      dest="${{targets.destdir}}/opt/opensearch"
+      install -d "$dest"
+      # ship bin, lib, modules, plugins, jdk-independent config; drop the bundled JDK
+      # (we run on openjdk-21-jre) and the Windows launchers.
+      cp -r bin config lib modules plugins agent LICENSE.txt NOTICE.txt "$dest/"
+      rm -rf "$dest/jdk"
+      find "$dest/bin" -name '*.bat' -delete
+      # OpenSearch ships config/ with restrictive perms; the nonroot runtime user must
+      # be able to read them to seed the writable conf dir (and execute the launchers).
+      chmod -R a+rX "$dest"
+      # bake a config-from-env entrypoint. The read-only rootfs means the config,
+      # data, and logs live under writable mounts; OPENSEARCH_* env override defaults.
+      install -d "${{targets.destdir}}/usr/bin"
+      cat > "${{targets.destdir}}/usr/bin/docker-entrypoint.sh" <<'EOS'
+      #!/bin/bash
+      set -euo pipefail
+
+      OS_HOME=/opt/opensearch
+      CONF="${OPENSEARCH_PATH_CONF:-/conf}"
+      DATA="${OPENSEARCH_PATH_DATA:-/data}"
+      LOGS="${OPENSEARCH_PATH_LOGS:-/var/log/opensearch}"
+      mkdir -p "$CONF" "$DATA" "$LOGS"
+
+      # seed the config dir from the distribution once (jvm.options, log4j2.properties,
+      # security/jvm config files OpenSearch needs alongside opensearch.yml)
+      if [ ! -f "$CONF/jvm.options" ]; then
+        cp -r "$OS_HOME"/config/. "$CONF"/
+      fi
+      # jvm.options ships relative log/heap paths resolved from the (read-only) CWD;
+      # repoint them at the writable dirs so the JVM can create them.
+      sed -i \
+        -e "s#file=logs/gc.log#file=${LOGS}/gc.log#" \
+        -e "s#-XX:ErrorFile=logs/#-XX:ErrorFile=${LOGS}/#" \
+        -e "s#-XX:HeapDumpPath=data#-XX:HeapDumpPath=${DATA}#" \
+        -e "s#-javaagent:agent/#-javaagent:${OS_HOME}/agent/#" \
+        "$CONF/jvm.options"
+
+      # generate opensearch.yml from env (single-node, security off by default for an
+      # internal deployment; the NetworkPolicy is the boundary)
+      {
+        echo "cluster.name: ${OPENSEARCH_CLUSTER_NAME:-quench-opensearch}"
+        echo "node.name: ${OPENSEARCH_NODE_NAME:-${HOSTNAME:-node-1}}"
+        echo "network.host: 0.0.0.0"
+        echo "http.port: ${OPENSEARCH_HTTP_PORT:-9200}"
+        echo "transport.port: ${OPENSEARCH_TRANSPORT_PORT:-9300}"
+        echo "discovery.type: ${OPENSEARCH_DISCOVERY_TYPE:-single-node}"
+        echo "path.data: $DATA"
+        echo "path.logs: $LOGS"
+        echo "plugins.security.disabled: ${OPENSEARCH_SECURITY_DISABLED:-true}"
+        if [ -n "${OPENSEARCH_CONFIG_EXTRA:-}" ]; then printf '%s\n' "${OPENSEARCH_CONFIG_EXTRA}"; fi
+      } > "$CONF/opensearch.yml"
+
+      export OPENSEARCH_JAVA_HOME=/usr/lib/jvm/java-21-openjdk
+      export OPENSEARCH_PATH_CONF="$CONF"
+      exec "$OS_HOME/bin/opensearch"
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /opt/opensearch/bin/opensearch
