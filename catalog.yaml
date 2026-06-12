@@ -42,130 +42,130 @@ catalog:
     source: https://github.com/etcd-io/etcd
     license: Apache-2.0
     tier: critical
-    status: built       # 0-CVE multi-arch, nonroot; Go static (etcd + etcdctl + etcdutl), env-configured
+    status: built # 0-CVE multi-arch, nonroot; Go static (etcd + etcdctl + etcdutl), env-configured
 
   - name: mariadb
     version: "11.8.8"
     source: https://archive.mariadb.org/mariadb-11.8.8/source/mariadb-11.8.8.tar.gz
     license: GPL-2.0-only
     tier: critical
-    status: built       # 0-CVE multi-arch, nonroot; newest LTS (11.8); CMake build (InnoDB only), mariadb-install-db bootstrap entrypoint
+    status: built # 0-CVE multi-arch, nonroot; newest LTS (11.8); CMake build (InnoDB only), mariadb-install-db bootstrap entrypoint
 
   - name: mysql
     version: "9.7.0"
     source: https://dev.mysql.com/get/Downloads/MySQL-9.7/mysql-9.7.0.tar.gz
     license: GPL-2.0-only
     tier: critical
-    status: built       # latest LTS (9.7); CMake build (DOWNLOAD_BOOST, -include cstdint for GCC 16), mysqld --initialize-insecure bootstrap entrypoint
+    status: built # latest LTS (9.7); CMake build (DOWNLOAD_BOOST, -include cstdint for GCC 16), mysqld --initialize-insecure bootstrap entrypoint
 
   - name: rabbitmq
     version: "4.3.1"
     source: https://github.com/rabbitmq/rabbitmq-server
     license: MPL-2.0
     tier: critical
-    status: built       # 0-CVE multi-arch, nonroot; built from source on Wolfi erlang-27, /usr/bin wrapper scripts, C.UTF-8 locale
+    status: built # 0-CVE multi-arch, nonroot; built from source on Wolfi erlang-27, /usr/bin wrapper scripts, C.UTF-8 locale
 
   - name: kafka
     version: "4.3.0"
     source: https://archive.apache.org/dist/kafka/4.3.0/kafka_2.13-4.3.0.tgz
     license: Apache-2.0
     tier: critical
-    status: built       # first JVM build; upstream binary dist on hardened openjdk-21-jre, KRaft-only (4.x), JAVA_HOME-wired entrypoint
+    status: built # first JVM build; upstream binary dist on hardened openjdk-21-jre, KRaft-only (4.x), JAVA_HOME-wired entrypoint
 
   - name: nats
     version: "2.14.2"
     source: https://github.com/nats-io/nats-server
     license: Apache-2.0
     tier: standard
-    status: built       # 0-CVE multi-arch, nonroot; Go static single binary, flag/config-driven, -m 8222 monitoring for /healthz probes
+    status: built # 0-CVE multi-arch, nonroot; Go static single binary, flag/config-driven, -m 8222 monitoring for /healthz probes
 
   - name: memcached
     version: "1.6.42"
     source: https://www.memcached.org/files/memcached-1.6.42.tar.gz
     license: BSD-3-Clause
     tier: standard
-    status: built       # 0-CVE multi-arch, nonroot; C autotools (--enable-tls), listens on 11211, no data volume (in-memory cache)
+    status: built # 0-CVE multi-arch, nonroot; C autotools (--enable-tls), listens on 11211, no data volume (in-memory cache)
 
   - name: ferretdb
     version: "2.7.0"
     source: https://github.com/FerretDB/FerretDB
     license: Apache-2.0
     tier: standard
-    status: built       # 0-CVE multi-arch, nonroot; Go static MongoDB-compatible proxy. Needs a DocumentDB-extended PostgreSQL backend (FERRETDB_POSTGRESQL_URL) to serve.
+    status: built # 0-CVE multi-arch, nonroot; Go static MongoDB-compatible proxy. Needs a DocumentDB-extended PostgreSQL backend (FERRETDB_POSTGRESQL_URL) to serve.
 
   - name: postgres-documentdb
     version: "0.107.0"
     source: https://github.com/FerretDB/documentdb
     license: MIT
     tier: standard
-    status: built       # FerretDB v2 backend: PostgreSQL 17 + DocumentDB extension. From source: Intel decimal math, libbson, rum, PostGIS (no raster/gdal), documentdb core+main; PG17/pg_cron/pgvector from Wolfi. initdb entrypoint runs CREATE EXTENSION documentdb CASCADE.
+    status: built # FerretDB v2 backend: PostgreSQL 17 + DocumentDB extension. From source: Intel decimal math, libbson, rum, PostGIS (no raster/gdal), documentdb core+main; PG17/pg_cron/pgvector from Wolfi. initdb entrypoint runs CREATE EXTENSION documentdb CASCADE.
 
   - name: documentdb
     version: "0.112.0"
     source: https://github.com/documentdb/documentdb
     license: MIT
     tier: standard
-    status: done        # image + chart both shipped. standalone MongoDB-compatible: PostgreSQL 17 + upstream documentdb extension + Rust pg_documentdb_gw gateway (MongoDB wire protocol, no FerretDB). From source: Intel decimal math, libbson, rum, PostGIS (no raster/gdal), documentdb core+main, gateway; PG17/pg_cron/pgvector from Wolfi. Entrypoint initdb's, CREATE EXTENSION documentdb CASCADE, documentdb_api.create_user, then runs the gateway on 10260. Published multi-arch 0-CVE: ghcr.io/quenchworks/images/documentdb:0.112.0@sha256:58fd6f04ceea4fab66a8e6b867a7a9bff5cefc41a634c7be1d06dc83f85c1652. Chart: charts/quench/documentdb (AH 8a88d701), gateway port 10260, SCRAM+TLS, released.
+    status: done # image + chart both shipped. standalone MongoDB-compatible: PostgreSQL 17 + upstream documentdb extension + Rust pg_documentdb_gw gateway (MongoDB wire protocol, no FerretDB). From source: Intel decimal math, libbson, rum, PostGIS (no raster/gdal), documentdb core+main, gateway; PG17/pg_cron/pgvector from Wolfi. Entrypoint initdb's, CREATE EXTENSION documentdb CASCADE, documentdb_api.create_user, then runs the gateway on 10260. Published multi-arch 0-CVE: ghcr.io/quenchworks/images/documentdb:0.112.0@sha256:58fd6f04ceea4fab66a8e6b867a7a9bff5cefc41a634c7be1d06dc83f85c1652. Chart: charts/quench/documentdb (AH 8a88d701), gateway port 10260, SCRAM+TLS, released.
 
   - name: zookeeper
     version: "3.9.5"
     source: https://archive.apache.org/dist/zookeeper/zookeeper-3.9.5/apache-zookeeper-3.9.5-bin.tar.gz
     license: Apache-2.0
     tier: standard
-    status: built       # JVM on the shared openjdk-21-jre base (reuses the kafka pattern); env-driven zoo.cfg, 4lw ruok health, ports 2181/2888/3888/8080
+    status: built # JVM on the shared openjdk-21-jre base (reuses the kafka pattern); env-driven zoo.cfg, 4lw ruok health, ports 2181/2888/3888/8080
 
   - name: opensearch
     version: "3.7.0"
     source: https://github.com/opensearch-project/OpenSearch
     license: Apache-2.0
     tier: standard
-    status: built       # JVM on the shared openjdk-21-jre base; bundled JDK stripped, single-node, security plugin off by default, config/data/logs on writable mounts
+    status: built # JVM on the shared openjdk-21-jre base; bundled JDK stripped, single-node, security plugin off by default, config/data/logs on writable mounts
 
   - name: cassandra
     version: "5.0.8"
     source: https://downloads.apache.org/cassandra/5.0.8/apache-cassandra-5.0.8-bin.tar.gz
     license: Apache-2.0
     tier: standard
-    status: done        # image + chart both shipped. JVM wide-column store on openjdk-17-jre (Cassandra 5.0 = JDK 11/17, NOT 21); arch-independent binary dist (bundles lib/x86_64 + lib/aarch64, sigar-bin dropped), env-driven cassandra.yaml, data/commitlog/saved_caches/hints/logs/conf on writable mounts. Published multi-arch 0-CVE: ghcr.io/quenchworks/images/cassandra:5.0.8@sha256:f81c06f8c90c2ea80aa24b5df5a4dda3e32b22563bcf90c0c52d343607bbcbe4. CQL 9042 / internode 7000(7001 TLS) / JMX 7199. Chart: charts/quench/cassandra (AH a2c07ae3), StatefulSet+headless gossip, nodetool-UN readiness, released.
+    status: done # image + chart both shipped. JVM wide-column store on openjdk-17-jre (Cassandra 5.0 = JDK 11/17, NOT 21); arch-independent binary dist (bundles lib/x86_64 + lib/aarch64, sigar-bin dropped), env-driven cassandra.yaml, data/commitlog/saved_caches/hints/logs/conf on writable mounts. Published multi-arch 0-CVE: ghcr.io/quenchworks/images/cassandra:5.0.8@sha256:f81c06f8c90c2ea80aa24b5df5a4dda3e32b22563bcf90c0c52d343607bbcbe4. CQL 9042 / internode 7000(7001 TLS) / JMX 7199. Chart: charts/quench/cassandra (AH a2c07ae3), StatefulSet+headless gossip, nodetool-UN readiness, released.
 
   - name: influxdb
     version: "2.7.12"
     source: https://github.com/influxdata/influxdb
     license: MIT
     tier: standard
-    status: done        # image + chart both shipped. InfluxDB 2.x (v2 storage engine, Go); influxd built from source + influx CLI (influx-cli v2.7.5). libflux (Rust) compiled from the vendored flux crate via the influxdata pkg-config cgo wrapper (rust-1.72 for the 2023-era crate). Web UI = official prebuilt influxdata/ui OSS-v2.7.12 bundle, checksum-verified + embedded via go-bindata (assets tag) — server from source, only the browser bundle is prebuilt (no Node in the scan surface). Built with go-1.26 + bumped grpc/oauth2/crypto/otel/jsonparser/aws-sdk/mqtt/retryablehttp to clear all fixable Go CVEs (0-CVE multi-arch, nonroot 1001). HTTP API 8086; read-only rootfs with writable /var/lib/influxdb2 + /etc/influxdb2 + /tmp; first-run setup via DOCKER_INFLUXDB_INIT_* env. Published multi-arch 0-CVE: ghcr.io/quenchworks/images/influxdb:2.7.12@sha256:e078ebc612344016ac015cbc2369881af1977c7c8b1dd966b1cc49a6b210e3ec. HTTP API 8086.
+    status: done # image + chart both shipped. InfluxDB 2.x (v2 storage engine, Go); influxd built from source + influx CLI (influx-cli v2.7.5). libflux (Rust) compiled from the vendored flux crate via the influxdata pkg-config cgo wrapper (rust-1.72 for the 2023-era crate). Web UI = official prebuilt influxdata/ui OSS-v2.7.12 bundle, checksum-verified + embedded via go-bindata (assets tag) — server from source, only the browser bundle is prebuilt (no Node in the scan surface). Built with go-1.26 + bumped grpc/oauth2/crypto/otel/jsonparser/aws-sdk/mqtt/retryablehttp to clear all fixable Go CVEs (0-CVE multi-arch, nonroot 1001). HTTP API 8086; read-only rootfs with writable /var/lib/influxdb2 + /etc/influxdb2 + /tmp; first-run setup via DOCKER_INFLUXDB_INIT_* env. Published multi-arch 0-CVE: ghcr.io/quenchworks/images/influxdb:2.7.12@sha256:e078ebc612344016ac015cbc2369881af1977c7c8b1dd966b1cc49a6b210e3ec. HTTP API 8086.
 
   - name: couchdb
     version: "3.5.2"
     source: https://github.com/apache/couchdb
     license: Apache-2.0
     tier: standard
-    status: done        # image + chart both shipped. 0-CVE multi-arch, nonroot 1001; Erlang/OTP app built from source on Wolfi erlang-27. JS view server = the BUNDLED QuickJS engine (--js-engine=quickjs --disable-spidermonkey), so there is NO system mozjs/SpiderMonkey on the image (entire mozjs CVE surface removed); couchjs is couch_quickjs's priv/couchjs_mainjs. Fauxton (Node) + docs (Sphinx) disabled to keep those toolchains off the scan. Read-only rootfs with writable /var/lib/couchdb (data + writable local.ini/local.d layered over /opt/couchdb read-only defaults); entrypoint writes first-run admin from COUCHDB_USER/PASSWORD, relocates data_dir/view_index_dir, sets Erlang cookie (COUCHDB_ERLANG_COOKIE) + node name. Single-node setup creates _users/_replicator/_global_changes. Published multi-arch 0-CVE: ghcr.io/quenchworks/images/couchdb:3.5.2@sha256:efeded7f98c35581466143367301b9904a0fe1bd891a4c7d8ffaf7a197e9a324. HTTP API 5984. Chart: charts/quench/couchdb (AH 2a97106c), Secret creds + post-install system-DB Job, BEAM needs >1Gi (limits 4Gi), released.
+    status: done # image + chart both shipped. 0-CVE multi-arch, nonroot 1001; Erlang/OTP app built from source on Wolfi erlang-27. JS view server = the BUNDLED QuickJS engine (--js-engine=quickjs --disable-spidermonkey), so there is NO system mozjs/SpiderMonkey on the image (entire mozjs CVE surface removed); couchjs is couch_quickjs's priv/couchjs_mainjs. Fauxton (Node) + docs (Sphinx) disabled to keep those toolchains off the scan. Read-only rootfs with writable /var/lib/couchdb (data + writable local.ini/local.d layered over /opt/couchdb read-only defaults); entrypoint writes first-run admin from COUCHDB_USER/PASSWORD, relocates data_dir/view_index_dir, sets Erlang cookie (COUCHDB_ERLANG_COOKIE) + node name. Single-node setup creates _users/_replicator/_global_changes. Published multi-arch 0-CVE: ghcr.io/quenchworks/images/couchdb:3.5.2@sha256:efeded7f98c35581466143367301b9904a0fe1bd891a4c7d8ffaf7a197e9a324. HTTP API 5984. Chart: charts/quench/couchdb (AH 2a97106c), Secret creds + post-install system-DB Job, BEAM needs >1Gi (limits 4Gi), released.
 
   - name: clickhouse
     version: "26.3.13.31"
     source: https://github.com/ClickHouse/ClickHouse
     license: Apache-2.0
     tier: standard
-    status: done        # image + chart both shipped. ships ClickHouse's OFFICIAL precompiled static binary fetched from GitHub release assets (packages.clickhouse.com 403s GHA runner IPs), per-arch, checksum-verified, NOT from-source: an upstream from-source build needs clang + ~30-60GB RAM + hundreds of CPU-minutes on a huge submodule tree, infeasible on a 2-core/7GB GitHub runner. Same upstream-artifact pattern as kafka/opensearch/cassandra; binary is multi-call (server/client/keeper/local) and only links glibc (no external libstdc++/libgcc). Nonroot 1001, multi-arch amd64+arm64. Read-only rootfs: writable /etc/clickhouse-server (config seeded from upstream defaults + config.d/users.d drop-ins), /var/lib/clickhouse (data), /var/log/clickhouse-server. First-run creds via CLICKHOUSE_USER/PASSWORD/DB/DEFAULT_ACCESS_MANAGEMENT (password stored as sha256_hex). HTTP 8123 / native TCP 9000 / interserver 9009. Configured user uses replace="replace" in the users.d drop-in so CLICKHOUSE_USER=default works with a real password (no passwordless superuser). Published multi-arch 0-CVE: ghcr.io/quenchworks/images/clickhouse:26.3.13.31@sha256:bcf0aae289e229225582d520f805d29765695411d975050a743537db33ab8d8e. Chart: charts/quench/clickhouse (AH 1ad6f385), Secret creds, /ping probe, released.
+    status: done # image + chart both shipped. ships ClickHouse's OFFICIAL precompiled static binary fetched from GitHub release assets (packages.clickhouse.com 403s GHA runner IPs), per-arch, checksum-verified, NOT from-source: an upstream from-source build needs clang + ~30-60GB RAM + hundreds of CPU-minutes on a huge submodule tree, infeasible on a 2-core/7GB GitHub runner. Same upstream-artifact pattern as kafka/opensearch/cassandra; binary is multi-call (server/client/keeper/local) and only links glibc (no external libstdc++/libgcc). Nonroot 1001, multi-arch amd64+arm64. Read-only rootfs: writable /etc/clickhouse-server (config seeded from upstream defaults + config.d/users.d drop-ins), /var/lib/clickhouse (data), /var/log/clickhouse-server. First-run creds via CLICKHOUSE_USER/PASSWORD/DB/DEFAULT_ACCESS_MANAGEMENT (password stored as sha256_hex). HTTP 8123 / native TCP 9000 / interserver 9009. Configured user uses replace="replace" in the users.d drop-in so CLICKHOUSE_USER=default works with a real password (no passwordless superuser). Published multi-arch 0-CVE: ghcr.io/quenchworks/images/clickhouse:26.3.13.31@sha256:bcf0aae289e229225582d520f805d29765695411d975050a743537db33ab8d8e. Chart: charts/quench/clickhouse (AH 1ad6f385), Secret creds, /ping probe, released.
 
   - name: victoriametrics
     version: "1.145.0"
     source: https://github.com/VictoriaMetrics/VictoriaMetrics
     license: Apache-2.0
     tier: low
-    status: done        # image + chart both shipped. 0-CVE multi-arch, nonroot; Go static single-node TSDB (Prometheus-compatible). Built from the git tag pinned to its commit with go-1.26. Thin entrypoint pins -storageDataPath=$VM_STORAGE (default /storage, writable mount for read-only rootfs) and -httpListenAddr=:8428; extra flags pass through. No auth by default (NetworkPolicy is the boundary). Published multi-arch 0-CVE: ghcr.io/quenchworks/images/victoriametrics:1.145.0@sha256:6cc39dbf93a4778091458a90c7e2324d6523063648770981af588d14c318c91a. HTTP API 8428.
+    status: done # image + chart both shipped. 0-CVE multi-arch, nonroot; Go static single-node TSDB (Prometheus-compatible). Built from the git tag pinned to its commit with go-1.26. Thin entrypoint pins -storageDataPath=$VM_STORAGE (default /storage, writable mount for read-only rootfs) and -httpListenAddr=:8428; extra flags pass through. No auth by default (NetworkPolicy is the boundary). Published multi-arch 0-CVE: ghcr.io/quenchworks/images/victoriametrics:1.145.0@sha256:6cc39dbf93a4778091458a90c7e2324d6523063648770981af588d14c318c91a. HTTP API 8428.
 
   - name: nginx
-    version: "1.27.3"
+    version: "1.31.1"
     source: https://github.com/nginx/nginx
     license: BSD-2-Clause
     tier: critical
     status: planned
 
   - name: solr
-    version: "9.10.1"
+    version: "10.0.0"
     source: https://github.com/apache/solr
     license: Apache-2.0
     tier: low
-    status: done        # image + chart both shipped (AH 454a51ee). JVM Lucene search server on the shared openjdk-21-jre base; arch-independent binary dist (pure JVM, no per-arch native bundles), Windows .cmd launchers dropped, procps added (bin/solr needs full `ps -p`, busybox lacks it). Single-node standalone by default (SolrCloud opt-in via SOLR_ZK_HOST). SOLR_HOME/logs/pid/tmp relocated to writable /var/solr mount for read-only rootfs; SOLR_JETTY_HOST=0.0.0.0. No auth by default (NetworkPolicy is the boundary). HTTP API 8983. Published multi-arch 0-CVE: ghcr.io/quenchworks/images/solr:9.10.1@sha256:0c02ab560cfb3455c8d8768e13b72c4e3cd876620151d3332ec8de3f87790436. Probe httpGet /solr/admin/info/health (lighter) or /solr/admin/info/system on 8983 (both 200 unauthenticated). Lucene 9.12.3.
+    status: done # image + chart both shipped (AH 454a51ee). JVM Lucene search server on the shared openjdk-21-jre base; arch-independent binary dist (pure JVM, no per-arch native bundles), Windows .cmd launchers dropped, procps added (bin/solr needs full `ps -p`, busybox lacks it). Single-node standalone by default (SolrCloud opt-in via SOLR_ZK_HOST). SOLR_HOME/logs/pid/tmp relocated to writable /var/solr mount for read-only rootfs; SOLR_JETTY_HOST=0.0.0.0. No auth by default (NetworkPolicy is the boundary). HTTP API 8983. Published multi-arch 0-CVE: ghcr.io/quenchworks/images/solr:10.0.0@sha256:1d571ba13744f758e25b095e409e242b1ffb490f9c99c0ae111819eda2956509. Probe httpGet /solr/admin/info/health (lighter) or /solr/admin/info/system on 8983 (both 200 unauthenticated). Lucene 10.3.2. Solr 10 starts --user-managed for standalone (cloud-by-default otherwise). Chart 0.0.2.
