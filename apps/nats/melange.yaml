@@ -1,0 +1,40 @@
+# Builds nats-server from source onto Wolfi. Single static Go binary, no CGO.
+# Output is a signed APK in Quenchworks' own repo. No upstream distro binaries.
+package:
+  name: quench-nats
+  version: 2.14.2
+  epoch: 0
+  description: "Quenchworks hardened NATS server, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/nats-io/nats-server/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: 54cfe4361aa09a55a92524b737993941cd37fd444ccedd9ba60fc0d4a0c0cd72
+  - runs: |
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      go build -trimpath \
+        -ldflags "-s -w -X github.com/nats-io/nats-server/v2/server.gitCommit=v${{package.version}}" \
+        -o "${{targets.destdir}}/usr/bin/nats-server" .
+
+# No in-build `test:` block: NATS's source tree ships broken symlinks under its
+# filesystem-test fixtures (e.g. test-dirfs-0) that break melange's test-workspace
+# population. The functional smoke runs on the assembled image via test.sh instead.

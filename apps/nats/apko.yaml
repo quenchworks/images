@@ -1,0 +1,48 @@
+# Assembles the nats-server runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# NATS is configured by flags / a config file, not env vars. The default command turns
+# on the HTTP monitoring endpoint (8222) so /healthz is available for probes; the chart
+# appends JetStream (-js -sd /data) and any other flags it needs.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-nats@local
+
+accounts:
+  groups:
+    - groupname: nats
+      gid: 1001
+  users:
+    - username: nats
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/nats-server -m 8222
+
+work-dir: /data
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-nats"
+  org.opencontainers.image.licenses: "Apache-2.0"
