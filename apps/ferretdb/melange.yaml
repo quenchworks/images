@@ -1,0 +1,50 @@
+# Builds the FerretDB proxy from source onto Wolfi. Single static Go binary, no CGO.
+# Output is a signed APK in Quenchworks' own repo. No upstream distro binaries.
+#
+# FerretDB v2 is a stateless proxy that speaks the MongoDB wire protocol and stores
+# data in PostgreSQL with the DocumentDB extension. This package is just the proxy;
+# it needs a DocumentDB-extended PostgreSQL backend (FERRETDB_POSTGRESQL_URL) to serve.
+package:
+  name: quench-ferretdb
+  version: 2.7.0
+  epoch: 0
+  description: "Quenchworks hardened FerretDB (MongoDB-compatible proxy), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/FerretDB/FerretDB/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: f246207b541ebd6eefcb0ffa338d78a1903c191fe538f38523e5f15c55843073
+  - runs: |
+      # Version files are normally written by `task gen-version` from git metadata,
+      # which is absent in a tarball build. mongodb.txt ships in the repo (so the
+      # //go:embed compiles); write version/package so the binary reports v2.7.0.
+      printf 'v%s' "${{package.version}}" > build/version/version.txt
+      printf 'quench'                     > build/version/package.txt
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local
+      go build -trimpath -ldflags "-s -w" \
+        -o "${{targets.destdir}}/usr/bin/ferretdb" ./cmd/ferretdb
+
+test:
+  pipeline:
+    - runs: |
+        ferretdb --version

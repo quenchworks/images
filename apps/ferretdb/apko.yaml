@@ -1,0 +1,54 @@
+# Assembles the FerretDB runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# FerretDB is configured by FERRETDB_* env vars; the defaults below bind the MongoDB
+# wire listener and the debug/metrics+probes endpoint to all interfaces and put the
+# small process state file on a writable dir. Point FERRETDB_POSTGRESQL_URL at a
+# DocumentDB-extended PostgreSQL to serve data.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-ferretdb@local
+
+accounts:
+  groups:
+    - groupname: ferretdb
+      gid: 1001
+  users:
+    - username: ferretdb
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/ferretdb
+
+environment:
+  FERRETDB_LISTEN_ADDR: "0.0.0.0:27017"
+  FERRETDB_DEBUG_ADDR: "0.0.0.0:8088"
+  FERRETDB_STATE_DIR: /state
+
+work-dir: /state
+
+paths:
+  - path: /state
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-ferretdb"
+  org.opencontainers.image.licenses: "Apache-2.0"
