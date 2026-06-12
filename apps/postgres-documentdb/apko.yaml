@@ -1,0 +1,68 @@
+# Assembles the PostgreSQL 17 + DocumentDB runtime image. No Dockerfile. Minimal,
+# nonroot, multi-arch, SBOM by apko. PostgreSQL 17, pg_cron, pgvector and PostGIS
+# come from Wolfi; our package adds the documentdb + rum extensions and the
+# bootstrap entrypoint that preloads them and runs CREATE EXTENSION documentdb CASCADE.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - tzdata
+    - busybox                      # the bootstrap entrypoint needs a tiny shell
+    - postgresql-17
+    - postgresql-17-client
+    - postgresql-17-contrib
+    - pg_cron-17
+    - pgvector-17
+    - quench-postgres-documentdb@local   # carries the documentdb + rum + postgis extensions and their runtime libs
+
+accounts:
+  groups:
+    - groupname: postgres
+      gid: 1001
+  users:
+    - username: postgres
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/local/bin/docker-entrypoint.sh
+
+environment:
+  PGDATA: /var/lib/postgresql/data
+
+work-dir: /var/lib/postgresql
+
+paths:
+  - path: /var/lib/postgresql
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/lib/postgresql/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+  - path: /var/run/postgresql
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-postgres-documentdb"
+  org.opencontainers.image.licenses: "MIT"

@@ -1,0 +1,212 @@
+# Builds the FerretDB DocumentDB PostgreSQL extension (and its from-source
+# dependencies) onto Wolfi's PostgreSQL 17. This is the backend FerretDB v2 needs:
+# a PostgreSQL with the `documentdb` extension that adds BSON types and the Mongo
+# CRUD API. Output is a signed APK in Quenchworks' own repo.
+#
+# From-source here: Intel decimal floating-point math (libbid), libbson (static),
+# rum index, and documentdb itself (pg_documentdb_core + pg_documentdb). PostgreSQL
+# 17, pg_cron, pgvector and PostGIS come from Wolfi (themselves built from source,
+# 0-CVE) and are layered in by apko — building all of those from source too would
+# add the geos/proj/gdal and PG server stacks for no security gain.
+package:
+  name: quench-postgres-documentdb
+  version: 0.107.0
+  epoch: 0
+  description: "Quenchworks hardened PostgreSQL 17 + DocumentDB extension (FerretDB v2 backend), built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - postgresql-17
+      - postgresql-17-client
+      - postgresql-17-contrib
+      - pg_cron-17
+      - pgvector-17
+      - pcre2
+      # PostGIS is built from source here (without raster), so its runtime libs are
+      # GEOS/PROJ/libxml2/json-c only — no GDAL, which is what carries the CVEs in
+      # Wolfi's raster-enabled postgis package.
+      - geos-3.14
+      - proj
+      - libxml2
+      - json-c
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - bash
+      - curl
+      - file
+      - git
+      - cmake
+      - pkgconf
+      - python-3.13
+      - postgresql-17
+      - postgresql-17-dev
+      - postgresql-17-client
+      - pcre2-dev
+      - openssl-dev
+      - zlib-dev
+      - icu-dev
+      - krb5-dev      # Wolfi's PG17 has GSSAPI, so libpq-be.h pulls gssapi/gssapi.h
+      - geos-3.14-dev # PostGIS build deps (no gdal — built without raster)
+      - proj-dev
+      - libxml2-dev
+      - json-c-dev
+
+pipeline:
+  # 1. Intel Decimal Floating-Point Math Library (libbid) — documentdb links it statically.
+  - uses: git-checkout
+    with:
+      repository: https://git.launchpad.net/ubuntu/+source/intelrdfpmath
+      tag: applied/2.0u3-1
+      expected-commit: 367cf033a910954b4220d78f558a221f9b9dd329
+      destination: intelmath
+  - runs: |
+      make -C intelmath/LIBRARY -j"$(nproc)" \
+        _CFLAGS_OPT=-fPIC CC=gcc CALL_BY_REF=0 GLOBAL_RND=0 GLOBAL_FLAGS=0 UNCHANGED_BINARY_FLAGS=0
+      install -d /usr/lib/intelmathlib /usr/lib/pkgconfig
+      cp -r intelmath/LIBRARY /usr/lib/intelmathlib/
+      cat > /usr/lib/pkgconfig/intelmathlib.pc <<'PC'
+      prefix=/usr/lib/intelmathlib
+      libdir=${prefix}/LIBRARY
+      includedir=${prefix}/LIBRARY/src
+      Name: intelmathlib
+      Description: Intel Decimal Floating point math library
+      Version: 2.0u3
+      Cflags: -I${includedir}
+      Libs: -L${libdir} -lbid
+      PC
+
+  # 2. libbson (static) from mongo-c-driver — documentdb links libbson-static-1.0.
+  - uses: git-checkout
+    with:
+      repository: https://github.com/mongodb/mongo-c-driver
+      tag: "1.28.0"
+      expected-commit: a463a46c38cb6b552f2da4b3ae63e393dfe0a9a6
+      destination: mongoc
+  - runs: |
+      cmake -S mongoc -B mongoc/build \
+        -DENABLE_MONGOC=OFF -DENABLE_STATIC=ON -DENABLE_TESTS=OFF -DENABLE_EXAMPLES=OFF \
+        -DENABLE_ICU=OFF -DCMAKE_C_FLAGS="-fPIC -g" -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr
+      cmake --build mongoc/build --parallel "$(nproc)" --target install
+
+  # 3. rum index extension (PG17), via PGXS.
+  - uses: git-checkout
+    with:
+      repository: https://github.com/postgrespro/rum
+      tag: "1.3.14"
+      expected-commit: 6a065fd8dfb280680304991aa30d7f72787fdb04
+      destination: rum
+  - runs: |
+      # with_llvm=no: Wolfi's PG17 enables JIT, so PGXS would emit LLVM bitcode with
+      # clang (absent from the build env). The extensions work fine without JIT bitcode.
+      make -C rum USE_PGXS=1 with_llvm=no -j"$(nproc)"
+      make -C rum USE_PGXS=1 with_llvm=no install DESTDIR="${{targets.destdir}}"
+
+  # 3b. PostGIS (PG17) from source, WITHOUT raster/protobuf/topology — matches FerretDB's
+  #     documentdb packaging and, crucially, drops the GDAL dependency (and its CVEs).
+  - runs: |
+      curl -fsSL -o postgis.tar.gz https://download.osgeo.org/postgis/source/postgis-3.5.2.tar.gz
+      echo "fb9f95d56e3aaef6a296473c76a3b99005ac41864d486c197cd478c9b14f791a  postgis.tar.gz" | sha256sum -c -
+      mkdir postgis && tar -xzf postgis.tar.gz -C postgis --strip-components=1
+      cd postgis
+      ./configure --without-raster --without-protobuf --without-topology \
+        --with-pgconfig="$(command -v pg_config)" --with-geosconfig="$(command -v geos-config)"
+      # with_llvm=no propagates to the PGXS sub-make (PG17 enables JIT, clang absent).
+      make with_llvm=no -j"$(nproc)"
+      make with_llvm=no install DESTDIR="${{targets.destdir}}"
+
+  # 4. documentdb: pg_documentdb_core then pg_documentdb (links core + libbson + libbid + pcre2).
+  #    COPT=-Wno-error: the tree builds with -Werror, which trips new GCC 16 diagnostics.
+  - uses: git-checkout
+    with:
+      repository: https://github.com/FerretDB/documentdb
+      tag: v0.107.0-ferretdb-2.7.0
+      expected-commit: e63835403de6ee285cea32410a765f26f1572727
+      destination: documentdb
+  - runs: |
+      # The tree compiles with a standalone -Werror in Makefile.cflags (included by
+      # both core and main). On this GCC that turns warnings like -Wdiscarded-qualifiers
+      # into hard errors. Flip the standalone -Werror to -Wno-error (leaves -Werror=vla
+      # etc. from PG's own flags intact); passing it via COPT does not work because the
+      # extension's -Werror is appended after COPT on the command line.
+      sed -i 's/-Werror /-Wno-error /g' documentdb/Makefile.cflags
+      # The helper scripts hardcode #!/bin/bash, which the Wolfi build sandbox lacks
+      # (bash is /usr/bin/bash, no /bin/bash symlink). Repoint to env bash.
+      sed -i '1s|#!/bin/bash|#!/usr/bin/env bash|' documentdb/scripts/*.sh
+      make -C documentdb/pg_documentdb_core USE_PGXS=1 with_llvm=no -j"$(nproc)"
+      make -C documentdb/pg_documentdb_core USE_PGXS=1 with_llvm=no install DESTDIR="${{targets.destdir}}"
+      make -C documentdb/pg_documentdb USE_PGXS=1 USE_DOCUMENTDB_CORE=1 with_llvm=no -j"$(nproc)"
+      make -C documentdb/pg_documentdb USE_PGXS=1 USE_DOCUMENTDB_CORE=1 with_llvm=no install DESTDIR="${{targets.destdir}}"
+
+  # 5. Bootstrap entrypoint: initdb, preload pg_cron + documentdb, CREATE EXTENSION documentdb CASCADE.
+  - runs: |
+      install -d "${{targets.destdir}}/usr/local/bin"
+      cat > "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh" <<'SCRIPT'
+      #!/bin/sh
+      set -eu
+      PGDATA="${PGDATA:-/var/lib/postgresql/data}"
+      POSTGRES_USER="${POSTGRES_USER:-postgres}"
+      POSTGRES_DB="${POSTGRES_DB:-postgres}"
+      SOCKET_DIR="${PGSOCKET_DIR:-/var/run/postgresql}"
+
+      if [ ! -s "$PGDATA/PG_VERSION" ]; then
+        if [ -z "${POSTGRES_PASSWORD:-}" ]; then
+          echo "POSTGRES_PASSWORD is required for first initialization" >&2
+          exit 1
+        fi
+        pwfile="$(mktemp)"
+        printf '%s' "$POSTGRES_PASSWORD" > "$pwfile"
+        # local socket: trust (only in-container processes reach it, and DocumentDB's
+        # pg_cron background index builder connects over it without a password).
+        # TCP stays scram — the cluster network is the trust boundary.
+        initdb -D "$PGDATA" -U "$POSTGRES_USER" \
+          --auth-local=trust --auth-host=scram-sha-256 \
+          --pwfile="$pwfile" --encoding=UTF8 --locale=C
+        rm -f "$pwfile"
+
+        # listen on all interfaces; the cluster network is the trust boundary, auth is scram
+        printf "\nlisten_addresses = '*'\n" >> "$PGDATA/postgresql.conf"
+        printf "host all all all scram-sha-256\n" >> "$PGDATA/pg_hba.conf"
+
+        # DocumentDB + pg_cron must be preloaded; mirror FerretDB's documentdb GUCs
+        cat >> "$PGDATA/postgresql.conf" <<'CONF'
+      shared_preload_libraries                      = 'pg_cron,pg_documentdb_core,pg_documentdb'
+      cron.database_name                            = 'postgres'
+      documentdb.enableCompact                      = true
+      documentdb.enableLetAndCollationForQueryMatch = true
+      documentdb.enableNowSystemVariable            = true
+      documentdb.enableSortbyIdPushDownToPrimaryKey = true
+      documentdb.enableSchemaValidation             = true
+      documentdb.enableBypassDocumentValidation     = true
+      documentdb.enableUserCrud                     = true
+      documentdb.maxUserLimit                       = 100
+      CONF
+
+        # start a temporary server (preload now active) to create the extension, then stop
+        pg_ctl -D "$PGDATA" -o "-c listen_addresses='' -k $SOCKET_DIR" -w start
+        if [ "$POSTGRES_DB" != "postgres" ]; then
+          PGPASSWORD="$POSTGRES_PASSWORD" createdb -h "$SOCKET_DIR" -U "$POSTGRES_USER" "$POSTGRES_DB" || true
+        fi
+        PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$SOCKET_DIR" -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+          -v ON_ERROR_STOP=1 -c 'CREATE EXTENSION IF NOT EXISTS documentdb CASCADE;'
+        pg_ctl -D "$PGDATA" -m fast -w stop
+      fi
+
+      exec postgres -D "$PGDATA" -k "$SOCKET_DIR"
+      SCRIPT
+      chmod 0755 "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        test -f "/usr/lib/postgresql17/pg_documentdb.so" || ls -la /usr/lib/postgresql17/
