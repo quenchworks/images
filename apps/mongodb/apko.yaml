@@ -1,0 +1,82 @@
+# ============================================================================
+# LICENSE: SSPL-1.0 (MongoDB Community Server) — *** NOT OSI-APPROVED ***.
+# The OSI explicitly declined the SSPL; this is NOT open source. Caution tier.
+# Clean truly-open alternative: QuenchWorks FerretDB + standalone documentdb
+# (MongoDB-wire compatible, Apache-2.0/PostgreSQL-licensed) — prefer them.
+# (The bundled mongosh shell is separately Apache-2.0.)
+# ============================================================================
+#
+# Assembles the MongoDB Community Server runtime image. Minimal, nonroot,
+# multi-arch, SBOM by apko. Ships upstream's official precompiled `mongod` (the
+# ubuntu2204/modern-glibc server build) plus the Apache-2.0 `mongosh` shell for
+# the first-boot auth bootstrap and in-image probing. MongoDB wire protocol on
+# 27017. Read-only rootfs: dbpath + log dir live on writable mounts under /data.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - bash                 # entrypoint shell
+    - busybox              # mkdir/sha256sum/sleep/seq/pkill utilities
+    - glibc                # libc/libm/libresolv/ld-linux + libdl/libpthread
+    - libgcc               # libgcc_s.so.1
+    - openssl              # libssl.so.3 + libcrypto.so.3 (OpenSSL 3)
+    - libcurl-openssl4     # libcurl.so.4
+    - ca-certificates-bundle
+    - tzdata
+    - quench-mongodb@local
+
+accounts:
+  groups:
+    - groupname: mongodb
+      gid: 1001
+  users:
+    - username: mongodb
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/docker-entrypoint.sh
+
+environment:
+  MONGO_DATA_DIR: /data/db
+  MONGO_LOG_DIR: /data/log
+  MONGO_PORT: "27017"
+  PATH: /usr/bin:/bin
+
+work-dir: /data
+
+paths:
+  # writable mounts for a read-only rootfs: data dir + log dir under /data
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /data/db
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+  - path: /data/log
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-mongodb"
+  # SSPL-1.0 is NOT OSI-approved. Clean alt: FerretDB + documentdb.
+  org.opencontainers.image.licenses: "SSPL-1.0"

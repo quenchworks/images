@@ -1,0 +1,134 @@
+# ============================================================================
+# LICENSE: SSPL-1.0 (Server Side Public License) — *** NOT OSI-APPROVED ***
+# ----------------------------------------------------------------------------
+# MongoDB Community Server is licensed under the SSPL. The Open Source
+# Initiative EXPLICITLY DECLINED to approve the SSPL: it is NOT an open-source
+# license. Do NOT represent MongoDB as open source. SPDX id used here is
+# `SSPL-1.0` for the server itself. Caution tier.
+#
+# CLEAN ALTERNATIVE (PREFER THESE): QuenchWorks already ships FerretDB and the
+# standalone `documentdb` image/chart — a MongoDB-WIRE-COMPATIBLE, TRULY-OPEN
+# (Apache-2.0 / PostgreSQL-licensed) answer. Reach for FerretDB + documentdb
+# before MongoDB Community whenever license cleanliness matters.
+# ============================================================================
+#
+# Packages MongoDB Community Server onto Wolfi. MongoDB is NOT built from source
+# here: the upstream build is an enormous C++/SCons job (clang, tens of GB RAM,
+# hours) — infeasible on a 2-core/7GB GitHub runner. Instead we ship MongoDB's
+# OWN official precompiled per-arch server tarball (the ubuntu2204 / modern-glibc
+# build, which is binary-compatible with Wolfi's glibc), then harden it on a
+# minimal apko base and gate it 0-CVE with Trivy. Same upstream-artifact pattern
+# as clickhouse/scylladb/cockroachdb.
+#
+# Wolfi soname matching (the real work): the official ubuntu2204 `mongod` links
+# only libcurl.so.4, libssl.so.3 + libcrypto.so.3 (OpenSSL 3), libresolv.so.2,
+# libm.so.6, libgcc_s.so.1, libc.so.6 and ld-linux (verified via `readelf -d`).
+# We provide the matching Wolfi runtime packages so every NEEDED soname resolves:
+#   glibc (libc/libm/libresolv/ld-linux), libgcc (libgcc_s), openssl
+#   (libssl/libcrypto), libcurl-openssl4 (libcurl.so.4).
+# mongosh additionally NEEDs libdl.so.2 + libpthread.so.0 (both in glibc).
+#
+# We ship `mongod` (server) only from the server tarball (mongos is dropped to
+# stay lean), PLUS the separate `mongosh` shell tarball (Apache-2.0, NOT SSPL) so
+# the entrypoint can do the first-boot root-user auth bootstrap and so probes /
+# tests have an in-image client. We deliberately do NOT ship the database tools
+# (mongodump etc.).
+package:
+  name: quench-mongodb
+  version: 8.0.26
+  epoch: 0
+  description: "Quenchworks hardened MongoDB Community Server (SSPL-1.0, NOT OSI-approved), packaged on Wolfi"
+  copyright:
+    - license: SSPL-1.0          # MongoDB Community Server — NOT open source
+    - license: Apache-2.0        # bundled mongosh shell is Apache-2.0
+  dependencies:
+    runtime:
+      - bash                     # the entrypoint is bash
+      - busybox                  # mkdir/sha256sum/sleep/etc. in the entrypoint
+      - glibc                    # libc/libm/libresolv/ld-linux + libdl/libpthread
+      - libgcc                   # libgcc_s.so.1
+      - openssl                  # libssl.so.3 + libcrypto.so.3 (OpenSSL 3)
+      - libcurl-openssl4         # libcurl.so.4
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - curl
+      - ca-certificates-bundle
+
+pipeline:
+  # MongoDB publishes separate x86_64/aarch64 server tarballs; fetch the one
+  # matching the build arch by uname -m with the arch-matching official sha256
+  # (from downloads.mongodb.org/full.json). Using the wrong arch yields a
+  # non-executable binary.
+  - runs: |
+      VER="${{package.version}}"
+      MONGOSH_VER=2.8.3
+      case "$(uname -m)" in
+        x86_64)
+          marsh=x86_64; msharsh=x64
+          sha=f339089cca30504e07a293fe766cff7afe19c370bdf4d6de58f2165affc05d46
+          shsha=f3d994c05c889f3c9f72f43cf6b574bc178a2a35f0be9322ab7f7b1aa66efd55
+          ;;
+        aarch64)
+          marsh=aarch64; msharsh=arm64
+          sha=aaaad56fe225ace4a350838359873da43ea9362f91d92877f8945303f046054a
+          shsha=68b4894acac60bf49902d6342d5ef91782473490e55100b4dc5db2ce1ff01fb2
+          ;;
+        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+      esac
+
+      # 1) the per-arch official MongoDB Community server tarball (ubuntu2204 /
+      #    modern glibc target). Ships bin/mongod (server) + bin/mongos + LICENSEs.
+      srvurl="https://fastdl.mongodb.org/linux/mongodb-linux-${marsh}-ubuntu2204-${VER}.tgz"
+      curl -fsSL -o mongodb.tgz "$srvurl"
+      echo "${sha}  mongodb.tgz" | sha256sum -c -
+      tar -xzf mongodb.tgz
+      install -Dm0755 "mongodb-linux-${marsh}-ubuntu2204-${VER}/bin/mongod" \
+        "${{targets.destdir}}/usr/bin/mongod"
+
+      # ship the upstream SSPL / MPL-2 / third-party license texts
+      licdir="${{targets.destdir}}/usr/share/licenses/mongodb"
+      install -d "$licdir"
+      for f in LICENSE-Community.txt MPL-2 THIRD-PARTY-NOTICES README; do
+        [ -f "mongodb-linux-${marsh}-ubuntu2204-${VER}/$f" ] && \
+          cp "mongodb-linux-${marsh}-ubuntu2204-${VER}/$f" "$licdir/" || true
+      done
+
+      # 2) the separate mongosh shell tarball (Apache-2.0, NOT SSPL). Needed by the
+      #    entrypoint to bootstrap the root user and as an in-image client/probe.
+      shurl="https://downloads.mongodb.com/compass/mongosh-${MONGOSH_VER}-linux-${msharsh}.tgz"
+      curl -fsSL -o mongosh.tgz "$shurl"
+      echo "${shsha}  mongosh.tgz" | sha256sum -c -
+      tar -xzf mongosh.tgz
+      install -Dm0755 "mongosh-${MONGOSH_VER}-linux-${msharsh}/bin/mongosh" \
+        "${{targets.destdir}}/usr/bin/mongosh"
+      # mongosh ships a companion cryptography shared lib alongside the binary
+      shlib="mongosh-${MONGOSH_VER}-linux-${msharsh}/bin"
+      for so in "$shlib"/*.so; do
+        [ -f "$so" ] && install -Dm0755 "$so" "${{targets.destdir}}/usr/lib/mongosh/$(basename "$so")" || true
+      done
+      shlicdir="${{targets.destdir}}/usr/share/licenses/mongosh"
+      install -d "$shlicdir"
+      for f in LICENSE-mongosh LICENSE-crypt-library; do
+        [ -f "mongosh-${MONGOSH_VER}-linux-${msharsh}/$f" ] && \
+          cp "mongosh-${MONGOSH_VER}-linux-${msharsh}/$f" "$shlicdir/" || true
+      done
+
+      # 3) the read-only-rootfs entrypoint (lives next to this melange.yaml)
+      install -Dm0755 ./entrypoint.sh "${{targets.destdir}}/usr/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/bin/mongod
+        test -x /usr/bin/mongosh
+        # mongod links the in-image mongosh crypto lib via LD_LIBRARY_PATH at
+        # runtime; --version only needs the openssl/curl/glibc/libgcc deps.
+        mongod --version
