@@ -1,0 +1,153 @@
+# Packages Apache Pulsar onto Wolfi. Pulsar is a distributed messaging/streaming
+# platform (broker + BookKeeper + metadata store). We ship the upstream BINARY
+# distribution (prebuilt jars) on a hardened Wolfi JRE -- that JRE plus the many
+# bundled jars are the CVE surface the Trivy gate scans (a bundled JDK would escape
+# attribution). Pulsar 4.0 LTS supports Java 17/21, so this runs on openjdk-21-jre,
+# the shared base the JVM tier (kafka/opensearch/solr/zookeeper) uses.
+#
+# We ship the lean `-bin` dist, NOT the `-all` bundle: connectors (Pulsar IO) and
+# tiered-storage offloaders are EXCLUDED to keep the image small and the CVE surface
+# minimal. The single-node deployment is `bin/pulsar standalone`, which runs the
+# broker + an in-process BookKeeper bookie + an embedded metadata store (RocksDB)
+# in ONE JVM -- no external ZooKeeper/bookie needed.
+#
+# The dist is arch-independent: Pulsar is pure JVM. The only native bits are netty
+# tcnative/epoll jars, which ship per-arch jars for linux amd64 AND arm64 inside
+# lib/ -- so a single tarball serves both arches. No per-arch fetch needed.
+package:
+  name: quench-pulsar
+  version: 4.0.11
+  epoch: 0
+  description: "Quenchworks hardened Apache Pulsar (standalone), packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-21-jre     # the JRE Pulsar runs on (the scanned CVE surface)
+      - bash               # bin/pulsar + the client/admin launchers are bash
+      - busybox
+      - procps             # bin scripts (pulsar-daemon) use a full `ps`; busybox ps lacks the flags
+      - libstdc++          # RocksDB JNI (embedded metadata store + bookie ledger storage) links libstdc++.so.6
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://archive.apache.org/dist/pulsar/pulsar-${{package.version}}/apache-pulsar-${{package.version}}-bin.tar.gz
+      expected-sha512: "e47b8efb0af0a584a72b79d5af167d074df204e1a47086269f383efbbc6766b79dc0c2f39f651ca28cc492d67f965d06a145ddfc90de642c1e383b44bdfae15e"
+      strip-components: 1
+  - runs: |
+      # Install the distribution under /opt/pulsar. Ship the runtime pieces: bin (the
+      # bash launchers: pulsar, pulsar-admin, pulsar-client, etc.), conf (the seed
+      # configs), lib (all the jars -- the broker, bookie, metadata store, client),
+      # instances + examples (functions runtime support), licenses. We DROP the
+      # Windows .cmd launchers (we run on bash only) and any bundled JDK (none ships,
+      # but be defensive).
+      dest="${{targets.destdir}}/opt/pulsar"
+      install -d "$dest"
+      cp -r bin conf lib instances examples LICENSE NOTICE README "$dest/"
+
+      # Drop the Windows launchers (we run on bash only).
+      find "$dest/bin" -name '*.cmd' -delete
+
+      # Be defensive: if any future dist bundles a JDK, strip it -- we run on the
+      # scanned openjdk-21-jre, not a vendored JDK.
+      rm -rf "$dest"/jdk "$dest"/*/jdk 2>/dev/null || true
+
+      # The dist ships restrictive perms; the nonroot runtime user must read the conf
+      # (to seed the writable mount) and exec the launchers.
+      chmod -R a+rX "$dest"
+
+      # Bake a config-from-env entrypoint. A read-only rootfs means ALL of standalone's
+      # writable state -- the BookKeeper journal+ledgers, the embedded metadata store
+      # (RocksDB), logs, the JVM tmpdir, and the (rewritable) conf dir -- must live under
+      # writable mounts. The entrypoint relocates every one of them under /pulsar.
+      install -d "${{targets.destdir}}/usr/bin"
+      cat > "${{targets.destdir}}/usr/bin/docker-entrypoint.sh" <<'EOS'
+      #!/bin/bash
+      set -euo pipefail
+
+      PULSAR_INSTALL=/opt/pulsar
+
+      # Writable mounts (read-only rootfs). Standalone writes a LOT and all of it
+      # otherwise lands under the install tree. Relocate:
+      #   - data: BookKeeper journal+ledgers + embedded metadata store (RocksDB)
+      #   - logs: pulsar-standalone.log etc.
+      #   - conf: seeded from the dist; Pulsar may rewrite config at runtime
+      #   - tmp:  java.io.tmpdir
+      PULSAR_DATA_DIR="${PULSAR_DATA_DIR:-/pulsar/data}"
+      export PULSAR_LOG_DIR="${PULSAR_LOG_DIR:-/pulsar/logs}"
+      PULSAR_CONF_DIR="${PULSAR_CONF_DIR:-/pulsar/conf}"
+      export TMPDIR="${PULSAR_TMP_DIR:-/pulsar/tmp}"
+      mkdir -p "$PULSAR_DATA_DIR" "$PULSAR_LOG_DIR" "$PULSAR_CONF_DIR" "$TMPDIR"
+
+      # Point the JVM's java.io.tmpdir AND RocksDB's native-lib extraction dir at the
+      # writable tmp. The embedded metadata store (RocksDB) and the bookie unpack their
+      # JNI .so via java.io.tmpdir at startup; without this they hit the read-only /tmp
+      # ("Failed to load RocksDB JNI library: Read-only file system").
+      export ROCKSDB_SHAREDLIB_DIR="$TMPDIR"
+      export PULSAR_EXTRA_OPTS="${PULSAR_EXTRA_OPTS:-} -Djava.io.tmpdir=$TMPDIR"
+
+      # Seed the writable conf dir from the dist's defaults once. bin/pulsar resolves
+      # conf relative to PULSAR_HOME; we point it at the writable copy via env so the
+      # broker/bookie can rewrite config under a read-only rootfs.
+      if [ ! -f "$PULSAR_CONF_DIR/standalone.conf" ]; then
+        cp -r "$PULSAR_INSTALL"/conf/. "$PULSAR_CONF_DIR"/
+      fi
+      # bin/pulsar reads these env vars to locate the conf files (they default under
+      # $PULSAR_HOME/conf on the read-only rootfs otherwise).
+      export PULSAR_STANDALONE_CONF="${PULSAR_STANDALONE_CONF:-$PULSAR_CONF_DIR/standalone.conf}"
+      export PULSAR_LOG_CONF="${PULSAR_LOG_CONF:-$PULSAR_CONF_DIR/log4j2.yaml}"
+
+      export JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/java-21-openjdk}"
+
+      # Modest heap by default (single-node smoke/dev footprint); override via PULSAR_MEM
+      # in the chart. PULSAR_MEM is consumed by conf/pulsar_env.sh.
+      export PULSAR_MEM="${PULSAR_MEM:--Xms512m -Xmx512m -XX:MaxDirectMemorySize=512m}"
+
+      # Run standalone from a writable CWD so any stray relative path lands on the
+      # writable mount, and pass the data dirs explicitly as absolute paths:
+      #   --zookeeper-dir / --bookkeeper-dir / --metadata-dir all default to
+      #   data/standalone/* (relative to CWD) -- pin them under the writable mount.
+      cd "$PULSAR_DATA_DIR"
+
+      STANDALONE_ARGS=(
+        --zookeeper-dir "$PULSAR_DATA_DIR/zookeeper"
+        --bookkeeper-dir "$PULSAR_DATA_DIR/bookkeeper"
+        --metadata-dir "$PULSAR_DATA_DIR/metadata"
+      )
+
+      # Keep single-node lean: the functions worker and BookKeeper stream storage are
+      # not needed for basic produce/consume. Disable unless explicitly re-enabled.
+      if [ "${PULSAR_FUNCTIONS_WORKER:-0}" != "1" ]; then
+        STANDALONE_ARGS+=(--no-functions-worker)
+      fi
+      if [ "${PULSAR_STREAM_STORAGE:-0}" != "1" ]; then
+        STANDALONE_ARGS+=(--no-stream-storage)
+      fi
+      if [ -n "${PULSAR_ADVERTISED_ADDRESS:-}" ]; then
+        STANDALONE_ARGS+=(--advertised-address "$PULSAR_ADVERTISED_ADDRESS")
+      fi
+
+      # PULSAR_HOME stays the read-only install; conf is overridden via the env above.
+      exec "$PULSAR_INSTALL/bin/pulsar" standalone "${STANDALONE_ARGS[@]}" "$@"
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /opt/pulsar/bin/pulsar
+        test -x /opt/pulsar/bin/pulsar-admin
+        test -x /opt/pulsar/bin/pulsar-client
+        test -x /usr/bin/docker-entrypoint.sh
+        test -f /opt/pulsar/conf/standalone.conf

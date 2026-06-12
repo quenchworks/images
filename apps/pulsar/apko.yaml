@@ -1,0 +1,75 @@
+# Assembles the Apache Pulsar runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Single-node `bin/pulsar standalone` (broker + in-process BookKeeper bookie + embedded
+# RocksDB metadata store in ONE JVM). Configured by PULSAR_* env; the entrypoint
+# relocates ALL writable state (data/logs/conf/tmp) under the /pulsar mount for a
+# read-only rootfs. Binary protocol on 6650, HTTP admin/REST on 8080. Pulsar ships no
+# auth by default -- the NetworkPolicy is the boundary.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-pulsar@local
+
+accounts:
+  groups:
+    - groupname: pulsar
+      gid: 1001
+  users:
+    - username: pulsar
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/docker-entrypoint.sh
+
+environment:
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  PULSAR_DATA_DIR: /pulsar/data
+  PULSAR_LOG_DIR: /pulsar/logs
+  PULSAR_CONF_DIR: /pulsar/conf
+  PULSAR_TMP_DIR: /pulsar/tmp
+  # keep the smoke/default footprint modest; override in the chart via PULSAR_MEM
+  PULSAR_MEM: "-Xms512m -Xmx512m -XX:MaxDirectMemorySize=512m"
+  PATH: /usr/lib/jvm/java-21-openjdk/bin:/usr/bin:/opt/pulsar/bin
+
+work-dir: /opt/pulsar
+
+paths:
+  - path: /pulsar
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /pulsar/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /pulsar/logs
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /pulsar/conf
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-pulsar"
+  org.opencontainers.image.licenses: "Apache-2.0"
