@@ -1,0 +1,64 @@
+# Assembles the InfluxDB 2.x runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# influxd is env-driven; a thin entrypoint ensures the writable data/config dirs exist
+# and runs optional first-run setup (DOCKER_INFLUXDB_INIT_*). HTTP API on 8086.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - bash
+    - busybox          # mkdir/sleep/seq/dirname for the entrypoint wrapper
+    - quench-influxdb@local
+
+accounts:
+  groups:
+    - groupname: influxdb
+      gid: 1001
+  users:
+    - username: influxdb
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/docker-entrypoint.sh
+
+environment:
+  # All writable paths live under dirs apko creates 1001-owned; safe on a read-only rootfs.
+  INFLUXD_ENGINE_PATH: /var/lib/influxdb2/engine
+  INFLUXD_BOLT_PATH: /var/lib/influxdb2/influxd.bolt
+  INFLUXD_SQLITE_PATH: /var/lib/influxdb2/influxd.sqlite
+  INFLUXD_CONFIG_PATH: /etc/influxdb2
+  INFLUX_CONFIGS_PATH: /etc/influxdb2/influx-configs
+  INFLUXD_HTTP_BIND_ADDRESS: ":8086"
+  PATH: /usr/bin:/bin
+
+work-dir: /var/lib/influxdb2
+
+paths:
+  - path: /var/lib/influxdb2
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+  - path: /etc/influxdb2
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-influxdb"
+  org.opencontainers.image.licenses: "MIT"

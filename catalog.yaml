@@ -128,6 +128,13 @@ catalog:
     tier: standard
     status: done        # image + chart both shipped. JVM wide-column store on openjdk-17-jre (Cassandra 5.0 = JDK 11/17, NOT 21); arch-independent binary dist (bundles lib/x86_64 + lib/aarch64, sigar-bin dropped), env-driven cassandra.yaml, data/commitlog/saved_caches/hints/logs/conf on writable mounts. Published multi-arch 0-CVE: ghcr.io/quenchworks/images/cassandra:5.0.8@sha256:f81c06f8c90c2ea80aa24b5df5a4dda3e32b22563bcf90c0c52d343607bbcbe4. CQL 9042 / internode 7000(7001 TLS) / JMX 7199. Chart: charts/quench/cassandra (AH a2c07ae3), StatefulSet+headless gossip, nodetool-UN readiness, released.
 
+  - name: influxdb
+    version: "2.7.12"
+    source: https://github.com/influxdata/influxdb
+    license: MIT
+    tier: standard
+    status: built       # InfluxDB 2.x (v2 storage engine, Go); influxd built from source + influx CLI (influx-cli v2.7.5). libflux (Rust) compiled from the vendored flux crate via the influxdata pkg-config cgo wrapper (rust-1.72 for the 2023-era crate). Web UI = official prebuilt influxdata/ui OSS-v2.7.12 bundle, checksum-verified + embedded via go-bindata (assets tag) — server from source, only the browser bundle is prebuilt (no Node in the scan surface). Built with go-1.26 + bumped grpc/oauth2/crypto/otel/jsonparser/aws-sdk/mqtt/retryablehttp to clear all fixable Go CVEs (0-CVE multi-arch, nonroot 1001). HTTP API 8086; read-only rootfs with writable /var/lib/influxdb2 + /etc/influxdb2 + /tmp; first-run setup via DOCKER_INFLUXDB_INIT_* env.
+
   - name: nginx
     version: "1.27.3"
     source: https://github.com/nginx/nginx

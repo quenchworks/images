@@ -1,0 +1,209 @@
+# Builds InfluxDB 2.x (influxd server) + the influx CLI from source onto Wolfi.
+# InfluxDB 2.7 links the Flux query engine, whose core (libflux) is a Rust crate
+# shipped inside the influxdata/flux Go module. The custom pkg-config wrapper
+# (github.com/influxdata/pkg-config) runs `cargo build --release` on that crate
+# during the cgo link, so libflux is built FROM SOURCE here (no prebuilt .a).
+#
+# The web UI is a separate React app (influxdata/ui). Building it needs a Node/yarn
+# toolchain we deliberately keep out of the scan surface; instead we embed the
+# official prebuilt UI release tarball (OSS-v<version>, checksum-verified) via the
+# `assets` build tag + go-bindata, exactly as upstream's own release build does.
+# The server is built from source; only the static browser bundle is prebuilt.
+#
+# Output is a signed APK in Quenchworks' own repo. No upstream distro binaries.
+package:
+  name: quench-influxdb
+  version: 2.7.12
+  epoch: 0
+  description: "Quenchworks hardened InfluxDB 2.x (influxd + influx CLI), built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - bash       # thin entrypoint wrapper (writable dirs + optional first-run setup)
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - bash
+      - curl
+      - git              # influxd version stamping uses `git describe`
+      - go-1.26          # newer than upstream's go 1.23: clears all stdlib CVE advisories
+      - go-bindata       # embeds the UI assets into static_gen.go
+      # libflux (Rust) toolchain + cgo deps.
+      # Pin Rust 1.72: the vendored flux v0.196.1 crate predates lints that newer
+      # rustc (1.87+) promotes to hard errors (e.g. mismatched_lifetime_syntaxes),
+      # which break `cargo build` on rust-1.89. 1.72 compiles the crate cleanly.
+      - rust-1.72
+      - clang
+      - pkgconf
+      - glibc-dev
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/influxdata/influxdb/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: 1c0d21ccc42baf61501a0e43d0853322176e200140e20f12c11297d2619e1275
+      strip-components: 1
+
+  - name: Fetch and verify the prebuilt UI assets + swagger (server still built from source)
+    runs: |
+      set -eu
+      UI_RELEASE="OSS-v${{package.version}}"
+      UI_SHA="682f8660c6b160a918f4631a791c76da1437c62de47d6a5a4cb0bd6a3a8e6800"
+      OPENAPI_SHA="8b5f1bbb2cd388eb454dc9da19e3d2c4061cdf5f"
+      SWAGGER_SHA="47f91c7d44de1ce56c02390fde14d13ca82060b3e74d018de8c1e4b86b27e264"
+
+      curl -fsSL "https://github.com/influxdata/ui/releases/download/${UI_RELEASE}/build.tar.gz" -o /tmp/ui-build.tar.gz
+      echo "${UI_SHA}  /tmp/ui-build.tar.gz" | sha256sum -c -
+      mkdir -p static/data
+      tar -xzf /tmp/ui-build.tar.gz -C static/data
+
+      curl -fsSL "https://raw.githubusercontent.com/influxdata/openapi/${OPENAPI_SHA}/contracts/oss.json" -o static/data/swagger.json
+      echo "${SWAGGER_SHA}  static/data/swagger.json" | sha256sum -c -
+
+  - name: Generate the embedded asset bundle (static_gen.go) via go-bindata
+    runs: |
+      set -eu
+      # Reproduce upstream's `go generate ./static` without a network round-trip:
+      # go-bindata is preinstalled (Wolfi package), emit static_gen.go tagged `assets`.
+      go-bindata -o static/static_gen.go -ignore 'map|go' -tags assets -pkg static static/data/...
+
+  - name: Bump vulnerable Go modules to their fixed versions (0-CVE gate)
+    runs: |
+      set -eu
+      export GOFLAGS=-mod=mod
+      export GO111MODULE=on
+      export GOTOOLCHAIN=local   # use the installed go-1.26, don't fetch go.mod's 1.23
+      # Minimum fixed versions per Trivy advisories against the influxd binary.
+      # Versions chosen to satisfy each advisory AND grpc 1.79.3's own transitive
+      # minimums (it pulls x/oauth2 >= 0.34.0 and x/crypto >= 0.46.0); both exceed
+      # their advisory fix versions (0.27.0 / 0.45.0), so the gate stays clean.
+      go get \
+        google.golang.org/grpc@v1.79.3 \
+        golang.org/x/oauth2@v0.34.0 \
+        golang.org/x/crypto@v0.46.0 \
+        github.com/buger/jsonparser@v1.1.2 \
+        github.com/aws/aws-sdk-go-v2/service/s3@v1.97.3 \
+        github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream@v1.7.8 \
+        github.com/eclipse/paho.mqtt.golang@v1.5.1 \
+        github.com/hashicorp/go-retryablehttp@v0.7.7 \
+        go.opentelemetry.io/otel@v1.41.0
+      go mod tidy
+
+  - name: Build libflux (Rust, from the flux module) + influxd (cgo)
+    runs: |
+      set -eu
+      export CGO_ENABLED=1
+      export CC=clang
+      export GOFLAGS=-mod=mod
+      export GO111MODULE=on
+      export GOTOOLCHAIN=local
+      # Cap any stray lints in the vendored flux crate to warnings, never errors.
+      export RUSTFLAGS="--cap-lints=warn"
+      # The influxdata pkg-config wrapper resolves the `flux` library by running
+      # `cargo build --release` inside the flux module's libflux crate.
+      export PKG_CONFIG="$(pwd)/scripts/pkg-config.sh"
+
+      COMMIT="$(git -C . rev-parse --short HEAD 2>/dev/null || echo ${{package.version}})"
+      VERSION="v${{package.version}}"
+      LDFLAGS="-s -w -X main.commit=${COMMIT} -X main.version=${VERSION}"
+
+      # assets: embed the UI; sqlite_foreign_keys,sqlite_json: required by the metadata store.
+      # noasm is forced on aarch64 to avoid a Flux SIMD panic (mirrors upstream GNUmakefile).
+      TAGS="assets,sqlite_foreign_keys,sqlite_json"
+      case "$(go env GOARCH)" in
+        amd64|s390x) ;;
+        *) TAGS="${TAGS},noasm" ;;
+      esac
+
+      go build -trimpath -tags "${TAGS}" -ldflags "${LDFLAGS}" \
+        -o "${{targets.destdir}}/usr/bin/influxd" ./cmd/influxd
+
+  - name: Build the influx CLI (influxdata/influx-cli, pure Go static)
+    runs: |
+      set -eu
+      CLI_VERSION="2.7.5"
+      CLI_SHA="2741105c0fa7bf0f728643807aa21e9a8e356b17a681e92f06c4ff680e6944ac"
+      curl -fsSL "https://github.com/influxdata/influx-cli/archive/refs/tags/v${CLI_VERSION}.tar.gz" -o /tmp/influx-cli.tar.gz
+      echo "${CLI_SHA}  /tmp/influx-cli.tar.gz" | sha256sum -c -
+      mkdir -p /tmp/influx-cli && tar -xzf /tmp/influx-cli.tar.gz -C /tmp/influx-cli --strip-components 1
+
+      ( cd /tmp/influx-cli
+        export CGO_ENABLED=0
+        export GOFLAGS=-mod=mod
+        export GOTOOLCHAIN=local
+        DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+        go build -trimpath \
+          -ldflags "-s -w -X main.version=${CLI_VERSION} -X main.date=${DATE}" \
+          -o "${{targets.destdir}}/usr/bin/influx" ./cmd/influx )
+
+  - name: Install the entrypoint wrapper
+    runs: |
+      mkdir -p "${{targets.destdir}}/usr/bin"
+      cat > "${{targets.destdir}}/usr/bin/docker-entrypoint.sh" <<'EOS'
+      #!/bin/bash
+      # Quenchworks InfluxDB 2.x entrypoint.
+      # - Ensures the writable data/config/tmp dirs exist (read-only rootfs friendly).
+      # - Optional first-run setup mirroring the official image's DOCKER_INFLUXDB_INIT_* env.
+      # - Wires influxd's bolt/engine/sqlite/config paths at writable locations via env.
+      set -euo pipefail
+
+      : "${INFLUXD_ENGINE_PATH:=/var/lib/influxdb2/engine}"
+      : "${INFLUXD_BOLT_PATH:=/var/lib/influxdb2/influxd.bolt}"
+      : "${INFLUXD_SQLITE_PATH:=/var/lib/influxdb2/influxd.sqlite}"
+      : "${INFLUXD_CONFIG_PATH:=/etc/influxdb2}"
+      : "${INFLUX_CONFIGS_PATH:=/etc/influxdb2/influx-configs}"
+      : "${INFLUXD_HTTP_BIND_ADDRESS:=:8086}"
+      export INFLUXD_ENGINE_PATH INFLUXD_BOLT_PATH INFLUXD_SQLITE_PATH \
+             INFLUXD_CONFIG_PATH INFLUX_CONFIGS_PATH INFLUXD_HTTP_BIND_ADDRESS
+
+      mkdir -p "$(dirname "$INFLUXD_BOLT_PATH")" "$INFLUXD_ENGINE_PATH" \
+               "$INFLUXD_CONFIG_PATH" "$(dirname "$INFLUX_CONFIGS_PATH")" /tmp
+
+      # First-run setup: only when the bolt is uninitialized AND init env is provided.
+      if [ "${DOCKER_INFLUXDB_INIT_MODE:-}" = "setup" ] && [ ! -s "$INFLUXD_BOLT_PATH" ]; then
+        : "${DOCKER_INFLUXDB_INIT_USERNAME:?DOCKER_INFLUXDB_INIT_USERNAME is required for setup mode}"
+        : "${DOCKER_INFLUXDB_INIT_PASSWORD:?DOCKER_INFLUXDB_INIT_PASSWORD is required for setup mode}"
+        : "${DOCKER_INFLUXDB_INIT_ORG:?DOCKER_INFLUXDB_INIT_ORG is required for setup mode}"
+        : "${DOCKER_INFLUXDB_INIT_BUCKET:?DOCKER_INFLUXDB_INIT_BUCKET is required for setup mode}"
+
+        echo "influxdb: first-run setup, starting influxd in the background..."
+        influxd &
+        IPID=$!
+
+        host="http://127.0.0.1:${INFLUXD_HTTP_BIND_ADDRESS##*:}"
+        for _ in $(seq 1 60); do
+          if influx ping --host "$host" >/dev/null 2>&1; then break; fi
+          if ! kill -0 "$IPID" 2>/dev/null; then echo "influxd exited during setup"; wait "$IPID"; exit 1; fi
+          sleep 1
+        done
+
+        setup_args=(setup --force --host "$host"
+          --username "$DOCKER_INFLUXDB_INIT_USERNAME"
+          --password "$DOCKER_INFLUXDB_INIT_PASSWORD"
+          --org "$DOCKER_INFLUXDB_INIT_ORG"
+          --bucket "$DOCKER_INFLUXDB_INIT_BUCKET")
+        [ -n "${DOCKER_INFLUXDB_INIT_RETENTION:-}" ] && setup_args+=(--retention "$DOCKER_INFLUXDB_INIT_RETENTION")
+        [ -n "${DOCKER_INFLUXDB_INIT_ADMIN_TOKEN:-}" ] && setup_args+=(--token "$DOCKER_INFLUXDB_INIT_ADMIN_TOKEN")
+        influx "${setup_args[@]}"
+
+        kill "$IPID" 2>/dev/null || true
+        wait "$IPID" 2>/dev/null || true
+        echo "influxdb: first-run setup complete."
+      fi
+
+      exec influxd "$@"
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/docker-entrypoint.sh"
+
+# No in-build `test:` block: the functional smoke (HTTP API on a read-only rootfs,
+# first-run setup, point write/read-back) runs on the assembled image via test.sh.
