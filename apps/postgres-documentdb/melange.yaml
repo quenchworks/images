@@ -67,7 +67,7 @@ pipeline:
     with:
       repository: https://git.launchpad.net/ubuntu/+source/intelrdfpmath
       tag: applied/2.0u3-1
-      expected-commit: 367cf033a910954b4220d78f558a221f9b9dd329
+      expected-commit: e2d24068229825f109c7f38a3be123f029174601
       destination: intelmath
   - runs: |
       make -C intelmath/LIBRARY -j"$(nproc)" \
@@ -121,9 +121,15 @@ pipeline:
       cd postgis
       ./configure --without-raster --without-protobuf --without-topology \
         --with-pgconfig="$(command -v pg_config)" --with-geosconfig="$(command -v geos-config)"
-      # with_llvm=no propagates to the PGXS sub-make (PG17 enables JIT, clang absent).
-      make with_llvm=no -j"$(nproc)"
-      make with_llvm=no install DESTDIR="${{targets.destdir}}"
+      # Build only the subdirs the extension needs. The top-level `all` recurses into
+      # utils/, which hard-depends on ../raster/rt_pg/rtpostgis_upgrade.sql and fails
+      # to generate it when raster is disabled. with_llvm=no: PG17 enables JIT but
+      # clang is absent in the build env.
+      for d in liblwgeom libpgcommon postgis extensions; do
+        make -C "$d" with_llvm=no -j"$(nproc)"
+      done
+      make -C postgis with_llvm=no install DESTDIR="${{targets.destdir}}"
+      make -C extensions with_llvm=no install DESTDIR="${{targets.destdir}}"
 
   # 4. documentdb: pg_documentdb_core then pg_documentdb (links core + libbson + libbid + pcre2).
   #    COPT=-Wno-error: the tree builds with -Werror, which trips new GCC 16 diagnostics.
