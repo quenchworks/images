@@ -64,6 +64,13 @@ pipeline:
       LOGS="${OPENSEARCH_PATH_LOGS:-/var/log/opensearch}"
       mkdir -p "$CONF" "$DATA" "$LOGS"
 
+      # The rootfs is read-only, so /tmp is not writable. OpenSearch's bin/opensearch
+      # launcher otherwise calls TempDirectory to mkdir under java.io.tmpdir (=/tmp)
+      # and dies. Pre-set OPENSEARCH_TMPDIR to a writable path so it skips that step
+      # (the launcher then passes it through as -Djava.io.tmpdir).
+      export OPENSEARCH_TMPDIR="${OPENSEARCH_TMPDIR:-$DATA/tmp}"
+      mkdir -p "$OPENSEARCH_TMPDIR"
+
       # seed the config dir from the distribution once (jvm.options, log4j2.properties,
       # security/jvm config files OpenSearch needs alongside opensearch.yml)
       if [ ! -f "$CONF/jvm.options" ]; then
