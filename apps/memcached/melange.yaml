@@ -1,0 +1,46 @@
+# Builds memcached from source onto Wolfi. Output is a signed APK in Quenchworks'
+# own repo. No upstream distro binaries.
+package:
+  name: quench-memcached
+  version: 1.6.42
+  epoch: 0
+  description: "Quenchworks hardened memcached, built from source on Wolfi"
+  copyright:
+    - license: BSD-3-Clause
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - libevent-dev
+      - openssl-dev
+      - linux-headers
+      - pkgconf
+
+pipeline:
+  - uses: fetch
+    with:
+      # Official memcached.org release tarball; its checksum is stable.
+      uri: https://www.memcached.org/files/memcached-${{package.version}}.tar.gz
+      expected-sha256: "50f08b879d4f9d36dea9d905e9eaade15c708e38db7e9a73fc21dc8b45395de7"
+  - runs: |
+      ./configure --prefix=/usr --enable-tls
+      make -j"$(nproc)"
+      make DESTDIR="${{targets.destdir}}" install
+  # The memcached user and any writable dirs are provided by apko (accounts), not the
+  # package, to avoid conflicting with wolfi-baselayout's /etc files. memcached is an
+  # in-memory cache: no data volume needed.
+
+test:
+  pipeline:
+    - runs: |
+        memcached --version
