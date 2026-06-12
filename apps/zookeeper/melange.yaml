@@ -1,0 +1,80 @@
+# Packages Apache ZooKeeper onto Wolfi. ZooKeeper is a JVM app: we ship the upstream
+# binary distribution (prebuilt jars) on the same hardened openjdk-21-jre base the
+# Kafka build established. The JRE is the CVE surface the Trivy gate scans.
+package:
+  name: quench-zookeeper
+  version: 3.9.5
+  epoch: 0
+  description: "Quenchworks hardened Apache ZooKeeper, packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-21-jre     # the JRE ZooKeeper runs on (the scanned CVE surface)
+      - bash               # the zkServer.sh launchers are bash
+      - busybox
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://archive.apache.org/dist/zookeeper/zookeeper-${{package.version}}/apache-zookeeper-${{package.version}}-bin.tar.gz
+      expected-sha256: "e752fe205abd9323eef8011ec3cb68adbb83678cfb5ab337159d0a40e12f93d7"
+      strip-components: 1
+  - runs: |
+      # install the distribution under /opt/zookeeper, dropping the Windows launchers
+      dest="${{targets.destdir}}/opt/zookeeper"
+      install -d "$dest"
+      cp -r bin conf lib LICENSE.txt NOTICE.txt "$dest/"
+      find "$dest/bin" -name '*.cmd' -delete
+      # bake a config-from-env entrypoint. A read-only rootfs means zoo.cfg and the
+      # data/log dirs live under writable mounts; ZOO_* env vars override every default.
+      install -d "${{targets.destdir}}/usr/bin"
+      cat > "${{targets.destdir}}/usr/bin/docker-entrypoint.sh" <<'EOS'
+      #!/bin/bash
+      set -euo pipefail
+
+      ZK_HOME=/opt/zookeeper
+      DATA_DIR="${ZOO_DATA_DIR:-/data}"
+      CONF_DIR="${ZOOCFGDIR:-/conf}"
+      mkdir -p "$DATA_DIR" "$CONF_DIR" "${ZOO_LOG_DIR:-/var/lib/zookeeper/log}"
+
+      CFG="$CONF_DIR/zoo.cfg"
+      {
+        echo "dataDir=$DATA_DIR"
+        echo "clientPort=${ZOO_CLIENT_PORT:-2181}"
+        echo "tickTime=${ZOO_TICK_TIME:-2000}"
+        echo "initLimit=${ZOO_INIT_LIMIT:-10}"
+        echo "syncLimit=${ZOO_SYNC_LIMIT:-5}"
+        echo "maxClientCnxns=${ZOO_MAX_CLIENT_CNXNS:-60}"
+        echo "autopurge.snapRetainCount=${ZOO_AUTOPURGE_SNAPRETAINCOUNT:-3}"
+        echo "autopurge.purgeInterval=${ZOO_AUTOPURGE_PURGEINTERVAL:-0}"
+        echo "admin.serverPort=${ZOO_ADMIN_SERVER_PORT:-8080}"
+        echo "4lw.commands.whitelist=${ZOO_4LW_COMMANDS_WHITELIST:-srvr,mntr,ruok,conf,stat,isro}"
+        echo "standaloneEnabled=${ZOO_STANDALONE_ENABLED:-true}"
+        # ensemble members, e.g. ZOO_SERVERS="server.1=zk1:2888:3888 server.2=zk2:2888:3888"
+        if [ -n "${ZOO_SERVERS:-}" ]; then for s in ${ZOO_SERVERS}; do echo "$s"; done; fi
+        # any extra raw lines
+        if [ -n "${ZOO_CFG_EXTRA:-}" ]; then printf '%s\n' "${ZOO_CFG_EXTRA}"; fi
+      } > "$CFG"
+
+      # node identity for an ensemble (ignored in standalone)
+      echo "${ZOO_MY_ID:-1}" > "$DATA_DIR/myid"
+
+      exec "$ZK_HOME/bin/zkServer.sh" --config "$CONF_DIR" start-foreground
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        test -f /opt/zookeeper/bin/zkServer.sh

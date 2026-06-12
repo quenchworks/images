@@ -1,0 +1,70 @@
+# Assembles the ZooKeeper runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# ZooKeeper is configured by ZOO_* env vars (the entrypoint writes zoo.cfg); the
+# client port is 2181, peer 2888, election 3888, admin HTTP 8080.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-zookeeper@local
+
+accounts:
+  groups:
+    - groupname: zookeeper
+      gid: 1001
+  users:
+    - username: zookeeper
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/docker-entrypoint.sh
+
+environment:
+  # openjdk-21-jre installs under /usr/lib/jvm with no /usr/bin/java symlink, so the
+  # zkServer.sh launcher needs JAVA_HOME (zkEnv.sh runs $JAVA_HOME/bin/java).
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  ZOOCFGDIR: /conf
+  ZOO_LOG_DIR: /var/lib/zookeeper/log
+  PATH: /usr/lib/jvm/java-21-openjdk/bin:/usr/bin:/opt/zookeeper/bin
+
+work-dir: /var/lib/zookeeper
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+  - path: /conf
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/lib/zookeeper
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/lib/zookeeper/log
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-zookeeper"
+  org.opencontainers.image.licenses: "Apache-2.0"

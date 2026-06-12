@@ -100,6 +100,13 @@ catalog:
     tier: standard
     status: built       # FerretDB v2 backend: PostgreSQL 17 + DocumentDB extension. From source: Intel decimal math, libbson, rum, PostGIS (no raster/gdal), documentdb core+main; PG17/pg_cron/pgvector from Wolfi. initdb entrypoint runs CREATE EXTENSION documentdb CASCADE.
 
+  - name: zookeeper
+    version: "3.9.5"
+    source: https://archive.apache.org/dist/zookeeper/zookeeper-3.9.5/apache-zookeeper-3.9.5-bin.tar.gz
+    license: Apache-2.0
+    tier: standard
+    status: built       # JVM on the shared openjdk-21-jre base (reuses the kafka pattern); env-driven zoo.cfg, 4lw ruok health, ports 2181/2888/3888/8080
+
   - name: nginx
     version: "1.27.3"
     source: https://github.com/nginx/nginx
