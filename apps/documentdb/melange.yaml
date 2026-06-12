@@ -1,0 +1,303 @@
+# Builds the *standalone* DocumentDB: PostgreSQL 17 + the upstream
+# documentdb/documentdb extension (BSON types + Mongo CRUD API) AND the Rust
+# pg_documentdb_gw gateway that speaks the MongoDB wire protocol. Unlike the
+# FerretDB-paired postgres-documentdb image (FerretDB/documentdb fork, no
+# gateway), this image is self-contained: a mongo client connects straight to
+# the built-in gateway, which proxies to the local PostgreSQL.
+#
+# From-source here (attributed to the SBOM/scan): Intel decimal floating-point
+# math (libbid), libbson (static), rum index, PostGIS (no raster/gdal),
+# documentdb core+main, and the Rust gateway. PostgreSQL 17, pg_cron and
+# pgvector come from Wolfi (themselves 0-CVE) and are layered in by apko.
+package:
+  name: quench-documentdb
+  version: 0.112.0
+  epoch: 0
+  description: "Quenchworks hardened standalone DocumentDB: PostgreSQL 17 + documentdb extension + MongoDB-wire gateway, built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - postgresql-17
+      - postgresql-17-client
+      - postgresql-17-contrib
+      - pg_cron-17
+      - pgvector-17
+      - pcre2
+      - openssl                # the gateway links libssl/libcrypto (tokio-openssl)
+      # PostGIS is built from source here (without raster), so its runtime libs are
+      # GEOS/PROJ/libxml2/json-c only — no GDAL, which carries the CVEs in Wolfi's
+      # raster-enabled postgis package.
+      - geos-3.14
+      - proj
+      - libxml2
+      - json-c
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - bash
+      - curl
+      - file
+      - git
+      - cmake
+      - pkgconf
+      - python-3.13
+      - postgresql-17
+      - postgresql-17-dev
+      - postgresql-17-client
+      - pcre2-dev
+      - openssl-dev
+      - zlib-dev
+      - icu-dev
+      - krb5-dev      # Wolfi's PG17 has GSSAPI, so libpq-be.h pulls gssapi/gssapi.h
+      - geos-3.14-dev # PostGIS build deps (no gdal — built without raster)
+      - proj-dev
+      - libxml2-dev
+      - json-c-dev
+      - rust-1.96     # the pg_documentdb_gw gateway is a Cargo/Rust project (provides cargo+rustc)
+
+pipeline:
+  # 1. Intel Decimal Floating-Point Math Library (libbid) — documentdb links it statically.
+  - uses: git-checkout
+    with:
+      repository: https://git.launchpad.net/ubuntu/+source/intelrdfpmath
+      tag: applied/2.0u3-1
+      expected-commit: e2d24068229825f109c7f38a3be123f029174601
+      destination: intelmath
+  - runs: |
+      make -C intelmath/LIBRARY -j"$(nproc)" \
+        _CFLAGS_OPT=-fPIC CC=gcc CALL_BY_REF=0 GLOBAL_RND=0 GLOBAL_FLAGS=0 UNCHANGED_BINARY_FLAGS=0
+      install -d /usr/lib/intelmathlib /usr/lib/pkgconfig
+      cp -r intelmath/LIBRARY /usr/lib/intelmathlib/
+      cat > /usr/lib/pkgconfig/intelmathlib.pc <<'PC'
+      prefix=/usr/lib/intelmathlib
+      libdir=${prefix}/LIBRARY
+      includedir=${prefix}/LIBRARY/src
+      Name: intelmathlib
+      Description: Intel Decimal Floating point math library
+      Version: 2.0u3
+      Cflags: -I${includedir}
+      Libs: -L${libdir} -lbid
+      PC
+
+  # 2. libbson (static) from mongo-c-driver — documentdb links libbson-static-1.0.
+  - uses: git-checkout
+    with:
+      repository: https://github.com/mongodb/mongo-c-driver
+      tag: "1.28.0"
+      expected-commit: a463a46c38cb6b552f2da4b3ae63e393dfe0a9a6
+      destination: mongoc
+  - runs: |
+      cmake -S mongoc -B mongoc/build \
+        -DENABLE_MONGOC=OFF -DENABLE_STATIC=ON -DENABLE_TESTS=OFF -DENABLE_EXAMPLES=OFF \
+        -DENABLE_ICU=OFF -DCMAKE_C_FLAGS="-fPIC -g" -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr
+      cmake --build mongoc/build --parallel "$(nproc)" --target install
+
+  # 3. rum index extension (PG17), via PGXS.
+  - uses: git-checkout
+    with:
+      repository: https://github.com/postgrespro/rum
+      tag: "1.3.14"
+      expected-commit: 6a065fd8dfb280680304991aa30d7f72787fdb04
+      destination: rum
+  - runs: |
+      # with_llvm=no: Wolfi's PG17 enables JIT, so PGXS would emit LLVM bitcode with
+      # clang (absent from the build env). The extensions work fine without JIT bitcode.
+      make -C rum USE_PGXS=1 with_llvm=no -j"$(nproc)"
+      make -C rum USE_PGXS=1 with_llvm=no install DESTDIR="${{targets.destdir}}"
+
+  # 3b. PostGIS (PG17) from source, WITHOUT raster/protobuf/topology — drops the GDAL
+  #     dependency (and its CVEs). documentdb's geospatial path links the postgis lib.
+  - runs: |
+      curl -fsSL -o postgis.tar.gz https://download.osgeo.org/postgis/source/postgis-3.5.2.tar.gz
+      echo "fb9f95d56e3aaef6a296473c76a3b99005ac41864d486c197cd478c9b14f791a  postgis.tar.gz" | sha256sum -c -
+      mkdir postgis && tar -xzf postgis.tar.gz -C postgis --strip-components=1
+      cd postgis
+      ./configure --without-raster --without-protobuf --without-topology \
+        --with-pgconfig="$(command -v pg_config)" --with-geosconfig="$(command -v geos-config)"
+      # Build only the subdirs the extension needs; the top-level `all` recurses into
+      # utils/ which hard-depends on raster. with_llvm=no: PG17 enables JIT but clang
+      # is absent in the build env.
+      for d in liblwgeom libpgcommon postgis extensions; do
+        make -C "$d" with_llvm=no -j"$(nproc)"
+      done
+      make -C postgis with_llvm=no install DESTDIR="${{targets.destdir}}"
+      make -C extensions with_llvm=no install DESTDIR="${{targets.destdir}}"
+
+  # 4. documentdb (UPSTREAM documentdb/documentdb @ v0.112-0): documentdb_core then
+  #    documentdb (main). Same hard-won lessons as the FerretDB fork apply.
+  - uses: git-checkout
+    with:
+      repository: https://github.com/documentdb/documentdb
+      tag: v0.112-0
+      expected-commit: 2b076555426d47700213e9f2ef935d8ab30d68e6
+      destination: documentdb
+  - runs: |
+      # The tree compiles with a standalone -Werror in Makefile.cflags (included by
+      # both core and main). On this GCC that turns warnings into hard errors. Flip the
+      # standalone -Werror to -Wno-error; passing it via COPT does not work because the
+      # extension's -Werror is appended after COPT on the command line.
+      sed -i 's/-Werror /-Wno-error /g' documentdb/Makefile.cflags
+      # Helper scripts hardcode #!/bin/bash; the Wolfi build sandbox has no /bin/bash
+      # symlink (bash is /usr/bin/bash). Repoint to env bash.
+      sed -i '1s|#!/bin/bash|#!/usr/bin/env bash|' documentdb/scripts/*.sh
+      make -C documentdb/pg_documentdb_core USE_PGXS=1 with_llvm=no -j"$(nproc)"
+      make -C documentdb/pg_documentdb_core USE_PGXS=1 with_llvm=no install DESTDIR="${{targets.destdir}}"
+      make -C documentdb/pg_documentdb USE_PGXS=1 USE_DOCUMENTDB_CORE=1 with_llvm=no -j"$(nproc)"
+      make -C documentdb/pg_documentdb USE_PGXS=1 USE_DOCUMENTDB_CORE=1 with_llvm=no install DESTDIR="${{targets.destdir}}"
+
+  # 5. The Rust gateway (pg_documentdb_gw). cargo build --release produces the
+  #    documentdb_gateway binary, which speaks the MongoDB wire protocol and proxies
+  #    to the local PostgreSQL. Built from source so the Trivy scan attributes the
+  #    vendored crates correctly.
+  - runs: |
+      cd documentdb/pg_documentdb_gw
+      # The repo pins target-cpu=x86-64-v3 (AVX2) in .cargo/config.toml, which can SIGILL
+      # on generic CI/runtime CPUs. Drop the CPU pin so the binary runs on any baseline x86-64.
+      rm -f .cargo/config.toml
+      # Build offline-friendly, release profile. The `documentdb_gateway` member is the
+      # binary we ship; build just it (skip the test crate).
+      cargo build --release --locked -p documentdb_gateway
+      install -d "${{targets.destdir}}/usr/local/bin"
+      install -m0755 target/release/documentdb_gateway "${{targets.destdir}}/usr/local/bin/documentdb_gateway"
+
+  # 6. Gateway base config template + bootstrap entrypoint. The entrypoint initdb's an
+  #    empty PGDATA, preloads pg_cron + documentdb, CREATE EXTENSION documentdb CASCADE,
+  #    creates the admin user via documentdb_api.create_user (SCRAM), then runs the
+  #    gateway in the foreground pointing at the local PG.
+  - runs: |
+      install -d "${{targets.destdir}}/usr/local/share/documentdb"
+      # Base gateway config. The entrypoint copies this to a writable dir and patches
+      # ports/credentials at runtime. EnforceTls=true with PemAutoGenerated => the gateway
+      # self-signs a cert in its working dir on first start; clients use tlsAllowInvalidCertificates.
+      cat > "${{targets.destdir}}/usr/local/share/documentdb/SetupConfiguration.json" <<'JSON'
+      {
+        "ApplicationName": "QuenchDocumentDBGateway",
+        "NodeHostName": "localhost",
+        "BlockedRolePrefixes": ["citus", "pg", "internal_role"],
+        "PostgresHostName": "/var/run/postgresql",
+        "PostgresPort": 9712,
+        "PostgresDatabase": "postgres",
+        "PostgresSystemUser": "postgres",
+        "PostgresDataUser": "postgres",
+        "GatewayListenPort": 10260,
+        "EnforceTls": true,
+        "UseLocalHost": false,
+        "HostConfigurationWatchIntervalMs": 1000,
+        "CertificateOptions": { "CertType": "PemAutoGenerated" }
+      }
+      JSON
+
+      install -d "${{targets.destdir}}/usr/local/bin"
+      cat > "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh" <<'SCRIPT'
+      #!/bin/bash
+      set -eu
+
+      PGDATA="${PGDATA:-/var/lib/postgresql/data}"
+      POSTGRES_USER="${POSTGRES_USER:-postgres}"
+      SOCKET_DIR="${PGSOCKET_DIR:-/var/run/postgresql}"
+      PG_PORT="${POSTGRES_PORT:-9712}"
+
+      # MongoDB wire-protocol port the gateway listens on.
+      DOCUMENTDB_PORT="${DOCUMENTDB_PORT:-10260}"
+      # DocumentDB admin user/password the mongo client authenticates as (SCRAM-SHA-256).
+      DOCUMENTDB_USER="${DOCUMENTDB_USER:-${MONGODB_USERNAME:-default_user}}"
+      DOCUMENTDB_PASSWORD="${DOCUMENTDB_PASSWORD:-${MONGODB_PASSWORD:-}}"
+
+      # The gateway writes self-signed certs into its CWD (PemAutoGenerated -> ./cert.pem,
+      # ./pkey.pem) and reads a config file; both must be writable on a read-only rootfs.
+      GW_RUNTIME_DIR="${GW_RUNTIME_DIR:-/var/lib/documentdb/gateway}"
+      mkdir -p "$GW_RUNTIME_DIR"
+      GW_CONFIG="$GW_RUNTIME_DIR/SetupConfiguration.json"
+
+      if [ -z "$DOCUMENTDB_PASSWORD" ]; then
+        echo "DOCUMENTDB_PASSWORD (or MONGODB_PASSWORD / POSTGRES_PASSWORD) is required" >&2
+        DOCUMENTDB_PASSWORD="${POSTGRES_PASSWORD:-}"
+        [ -n "$DOCUMENTDB_PASSWORD" ] || exit 1
+      fi
+      # PostgreSQL superuser password: reuse the documentdb password unless one is set.
+      POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-$DOCUMENTDB_PASSWORD}"
+
+      if [ ! -s "$PGDATA/PG_VERSION" ]; then
+        pwfile="$(mktemp)"
+        printf '%s' "$POSTGRES_PASSWORD" > "$pwfile"
+        # local socket: trust (only in-container processes reach it; documentdb's pg_cron
+        # background worker connects over it). TCP stays scram — the gateway and any external
+        # client authenticate with scram-sha-256.
+        initdb -D "$PGDATA" -U "$POSTGRES_USER" \
+          --auth-local=trust --auth-host=scram-sha-256 \
+          --pwfile="$pwfile" --encoding=UTF8 --locale=C
+        rm -f "$pwfile"
+
+        printf "\nlisten_addresses = 'localhost'\n" >> "$PGDATA/postgresql.conf"
+        printf "port = %s\n" "$PG_PORT" >> "$PGDATA/postgresql.conf"
+        printf "host all all 127.0.0.1/32 scram-sha-256\n" >> "$PGDATA/pg_hba.conf"
+        printf "host all all ::1/128 scram-sha-256\n" >> "$PGDATA/pg_hba.conf"
+
+        # Only the preload + cron settings are required; the documentdb feature GUCs
+        # default sensibly and several were reserved/renamed in 0.112 (setting unknown
+        # ones just logs warnings). User CRUD is enabled so create_user/SCRAM works.
+        # The gateway opens several connection pools (system, pre-auth, per-user data)
+        # plus pg_cron's worker, so give PG generous headroom over the default 100.
+        cat >> "$PGDATA/postgresql.conf" <<'CONF'
+      shared_preload_libraries = 'pg_cron,pg_documentdb_core,pg_documentdb'
+      cron.database_name       = 'postgres'
+      max_connections          = 200
+      ssl                      = off
+      CONF
+
+        # bootstrap server on the local socket (preload now active) to create the
+        # extension and the admin user, then stop.
+        pg_ctl -D "$PGDATA" -o "-c listen_addresses='' -k $SOCKET_DIR -p $PG_PORT" -w start
+        psql -h "$SOCKET_DIR" -p "$PG_PORT" -U "$POSTGRES_USER" -d postgres \
+          -v ON_ERROR_STOP=1 -c 'CREATE EXTENSION IF NOT EXISTS documentdb CASCADE;'
+        # Create the DocumentDB admin user via the API so SCRAM auth + documentdb roles
+        # are wired up the way the gateway expects (mirrors upstream SetupCustomAdminUser).
+        # The spec is a createUser wire command serialized to JSON, cast to bson. Pass it
+        # as a single quoted psql parameter (:'spec') so passwords with shell-special chars
+        # are safe; the JSON is assembled by the shell with escaped quotes.
+        create_user_spec='{"createUser":"'"$DOCUMENTDB_USER"'","pwd":"'"$DOCUMENTDB_PASSWORD"'","roles":[{"role":"clusterAdmin","db":"admin"},{"role":"readWriteAnyDatabase","db":"admin"}]}'
+        # psql interpolates :'var' only for SQL read from stdin/files, not from -c, so
+        # feed the statement on stdin with the spec passed as a quoted variable.
+        printf '%s\n' "SELECT documentdb_api.create_user((:'spec')::documentdb_core.bson);" | \
+          psql -h "$SOCKET_DIR" -p "$PG_PORT" -U "$POSTGRES_USER" -d postgres \
+            -v ON_ERROR_STOP=1 -v spec="$create_user_spec"
+        pg_ctl -D "$PGDATA" -m fast -w stop
+      fi
+
+      # Build the runtime gateway config from the template, patching ports + socket dir.
+      # The gateway reaches PG over the local unix socket (PostgresHostName = socket dir)
+      # as the superuser, which is local-trust auth — no gateway password needed. The
+      # mongo client's SCRAM credentials are validated by the documentdb auth UDFs and the
+      # per-user data pool connects as that role over the same trusted socket.
+      cp /usr/local/share/documentdb/SetupConfiguration.json "$GW_CONFIG"
+      sed -i "s/\"GatewayListenPort\": [0-9]*/\"GatewayListenPort\": $DOCUMENTDB_PORT/" "$GW_CONFIG"
+      sed -i "s/\"PostgresPort\": [0-9]*/\"PostgresPort\": $PG_PORT/" "$GW_CONFIG"
+      sed -i "s#\"PostgresHostName\": \"[^\"]*\"#\"PostgresHostName\": \"$SOCKET_DIR\"#" "$GW_CONFIG"
+      sed -i "s/\"PostgresSystemUser\": \"[^\"]*\"/\"PostgresSystemUser\": \"$POSTGRES_USER\"/" "$GW_CONFIG"
+      sed -i "s/\"PostgresDataUser\": \"[^\"]*\"/\"PostgresDataUser\": \"$POSTGRES_USER\"/" "$GW_CONFIG"
+
+      # Start PostgreSQL in the background; the gateway connects over the local socket.
+      pg_ctl -D "$PGDATA" -o "-k $SOCKET_DIR -p $PG_PORT" -w start
+
+      # Run the gateway in the foreground as the container's main process. It must run from
+      # a writable CWD so PemAutoGenerated can write ./cert.pem and ./pkey.pem there.
+      cd "$GW_RUNTIME_DIR"
+      exec /usr/local/bin/documentdb_gateway "$GW_CONFIG"
+      SCRIPT
+      chmod 0755 "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        test -f "/usr/lib/postgresql17/pg_documentdb.so" || ls -la /usr/lib/postgresql17/
+        test -x "/usr/local/bin/documentdb_gateway"

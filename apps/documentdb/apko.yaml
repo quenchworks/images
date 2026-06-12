@@ -1,0 +1,87 @@
+# Assembles the standalone DocumentDB runtime image: PostgreSQL 17 + the
+# documentdb extension + the Rust MongoDB-wire gateway. No Dockerfile. Minimal,
+# nonroot, multi-arch, SBOM by apko. PostgreSQL 17, pg_cron and pgvector come
+# from Wolfi; our package adds documentdb + rum + postgis extensions, the
+# documentdb_gateway binary, and the bootstrap entrypoint. A mongo client
+# connects directly to the gateway on the MongoDB wire-protocol port.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - tzdata
+    - bash                         # the bootstrap entrypoint is a bash script
+    - busybox
+    - postgresql-17
+    - postgresql-17-client
+    - postgresql-17-contrib
+    - pg_cron-17
+    - pgvector-17
+    - openssl                      # the gateway links libssl/libcrypto
+    - quench-documentdb@local      # documentdb + rum + postgis extensions, gateway binary, entrypoint
+
+accounts:
+  groups:
+    - groupname: documentdb
+      gid: 1001
+  users:
+    - username: documentdb
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/local/bin/docker-entrypoint.sh
+
+environment:
+  PGDATA: /var/lib/postgresql/data
+  PGSOCKET_DIR: /var/run/postgresql
+  POSTGRES_PORT: "9712"
+  DOCUMENTDB_PORT: "10260"
+  DOCUMENTDB_USER: default_user
+  GW_RUNTIME_DIR: /var/lib/documentdb/gateway
+
+work-dir: /var/lib/documentdb
+
+paths:
+  - path: /var/lib/postgresql
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/lib/postgresql/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+  - path: /var/lib/documentdb
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/lib/documentdb/gateway
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/run/postgresql
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-documentdb"
+  org.opencontainers.image.licenses: "MIT"

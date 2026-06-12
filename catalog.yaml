@@ -100,6 +100,13 @@ catalog:
     tier: standard
     status: built       # FerretDB v2 backend: PostgreSQL 17 + DocumentDB extension. From source: Intel decimal math, libbson, rum, PostGIS (no raster/gdal), documentdb core+main; PG17/pg_cron/pgvector from Wolfi. initdb entrypoint runs CREATE EXTENSION documentdb CASCADE.
 
+  - name: documentdb
+    version: "0.112.0"
+    source: https://github.com/documentdb/documentdb
+    license: MIT
+    tier: standard
+    status: building    # standalone MongoDB-compatible: PostgreSQL 17 + upstream documentdb extension + Rust pg_documentdb_gw gateway (MongoDB wire protocol, no FerretDB). From source: Intel decimal math, libbson, rum, PostGIS (no raster/gdal), documentdb core+main, gateway; PG17/pg_cron/pgvector from Wolfi. Entrypoint initdb's, CREATE EXTENSION documentdb CASCADE, documentdb_api.create_user, then runs the gateway on 10260.
+
   - name: zookeeper
     version: "3.9.5"
     source: https://archive.apache.org/dist/zookeeper/zookeeper-3.9.5/apache-zookeeper-3.9.5-bin.tar.gz
