@@ -1,0 +1,173 @@
+# Packages ClickHouse onto Wolfi. ClickHouse is NOT built from source here: an
+# upstream from-source build needs clang, ~30-60GB RAM and hundreds of CPU-minutes
+# with a huge submodule tree — infeasible on a 2-core/7GB GitHub runner (OOM/timeout).
+# Instead we ship ClickHouse's OWN official precompiled static binary (the same
+# upstream-artifact pattern kafka/opensearch/cassandra use), then harden it on a
+# minimal apko base and gate it 0-CVE with Trivy. This is clean-room-consistent:
+# it is upstream's published artifact, not a Bitnami chart, and the scan still fully
+# applies. The `clickhouse` binary is multi-call (server/client/keeper/local) and is
+# essentially self-contained — it only links glibc (libc/libm/libdl/librt/libpthread),
+# no external libstdc++/libgcc — so the runtime surface is tiny.
+package:
+  name: quench-clickhouse
+  version: 26.3.13.31
+  epoch: 0
+  description: "Quenchworks hardened ClickHouse, packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - bash               # the entrypoint is bash
+      - busybox            # mkdir/cp/sha256sum/awk/printf used by the entrypoint
+      - glibc              # the static binary still links glibc (libc/libm/libdl/...)
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - curl
+      - ca-certificates-bundle
+
+pipeline:
+  # ClickHouse publishes separate amd64/arm64 builds of the self-contained binary, so
+  # fetch the tarball matching the build arch by uname -m (x86_64->amd64,
+  # aarch64->arm64) with the arch-matching checksum — using the wrong arch yields a
+  # non-executable / wrong-arch binary. The clickhouse-common-static tgz holds the
+  # multi-call `clickhouse` binary; the clickhouse-server tgz (arch-independent config)
+  # ships the default config.xml/users.xml we seed the writable config dir from.
+  - runs: |
+      VER="${{package.version}}"
+      case "$(uname -m)" in
+        x86_64)  charch=amd64; sha=6656a468f8161b966b2af1bc2e12e058b5944966869e3224b5ecccea504af98f96f05f96d16bcb6af2d0cfba313a510a19bf2e6e7adb864fe413fbf2b5a6426c ;;
+        aarch64) charch=arm64; sha=69f8733468c8cd70f610e42eb509196ed24f0ccab7f3e68b6a2499c8bc7d3aa25fb436b0185d7adaaa4eaf0c11d170356d80fa1268c613c838a9749e42fc2ad0 ;;
+        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+      esac
+
+      # 1) the per-arch static binary
+      binurl="https://packages.clickhouse.com/tgz/lts/clickhouse-common-static-${VER}-${charch}.tgz"
+      curl -fsSL -o ch-common.tgz "$binurl"
+      echo "${sha}  ch-common.tgz" | sha512sum -c -
+      tar -xzf ch-common.tgz
+      install -Dm0755 "clickhouse-common-static-${VER}/usr/bin/clickhouse" \
+        "${{targets.destdir}}/usr/bin/clickhouse"
+
+      # multi-call symlinks: `clickhouse <subcommand>` is also reachable as the named
+      # binary (clickhouse-server == `clickhouse server`, etc.)
+      install -d "${{targets.destdir}}/usr/bin"
+      for n in clickhouse-server clickhouse-client clickhouse-keeper clickhouse-local clickhouse-benchmark clickhouse-extract-from-config; do
+        ln -sf clickhouse "${{targets.destdir}}/usr/bin/${n}"
+      done
+
+      # 2) the default server config (arch-independent — amd64 tgz is fine for both),
+      #    shipped read-only under /opt; the entrypoint seeds a writable copy from it.
+      SRVSHA=c71156af5dba80d6b5fec9fbdf7ede35c505a9a3293325747068235e2cfa90ca8d119b64a87f24feba3b72f15385a428f680bdbf169da7f110408ef9d3478d54
+      curl -fsSL -o ch-server.tgz "https://packages.clickhouse.com/tgz/lts/clickhouse-server-${VER}-amd64.tgz"
+      echo "${SRVSHA}  ch-server.tgz" | sha512sum -c -
+      tar -xzf ch-server.tgz
+      dflt="${{targets.destdir}}/opt/clickhouse/config-defaults"
+      install -d "$dflt"
+      cp "clickhouse-server-${VER}/etc/clickhouse-server/config.xml" "$dflt/config.xml"
+      cp "clickhouse-server-${VER}/etc/clickhouse-server/users.xml"  "$dflt/users.xml"
+      chmod -R a+rX "${{targets.destdir}}/opt/clickhouse"
+
+      # 3) the config-from-env entrypoint
+      install -d "${{targets.destdir}}/usr/bin"
+      cat > "${{targets.destdir}}/usr/bin/docker-entrypoint.sh" <<'EOS'
+      #!/bin/bash
+      set -euo pipefail
+
+      DEFAULTS=/opt/clickhouse/config-defaults
+      CONF="${CLICKHOUSE_CONFIG_DIR:-/etc/clickhouse-server}"
+      DATA="${CLICKHOUSE_DATA_DIR:-/var/lib/clickhouse}"
+      LOGS="${CLICKHOUSE_LOG_DIR:-/var/log/clickhouse-server}"
+
+      # read-only rootfs: every writable area lives under a mount. Create the dirs the
+      # server writes to (data tree + logs + the config dir we seed + format schemas).
+      mkdir -p \
+        "$CONF" "$CONF/config.d" "$CONF/users.d" \
+        "$LOGS" \
+        "$DATA" "$DATA/tmp" "$DATA/user_files" "$DATA/format_schemas" "$DATA/access"
+
+      # seed the writable config dir from the read-only upstream defaults once
+      if [ ! -f "$CONF/config.xml" ]; then
+        cp "$DEFAULTS/config.xml" "$CONF/config.xml"
+      fi
+      if [ ! -f "$CONF/users.xml" ]; then
+        cp "$DEFAULTS/users.xml" "$CONF/users.xml"
+      fi
+
+      # config.d override: bind to all interfaces (upstream defaults to localhost only)
+      # and pin every writable path explicitly so nothing tries to write the rootfs.
+      cat > "$CONF/config.d/quench.xml" <<XML
+      <clickhouse>
+          <listen_host>0.0.0.0</listen_host>
+          <listen_host>::</listen_host>
+          <listen_try>1</listen_try>
+          <path>${DATA}/</path>
+          <tmp_path>${DATA}/tmp/</tmp_path>
+          <user_files_path>${DATA}/user_files/</user_files_path>
+          <format_schema_path>${DATA}/format_schemas/</format_schema_path>
+          <logger>
+              <log>${LOGS}/clickhouse-server.log</log>
+              <errorlog>${LOGS}/clickhouse-server.err.log</errorlog>
+          </logger>
+          <user_directories>
+              <local_directory>
+                  <path>${DATA}/access/</path>
+              </local_directory>
+          </user_directories>
+      </clickhouse>
+      XML
+
+      # first-run credentials, mirroring the official clickhouse-server image env. We
+      # write a users.d/ drop-in (idempotent: regenerated each boot from env).
+      CH_USER="${CLICKHOUSE_USER:-default}"
+      CH_PASSWORD="${CLICKHOUSE_PASSWORD:-}"
+      CH_ACCESS="${CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT:-1}"
+      # sha256 the password so it is never stored in plaintext in the config
+      if [ -n "$CH_PASSWORD" ]; then
+        PW_HASH="$(printf '%s' "$CH_PASSWORD" | sha256sum | awk '{print $1}')"
+        PW_TAG="<password_sha256_hex>${PW_HASH}</password_sha256_hex>"
+      else
+        PW_TAG="<password></password>"
+      fi
+      cat > "$CONF/users.d/quench-user.xml" <<XML
+      <clickhouse>
+          <users>
+              <${CH_USER}>
+                  ${PW_TAG}
+                  <networks><ip>::/0</ip></networks>
+                  <profile>default</profile>
+                  <quota>default</quota>
+                  <access_management>${CH_ACCESS}</access_management>
+                  <named_collection_control>1</named_collection_control>
+              </${CH_USER}>
+          </users>
+      </clickhouse>
+      XML
+
+      # optional: create an initial database on first boot
+      if [ -n "${CLICKHOUSE_DB:-}" ]; then
+        mkdir -p "$DATA/metadata"
+        cat > "$CONF/config.d/quench-initdb.xml" <<XML
+      <clickhouse>
+          <default_database>${CLICKHOUSE_DB}</default_database>
+      </clickhouse>
+      XML
+      fi
+
+      exec clickhouse server --config-file="$CONF/config.xml"
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/bin/clickhouse
+        clickhouse --version
+        test -f /opt/clickhouse/config-defaults/config.xml

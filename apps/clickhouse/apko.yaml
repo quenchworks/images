@@ -1,0 +1,68 @@
+# Assembles the ClickHouse runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Ships upstream's self-contained static `clickhouse` binary (multi-call:
+# server/client/keeper/local). Configured by CLICKHOUSE_* env (the entrypoint seeds a
+# writable config dir from the upstream defaults and writes config.d/users.d drop-ins).
+# HTTP API on 8123, native TCP protocol on 9000, interserver on 9009.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - busybox            # entrypoint shell utilities (mkdir/cp/sha256sum/awk)
+    - ca-certificates-bundle
+    - tzdata
+    - quench-clickhouse@local
+
+accounts:
+  groups:
+    - groupname: clickhouse
+      gid: 1001
+  users:
+    - username: clickhouse
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/docker-entrypoint.sh
+
+environment:
+  CLICKHOUSE_CONFIG_DIR: /etc/clickhouse-server
+  CLICKHOUSE_DATA_DIR: /var/lib/clickhouse
+  CLICKHOUSE_LOG_DIR: /var/log/clickhouse-server
+  PATH: /usr/bin:/bin
+
+work-dir: /var/lib/clickhouse
+
+paths:
+  # writable mounts for a read-only rootfs: seeded config dir, data tree, logs
+  - path: /etc/clickhouse-server
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/lib/clickhouse
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+  - path: /var/log/clickhouse-server
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-clickhouse"
+  org.opencontainers.image.licenses: "Apache-2.0"
