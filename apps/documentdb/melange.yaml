@@ -124,13 +124,24 @@ pipeline:
       cd postgis
       ./configure --without-raster --without-protobuf --without-topology \
         --with-pgconfig="$(command -v pg_config)" --with-geosconfig="$(command -v geos-config)"
-      # Build only the subdirs the extension needs; the top-level `all` recurses into
-      # utils/ which hard-depends on raster. with_llvm=no: PG17 enables JIT but clang
-      # is absent in the build env.
-      for d in liblwgeom libpgcommon postgis extensions; do
+      # Build only the libs + the postgis extension we ship. with_llvm=no: PG17 enables
+      # JIT but clang is absent in the build env.
+      for d in liblwgeom libpgcommon postgis; do
         make -C "$d" with_llvm=no -j"$(nproc)"
       done
       make -C postgis with_llvm=no install DESTDIR="${{targets.destdir}}"
+      # The postgis EXTENSION makefile's `all` builds an --ANY-- upgrade SQL that pulls the
+      # raster drop scripts (rtpostgis_*.sql), recursing into raster/rt_pg, which fails when
+      # --without-raster is set. The failure is racy under -j, so it slipped through on amd64
+      # but failed deterministically on arm64. Pre-stub those raster scripts so the upgrade
+      # SQL can be generated without building raster. Build the `extensions` parent serially
+      # (no -j) so its shared helper SQL (postgis_extension_helper.sql) is generated before
+      # the postgis subdir needs it, and so the raster recursion can't race.
+      mkdir -p raster/rt_pg
+      for f in rtpostgis_upgrade_cleanup.sql rtpostgis_drop.sql uninstall_rtpostgis.sql; do
+        : > "raster/rt_pg/$f"
+      done
+      make -C extensions with_llvm=no
       make -C extensions with_llvm=no install DESTDIR="${{targets.destdir}}"
 
   # 4. documentdb (UPSTREAM documentdb/documentdb @ v0.112-0): documentdb_core then
