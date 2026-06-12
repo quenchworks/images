@@ -1,0 +1,198 @@
+# Packages Neo4j Community Edition onto Wolfi. Neo4j is a JVM graph database: we ship
+# the upstream Community binary distribution (prebuilt jars) on a hardened Wolfi JRE,
+# which is the CVE surface the Trivy gate scans (a bundled JDK would escape attribution).
+# The dist ships NO bundled JDK -- it runs on the system JRE -- so we run it on
+# openjdk-21-jre, the shared base the JVM tier (kafka/opensearch/solr) uses. Neo4j
+# 2025.x/2026.x support Java 21 and 25.
+#
+# LICENSE: Neo4j Community Edition is GPLv3 (OSI-clean, shippable). The Enterprise
+# edition is commercial -- we build COMMUNITY ONLY. We also DROP the bundled
+# products/ plugins (Graph Data Science, GenAI) -- GDS carries a separate non-GPL
+# license tier -- and labs/ (APOC) to keep the image Community-GPLv3-clean and shrink
+# the jar CVE surface. Core graph DB runs entirely from lib/.
+#
+# The binary dist is arch-independent: Neo4j is pure JVM with no extracted per-arch
+# native libs (netty ships BOTH linux amd64+arm64 transport jars inside lib/ and picks
+# at runtime), so a single tarball serves both amd64 and arm64.
+package:
+  name: quench-neo4j
+  version: 2026.05.0
+  epoch: 0
+  description: "Quenchworks hardened Neo4j Community Edition (GPLv3), packaged on Wolfi"
+  copyright:
+    - license: GPL-3.0-only
+  dependencies:
+    runtime:
+      - openjdk-21-jre     # the JRE Neo4j runs on (the scanned CVE surface; JDK 21 supported)
+      - bash               # the docker-entrypoint is bash (the neo4j launchers are POSIX sh)
+      - busybox
+      - procps             # neo4j status/stop use `ps`; busybox ps lacks the flags
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+
+pipeline:
+  - uses: fetch
+    with:
+      # dist.neo4j.org is the permanent Community download host; it publishes a .sha256
+      # sidecar (verified out of band) -- melange re-verifies the sha here.
+      uri: https://dist.neo4j.org/neo4j-community-${{package.version}}-unix.tar.gz
+      expected-sha256: "bb753b4e9bcc331e90b968edd8da445e974090867ca825cc672defdad6066f0e"
+      strip-components: 1
+  - runs: |
+      # install the Community distribution under /opt/neo4j. Ship the runtime pieces:
+      # bin (the POSIX-sh launchers: neo4j, neo4j-admin, cypher-shell), lib (the core
+      # Community graph DB jars -- the classpath), conf (default neo4j.conf seeded into
+      # the writable conf dir on first boot), certificates, web (Browser UI assets),
+      # plugins (empty staging dir), licenses + LICENSE/NOTICE.
+      dest="${{targets.destdir}}/opt/neo4j"
+      install -d "$dest"
+      cp -r bin lib conf certificates web plugins licenses \
+            LICENSE.txt README.txt ThirdPartyLicenses.txt UPGRADE.txt "$dest/"
+      # DROP the commercial/optional bundled plugins to stay Community-GPLv3-clean and
+      # cut the jar CVE surface: products/ = Graph Data Science (separate license tier)
+      # + GenAI; labs/ = APOC. They are staging dirs (NOT auto-loaded), so removing them
+      # does not affect the core Community graph database.
+      # (They are simply not copied above.)
+      #
+      # the dist ships configs/launchers with restrictive perms; the nonroot runtime user
+      # must read the default conf (to seed the writable mount) and exec the launchers.
+      chmod -R a+rX "$dest"
+
+      # bake a config-from-env entrypoint. A read-only rootfs means data/, logs/, run/
+      # and the conf dir all live under writable mounts; the entrypoint relocates them
+      # via server.directories.* and mirrors the official image's NEO4J_<setting> env ->
+      # neo4j.conf translation plus NEO4J_AUTH initial-password handling.
+      install -d "${{targets.destdir}}/usr/bin"
+      cat > "${{targets.destdir}}/usr/bin/docker-entrypoint.sh" <<'EOS'
+      #!/bin/bash
+      set -euo pipefail
+
+      NEO4J_INSTALL=/opt/neo4j
+
+      # Writable mounts (read-only rootfs). The official neo4j image uses /data and
+      # /logs; we mirror that, plus a writable conf dir (/conf) and run dir (/var/run/neo4j)
+      # since the rootfs is read-only.
+      DATA="${NEO4J_DATA_DIR:-/data}"
+      LOGS="${NEO4J_LOGS_DIR:-/logs}"
+      CONF="${NEO4J_CONF:-/conf}"
+      RUN="${NEO4J_RUN_DIR:-/var/run/neo4j}"
+      mkdir -p "$DATA" "$LOGS" "$CONF" "$RUN"
+
+      # Point the JVM's temp dirs at a writable location (the read-only rootfs makes /tmp
+      # unwritable). JNA unpacks libjnidispatch.so under java.io.tmpdir at class-load
+      # time, so this MUST be set for EVERY JVM we launch -- the server AND the
+      # neo4j-admin set-initial-password invocation below -- before the JVM starts.
+      # JAVA_TOOL_OPTIONS is honored by every JVM regardless of how it is invoked, so
+      # export it up front (covers both). jna.tmpdir is set too for belt-and-braces.
+      TMP="${NEO4J_TMP_DIR:-$DATA/tmp}"
+      mkdir -p "$TMP"
+      export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:-} -Djava.io.tmpdir=$TMP -Djna.tmpdir=$TMP"
+
+      # Seed the conf dir from the dist once (neo4j.conf + neo4j-admin.conf + the log4j
+      # xml configs Neo4j needs alongside neo4j.conf).
+      if [ ! -f "$CONF/neo4j.conf" ]; then
+        cp "$NEO4J_INSTALL"/conf/* "$CONF"/ 2>/dev/null || true
+      fi
+      CONF_FILE="$CONF/neo4j.conf"
+
+      # Helper: set (or replace) a setting in neo4j.conf. Comments out any existing
+      # (possibly commented) line for the key, then appends the desired value.
+      set_conf() {
+        key="$1"; val="$2"
+        # escape regex metachars in the key (dots)
+        esc="$(printf '%s' "$key" | sed 's/[.[\*^$/]/\\&/g')"
+        sed -i "/^#\?${esc}=/d" "$CONF_FILE"
+        printf '%s=%s\n' "$key" "$val" >> "$CONF_FILE"
+      }
+
+      # Relocate all writable dirs onto the writable mounts (defaults live under the
+      # read-only install tree).
+      set_conf "server.directories.data" "$DATA"
+      set_conf "server.directories.logs" "$LOGS"
+      set_conf "server.directories.run" "$RUN"
+      set_conf "server.directories.transaction.logs.root" "$DATA/transactions"
+      # Listen on all interfaces (the default binds only localhost connectors, which is
+      # unreachable from outside the container).
+      set_conf "server.default_listen_address" "0.0.0.0"
+      # Advertise the in-container hostname for Bolt (so the driver routing target is
+      # reachable); override with NEO4J_server_default__advertised__address in the chart.
+      set_conf "server.bolt.advertised_address" "${NEO4J_ADVERTISED_HOST:-:7687}"
+      # Modest memory defaults for the smoke gate (override via NEO4J_server_memory_* env).
+      set_conf "server.memory.heap.initial_size" "${NEO4J_HEAP_INITIAL:-512m}"
+      set_conf "server.memory.heap.max_size" "${NEO4J_HEAP_MAX:-512m}"
+      set_conf "server.memory.pagecache.size" "${NEO4J_PAGECACHE:-256m}"
+
+      # Mirror the official image's NEO4J_<setting> env -> neo4j.conf mapping: any env var
+      # prefixed NEO4J_ (other than the reserved NEO4J_AUTH / NEO4J_*_DIR / NEO4J_CONF /
+      # NEO4J_HEAP_* / NEO4J_PAGECACHE / NEO4J_ADVERTISED_HOST control vars) becomes a conf
+      # setting with single underscores -> dots and double underscores -> single underscore.
+      # e.g. NEO4J_server_memory_heap_max__size=1G -> server.memory.heap.max_size=1G
+      for var in $(env | grep -oE '^NEO4J_[A-Za-z0-9_]+=' | sed 's/=$//'); do
+        case "$var" in
+          NEO4J_AUTH|NEO4J_DATA_DIR|NEO4J_LOGS_DIR|NEO4J_RUN_DIR|NEO4J_CONF|NEO4J_TMP_DIR|NEO4J_HEAP_INITIAL|NEO4J_HEAP_MAX|NEO4J_PAGECACHE|NEO4J_ADVERTISED_HOST|NEO4J_HOME)
+            continue ;;
+        esac
+        val="$(eval printf '%s' "\"\${$var}\"")"
+        key="$(printf '%s' "${var#NEO4J_}" | sed -e 's/__/\x00/g' -e 's/_/./g' -e 's/\x00/_/g')"
+        set_conf "$key" "$val"
+      done
+
+      # NEO4J_AUTH handling (Neo4j refuses the default neo4j/neo4j until it is changed).
+      #   neo4j/<password> -> set the initial password before first start
+      #   none             -> disable auth entirely
+      # Marker file in DATA so we only set the initial password on the first ever boot.
+      AUTH_MARKER="$DATA/.quench_auth_done"
+      if [ ! -f "$AUTH_MARKER" ]; then
+        case "${NEO4J_AUTH:-}" in
+          none)
+            set_conf "dbms.security.auth_enabled" "false"
+            ;;
+          neo4j/*)
+            password="${NEO4J_AUTH#neo4j/}"
+            if [ -z "$password" ]; then
+              echo "NEO4J_AUTH=neo4j/<password> requires a non-empty password" >&2; exit 1
+            fi
+            NEO4J_HOME="$NEO4J_INSTALL" NEO4J_CONF="$CONF" \
+              "$NEO4J_INSTALL/bin/neo4j-admin" dbms set-initial-password "$password"
+            ;;
+          "")
+            echo "NEO4J_AUTH is required (use 'neo4j/<password>' or 'none'); Neo4j refuses the default credentials." >&2
+            exit 1
+            ;;
+          *)
+            echo "Unsupported NEO4J_AUTH='${NEO4J_AUTH}'. Use 'neo4j/<password>' or 'none'." >&2
+            exit 1
+            ;;
+        esac
+        touch "$AUTH_MARKER"
+      fi
+
+      export JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/java-21-openjdk}"
+      export NEO4J_HOME="$NEO4J_INSTALL"
+      export NEO4J_CONF="$CONF"
+      # (java.io.tmpdir / jna.tmpdir already routed to $TMP via JAVA_TOOL_OPTIONS above.)
+
+      # Run Neo4j in the foreground as PID 1.
+      exec "$NEO4J_INSTALL/bin/neo4j" console
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /opt/neo4j/bin/neo4j
+        test -x /opt/neo4j/bin/neo4j-admin
+        test -x /opt/neo4j/bin/cypher-shell
+        test -x /usr/bin/docker-entrypoint.sh
+        test -f /opt/neo4j/conf/neo4j.conf
+        # Community-only: the GDS/GenAI products and APOC labs jars must be absent
+        test ! -d /opt/neo4j/products
+        test ! -d /opt/neo4j/labs
