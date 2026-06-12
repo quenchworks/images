@@ -1,0 +1,228 @@
+# Packages ScyllaDB Open Source onto Wolfi. ScyllaDB is a massive Seastar/C++ codebase
+# whose from-source build needs clang + tens of GB RAM + hours (worse than ClickHouse) —
+# infeasible on a 2-core/7GB GitHub runner. Instead we ship ScyllaDB's OWN official
+# per-arch RELOCATABLE package (the same upstream-artifact pattern clickhouse/kafka/
+# opensearch use), then harden it on a minimal apko base and gate it 0-CVE with Trivy.
+# This is clean-room-consistent: it is upstream's published artifact, not a Bitnami chart.
+#
+# LICENSE NOTE: ScyllaDB Open Source is AGPL-3.0-only (OSI-approved, freely shippable;
+# we redistribute the upstream binary unmodified and carry its NOTICE/licenses). The
+# build-method is the official relocatable binary, NOT from-source.
+#
+# The relocatable is FULLY self-contained: scylla/libreloc/ bundles its own ld.so,
+# libc.so.6, libstdc++, libcrypto/libssl, gnutls, icu, boost, etc. The `scylla` server
+# (scylla/libexec/scylla) uses libreloc/ld.so as its ELF interpreter with
+# LD_LIBRARY_PATH=libreloc, so it does NOT link the system glibc at all. We install the
+# tree under /opt/scylladb and replicate upstream's install.sh relocation: patchelf the
+# interpreter to /opt/scylladb/libreloc/ld.so and generate the bin/scylla thunk that sets
+# LD_LIBRARY_PATH + GNUTLS config. The image therefore needs almost nothing from Wolfi.
+#
+# TRIVY TRADEOFF: the bundled libreloc libs are NOT OS packages, so Trivy does not attribute
+# CVEs to them (it scans the apko base + any Wolfi packages). This is inherent to shipping a
+# vendor relocatable (same as a static binary). The Wolfi base surface is tiny (bash/busybox)
+# and we keep it 0-CVE; upstream patches libreloc on each ScyllaDB release.
+package:
+  name: quench-scylladb
+  version: "2026.1.5"
+  epoch: 0
+  description: "Quenchworks hardened ScyllaDB Open Source, packaged on Wolfi"
+  copyright:
+    - license: AGPL-3.0-only
+  dependencies:
+    runtime:
+      - bash               # the entrypoint + the bin/scylla thunk are bash
+      - busybox            # mkdir/cp/sha512sum/awk/sed/hostname used by the entrypoint
+    # melange's ELF scanner sees the bundled libreloc/ld.so set as the `scylla`
+    # interpreter and emits an unsatisfiable `so:ld.so` runtime dep (Wolfi provides
+    # `so:ld-linux-x86-64.so.2`, not `so:ld.so`). The binary uses its OWN bundled
+    # loader at /opt/scylladb/libreloc/ld.so — it never needs a system ld.so — so we
+    # self-provide the soname to satisfy the solver without pulling anything in.
+    provides:
+      - so:ld.so
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - curl
+      - ca-certificates-bundle
+
+pipeline:
+  # ScyllaDB publishes separate x86_64/aarch64 relocatable packages, so fetch the one
+  # matching the build arch by uname -m with the arch-matching checksum (the wrong arch
+  # yields a non-runnable binary). The build-id (date.githash) is embedded in the path
+  # and filename; pin both arches to the same release build 2026.1.5.
+  - runs: |
+      VER="${{package.version}}"
+      BUILD="0.20260602.678ab80fc38b"          # the 2026.1.5 release build id
+      REL="2026.1"                              # relocatable directory (major.minor LTS)
+      case "$(uname -m)" in
+        x86_64)  rarch=x86_64;  sha=fcad9f3208ec6da083d282a7c4ee625366d169b625d36bf290d4d9407d4843ccbe23c1a6376931e6bd1c00451cb8263d25f3358695b9948238157661ba53956f ;;
+        aarch64) rarch=aarch64; sha=91dab00ba6092774a123ea87542834d761bc1715ee15afe35b583ab9021cdf574c4498bd69b52d3bce8ece8908a0deb40936976aa4a436354108dc6e99591c53 ;;
+        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+      esac
+
+      # Fetch from the S3 bucket backing downloads.scylladb.com. The plain HTML index host
+      # (downloads.scylladb.com/...) is a JS listing app; the real objects live at
+      # s3.amazonaws.com/downloads.scylladb.com/<key>. This is the canonical asset path
+      # the unified installer resolves to.
+      base="https://s3.amazonaws.com/downloads.scylladb.com/downloads/scylla/relocatable/scylladb-${REL}"
+      url="${base}/scylla-${VER}-${BUILD}.${rarch}.tar.gz"
+      echo "fetching ${url}"
+      curl -fsSL --retry 5 --retry-delay 5 -o scylla.tar.gz "$url"
+      echo "${sha}  scylla.tar.gz" | sha512sum -c -
+      tar -xzf scylla.tar.gz                   # extracts ./scylla/...
+
+      prefix=/opt/scylladb
+      dest="${{targets.destdir}}${prefix}"
+      install -d "$dest"
+      # Install the whole relocatable tree (libreloc, libexec, conf, scripts, api,
+      # swagger-ui, node_exporter, tools, licenses). Drop the bulky debug/dev/dist bits
+      # that the runtime never reads to keep the layer lean.
+      cp -a scylla/. "$dest/"
+      rm -rf "$dest/debian" "$dest/dist" "$dest/scylla-gdb.py" \
+             "$dest/SCYLLA-RELOCATABLE-FILE" "$dest/.relocatable_package_version" 2>/dev/null || true
+
+      # --- replicate upstream install.sh relocation (adjust_bin) ---
+      # patchelf is bundled in libexec; per upstream it must be run via the bundled ld.so
+      # (it can't patch itself). Set every libexec/* ELF interpreter to the installed
+      # libreloc/ld.so, then generate a bin/<name> bash thunk that exports
+      # LD_LIBRARY_PATH=$prefix/libreloc + the gnutls config and execs the real binary.
+      cd scylla
+      runpatchelf() { LD_LIBRARY_PATH="$PWD/libreloc" libreloc/ld.so libexec/patchelf "$@"; }
+      install -d "$dest/bin"
+      for binpath in libexec/*; do
+        bin="$(basename "$binpath")"
+        # only ELF executables get an interpreter; skip non-ELF helpers (e.g. .supp/.py)
+        if head -c4 "$binpath" | grep -q $'\x7fELF'; then
+          runpatchelf --set-interpreter "${prefix}/libreloc/ld.so" "$dest/libexec/$bin"
+          cat > "$dest/bin/$bin" <<EOF
+      #!/bin/bash -e
+      [[ -z "\$LD_PRELOAD" ]] || { echo "\$0: not compatible with LD_PRELOAD" >&2; exit 110; }
+      export GNUTLS_SYSTEM_PRIORITY_FILE="\${GNUTLS_SYSTEM_PRIORITY_FILE-${prefix}/libreloc/gnutls.config}"
+      export LD_LIBRARY_PATH="${prefix}/libreloc"
+      export UBSAN_OPTIONS="\${UBSAN_OPTIONS:+\$UBSAN_OPTIONS:}suppressions=${prefix}/libexec/ubsan-suppressions.supp"
+      exec -a "\$0" "${prefix}/libexec/$bin" "\$@"
+      EOF
+          chmod 0755 "$dest/bin/$bin"
+        fi
+      done
+      cd ..
+
+      # the SCYLLA-PRODUCT/VERSION/RELEASE files + NOTICE/licenses stay under /opt/scylladb
+      # for attribution. Make the whole tree world-readable/executable for the nonroot user.
+      chmod -R a+rX "$dest"
+
+      # stash the upstream default scylla.yaml as a read-only seed; the entrypoint copies
+      # it into a writable conf dir on first boot (read-only rootfs).
+      install -d "$dest/conf-defaults"
+      cp "$dest/conf/scylla.yaml" "$dest/conf-defaults/scylla.yaml"
+      cp "$dest/conf/cassandra-rackdc.properties" "$dest/conf-defaults/cassandra-rackdc.properties" 2>/dev/null || true
+
+      # --- config-from-env entrypoint ---
+      # ScyllaDB normally wants AIO/hugepages/CPU-pinning/perftune that fail in an
+      # unprivileged nonroot container; --developer-mode relaxes the fs/AIO/clocksource
+      # checks, --overprovisioned + --smp + --memory keep it inside a constrained cgroup
+      # (otherwise Scylla grabs most of the host). Single-node by default (seeds = self).
+      install -d "${{targets.destdir}}/usr/bin"
+      cat > "${{targets.destdir}}/usr/bin/docker-entrypoint.sh" <<'EOS'
+      #!/bin/bash
+      set -euo pipefail
+
+      PREFIX=/opt/scylladb
+      CONF="${SCYLLA_CONF:-/etc/scylla}"
+      WORKDIR="${SCYLLA_WORKDIR:-/var/lib/scylla}"
+
+      # read-only rootfs: conf + workdir (data/commitlog/hints/view_hints/saved_caches all
+      # live under workdir) must be on writable mounts. Create them.
+      mkdir -p "$CONF" "$WORKDIR"
+
+      # seed the writable conf dir from the upstream default once
+      if [ ! -f "$CONF/scylla.yaml" ]; then
+        cp "$PREFIX/conf-defaults/scylla.yaml" "$CONF/scylla.yaml"
+        [ -f "$PREFIX/conf-defaults/cassandra-rackdc.properties" ] && \
+          cp "$PREFIX/conf-defaults/cassandra-rackdc.properties" "$CONF/cassandra-rackdc.properties" || true
+      fi
+
+      # resolve listen/broadcast: default to the container IP, seeds = self (single node).
+      LISTEN="${SCYLLA_LISTEN_ADDRESS:-}"
+      if [ -z "$LISTEN" ]; then
+        LISTEN="$(hostname -i 2>/dev/null | awk '{print $1}')"
+        [ -n "$LISTEN" ] || LISTEN="127.0.0.1"
+      fi
+      BROADCAST="${SCYLLA_BROADCAST_ADDRESS:-$LISTEN}"
+      RPC="${SCYLLA_RPC_ADDRESS:-0.0.0.0}"
+      BROADCAST_RPC="${SCYLLA_BROADCAST_RPC_ADDRESS:-$LISTEN}"
+      SEEDS="${SCYLLA_SEEDS:-$LISTEN}"
+      # REST API: bind to all interfaces so health probes (port 10000) work from outside.
+      API_ADDR="${SCYLLA_API_ADDRESS:-0.0.0.0}"
+
+      CY="$CONF/scylla.yaml"
+      # edit the seeded yaml in place. These keys exist (uncommented) in the dist file.
+      sed -i \
+        -e "s/^cluster_name:.*/cluster_name: '${SCYLLA_CLUSTER_NAME:-Quench Cluster}'/" \
+        -e "s/^listen_address:.*/listen_address: ${LISTEN}/" \
+        -e "s/^rpc_address:.*/rpc_address: ${RPC}/" \
+        -e "s/^api_address:.*/api_address: ${API_ADDR}/" \
+        -e "s#- seeds:.*#- seeds: \"${SEEDS}\"#" \
+        "$CY"
+      # cluster_name may be commented in some builds; append if sed didn't match.
+      grep -q "^cluster_name:" "$CY" || echo "cluster_name: '${SCYLLA_CLUSTER_NAME:-Quench Cluster}'" >> "$CY"
+
+      # broadcast_address / broadcast_rpc_address ship commented; append explicitly.
+      # rpc_address 0.0.0.0 REQUIRES broadcast_rpc_address set to a real address.
+      grep -q "^broadcast_address:" "$CY"     || echo "broadcast_address: ${BROADCAST}" >> "$CY"
+      grep -q "^broadcast_rpc_address:" "$CY"  || echo "broadcast_rpc_address: ${BROADCAST_RPC}" >> "$CY"
+
+      # optional authentication (default: open, like upstream single-node dev). Set
+      # SCYLLA_AUTHENTICATOR=PasswordAuthenticator + SCYLLA_AUTHORIZER=CassandraAuthorizer
+      # to require the default cassandra/cassandra superuser (rotate it after first boot).
+      if [ -n "${SCYLLA_AUTHENTICATOR:-}" ]; then
+        grep -q "^authenticator:" "$CY" && sed -i "s/^authenticator:.*/authenticator: ${SCYLLA_AUTHENTICATOR}/" "$CY" \
+          || echo "authenticator: ${SCYLLA_AUTHENTICATOR}" >> "$CY"
+      fi
+      if [ -n "${SCYLLA_AUTHORIZER:-}" ]; then
+        grep -q "^authorizer:" "$CY" && sed -i "s/^authorizer:.*/authorizer: ${SCYLLA_AUTHORIZER}/" "$CY" \
+          || echo "authorizer: ${SCYLLA_AUTHORIZER}" >> "$CY"
+      fi
+      # raw yaml escape hatch for the chart.
+      if [ -n "${SCYLLA_YAML_EXTRA:-}" ]; then printf '%s\n' "${SCYLLA_YAML_EXTRA}" >> "$CY"; fi
+
+      # Container/kind relaxed mode. --developer-mode (arg) relaxes AIO/fs/clocksource
+      # checks; --smp/--memory (args) keep Scylla inside the cgroup; --reactor-backend
+      # (arg) epoll avoids io_uring/AIO when the kernel/seccomp blocks it. NOTE:
+      # --overprovisioned is a BARE BOOLEAN switch (no value) — passing it a value makes
+      # the value parse as a stray positional, so add it conditionally with no argument.
+      set -- \
+        --options-file "$CY" \
+        --workdir "$WORKDIR" \
+        --listen-address "$LISTEN" \
+        --broadcast-address "$BROADCAST" \
+        --rpc-address "$RPC" \
+        --broadcast-rpc-address "$BROADCAST_RPC" \
+        --seed-provider-parameters "seeds=${SEEDS}" \
+        --api-address "$API_ADDR" \
+        --developer-mode "${SCYLLA_DEVELOPER_MODE:-1}" \
+        --smp "${SCYLLA_SMP:-1}" \
+        --memory "${SCYLLA_MEMORY:-1G}" \
+        --reactor-backend "${SCYLLA_REACTOR_BACKEND:-epoll}"
+      # overprovisioned defaults on (1); set SCYLLA_OVERPROVISIONED=0 to disable.
+      if [ "${SCYLLA_OVERPROVISIONED:-1}" != "0" ]; then set -- "$@" --overprovisioned; fi
+      # shellcheck disable=SC2086
+      exec "$PREFIX/bin/scylla" "$@" ${SCYLLA_ARGS:-}
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /opt/scylladb/libexec/scylla
+        test -x /opt/scylladb/bin/scylla
+        test -x /usr/bin/docker-entrypoint.sh
+        test -f /opt/scylladb/conf-defaults/scylla.yaml
+        # the relocated server must at least print its version via the bundled loader
+        /opt/scylladb/bin/scylla --version

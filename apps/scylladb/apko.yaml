@@ -1,0 +1,69 @@
+# Assembles the ScyllaDB runtime image: minimal hardened Wolfi base + ScyllaDB's official
+# relocatable package (fully self-contained under /opt/scylladb/libreloc — bundles its own
+# ld.so/libc/libstdc++/openssl/gnutls, so the image needs almost nothing else). Nonroot,
+# multi-arch, SBOM by apko. Configured by SCYLLA_* env (the entrypoint seeds scylla.yaml
+# into a writable conf dir and passes developer-mode/smp/memory flags for unprivileged
+# nonroot/read-only containers). CQL 9042 / REST API 10000 / internode 7000(7001 TLS) /
+# Prometheus 9180. Single-node by default (seeds = self).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - bash               # entrypoint + the bin/scylla thunk are bash
+    - busybox            # mkdir/cp/sed/awk/hostname used by the entrypoint
+    - quench-scylladb@local
+
+accounts:
+  groups:
+    - groupname: scylla
+      gid: 1001
+  users:
+    - username: scylla
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/docker-entrypoint.sh
+
+environment:
+  SCYLLA_CONF: /etc/scylla
+  SCYLLA_WORKDIR: /var/lib/scylla
+  # container-safe defaults; override in the chart for production sizing.
+  SCYLLA_SMP: "1"
+  SCYLLA_MEMORY: "1G"
+  SCYLLA_DEVELOPER_MODE: "1"
+  SCYLLA_OVERPROVISIONED: "1"
+  PATH: /usr/bin:/bin:/opt/scylladb/bin
+
+work-dir: /var/lib/scylla
+
+paths:
+  # writable mounts for a read-only rootfs: seeded conf dir + the data workdir.
+  - path: /etc/scylla
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/lib/scylla
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-scylladb"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"
