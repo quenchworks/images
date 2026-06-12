@@ -23,15 +23,24 @@ environment:
       - https://packages.wolfi.dev/os
     packages:
       - busybox
+      - curl
       - ca-certificates-bundle
 
 pipeline:
-  - uses: fetch
-    with:
-      uri: https://artifacts.opensearch.org/releases/bundle/opensearch/${{package.version}}/opensearch-${{package.version}}-linux-x64.tar.gz
-      expected-sha512: "9e481db6495cbdacd6704a19c6ed7679e1138d40dbe283642c599bf70441c968bbd7f6faf7ecfa6c9ecf0685141037079b53647c5df3595bd5b9647bcbad1a04"
-      strip-components: 1
+  # OpenSearch ships arch-specific distributions (they bundle native x86_64/arm64
+  # libs), so fetch the tarball matching the build arch — not a fixed one, or the
+  # arm64 package ends up with x86_64 binaries (unsatisfiable so:ld-linux deps).
   - runs: |
+      case "$(uname -m)" in
+        x86_64)  osarch=x64;   sha=9e481db6495cbdacd6704a19c6ed7679e1138d40dbe283642c599bf70441c968bbd7f6faf7ecfa6c9ecf0685141037079b53647c5df3595bd5b9647bcbad1a04 ;;
+        aarch64) osarch=arm64; sha=fbc2dcb98ab909c113f70473861f9a7e62d9b3c59c6c06201617a3e3d1ce7ec9707ecba217ead62ea553f2486bb91b87f2d34a99d498dc5c5d4f0659fe01db50 ;;
+        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+      esac
+      url="https://artifacts.opensearch.org/releases/bundle/opensearch/${{package.version}}/opensearch-${{package.version}}-linux-${osarch}.tar.gz"
+      curl -fsSL -o os.tar.gz "$url"
+      echo "${sha}  os.tar.gz" | sha512sum -c -
+      mkdir -p src && tar -xzf os.tar.gz -C src --strip-components 1
+      cd src
       dest="${{targets.destdir}}/opt/opensearch"
       install -d "$dest"
       # ship bin, lib, modules, plugins, jdk-independent config; drop the bundled JDK
