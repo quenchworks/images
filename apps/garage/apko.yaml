@@ -1,0 +1,66 @@
+# Assembles the Garage single-node S3-compatible object-store runtime image.
+# Minimal, nonroot, multi-arch, SBOM by apko.
+#
+# Garage is the AGPL S3-compatible object-store ALTERNATIVE to the default SeaweedFS.
+# The bootstrap entrypoint seeds garage.toml, starts `garage server`, runs the
+# one-time single-node layout assign+apply, imports the S3 key + default bucket from
+# env, then runs the server in the foreground. All state (metadata_dir, data_dir, the
+# generated garage.toml) is pinned to a writable mount (default /data) so the image
+# runs on a read-only rootfs.
+#
+# rpc_secret + admin_token are generated+persisted in the metadata dir if not supplied
+# via env (chart Secret). S3 creds come from GARAGE_S3_ACCESS_KEY/SECRET_KEY
+# (chart Secret); if unset a key is created and surfaced in the logs.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - bash                          # the bootstrap entrypoint is bash
+    - busybox
+    - ca-certificates-bundle
+    - quench-garage@local
+
+accounts:
+  groups:
+    - groupname: garage
+      gid: 1001
+  users:
+    - username: garage
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/local/bin/docker-entrypoint.sh
+
+environment:
+  GARAGE_METADATA_DIR: /data/meta
+  GARAGE_DATA_DIR: /data/data
+  GARAGE_CONFIG_FILE: /data/garage.toml
+  GARAGE_S3_PORT: "3900"
+  GARAGE_ADMIN_PORT: "3903"
+
+work-dir: /data
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-garage"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"

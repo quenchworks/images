@@ -1,0 +1,223 @@
+# Packages Garage (Deuxfleurs' S3-compatible distributed object store) onto Wolfi.
+# Garage is NOT built from source here: a from-source Rust build pulls a large crate
+# tree and is heavy on a 2-core/7GB GitHub runner. Instead we ship Garage's OWN
+# official precompiled static binary (the same upstream-artifact pattern
+# clickhouse/scylladb/cockroachdb use), then harden it on a minimal apko base and gate
+# it 0-CVE with Trivy. This is clean-room-consistent: it is upstream's published
+# musl-static artifact, not a Bitnami chart, and the scan still fully applies.
+#
+# The binary is a fully self-contained musl static-PIE (x86_64) / static (aarch64)
+# executable -- it needs NO runtime libs. We still ship bash/busybox/ca-certificates
+# because the bootstrap entrypoint (single-node layout assign+apply + S3 key/bucket
+# create on first boot) is a bash script.
+#
+# Garage is the AGPL S3-compatible object-store ALTERNATIVE to the default SeaweedFS.
+package:
+  name: quench-garage
+  version: 1.3.1
+  epoch: 0
+  description: "Quenchworks hardened Garage (S3-compatible distributed object store), packaged on Wolfi"
+  copyright:
+    - license: AGPL-3.0-only
+  dependencies:
+    runtime:
+      - bash                    # the bootstrap entrypoint is bash
+      - busybox                 # mkdir/sha256sum/printf/sleep/head used by the entrypoint
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - curl
+      - ca-certificates-bundle
+
+pipeline:
+  # Garage publishes a separate per-target static binary, so fetch the one matching
+  # the build arch by uname -m (x86_64 -> x86_64-unknown-linux-musl,
+  # aarch64 -> aarch64-unknown-linux-musl) with the arch-matching sha256 -- the wrong
+  # arch yields a non-executable / wrong-arch binary. The musl-static binary links no
+  # external libs (verified: static-PIE / statically linked, stripped).
+  - runs: |
+      VER="${{package.version}}"
+      case "$(uname -m)" in
+        x86_64)  target=x86_64-unknown-linux-musl;  sha=0441419f7c0b372d37e533a80e08367023d30fa56a56d1db3f8a2aff27e24c92 ;;
+        aarch64) target=aarch64-unknown-linux-musl; sha=28d754bb7df456547b1a206eebcae3a974b4689adebbe755e373df4fd09b3244 ;;
+        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+      esac
+
+      binurl="https://garagehq.deuxfleurs.fr/_releases/v${VER}/${target}/garage"
+      curl -fsSL -o garage "$binurl"
+      echo "${sha}  garage" | sha256sum -c -
+      install -Dm0755 garage "${{targets.destdir}}/usr/bin/garage"
+
+  - runs: |
+      # The single-node bootstrap entrypoint. Garage refuses to start without a config
+      # file (garage.toml), and a fresh single-node cluster needs a one-time layout
+      # assign+apply before S3 works, plus an S3 access key + bucket. The entrypoint,
+      # on first boot: seeds garage.toml (writable copy) from env, starts `garage
+      # server` in the background, waits for it, runs layout assign+apply if not laid
+      # out, imports/creates the S3 key (from GARAGE_S3_ACCESS_KEY/SECRET_KEY) and a
+      # default bucket, then waits on the server pid in the foreground. Idempotent:
+      # a marker file in the metadata dir guards the one-time bootstrap.
+      #
+      # Read-only rootfs: metadata_dir, data_dir, the generated garage.toml and /tmp
+      # all live on writable mounts pinned via env.
+      install -d "${{targets.destdir}}/usr/local/bin"
+      cat > "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh" <<'SCRIPT'
+      #!/bin/bash
+      set -euo pipefail
+
+      META_DIR="${GARAGE_METADATA_DIR:-/data/meta}"
+      DATA_DIR="${GARAGE_DATA_DIR:-/data/data}"
+      CONFIG="${GARAGE_CONFIG_FILE:-/data/garage.toml}"
+      S3_REGION="${GARAGE_S3_REGION:-garage}"
+      S3_PORT="${GARAGE_S3_PORT:-3900}"
+      ADMIN_PORT="${GARAGE_ADMIN_PORT:-3903}"
+      ROOT_DOMAIN="${GARAGE_ROOT_DOMAIN:-.s3.garage}"
+      DEFAULT_BUCKET="${GARAGE_DEFAULT_BUCKET:-}"
+      ZONE="${GARAGE_ZONE:-dc1}"
+      CAPACITY="${GARAGE_CAPACITY:-1G}"
+
+      mkdir -p "$META_DIR" "$DATA_DIR" "$(dirname "$CONFIG")"
+
+      # rpc_secret is REQUIRED. Use the provided one (chart Secret) or generate a
+      # random 32-byte hex once and persist it in the metadata dir so it survives
+      # restarts (a changing rpc_secret would orphan the node).
+      RPC_SECRET_FILE="${META_DIR}/.rpc_secret"
+      if [ -n "${GARAGE_RPC_SECRET:-}" ]; then
+        RPC_SECRET="$GARAGE_RPC_SECRET"
+      elif [ -f "$RPC_SECRET_FILE" ]; then
+        RPC_SECRET="$(cat "$RPC_SECRET_FILE")"
+      else
+        RPC_SECRET="$(head -c32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+        printf '%s' "$RPC_SECRET" > "$RPC_SECRET_FILE"
+        chmod 0600 "$RPC_SECRET_FILE"
+      fi
+
+      # admin_token guards the admin API (:3903 /health). Generated/persisted like
+      # rpc_secret unless provided.
+      ADMIN_TOKEN_FILE="${META_DIR}/.admin_token"
+      if [ -n "${GARAGE_ADMIN_TOKEN:-}" ]; then
+        ADMIN_TOKEN="$GARAGE_ADMIN_TOKEN"
+      elif [ -f "$ADMIN_TOKEN_FILE" ]; then
+        ADMIN_TOKEN="$(cat "$ADMIN_TOKEN_FILE")"
+      else
+        ADMIN_TOKEN="$(head -c32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+        printf '%s' "$ADMIN_TOKEN" > "$ADMIN_TOKEN_FILE"
+        chmod 0600 "$ADMIN_TOKEN_FILE"
+      fi
+
+      # Seed garage.toml every boot (idempotent; reflects current env). db_engine
+      # sqlite avoids lmdb's mmap/size config for a single node. replication_factor=1
+      # is the single-node setting in Garage 1.x.
+      cat > "$CONFIG" <<TOML
+      metadata_dir = "${META_DIR}"
+      data_dir = "${DATA_DIR}"
+      db_engine = "sqlite"
+      replication_factor = 1
+      rpc_bind_addr = "0.0.0.0:3901"
+      rpc_secret = "${RPC_SECRET}"
+
+      [s3_api]
+      s3_region = "${S3_REGION}"
+      api_bind_addr = "0.0.0.0:${S3_PORT}"
+      root_domain = "${ROOT_DOMAIN}"
+
+      [s3_web]
+      bind_addr = "0.0.0.0:3902"
+      root_domain = ".web.garage"
+      index = "index.html"
+
+      [admin]
+      api_bind_addr = "0.0.0.0:${ADMIN_PORT}"
+      admin_token = "${ADMIN_TOKEN}"
+      TOML
+      chmod 0600 "$CONFIG"
+
+      export GARAGE_CONFIG_FILE="$CONFIG"
+
+      # Start the server in the background; wait on its pid at the end (foreground).
+      garage server &
+      GARAGE_PID=$!
+
+      # gc() forwards signals so the container stops cleanly.
+      term() { kill -TERM "$GARAGE_PID" 2>/dev/null || true; }
+      trap term TERM INT
+
+      # Wait for the local node's RPC to come up so admin commands work.
+      echo "garage: waiting for node to come up..."
+      for i in $(seq 1 60); do
+        if garage status >/dev/null 2>&1; then
+          echo "garage: node up after ${i}s"
+          break
+        fi
+        if ! kill -0 "$GARAGE_PID" 2>/dev/null; then
+          echo "garage: server exited during startup" >&2
+          wait "$GARAGE_PID"; exit 1
+        fi
+        [ "$i" = 60 ] && { echo "garage: node did not come up" >&2; term; wait "$GARAGE_PID"; exit 1; }
+        sleep 1
+      done
+
+      # One-time single-node bootstrap, guarded by a marker so restarts are no-ops.
+      BOOTSTRAP_MARKER="${META_DIR}/.quench_bootstrapped"
+      if [ ! -f "$BOOTSTRAP_MARKER" ]; then
+        echo "garage: bootstrapping single-node cluster layout"
+        NODE_ID="$(garage node id -q 2>/dev/null | head -1 | cut -d'@' -f1)"
+        if [ -z "$NODE_ID" ]; then
+          echo "garage: could not resolve node id" >&2; term; wait "$GARAGE_PID"; exit 1
+        fi
+
+        # Assign this node a role + capacity, then apply layout version 1, unless a
+        # layout already exists (idempotent across re-creations of the marker).
+        if ! garage layout show 2>/dev/null | grep -q "$NODE_ID"; then
+          garage layout assign -z "$ZONE" -c "$CAPACITY" "$NODE_ID"
+          garage layout apply --version 1
+          echo "garage: layout applied (zone=${ZONE} capacity=${CAPACITY})"
+        fi
+
+        # Import the S3 access key from env (deterministic), or create one and surface
+        # it in the logs. Import requires both key id + secret, AND requires the layout
+        # to already be applied (above). NOTE: Garage validates the access key ID
+        # format -- it MUST be "GK" followed by exactly 24 hex chars; an arbitrary
+        # string is rejected ("Invalid key format"). If you want fully arbitrary creds,
+        # omit these env vars and let Garage create+surface a key instead.
+        if [ -n "${GARAGE_S3_ACCESS_KEY:-}" ] && [ -n "${GARAGE_S3_SECRET_KEY:-}" ]; then
+          garage key import "${GARAGE_S3_ACCESS_KEY}" "${GARAGE_S3_SECRET_KEY}" -n quench-admin --yes \
+            || echo "garage: key import skipped (already exists)"
+          KEY_REF="${GARAGE_S3_ACCESS_KEY}"
+        else
+          echo "garage: GARAGE_S3_ACCESS_KEY/SECRET_KEY not set -- creating a key (surfaced below)"
+          garage key create quench-admin || true
+          KEY_REF="quench-admin"
+        fi
+
+        # Create + grant a default bucket if requested.
+        if [ -n "$DEFAULT_BUCKET" ]; then
+          garage bucket create "$DEFAULT_BUCKET" || echo "garage: bucket already exists"
+          garage bucket allow --read --write --owner "$DEFAULT_BUCKET" --key "$KEY_REF" || true
+          echo "garage: bucket '${DEFAULT_BUCKET}' granted to key '${KEY_REF}'"
+        fi
+
+        touch "$BOOTSTRAP_MARKER"
+        echo "garage: bootstrap complete"
+      else
+        echo "garage: already bootstrapped, skipping layout/key setup"
+      fi
+
+      echo "garage: ready (S3 :${S3_PORT}, admin :${ADMIN_PORT})"
+      wait "$GARAGE_PID"
+      SCRIPT
+      chmod 0755 "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/bin/garage
+        garage --version
+        test -x /usr/local/bin/docker-entrypoint.sh
