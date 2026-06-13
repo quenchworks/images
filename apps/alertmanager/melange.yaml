@@ -1,0 +1,155 @@
+# Builds Prometheus Alertmanager (the alertmanager server + amtool) from source
+# onto Wolfi. One static Go binary per tool, no CGO. Output is a signed APK in
+# Quenchworks' own repo. No upstream distro binaries.
+#
+# Alertmanager bundles a web UI (an Elm SPA under ui/app/) that the server embeds
+# via go:embed (`//go:embed app/dist` in ui/web.go). Upstream does NOT publish a
+# release source tarball with the UI pre-built, and the v0.33.0 GitHub release
+# carries only cross-compiled binaries -- the git tag ships only the UI *sources*.
+# So to keep the server "from source" AND ship a working browser bundle, we
+# reproduce upstream's own asset pipeline here (mirroring our prometheus image):
+#   ui/app: npm ci + npm run build (vite + vite-plugin-elm) -> ui/app/dist/**
+#   go build -> ui/web.go's `//go:embed app/dist` picks up the compiled SPA.
+# The OpenAPI-generated Elm client (ui/app/src/Data, ui/app/src/DateTime.elm) is
+# already committed in the source tree, so no Java/OpenAPI generator is needed.
+# Node/npm live ONLY in the build sandbox; the runtime image is a static Go binary
+# with no JS toolchain, so Node never enters the Trivy scan surface.
+package:
+  name: quench-alertmanager
+  version: 0.33.0
+  epoch: 0
+  description: "Quenchworks hardened Prometheus Alertmanager (alert dedup/grouping/routing/silencing + amtool), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - bash
+      - ca-certificates-bundle
+      - findutils
+      # go.mod declares go 1.25; .promu.yml pins the build toolchain to 1.26. Use
+      # go-1.26 (newest, clears stdlib CVE advisories) and GOTOOLCHAIN=local so
+      # go.mod's 1.25 directive does not trigger a toolchain download.
+      - go-1.26
+      # UI toolchain: ui/app is built with vite (vite-plugin-elm). The repo's
+      # .nvmrc pins Node v24; npm ci + vite build compiles the Elm SPA into
+      # ui/app/dist, which ui/web.go embeds via go:embed.
+      - nodejs-24
+      - npm
+
+pipeline:
+  # git-checkout, not fetch: building from the pinned git tag avoids the
+  # codeload.github.com CDN entirely and is the robust source for a repo this size.
+  # The git archive contains the UI sources (ui/app/), which we build below.
+  - uses: git-checkout
+    with:
+      repository: https://github.com/prometheus/alertmanager
+      tag: v${{package.version}}
+      expected-commit: 5d3ceb55bf3775ea152dcdf3803bbbb2b4afed54
+
+  - name: Build the web UI from source (Node), reproducing the ui/app build
+    runs: |
+      set -eu
+      # vite-plugin-elm downloads/uses the elm compiler binary; needs a writable
+      # npm cache and HOME (both writable in the sandbox).
+      export npm_config_cache="$(mktemp -d)"
+      export HOME="$(mktemp -d)"
+      # ui-install: deterministic install from the committed package-lock.json.
+      # --foreground-scripts runs lifecycle scripts inline so the elm binary
+      # (fetched in a postinstall) is available for `vite build`.
+      ( cd ui/app && npm ci --foreground-scripts )
+      # ui-build: `npm run build` == `vite build`, which compiles the Elm SPA and
+      # writes the gzip/brotli-compressed bundle into ui/app/dist (per the
+      # vite-plugin-compression2 config). ui/web.go's //go:embed app/dist picks it up.
+      ( cd ui/app && npm run build )
+      # Sanity: ensure the embed target exists before the Go build. The vite
+      # compression plugin runs with deleteOriginalAssets, so the served files
+      # are index.html.gz / index.html.br (web.go negotiates encoding); assert
+      # the gzip variant is present rather than the (deleted) plain index.html.
+      test -f ui/app/dist/index.html.gz
+
+  - name: Build alertmanager + amtool (static, CGO off)
+    runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's 1.25
+      export GO111MODULE=on
+
+      REVISION="$(git rev-parse HEAD)"
+      DATE="$(date -u +'%Y%m%d-%H:%M:%S')"
+      VERPKG="github.com/prometheus/common/version"
+      # Mirror upstream/promu version stamping so `alertmanager --version`,
+      # `amtool --version`, the /api/v2/status endpoint and the build_info metric
+      # report v0.33.0.
+      LDFLAGS="-s -w \
+        -X ${VERPKG}.Version=${{package.version}} \
+        -X ${VERPKG}.Revision=${REVISION} \
+        -X ${VERPKG}.Branch=HEAD \
+        -X ${VERPKG}.BuildUser=quenchworks \
+        -X ${VERPKG}.BuildDate=${DATE}"
+
+      # netgo: pure-Go resolver (no libc dependency, matches upstream's static
+      # build, which sets the netgo tag in .promu.yml).
+      for cmd in alertmanager amtool; do
+        go build -trimpath -tags "netgo" -ldflags "${LDFLAGS}" \
+          -o "${{targets.destdir}}/usr/bin/${cmd}" "./cmd/${cmd}"
+      done
+
+  - name: Install the default config and the thin entrypoint
+    runs: |
+      set -eu
+      # Ship a minimal default alertmanager.yml (a trivial route + a no-op
+      # webhook receiver). The chart mounts a custom ConfigMap over this
+      # read-only path via --config.file.
+      install -d "${{targets.destdir}}/etc/alertmanager"
+      cat > "${{targets.destdir}}/etc/alertmanager/alertmanager.yml" <<'YAML'
+      # Quenchworks default Alertmanager config. Minimal: a single catch-all route
+      # and a no-op webhook receiver. Override via --config.file (the chart mounts
+      # a ConfigMap). Designed only to let the server start; real routing/receivers
+      # are supplied by the chart.
+      route:
+        receiver: default
+        group_by: ['alertname']
+        group_wait: 30s
+        group_interval: 5m
+        repeat_interval: 3h
+      receivers:
+        - name: default
+      YAML
+
+      # Thin entrypoint. Alertmanager persists nflog/silences state to
+      # --storage.path; on a read-only rootfs that must be a writable mount
+      # (AM_STORAGE_PATH, default /alertmanager). The config dir stays read-only
+      # (the server only reads it). Extra flags pass through via "$@".
+      install -d "${{targets.destdir}}/usr/local/bin"
+      cat > "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh" <<'SCRIPT'
+      #!/bin/sh
+      set -eu
+      AM_CONFIG_FILE="${AM_CONFIG_FILE:-/etc/alertmanager/alertmanager.yml}"
+      AM_STORAGE_PATH="${AM_STORAGE_PATH:-/alertmanager}"
+      AM_WEB_LISTEN="${AM_WEB_LISTEN:-0.0.0.0:9093}"
+      mkdir -p "${AM_STORAGE_PATH}"
+      exec /usr/bin/alertmanager \
+        --config.file="${AM_CONFIG_FILE}" \
+        --storage.path="${AM_STORAGE_PATH}" \
+        --web.listen-address="${AM_WEB_LISTEN}" \
+        "$@"
+      SCRIPT
+      chmod 0755 "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        alertmanager --version
+        amtool --version

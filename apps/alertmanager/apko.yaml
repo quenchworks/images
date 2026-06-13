@@ -1,0 +1,58 @@
+# Assembles the Alertmanager runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+#
+# Alertmanager is configured by flags + a config file. The thin entrypoint pins the
+# state path to a writable mount (AM_STORAGE_PATH, default /alertmanager) so the
+# image runs on a read-only rootfs, the config to /etc/alertmanager/alertmanager.yml
+# (the chart mounts a ConfigMap over it via --config.file), and the web/API listener
+# to :9093. Cluster gossip uses :9094 (tcp+udp). There is no auth by default -- the
+# NetworkPolicy is the security boundary, consistent with the catalog posture.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - busybox                       # the thin entrypoint needs a tiny shell
+    - ca-certificates-bundle
+    - quench-alertmanager@local
+
+accounts:
+  groups:
+    - groupname: alertmanager
+      gid: 1001
+  users:
+    - username: alertmanager
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/local/bin/docker-entrypoint.sh
+
+environment:
+  AM_CONFIG_FILE: /etc/alertmanager/alertmanager.yml
+  AM_STORAGE_PATH: /alertmanager
+  AM_WEB_LISTEN: "0.0.0.0:9093"
+
+work-dir: /alertmanager
+
+paths:
+  - path: /alertmanager
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-alertmanager"
+  org.opencontainers.image.licenses: "Apache-2.0"
