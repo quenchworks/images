@@ -1,0 +1,163 @@
+# Builds the Temporal server from source onto Wolfi. Temporal is a durable
+# workflow-execution engine: ONE Go binary (temporal-server) runs the
+# frontend / history / matching / worker roles, selected at runtime by
+# `--service` (or all-in-one). We build static, CGO-free (CGO_ENABLED=0)
+# binaries, multi-arch. Output is a signed APK in Quenchworks' own repo --
+# no upstream distro binaries.
+#
+# Deliverables shipped in this package:
+#   - temporal-server        (cmd/server)        -- the server, the deliverable
+#   - temporal-sql-tool      (cmd/tools/sql)      -- Postgres/MySQL schema setup
+#                                                    (the chart runs setup-schema
+#                                                    / update-schema as a Job)
+#   - temporal-cassandra-tool(cmd/tools/cassandra)-- trivial extra target
+#   - the SQL schema files (schema/postgresql, schema/mysql, schema/sqlite) so
+#     the chart's setup Job can point temporal-sql-tool at them.
+#   - the upstream config/ dir (server config templates + dynamicconfig) so a
+#     self-contained sqlite boot works for the smoke test; the CHART supplies
+#     the real Postgres config via a ConfigMap.
+#
+# NOT shipped here (separate upstream repos / future images):
+#   - the Web UI  -> temporalio/ui-server (separate image, future)
+#   - the `temporal` CLI -> temporalio/cli (separate)
+#
+# The server build needs network (go.mod has no vendor/ dir); melange's build
+# pipeline fetches modules with GOFLAGS default (module proxy). go.mod requires
+# go 1.25.x, so we use the Wolfi go-1.25 toolchain to pick up the latest stdlib
+# CVE fixes. The release version is hardcoded in source
+# (common/headers/version_checker.go: ServerVersion = "1.29.7", stamped by
+# upstream's create-tag workflow), wired into the urfave/cli app.Version, so
+# `temporal-server --version` reports the pinned release with no ldflags.
+package:
+  name: quench-temporal
+  version: 1.29.7
+  epoch: 0
+  description: "Quenchworks hardened Temporal (durable workflow execution engine / orchestration server), built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - busybox            # minimal shell for the thin entrypoint + debugging
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - git
+      # go.mod requires go >= 1.25.x; use the current go-1.25 toolchain.
+      - go-1.25
+
+pipeline:
+  # Build from the git tag source tarball. Pinned to the tag; verified by sha256.
+  - uses: fetch
+    with:
+      uri: https://github.com/temporalio/temporal/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: 98fdd3fcfa1eec770df121af846a8d25af5fe1d77fa89b3f95bddf0246c3d7c3
+  - runs: |
+      export CGO_ENABLED=0
+      export GOTOOLCHAIN=local
+      export GOFLAGS=-mod=mod
+      # Match upstream's Makefile build: static CGO-free binaries with the
+      # disable_grpc_modules build tag (the sqlite plugin uses pure-Go
+      # modernc.org/sqlite, so CGO_ENABLED=0 is fine). The version is baked
+      # into the source (headers.ServerVersion), so no -X ldflags are needed;
+      # -s -w just strips debug info.
+      TAGS="disable_grpc_modules"
+      LDFLAGS="-s -w"
+
+      install -d "${{targets.destdir}}/usr/bin"
+      go build -trimpath -tags "${TAGS}" -ldflags "${LDFLAGS}" \
+        -o "${{targets.destdir}}/usr/bin/temporal-server" ./cmd/server
+      go build -trimpath -tags "${TAGS}" -ldflags "${LDFLAGS}" \
+        -o "${{targets.destdir}}/usr/bin/temporal-sql-tool" ./cmd/tools/sql
+      go build -trimpath -tags "${TAGS}" -ldflags "${LDFLAGS}" \
+        -o "${{targets.destdir}}/usr/bin/temporal-cassandra-tool" ./cmd/tools/cassandra
+
+      # Ship the SQL schema files. The chart's setup Job runs e.g.
+      #   temporal-sql-tool ... setup-schema -v 0.0
+      #   temporal-sql-tool ... update-schema -d /etc/temporal/schema/postgresql/v12/temporal
+      # so the schema dir layout (postgresql/v12/{temporal,visibility}/...) must
+      # be preserved exactly. We ship postgresql (the QuenchWorks backend), plus
+      # mysql and sqlite for completeness/the self-contained smoke test.
+      install -d "${{targets.destdir}}/etc/temporal/schema"
+      cp -r schema/postgresql "${{targets.destdir}}/etc/temporal/schema/"
+      cp -r schema/mysql      "${{targets.destdir}}/etc/temporal/schema/"
+      cp -r schema/sqlite     "${{targets.destdir}}/etc/temporal/schema/"
+
+      # Ship the upstream config dir: the server config templates and the
+      # dynamicconfig samples. The CHART overrides these with its own ConfigMap
+      # for a real Postgres deployment; we ship the upstream samples so a
+      # self-contained sqlite boot (the smoke test, and `--env development-sqlite-file`)
+      # works out of the box. temporal-server resolves config relative to
+      # --root, so we lay it out under /etc/temporal/config.
+      install -d "${{targets.destdir}}/etc/temporal/config"
+      cp config/*.yaml "${{targets.destdir}}/etc/temporal/config/"
+      cp -r config/dynamicconfig "${{targets.destdir}}/etc/temporal/config/"
+
+      # The shipped sqlite-file config points dynamicConfigClient.filepath at a
+      # RELATIVE path (config/dynamicconfig/development-sql.yaml), resolved against
+      # the process cwd -- which breaks a standalone boot from an arbitrary cwd.
+      # Rewrite it to the absolute shipped path so the all-in-one sqlite boot is
+      # self-contained no matter the working directory. (The chart supplies its
+      # own config + dynamicconfig, so this only affects the bundled standalone
+      # config used by the smoke test / `--env development-sqlite-file`.)
+      sqlite_cfg="${{targets.destdir}}/etc/temporal/config/development-sqlite-file.yaml"
+      sed -i 's#filepath: "config/dynamicconfig/development-sql.yaml"#filepath: "/etc/temporal/config/dynamicconfig/development-sql.yaml"#' "$sqlite_cfg"
+
+      # license + version marker for provenance
+      install -d "${{targets.destdir}}/usr/share/doc/temporal"
+      cp LICENSE "${{targets.destdir}}/usr/share/doc/temporal/" 2>/dev/null || true
+
+      # everything must be world-readable for the nonroot runtime user
+      chmod -R a+rX "${{targets.destdir}}/etc/temporal"
+
+      # A thin entrypoint: exec temporal-server with --root pointing at the
+      # chart-mounted (or shipped) config tree. Defaults boot the all-in-one
+      # server against the shipped sqlite config so the image runs standalone;
+      # the chart sets TEMPORAL_ROOT / TEMPORAL_CONFIG_DIR / TEMPORAL_ENV /
+      # SERVICES to point at its ConfigMap + Postgres. Keep it thin: it only
+      # assembles the `temporal-server start` argv.
+      cat > "${{targets.destdir}}/usr/bin/docker-entrypoint.sh" <<'EOS'
+      #!/bin/sh
+      set -eu
+
+      ROOT="${TEMPORAL_ROOT:-/etc/temporal}"
+      CONFIG_DIR="${TEMPORAL_CONFIG_DIR:-config}"
+      ENV_NAME="${TEMPORAL_ENV:-development-sqlite-file}"
+
+      # --root/--config/--env are GLOBAL flags (before the `start` subcommand).
+      # SERVICES selects which roles to start (flags AFTER `start`). Empty =
+      # all-in-one (the default, what the standalone sqlite boot uses). The chart
+      # sets it per pod role, e.g. SERVICES="frontend"/"history"/"matching"/"worker".
+      set -- --root "$ROOT" --config "$CONFIG_DIR" --env "$ENV_NAME" start
+      if [ -n "${SERVICES:-}" ]; then
+        OLDIFS=$IFS; IFS=','
+        for svc in $SERVICES; do
+          set -- "$@" --service "$svc"
+        done
+        IFS=$OLDIFS
+      fi
+
+      exec /usr/bin/temporal-server "$@"
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        temporal-server --version
+        temporal-sql-tool --version
+        temporal-cassandra-tool --version
+        # schema files must be present at the path the chart expects
+        test -f /etc/temporal/schema/postgresql/v12/temporal/schema.sql
+        test -f /etc/temporal/schema/postgresql/v12/visibility/schema.sql
+        test -d /etc/temporal/schema/postgresql/v12/temporal/versioned
+        test -x /usr/bin/docker-entrypoint.sh
+        test -f /etc/temporal/config/development-sqlite-file.yaml

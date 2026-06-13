@@ -1,0 +1,58 @@
+# Assembles the Temporal server runtime image. Minimal, nonroot, multi-arch,
+# SBOM by apko. Temporal is ONE Go binary (temporal-server) that runs the
+# frontend / history / matching / worker roles; the chart selects roles via
+# the SERVICES env (the thin entrypoint maps it to --service flags) and supplies
+# the real config + Postgres DSN via a ConfigMap. With no env overrides the
+# image boots the all-in-one server against the shipped embedded-sqlite config
+# (config/development-sqlite-file.yaml), which is what the smoke test exercises.
+#
+# Ports (advisory -- the chart's config sets the actual binds):
+#   7233 frontend gRPC, 7234 history, 7235 matching, 7239 worker,
+#   7243 frontend HTTP API, 6933-6939 membership/ringpop, 8000 metrics (tally),
+#   7936 pprof.
+#
+# Read-only rootfs friendly: the server writes nothing to the rootfs in the
+# Postgres deployment (state lives in Postgres). It needs a writable /tmp; the
+# standalone sqlite boot also needs a writable dir for the sqlite file/WAL --
+# the chart mounts those as writable volumes / tmpfs.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - busybox
+    - ca-certificates-bundle
+    - quench-temporal@local
+
+accounts:
+  groups:
+    - groupname: temporal
+      gid: 1001
+  users:
+    - username: temporal
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/docker-entrypoint.sh
+
+environment:
+  TEMPORAL_ROOT: /etc/temporal
+  TEMPORAL_CONFIG_DIR: config
+  TEMPORAL_ENV: development-sqlite-file
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-temporal"
+  org.opencontainers.image.licenses: "MIT"
