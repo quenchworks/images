@@ -1,0 +1,162 @@
+# Builds Prometheus (the prometheus server + promtool) from source onto Wolfi.
+# Single static Go binary per tool, no CGO. Output is a signed APK in
+# Quenchworks' own repo. No upstream distro binaries.
+#
+# Prometheus bundles a web UI (a React/Mantine SPA under web/ui/) that the server
+# embeds via go:embed behind the `builtinassets` build tag. Unlike influxdb,
+# upstream does NOT publish a release source tarball with the UI pre-built: the
+# git tag ships only the UI *sources*, and the v3.12.0 GitHub release carries only
+# cross-compiled binaries. So to keep the server "from source" AND ship a working
+# browser bundle, we reproduce upstream's own asset pipeline here:
+#   make assets        -> npm ci + build_ui.sh --all  (needs Node 22, per .nvmrc)
+#   make assets-compress -> gzip static/** + generate web/ui/embed.go (go:embed list)
+#   go build -tags builtinassets -> the compressed SPA is embedded into the binary.
+# Node/npm live ONLY in the build sandbox; the runtime image is a static Go binary
+# with no JS toolchain, so Node never enters the Trivy scan surface.
+package:
+  name: quench-prometheus
+  version: 3.12.0
+  epoch: 0
+  description: "Quenchworks hardened Prometheus (metrics server / TSDB + promtool), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - bash            # build_ui.sh / compress_assets.sh are bash scripts
+      - ca-certificates-bundle
+      - findutils       # compress_assets.sh uses find -exec ... +
+      - gzip            # compress_assets.sh gzips every static asset
+      # go.mod declares go 1.25; promu pins the build toolchain to 1.26. Use go-1.26
+      # (newest, clears stdlib CVE advisories) and GOTOOLCHAIN=local so go.mod's
+      # 1.25 directive does not trigger a toolchain download.
+      - go-1.26
+      # UI toolchain: web/ui/.nvmrc pins Node v22; npm ci builds the React/Mantine SPA.
+      - nodejs-22
+      - npm
+
+pipeline:
+  # git-checkout, not fetch: building from the pinned git tag avoids the
+  # codeload.github.com CDN entirely and is the robust source for a repo this size.
+  # The git archive contains the UI sources (web/ui/), which we build below.
+  - uses: git-checkout
+    with:
+      repository: https://github.com/prometheus/prometheus
+      tag: v${{package.version}}
+      # The dereferenced commit the v3.12.0 annotated tag points at (the tag object
+      # itself hashes to 08f9ec4...; git-checkout verifies the commit, not the tag).
+      expected-commit: 9f27dffc1f93ca23287972f632025879f2d1c658
+
+  - name: Build the web UI from source (Node), reproducing `make assets`
+    runs: |
+      set -eu
+      # build_ui.sh expects a writable npm cache; HOME in the sandbox is writable.
+      export npm_config_cache="$(mktemp -d)"
+      # ui-install: deterministic install from the committed package-lock.json.
+      # --foreground-scripts runs lifecycle scripts inline; esbuild (pulled in by
+      # mantine-ui's Vite build) downloads its platform binary in a postinstall that
+      # npm's allowScripts guard otherwise blocks, which would break `vite build`.
+      ( cd web/ui && npm ci --foreground-scripts )
+      # ui-build: build the promql modules + the Mantine UI into web/ui/static/**.
+      # Use --mantine-ui (not --all): the Mantine SPA is the DEFAULT served UI
+      # (web.go serves /static/mantine-ui; the legacy CRA react-app is only reached
+      # behind --enable-feature=old-ui). react-app is not even an npm workspace here,
+      # so its react-scripts aren't installed -- building only the default UI is both
+      # correct and avoids the dead legacy bundle. The script ships without an execute
+      # bit in the git archive; invoke via bash.
+      ( cd web/ui && bash ./build_ui.sh --mantine-ui )
+
+  - name: Compress the assets and generate the go:embed manifest (web/ui/embed.go)
+    runs: |
+      set -eu
+      # compress_assets.sh: copies embed.go.tmpl -> embed.go, gzips every file under
+      # web/ui/static, and appends one //go:embed line per .gz plus `var EmbedFS embed.FS`.
+      scripts/compress_assets.sh
+
+  - name: Build prometheus + promtool (static, CGO off, builtinassets)
+    runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's 1.25
+      export GO111MODULE=on
+      # The repo ships a go.work (workspace mode), which rejects -mod=mod. Disable
+      # the workspace so the main module's go.mod is used directly.
+      export GOWORK=off
+
+      REVISION="$(git rev-parse HEAD)"
+      DATE="$(date -u +'%Y%m%d-%H:%M:%S')"
+      VERPKG="github.com/prometheus/common/version"
+      # Mirror upstream/promu version stamping so `prometheus --version`,
+      # the /api/v1/status/buildinfo endpoint and the build_info metric report v3.12.0.
+      LDFLAGS="-s -w \
+        -X ${VERPKG}.Version=${{package.version}} \
+        -X ${VERPKG}.Revision=${REVISION} \
+        -X ${VERPKG}.Branch=HEAD \
+        -X ${VERPKG}.BuildUser=quenchworks \
+        -X ${VERPKG}.BuildDate=${DATE}"
+
+      # netgo: pure-Go resolver (no libc dependency, matches upstream's static build).
+      # builtinassets: embed the compressed SPA generated above.
+      for cmd in prometheus promtool; do
+        go build -trimpath -tags "netgo,builtinassets" -ldflags "${LDFLAGS}" \
+          -o "${{targets.destdir}}/usr/bin/${cmd}" "./cmd/${cmd}"
+      done
+
+  - name: Install the default config and the thin entrypoint
+    runs: |
+      set -eu
+      # Ship a minimal default prometheus.yml (global scrape_interval + a single
+      # self-scrape job). The chart mounts a custom ConfigMap over this read-only path.
+      install -d "${{targets.destdir}}/etc/prometheus"
+      cat > "${{targets.destdir}}/etc/prometheus/prometheus.yml" <<'YAML'
+      # Quenchworks default Prometheus config. Minimal: global scrape interval and a
+      # single self-scrape job. Override via --config.file (the chart mounts a ConfigMap).
+      global:
+        scrape_interval: 15s
+        evaluation_interval: 15s
+
+      scrape_configs:
+        - job_name: prometheus
+          static_configs:
+            - targets:
+                - localhost:9090
+      YAML
+
+      # Thin entrypoint. Prometheus writes its TSDB to --storage.tsdb.path; on a
+      # read-only rootfs that must be a writable mount (PROM_TSDB_PATH, default
+      # /prometheus). The config dir stays read-only (the server only reads it);
+      # --web.enable-lifecycle exposes /-/reload for config reloads via the chart.
+      # Extra flags pass through via "$@".
+      install -d "${{targets.destdir}}/usr/local/bin"
+      cat > "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh" <<'SCRIPT'
+      #!/bin/sh
+      set -eu
+      PROM_CONFIG_FILE="${PROM_CONFIG_FILE:-/etc/prometheus/prometheus.yml}"
+      PROM_TSDB_PATH="${PROM_TSDB_PATH:-/prometheus}"
+      PROM_WEB_LISTEN="${PROM_WEB_LISTEN:-0.0.0.0:9090}"
+      mkdir -p "${PROM_TSDB_PATH}"
+      exec /usr/bin/prometheus \
+        --config.file="${PROM_CONFIG_FILE}" \
+        --storage.tsdb.path="${PROM_TSDB_PATH}" \
+        --web.listen-address="${PROM_WEB_LISTEN}" \
+        --web.enable-lifecycle \
+        "$@"
+      SCRIPT
+      chmod 0755 "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        prometheus --version
+        promtool --version

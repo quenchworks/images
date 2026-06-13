@@ -1,0 +1,58 @@
+# Assembles the Prometheus runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+#
+# Prometheus is configured by flags + a config file. The thin entrypoint pins the
+# TSDB path to a writable mount (PROM_TSDB_PATH, default /prometheus) so the image
+# runs on a read-only rootfs, the config to /etc/prometheus/prometheus.yml (the
+# chart mounts a ConfigMap over it), and the web/API listener to :9090. There is no
+# auth by default -- the NetworkPolicy is the security boundary, consistent with the
+# catalog posture.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - busybox                       # the thin entrypoint needs a tiny shell
+    - ca-certificates-bundle
+    - quench-prometheus@local
+
+accounts:
+  groups:
+    - groupname: prometheus
+      gid: 1001
+  users:
+    - username: prometheus
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/local/bin/docker-entrypoint.sh
+
+environment:
+  PROM_CONFIG_FILE: /etc/prometheus/prometheus.yml
+  PROM_TSDB_PATH: /prometheus
+  PROM_WEB_LISTEN: "0.0.0.0:9090"
+
+work-dir: /prometheus
+
+paths:
+  - path: /prometheus
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-prometheus"
+  org.opencontainers.image.licenses: "Apache-2.0"

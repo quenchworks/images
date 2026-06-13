@@ -168,6 +168,13 @@ catalog:
     tier: low
     status: done # image + chart both shipped. 0-CVE multi-arch, nonroot; Go static single-node TSDB (Prometheus-compatible). Built from the git tag pinned to its commit with go-1.26. Thin entrypoint pins -storageDataPath=$VM_STORAGE (default /storage, writable mount for read-only rootfs) and -httpListenAddr=:8428; extra flags pass through. No auth by default (NetworkPolicy is the boundary). Published multi-arch 0-CVE: ghcr.io/quenchworks/images/victoriametrics:1.145.0@sha256:6cc39dbf93a4778091458a90c7e2324d6523063648770981af588d14c318c91a. HTTP API 8428.
 
+  - name: prometheus
+    version: "3.12.0"
+    source: https://github.com/prometheus/prometheus
+    license: Apache-2.0
+    tier: standard
+    status: built # metrics server / TSDB; completes the observability stack with the exporters + VictoriaMetrics. 0-CVE multi-arch, nonroot; Go static (prometheus + promtool, CGO off, netgo+builtinassets). Server built from the git tag pinned to its commit with go-1.26; the embedded Mantine web UI is also built from source (Node 22 in the build sandbox only, never in the runtime/scan surface) via `make assets` + go:embed. Thin entrypoint pins --storage.tsdb.path=$PROM_TSDB_PATH (default /prometheus, writable mount for read-only rootfs), --config.file=/etc/prometheus/prometheus.yml (chart mounts a ConfigMap over it), --web.listen-address=:9090, --web.enable-lifecycle; extra flags pass through. No auth by default (NetworkPolicy is the boundary). HTTP API + UI on 9090.
+
   - name: nginx
     version: "1.30.2"
     source: https://github.com/nginx/nginx
