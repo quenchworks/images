@@ -84,8 +84,12 @@ jobs:
         # / otel-collector).
         run: |
           mkdir -p /tmp/binscan
-          docker load -i image.tar
-          cid="$(docker create "${GHCR_IMAGE}:scan-${{ matrix.platform }}")"
+          # apko writes a single-arch OCI tar; `docker load` tags it with the
+          # arch appended (…:scan-<plat>-<plat>). Capture the loaded ref rather
+          # than guessing it.
+          loaded="$(docker load -i image.tar | sed -n 's/^Loaded image: //p' | head -1)"
+          echo "loaded image: ${loaded}"
+          cid="$(docker create "${loaded}")"
           docker cp "$cid:/usr/bin/scanner-trivy" /tmp/binscan/scanner-trivy
           docker cp "$cid:/usr/bin/trivy" /tmp/binscan/trivy
           docker rm "$cid" >/dev/null
