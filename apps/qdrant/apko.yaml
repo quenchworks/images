@@ -1,0 +1,60 @@
+# Assembles the Qdrant vector-database runtime image.
+# Minimal, nonroot, multi-arch, read-only-rootfs friendly, SBOM by apko.
+#
+# Qdrant serves the REST API + web dashboard on :6333 and gRPC on :6334. The thin
+# entrypoint ensures the writable storage + snapshots dirs exist (pinned via Qdrant's
+# env-config to /qdrant/storage and /qdrant/snapshots), points the web UI at the
+# bundled /opt/qdrant/static dir, then runs the qdrant binary with the base config.
+# All state lives under /qdrant (a writable mount / PVC) so the image runs on a
+# read-only rootfs.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - bash                          # the entrypoint is a shell script
+    - busybox
+    - ca-certificates-bundle
+    - quench-qdrant@local
+
+accounts:
+  groups:
+    - groupname: qdrant
+      gid: 1001
+  users:
+    - username: qdrant
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/local/bin/docker-entrypoint.sh
+
+environment:
+  QDRANT__STORAGE__STORAGE_PATH: /qdrant/storage
+  QDRANT__STORAGE__SNAPSHOTS_PATH: /qdrant/snapshots
+  QDRANT__SERVICE__STATIC_CONTENT_DIR: /opt/qdrant/static
+
+work-dir: /qdrant
+
+paths:
+  - path: /qdrant
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-qdrant"
+  org.opencontainers.image.licenses: "Apache-2.0"

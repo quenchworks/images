@@ -1,0 +1,128 @@
+# Builds Qdrant (high-performance vector database / similarity search engine) FROM
+# SOURCE on Wolfi with melange. Qdrant is a Rust project (Cargo workspace, edition
+# 2024, MSRV 1.94); we build it with Wolfi's rust-1.96 toolchain, the same toolchain
+# version upstream pins in its own Dockerfile (cargo-chef rust-1.96.0). Built from
+# source (not an upstream binary) so the Trivy scan attributes the vendored crates
+# correctly and we can `cargo update` to clear any fixable CVE.
+#
+# Build deps mirror upstream's Dockerfile: protobuf-compiler (protoc) for the gRPC
+# .proto codegen in lib/api/build.rs (tonic_prost_build), clang + lld + cmake for the
+# native deps (the build links jemalloc/rocksdb-style C deps), plus build-base.
+#
+# Web UI dashboard: Qdrant serves a static dashboard at /dashboard from ./static
+# (DEFAULT_STATIC_DIR, enable_static_content defaults true). Upstream's image pulls
+# the prebuilt `dist-qdrant.zip` from the qdrant-web-ui repo into /static via
+# tools/sync-web-ui.sh -- there is NO Node build. We do the same: fetch the matching
+# pinned qdrant-web-ui release artifact (checksum-verified), unzip its `dist/` into
+# /opt/qdrant/static so the binary finds it. The REST API on 6333 works with or
+# without it; the dashboard is the bonus and IS bundled here.
+package:
+  name: quench-qdrant
+  version: 1.18.2
+  epoch: 0
+  description: "Quenchworks hardened Qdrant (Rust vector database / similarity search engine), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - bash                    # the entrypoint is a shell script
+      - busybox                 # mkdir used by the entrypoint
+      - ca-certificates-bundle  # Qdrant talks TLS to external endpoints (S3 snapshots, etc.)
+
+vars:
+  # qdrant-web-ui release whose dist-qdrant.zip we vendor into ./static. Arch-agnostic
+  # (pure static web assets), so one checksum covers both arches.
+  web-ui-tag: v0.2.13
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - bash
+      - curl
+      - unzip                   # the web-ui dist ships as a .zip
+      - git
+      - cmake
+      - clang                   # native C/C++ deps in the crate tree
+      - lld                     # upstream links with lld
+      - pkgconf
+      - protobuf-dev            # provides protoc for the tonic gRPC codegen
+      - openssl-dev
+      - rust-1.96               # Wolfi rust toolchain (matches upstream's pinned 1.96)
+
+pipeline:
+  - uses: git-checkout
+    with:
+      repository: https://github.com/qdrant/qdrant
+      tag: v${{package.version}}
+      expected-commit: 44ad62f8cd69642be5afa6441612525e24a0d063
+      destination: qdrant
+
+  # Build the qdrant binary, release profile, locked to the committed Cargo.lock.
+  # No target-cpu pin (upstream ships none), so the binary runs on any baseline
+  # x86-64 / aarch64. PROTOC points the build script at Wolfi's protoc.
+  - runs: |
+      cd qdrant
+      export PROTOC="$(command -v protoc)"
+      cargo build --release --locked --bin qdrant
+      install -Dm0755 target/release/qdrant "${{targets.destdir}}/usr/bin/qdrant"
+
+  # Vendor the prebuilt web dashboard into /opt/qdrant/static (the dir the entrypoint
+  # points the binary at via QDRANT__SERVICE__STATIC_CONTENT_DIR). Same source as
+  # upstream's sync-web-ui.sh: the qdrant-web-ui dist-qdrant.zip, checksum-verified.
+  # The zip's dist/ holds index.html + assets + openapi.json; we flatten dist/ into
+  # the static dir exactly as upstream does.
+  - runs: |
+      VER="${{vars.web-ui-tag}}"
+      sha=46bb39569f46dd578a8060e91ce972e4feb92f1b2439fc4e63b1909e055914b7
+      url="https://github.com/qdrant/qdrant-web-ui/releases/download/${VER}/dist-qdrant.zip"
+      curl -fsSL -o dist-qdrant.zip "$url"
+      echo "${sha}  dist-qdrant.zip" | sha256sum -c -
+      install -d "${{targets.destdir}}/opt/qdrant/static"
+      unzip -o dist-qdrant.zip -d webui
+      cp -r webui/dist/* "${{targets.destdir}}/opt/qdrant/static/"
+
+  # Ship the upstream default config (production.yaml) so Qdrant has a sane base
+  # config; the entrypoint + env overrides pin storage/snapshots/static to writable
+  # mounts on top of it.
+  - runs: |
+      install -d "${{targets.destdir}}/opt/qdrant/config"
+      install -m0644 qdrant/config/config.yaml "${{targets.destdir}}/opt/qdrant/config/config.yaml"
+
+  - runs: |
+      # Thin entrypoint. Qdrant defaults storage to ./storage and snapshots to
+      # ./snapshots relative to the working dir, which fails on a read-only rootfs
+      # unless pinned to a writable mount. We pin them via Qdrant's env-config
+      # mechanism (QDRANT__STORAGE__STORAGE_PATH / __SNAPSHOTS_PATH) to a writable
+      # dir (default /qdrant/storage and /qdrant/snapshots), and point the web UI at
+      # the bundled static dir. Extra flags pass through via "$@".
+      install -d "${{targets.destdir}}/usr/local/bin"
+      cat > "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh" <<'SCRIPT'
+      #!/bin/bash
+      set -euo pipefail
+
+      STORAGE_PATH="${QDRANT__STORAGE__STORAGE_PATH:-/qdrant/storage}"
+      SNAPSHOTS_PATH="${QDRANT__STORAGE__SNAPSHOTS_PATH:-/qdrant/snapshots}"
+      mkdir -p "$STORAGE_PATH" "$SNAPSHOTS_PATH"
+
+      export QDRANT__STORAGE__STORAGE_PATH="$STORAGE_PATH"
+      export QDRANT__STORAGE__SNAPSHOTS_PATH="$SNAPSHOTS_PATH"
+      # Serve the bundled web dashboard from the vendored static dir.
+      export QDRANT__SERVICE__STATIC_CONTENT_DIR="${QDRANT__SERVICE__STATIC_CONTENT_DIR:-/opt/qdrant/static}"
+
+      exec /usr/bin/qdrant --config-path /opt/qdrant/config/config.yaml "$@"
+      SCRIPT
+      chmod 0755 "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/bin/qdrant
+        qdrant --version
+        test -x /usr/local/bin/docker-entrypoint.sh
+        test -f /opt/qdrant/static/index.html
