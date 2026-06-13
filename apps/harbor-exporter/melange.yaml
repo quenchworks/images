@@ -60,6 +60,12 @@ pipeline:
       # bump the two laggards to v1.43.0 (the fixed version) to clear the gate.
       go get go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.43.0
       go get go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.43.0
+      # CVE-2026-35206 (helm): helm.sh/helm/v3 v3.18.5 -> v3.20.2 (fixed).
+      # (No `go mod tidy`: exporter does not generate the swagger restapi
+      # packages that the core handler imports, so a full-module tidy fails on
+      # those missing generated dirs; `go get` + `go build ./cmd/exporter` only
+      # resolves what the exporter actually imports.)
+      go get helm.sh/helm/v3@v3.20.2
       GITCOMMIT="v${{package.version}}"
       LDFLAGS="-w -s \
         -X github.com/goharbor/harbor/src/pkg/version.GitCommit=${GITCOMMIT} \
