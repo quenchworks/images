@@ -1,0 +1,44 @@
+# Assembles the BusyBox toolbox/base image from our own from-source package plus a
+# minimal Wolfi base. No Dockerfile. Minimal, nonroot, multi-arch, SBOM by apko.
+#
+# IMAGE-ONLY — no Helm chart. This is a hardened minimal base/toolbox image: the
+# 0-CVE, signed, nonroot, multi-arch answer to `busybox:latest`. Use it as a base
+# layer, a debug/toolbox container, or an initContainer. Read-only-rootfs friendly:
+# busybox needs nothing writable; mount a writable /tmp if your workload needs one.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-busybox@local
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# Interactive toolbox default. busybox dispatches the applet from argv[0]/argv[1],
+# so `/bin/sh` lands you in the busybox shell; override the command for any applet.
+entrypoint:
+  command: /bin/sh
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-busybox"
+  org.opencontainers.image.licenses: "GPL-2.0-only"

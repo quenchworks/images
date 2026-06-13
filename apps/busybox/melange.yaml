@@ -1,0 +1,84 @@
+# Builds BusyBox from the official upstream source onto Wolfi. Output is a signed
+# APK in Quenchworks' own repo. No upstream distro binaries. BusyBox is a single
+# multi-call binary that implements a broad set of POSIX userland applets (sh, ls,
+# cat, sed, grep, awk, wget, ...) — the from-source provenance is the point here.
+package:
+  name: quench-busybox
+  version: 1.38.0
+  epoch: 0
+  description: "Quenchworks hardened BusyBox, built from source on Wolfi"
+  copyright:
+    - license: GPL-2.0-only
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - bzip2
+      - ca-certificates-bundle
+      - linux-headers
+      - perl
+      - openssl-dev
+
+pipeline:
+  - uses: fetch
+    with:
+      # Official busybox.net release tarball; checksum from busybox.net/downloads.
+      uri: https://busybox.net/downloads/busybox-${{package.version}}.tar.bz2
+      expected-sha256: "34f9ea6ff8636f2c9241153b9114eefa9e65674a45318ae1ef95bb5f31c53bb2"
+  - runs: |
+      # Some environments leave a stray `.config` directory in the tree which makes
+      # busybox's Kconfig choke ("`.config: Is a directory`"). Clear it first.
+      rm -rf .config
+      # Start from defconfig (a broad, sane applet set), then turn off applets that
+      # are kernel/distro plumbing (modutils, fdisk, etc.) or that don't build cleanly
+      # as a portable container userland. We build glibc-dynamic against Wolfi's libc:
+      # the apko runtime already ships glibc, so this stays tiny and 0-CVE.
+      make defconfig
+
+      # Drop applets that are inappropriate or fragile in a container toolbox.
+      disable() { sed -i "s/^CONFIG_$1=y/# CONFIG_$1 is not set/" .config; }
+      # tc has had GCC-version build breakage upstream; not useful in a container.
+      disable TC
+      # Kernel module tooling — meaningless in a container.
+      disable MODPROBE_SMALL
+      disable INSMOD
+      disable RMMOD
+      disable LSMOD
+      disable MODPROBE
+      disable DEPMOD
+      disable MODINFO
+      # The applets disabled above have no other symbols depending on them, so the
+      # edited .config is internally consistent; busybox's Kconfig has no
+      # `olddefconfig` target, so we build directly from it. Any unknown symbol would
+      # only be dropped, never prompt, since we feed empty answers if a prompt arises.
+      yes '' 2>/dev/null | make oldconfig >/dev/null 2>&1 || true
+
+      make -j"$(nproc)" busybox
+
+      # Wolfi is a usrmerge distro: real files live under /usr/bin and /bin is a
+      # symlink to /usr/bin (provided by wolfi-baselayout in the runtime image).
+      # Install the binary plus an applet symlink per compiled-in applet under
+      # /usr/bin, all pointing at /usr/bin/busybox.
+      install -Dm0755 busybox "${{targets.destdir}}/usr/bin/busybox"
+      ./busybox --list | while read -r applet; do
+        case "$applet" in
+          busybox) continue ;;
+        esac
+        ln -sf /usr/bin/busybox "${{targets.destdir}}/usr/bin/${applet}"
+      done
+
+test:
+  pipeline:
+    - runs: |
+        /usr/bin/busybox | head -1
+        /usr/bin/busybox sh -c 'echo ok'
+        [ -L /usr/bin/ls ] && echo "applet symlinks present"
