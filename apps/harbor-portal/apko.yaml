@@ -1,0 +1,55 @@
+# Assembles the Harbor portal runtime image: QuenchWorks' own hardened nginx
+# serving the prebuilt Angular SPA + Swagger UI static assets. Minimal, nonroot
+# (uid 1001), multi-arch, SBOM by apko. NO Node / JS toolchain in the runtime --
+# only nginx + the compiled static files, so the Trivy scan surface is just nginx.
+#
+# The quench-harbor-portal package ships the assets at /opt/harbor/portal (a
+# portal-owned root, so it does not collide with the sample index.html the shared
+# quench-nginx package puts in /usr/share/nginx/html) and the portal nginx.conf
+# at /etc/nginx/harbor-portal.conf (vendored from Harbor v2.14.4, rendered
+# non-TLS: listen 8080, SPA fallback, Swagger UI at /devcenter-api-2.0).
+# We reuse the same quench-nginx package the standalone nginx image is built from
+# (built into ./packages in the same CI job), NOT docker.io/nginx. nginx writes
+# its pid + all temp paths under /tmp; mount /tmp as a writable tmpfs on a
+# read-only rootfs. Listens on :8080 (nonroot can't bind <1024); the chart's
+# Service maps it. Health: GET / -> 200 (serves the SPA index.html).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-nginx@local            # our hardened nginx (built from source), not docker.io/nginx
+    - quench-harbor-portal@local    # the prebuilt SPA + Swagger UI assets + portal nginx.conf
+
+accounts:
+  groups:
+    - groupname: nginx
+      gid: 1001
+  users:
+    - username: nginx
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# nginx runs in the foreground (daemon off; is in the portal nginx.conf), so we
+# invoke nginx directly with the portal config. No shell wrapper needed.
+entrypoint:
+  command: /usr/bin/nginx -c /etc/nginx/harbor-portal.conf
+
+work-dir: /opt/harbor/portal
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-harbor-portal"
+  org.opencontainers.image.licenses: "Apache-2.0"

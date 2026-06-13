@@ -1,0 +1,215 @@
+# Builds the Harbor portal (the web UI) as a set of *static assets* on Wolfi.
+#
+# Harbor's portal is an Angular 16 SPA (src/portal/) plus a bundled Swagger UI
+# (src/portal/app-swagger-ui/) generated from the Harbor v2.0 OpenAPI spec
+# (api/v2.0/swagger.yaml). Upstream compiles all of this with a Node toolchain
+# (NODEBUILDIMAGE=node:16.18.0 in the repo Makefile) and then serves the
+# compiled output with nginx (make/photon/portal/Dockerfile). We faithfully
+# reproduce that build in the *melange build sandbox* and ship ONLY the produced
+# static files in this package -- no Node, npm, Angular or any JS toolchain ever
+# lands in the runtime image, so Node never enters the Trivy scan surface. The
+# runtime image (apko.yaml) is QuenchWorks' own hardened nginx serving these
+# assets on :8080.
+#
+# Upstream's portal Dockerfile build, reproduced step-for-step below:
+#   COPY api/v2.0/swagger.yaml -> /build_dir/swagger.yaml
+#   npm install              (postinstall: convert-yaml-to-json + ng-swagger-gen)
+#   npm run generate-build-timestamp
+#   node --max_old_space_size=2048 node_modules/@angular/cli/bin/ng build \
+#        --configuration production            -> dist/
+#   js-yaml swagger.yaml -> swagger.json
+#   cd app-swagger-ui && npm install && npm run build   -> app-swagger-ui/dist/
+#   the three outputs (dist/, swagger.json, app-swagger-ui/dist/) are copied
+#   into /usr/share/nginx/html.
+package:
+  name: quench-harbor-portal
+  version: 2.14.4
+  epoch: 0
+  description: "Quenchworks hardened Harbor portal (Angular SPA + Swagger UI), built from source, served as static assets by nginx"
+  copyright:
+    - license: Apache-2.0
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - bash
+      - ca-certificates-bundle
+      - findutils
+      # Upstream pins NODEBUILDIMAGE=node:16.18.0 (Angular 16 toolchain). Wolfi
+      # neither node-16 nor node-18 bundles npm, and the only Wolfi `npm` package
+      # is v11 which requires Node >= 20; so the supported toolchain pairing here
+      # is nodejs-20 + npm. Angular 16's CLI runs cleanly on Node 20 (it only
+      # warns about its officially-listed 16/18 matrix, the production build
+      # succeeds). The build is large + memory-hungry (we set --max_old_space_size
+      # like upstream). Node/npm live ONLY in this sandbox; nothing JS ships.
+      - nodejs-20
+      - npm
+      # python3 is occasionally pulled by node-gyp for native addons during npm
+      # install; include it so the install never fails reaching for a compiler.
+      - python3
+
+pipeline:
+  # git-checkout (not fetch): building from the pinned git tag avoids the
+  # codeload.github.com auto-tarball (whose sha256 is not stable) and is the
+  # robust source for a repo this size. The checkout carries both the portal
+  # sources (src/portal/, src/portal/app-swagger-ui/) and the OpenAPI spec
+  # (api/v2.0/swagger.yaml) we need.
+  - uses: git-checkout
+    with:
+      repository: https://github.com/goharbor/harbor
+      tag: v${{package.version}}
+      expected-commit: 79a297f760eb9596c8693727b88c3c568f9c6302
+
+  - name: Build the Angular SPA + Swagger UI (Node sandbox), reproducing the portal Dockerfile
+    runs: |
+      set -eu
+      # npm needs a writable cache + HOME inside the sandbox.
+      export npm_config_cache="$(mktemp -d)"
+      export HOME="$(mktemp -d)"
+      export NPM_CONFIG_REGISTRY="https://registry.npmjs.org"
+
+      cd src/portal
+
+      # Upstream copies api/v2.0/swagger.yaml to the portal build dir as
+      # swagger.yaml BEFORE npm install: the postinstall script
+      # (scripts/convert-yaml-to-json.js) prefers ./swagger.yaml when present and
+      # feeds it to ng-swagger-gen to generate the typed API client. Without it
+      # the postinstall reads the dev relative path; copying it matches the
+      # production container build exactly.
+      cp ../../api/v2.0/swagger.yaml ./swagger.yaml
+
+      # `npm install --unsafe-perm` EXACTLY as upstream's portal Dockerfile -- not
+      # `npm ci`: the committed package-lock.json is not in strict sync with
+      # package.json (e.g. cytoscape/d3-selection are resolved at install time),
+      # which `npm ci` rejects but `npm install` reconciles, matching the upstream
+      # production build. The esbuild/vite optional deps are os/cpu-keyed npm
+      # optionalDependencies (@esbuild/linux-x64, @esbuild/linux-arm64, ...), so
+      # npm installs the correct native binary per arch automatically on both the
+      # amd64 and arm64 native runners -- no per-arch shim needed (unlike the
+      # alertmanager elm case). Runs the postinstall (ng-swagger-gen) faithfully.
+      npm install --unsafe-perm
+
+      # Stamp the production build timestamp into environment.prod.ts (upstream
+      # `npm run generate-build-timestamp`).
+      npm run generate-build-timestamp
+
+      # Angular production build -> dist/. Heap bumped exactly as upstream.
+      node --max_old_space_size=2048 'node_modules/@angular/cli/bin/ng' \
+        build --configuration production
+
+      # Generate swagger.json from the OpenAPI yaml (upstream uses js-yaml 4.1.0,
+      # already resolved in the dep tree) for the Swagger UI to consume.
+      node -e "const yaml=require('js-yaml');const fs=require('fs');const s=yaml.load(fs.readFileSync('swagger.yaml','utf8'));fs.writeFileSync('swagger.json',JSON.stringify(s));"
+
+      # Ship the upstream LICENSE into the built SPA dir, as the Dockerfile does.
+      cp ../../LICENSE dist/ 2>/dev/null || true
+
+      # Build the bundled Swagger UI (webpack); produces app-swagger-ui/dist with
+      # swagger-ui-index.html (the build script renames index.html so it does not
+      # clash with the SPA's index.html).
+      cd app-swagger-ui
+      npm install --unsafe-perm
+      npm run build
+      cd ..
+
+      # Assemble the web root, mirroring the portal Dockerfile's three COPYs (it
+      # copies dist/, swagger.json and app-swagger-ui/dist/ into the served root).
+      # We use a portal-OWNED root (/opt/harbor/portal) rather than
+      # /usr/share/nginx/html so this package does not collide with the default
+      # index.html/50x.html that the shared quench-nginx package ships in
+      # /usr/share/nginx/html; the portal nginx.conf points `root` here.
+      webroot="${{targets.destdir}}/opt/harbor/portal"
+      install -d "$webroot"
+      cp -a dist/. "$webroot"/
+      cp -a swagger.json "$webroot"/swagger.json
+      cp -a app-swagger-ui/dist/. "$webroot"/
+
+      # Sanity: the SPA entrypoint and the swagger UI entrypoint must both exist.
+      test -f "$webroot/index.html"
+      test -f "$webroot/swagger-ui-index.html"
+      test -f "$webroot/swagger.json"
+
+  - name: Install the portal nginx config (nonroot / read-only-rootfs, port 8080)
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      # Vendored from make/photon/prepare/templates/portal/nginx.conf.jinja at
+      # v2.14.4 (the non-TLS branch -- internal_tls disabled; TLS is the chart's
+      # job and would listen 8443 with mounted certs). Adapted only by being
+      # rendered (no jinja): listens on 8080 (nonroot can't bind <1024), root at
+      # /opt/harbor/portal, SPA fallback to /index.html, and the Swagger UI at
+      # /devcenter-api-2.0 -> /swagger-ui-index.html. All temp paths + pid already
+      # live under /tmp upstream, so it is read-only-rootfs friendly as-is. We add
+      # `daemon off;` + log to stdout/stderr so nginx runs in the foreground as
+      # PID 1 and logs to the container streams.
+      # Shipped at a portal-specific path (not /etc/nginx/nginx.conf) so it does
+      # not collide with the default nginx.conf that the quench-nginx package
+      # installs; the apko entrypoint runs `nginx -c /etc/nginx/harbor-portal.conf`.
+      install -d "$destdir/etc/nginx"
+      cat > "$destdir/etc/nginx/harbor-portal.conf" <<'EOF'
+      # Quenchworks Harbor portal nginx config. Vendored from Harbor v2.14.4
+      # make/photon/prepare/templates/portal/nginx.conf.jinja (non-TLS branch),
+      # adapted for nonroot (uid 1001) + read-only rootfs: foreground (daemon off),
+      # pid + all temp paths under /tmp (writable tmpfs), logs to stdout/stderr.
+      worker_processes auto;
+      pid /tmp/nginx.pid;
+      daemon off;
+      error_log /dev/stderr notice;
+
+      events {
+          worker_connections  1024;
+      }
+
+      http {
+          include /etc/nginx/mime.types;
+          default_type application/octet-stream;
+
+          client_body_temp_path /tmp/client_body_temp;
+          proxy_temp_path /tmp/proxy_temp;
+          fastcgi_temp_path /tmp/fastcgi_temp;
+          uwsgi_temp_path /tmp/uwsgi_temp;
+          scgi_temp_path /tmp/scgi_temp;
+
+          access_log /dev/stdout;
+
+          server {
+              listen 8080;
+              server_name  localhost;
+
+              root   /opt/harbor/portal;
+              index  index.html index.htm;
+
+              gzip on;
+              gzip_min_length 1000;
+              gzip_proxied expired no-cache no-store private auth;
+              gzip_types text/plain text/css application/json application/javascript application/x-javascript text/xml application/xml application/xml+rss text/javascript;
+
+              location /devcenter-api-2.0 {
+                  try_files $uri $uri/ /swagger-ui-index.html;
+              }
+
+              location / {
+                  try_files $uri $uri/ /index.html;
+              }
+
+              location = /index.html {
+                  add_header Cache-Control "no-store, no-cache, must-revalidate";
+              }
+          }
+      }
+      EOF
+
+test:
+  pipeline:
+    - runs: |
+        # The package is pure static assets + an nginx.conf; assert they exist.
+        test -f /opt/harbor/portal/index.html
+        test -f /opt/harbor/portal/swagger-ui-index.html
+        test -f /opt/harbor/portal/swagger.json
+        test -f /etc/nginx/harbor-portal.conf
