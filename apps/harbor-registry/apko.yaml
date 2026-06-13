@@ -1,0 +1,62 @@
+# Assembles the Harbor registry runtime image. Minimal, nonroot, multi-arch,
+# read-only-rootfs friendly, SBOM by apko. ONE Go binary (registry) from the
+# goharbor/distribution fork (the redis-patched Docker distribution Harbor ships).
+#
+# Entry point: `registry serve /etc/registry/config.yml`. The image ships only a
+# MINIMAL sample config.yml (filesystem storage at /storage, HTTP :5000, debug/
+# metrics :5001, no auth) so it boots standalone for the smoke test. In a Harbor
+# deployment the CHART mounts the real /etc/registry/config.yml plus the
+# htpasswd at /etc/registry/passwd and the Harbor core token-service cert at
+# /etc/registry/root.crt.
+#
+# Ports: 5000 (HTTP registry API + /v2/), 5001 (debug/pprof + Prometheus metrics).
+# Storage: filesystem driver rootdirectory /storage -> a writable mount (chart PVC).
+# Read-only rootfs: writable paths are /storage (the blob store) and /tmp only.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - busybox
+    - ca-certificates-bundle
+    - quench-harbor-registry@local
+
+accounts:
+  groups:
+    - groupname: registry
+      gid: 1001
+  users:
+    - username: registry
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/registry serve /etc/registry/config.yml
+
+# /storage is the filesystem-driver root (chart mounts a writable PVC here);
+# create it owned by the nonroot user so a standalone boot can write under a
+# read-only rootfs when /storage is a writable volume.
+paths:
+  - path: /storage
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+# Advisory only -- the chart's Service sets the actual ports.
+# 5000 HTTP API, 5001 debug/metrics.
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "harbor-registry"
+  org.opencontainers.image.licenses: "Apache-2.0"
