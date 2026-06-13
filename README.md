@@ -5,16 +5,28 @@ The image factory. Builds hardened container images from source on
 and [apko](https://github.com/chainguard-dev/apko), scans them with a hard 0-CVE gate, signs them
 with cosign, and publishes to GHCR.
 
-Part of [Quenchworks](https://github.com/quenchworks). See the org profile for the full picture.
+Part of [Quenchworks](https://github.com/quenchworks). Browse the catalog at
+[quenchworks.mkabumattar.com/images](https://quenchworks.mkabumattar.com/images).
+
+## What ships here
+
+**29 images** across databases, caches, search, message queues, coordination, and metrics. Every one:
+
+- is **built from source** (no Dockerfile, nothing inherited from another distro); where an upstream
+  is infeasible to compile in CI (ClickHouse, ScyllaDB, CockroachDB, Dragonfly, MongoDB), we ship
+  the project's own official binary and harden the base around it,
+- passes a hard **0 fixable CVE** gate (Trivy, fail-on-fixable) before anything is published,
+- runs as **nonroot (uid 1001)** on a **read-only root filesystem**,
+- is **multi-arch**: a linux/amd64 + linux/arm64 index, signed and pinned by digest,
+- ships an **SBOM** and is **cosign-signed** (keyless OIDC).
 
 ## Layout
 
 ```
-catalog.yaml                 source of truth: app, version, source, license, tier
+catalog.yaml                 source of truth: app, version, source, license, tier, status
 apps/<app>/melange.yaml      build the package from source
 apps/<app>/apko.yaml         assemble the minimal nonroot image
 apps/<app>/test.sh           smoke test the built image
-manifests/<app>.json         output: { repository, digest, builtAt } per app
 .github/workflows/           per-app build, scan, sign, dispatch
 ```
 
@@ -24,9 +36,11 @@ manifests/<app>.json         output: { repository, digest, builtAt } per app
 2. apko assembles a minimal, nonroot, multi-arch image and writes it to a local tar.
 3. Trivy scans that tar with `--exit-code 1 --ignore-unfixed`. A fixable CVE fails the build, and
    nothing is published.
-4. Only after the gate passes, apko publishes to `ghcr.io/quenchworks/images/<app>`.
+4. Only after the gate passes, apko publishes to `ghcr.io/quenchworks/images/<app>` as a multi-arch
+   index.
 5. cosign signs the digest (keyless).
-6. The digest is written to `manifests/<app>.json`, and a dispatch tells the charts repo to repin.
+6. A dispatch tells the [charts](https://github.com/quenchworks/charts) repo to repin the matching
+   chart to the new digest.
 
 The build runs on change and once a day, so a clean scan stays true rather than aging out.
 
@@ -44,10 +58,12 @@ Add a row to `catalog.yaml`, then create `apps/<app>/` with a melange build, an 
 test. Charts are authored separately in the [charts](https://github.com/quenchworks/charts) repo,
 from each app's own upstream docs. See [CONTRIBUTING](https://github.com/quenchworks/.github/blob/main/CONTRIBUTING.md).
 
-## Two placeholders before the first build
+## A note on licensing
 
-- `apps/redis/melange.yaml`: set the real `expected-sha256` for the pinned source tarball.
-- Repo secret: `CHARTS_DISPATCH_TOKEN` (lets the build notify the charts repo to repin).
+Most of the catalog is OSI-clean. Four datastores are source-available and carried with a loud
+license note in `catalog.yaml` and on the website, because they are **not** OSI-approved open source:
+MongoDB and Elasticsearch (SSPL-1.0), CockroachDB and Dragonfly (BSL-1.1). Each names the clean
+alternative we recommend instead (Valkey, OpenSearch, FerretDB + DocumentDB).
 
 ## License
 
