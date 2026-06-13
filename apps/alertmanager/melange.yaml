@@ -60,18 +60,32 @@ pipeline:
   - name: Build the web UI from source (Node), reproducing the ui/app build
     runs: |
       set -eu
-      # vite-plugin-elm downloads/uses the elm compiler binary; needs a writable
-      # npm cache and HOME (both writable in the sandbox).
+      # vite-plugin-elm uses node-elm-compiler, which spawns whatever `elm` is on
+      # PATH. Needs a writable npm cache and HOME (both writable in the sandbox).
       export npm_config_cache="$(mktemp -d)"
       export HOME="$(mktemp -d)"
-      # ui-install: deterministic install from the committed package-lock.json.
-      # --foreground-scripts runs lifecycle scripts inline so the elm binary
-      # (fetched in a postinstall) is available for `vite build`.
-      ( cd ui/app && npm ci --foreground-scripts )
-      # ui-build: `npm run build` == `vite build`, which compiles the Elm SPA and
-      # writes the gzip/brotli-compressed bundle into ui/app/dist (per the
-      # vite-plugin-compression2 config). ui/web.go's //go:embed app/dist picks it up.
-      ( cd ui/app && npm run build )
+      (
+        cd ui/app
+        # ui-install: deterministic install from the committed package-lock.json,
+        # but with --ignore-scripts. The upstream `elm` npm package's postinstall
+        # downloads a prebuilt compiler from GitHub keyed on process.arch, and
+        # Elm 0.19.1 ships NO official linux/arm64 binary (the URL resolves to
+        # binary-for-linux-undefined.gz -> a 404 -> the build fails on aarch64).
+        # We skip that download and supply the compiler ourselves below.
+        npm ci --ignore-scripts
+        # Supply a real per-arch Elm 0.19.1 compiler via @lydell/elm, whose
+        # platform optionalDependencies include @lydell/elm_linux_arm64 and
+        # _linux_x64 (statically-linked native binaries). Its node_modules/.bin/elm
+        # launcher selects the right one; putting it first on PATH makes
+        # node-elm-compiler (default pathToElm="elm") use it for both arches.
+        npm install --no-save --no-package-lock @lydell/elm@0.19.1-14
+        export PATH="$(pwd)/node_modules/.bin:${PATH}"
+        elm --version
+        # ui-build: `npm run build` == `vite build`, which compiles the Elm SPA and
+        # writes the gzip/brotli-compressed bundle into ui/app/dist (per the
+        # vite-plugin-compression2 config). ui/web.go's //go:embed app/dist picks it up.
+        npm run build
+      )
       # Sanity: ensure the embed target exists before the Go build. The vite
       # compression plugin runs with deleteOriginalAssets, so the served files
       # are index.html.gz / index.html.br (web.go negotiates encoding); assert
