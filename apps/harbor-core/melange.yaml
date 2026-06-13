@@ -105,15 +105,42 @@ pipeline:
         -o "${{targets.destdir}}/usr/bin/harbor_core" ./core
       cd ..
 
+      # Runtime static assets the core binary reads via RELATIVE paths resolved
+      # against its working directory (which we pin to /harbor below). Mirror
+      # upstream make/photon/core/Dockerfile's /harbor layout:
+      #   - migrations/postgresql/*.up.sql : golang-migrate opens the source
+      #     "file://migrations/postgresql/" (src/common/dao/pgsql.go
+      #     defaultMigrationPath = "migrations/postgresql/") at startup. WITHOUT
+      #     this tree at the workdir-relative path, core FATALs on boot with
+      #     `failed to open source, "file://migrations/postgresql/"`.
+      #     Upstream source path: make/migrations/postgresql -> /harbor/migrations.
+      #   - views/ : beego templates (404.tpl, reset-password-mail.tpl) rendered
+      #     at runtime (src/core/controllers/error.go TplName="404.tpl"); beego
+      #     resolves the views dir relative to the workdir.
+      #   - icons/ : artifact-type icons served at runtime.
+      # All three are static, read-only data -- fine on a read-only rootfs.
+      install -d "${{targets.destdir}}/harbor/migrations"
+      cp -r make/migrations/* "${{targets.destdir}}/harbor/migrations/"
+      install -d "${{targets.destdir}}/harbor/views"
+      cp -r src/core/views/* "${{targets.destdir}}/harbor/views/"
+      install -d "${{targets.destdir}}/harbor/icons"
+      cp -r icons/* "${{targets.destdir}}/harbor/icons/"
+      # Normalize perms on the baked static tree (dirs 0755, files 0644).
+      find "${{targets.destdir}}/harbor" -type d -exec chmod 0755 {} +
+      find "${{targets.destdir}}/harbor" -type f -exec chmod 0644 {} +
+
       # license for provenance
       install -d "${{targets.destdir}}/usr/share/doc/harbor-core"
       cp LICENSE "${{targets.destdir}}/usr/share/doc/harbor-core/" 2>/dev/null || true
 
-      # Thin entrypoint: exec harbor_core. Config comes entirely from the chart
-      # (env + mounted ConfigMap/Secret); this image ships NO live config.
+      # Thin entrypoint: cd to /harbor (the upstream core image WORKDIR) so the
+      # binary's relative source path "file://migrations/postgresql/" and beego's
+      # relative "views"/"icons" dirs resolve, then exec harbor_core. Config comes
+      # entirely from the chart (env + mounted ConfigMap/Secret); ships NO config.
       cat > "${{targets.destdir}}/usr/bin/docker-entrypoint.sh" <<'EOS'
       #!/bin/sh
       set -eu
+      cd /harbor
       exec /usr/bin/harbor_core "$@"
       EOS
       chmod 0755 "${{targets.destdir}}/usr/bin/docker-entrypoint.sh"
@@ -126,3 +153,10 @@ test:
         # No --version flag upstream: the release string is stamped into
         # version.ReleaseVersion and logged at startup. Assert it's embedded.
         strings /usr/bin/harbor_core | grep -q 'v2.14.4'
+        # The migration source tree MUST be baked at the workdir-relative path
+        # or core FATALs on boot opening "file://migrations/postgresql/".
+        test -d /harbor/migrations/postgresql
+        ls /harbor/migrations/postgresql/*.up.sql >/dev/null
+        # Runtime templates/icons present too (avoid a second missing-file FATAL).
+        test -f /harbor/views/404.tpl
+        test -d /harbor/icons

@@ -40,6 +40,12 @@ accounts:
 entrypoint:
   command: /usr/bin/docker-entrypoint.sh
 
+# Pin the working directory to /harbor (mirrors upstream's photon core image
+# WORKDIR) so the core binary's RELATIVE startup paths resolve: golang-migrate
+# opens "file://migrations/postgresql/" and beego reads "views"/"icons" relative
+# to the cwd. The baked static tree lives at /harbor/{migrations,views,icons}.
+work-dir: /harbor
+
 archs:
   - x86_64
   - aarch64
