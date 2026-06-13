@@ -1,0 +1,67 @@
+# Builds Traefik from source onto Wolfi. Single static Go binary (CGO disabled),
+# multi-arch. Output is a signed APK in Quenchworks' own repo. No upstream distro
+# binaries.
+#
+# Traefik is a cloud-native edge router / reverse proxy and ingress controller.
+# The dashboard/webui is a prebuilt static bundle shipped inside the release
+# source tarball under webui/static and embedded into the binary via
+# `//go:embed static` (webui/embed.go). That means NO Node toolchain is needed at
+# build time -- we build from the release .src.tar.gz which already contains the
+# generated assets, so the embedded FS serves the dashboard.
+#
+# We deliberately skip upstream's `go generate` step: it only writes Markdown
+# reference docs under docs/ (internal/gendoc.go), nothing the binary compilation
+# depends on.
+package:
+  name: quench-traefik
+  version: 3.7.5
+  epoch: 0
+  description: "Quenchworks hardened Traefik (cloud-native edge router / reverse proxy & ingress controller), built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      # go.mod requires go >= 1.25.0; use the current go-1.26 toolchain to pick up
+      # the latest stdlib CVE fixes (clears the Trivy gate without manual bumps).
+      - go-1.26
+
+pipeline:
+  # Build from the official release source tarball, which already contains the
+  # prebuilt webui/static dashboard bundle (so the embedded FS serves the UI
+  # without Node). Pinned to the published asset; verified by sha256.
+  - uses: fetch
+    with:
+      uri: https://github.com/traefik/traefik/releases/download/v${{package.version}}/traefik-v${{package.version}}.src.tar.gz
+      expected-sha256: 09e44f902945eeced6521c0e561c31c3bdf19f82882945aca049ae31a8e9055d
+  - runs: |
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local
+      # Stamp version/codename/date exactly like upstream's Makefile so
+      # `traefik version` reports the pinned release. Codename "cheddar" matches
+      # the upstream default for the v3 line.
+      DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      LDFLAGS="-s -w \
+        -X github.com/traefik/traefik/v3/pkg/version.Version=${{package.version}} \
+        -X github.com/traefik/traefik/v3/pkg/version.Codename=cheddar \
+        -X github.com/traefik/traefik/v3/pkg/version.BuildDate=${DATE}"
+      go build -trimpath -ldflags "${LDFLAGS}" \
+        -installsuffix nocgo \
+        -o "${{targets.destdir}}/usr/bin/traefik" ./cmd/traefik
+
+test:
+  pipeline:
+    - runs: |
+        traefik version

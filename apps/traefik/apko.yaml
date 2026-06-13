@@ -1,0 +1,49 @@
+# Assembles the Traefik runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+#
+# Traefik is configured by CLI flags / a static config file mounted by the chart.
+# The entrypoint is the binary directly (/usr/bin/traefik) -- no shell wrapper
+# needed; Traefik ships a `traefik healthcheck` subcommand and a `/ping` endpoint
+# for liveness, so probes do not require a shell. busybox is included only to give
+# operators a minimal shell for debugging and is not on the entrypoint path.
+#
+# Read-only rootfs friendly: Traefik writes nothing to the rootfs by default. When
+# ACME/Let's Encrypt is enabled the chart mounts a writable volume for acme.json;
+# the base image does not presume a storage path.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - busybox
+    - ca-certificates-bundle
+    - quench-traefik@local
+
+accounts:
+  groups:
+    - groupname: traefik
+      gid: 1001
+  users:
+    - username: traefik
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/traefik
+
+# Default ports: 80 web, 443 websecure, 8080 dashboard/api (when enabled).
+# Advisory only -- the chart sets the actual entryPoints.
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-traefik"
+  org.opencontainers.image.licenses: "MIT"
