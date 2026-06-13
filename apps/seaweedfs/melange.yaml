@@ -1,0 +1,109 @@
+# Builds SeaweedFS (the single `weed` binary) from source onto Wolfi. Single
+# static Go binary, no CGO. Output is a signed APK in Quenchworks' own repo.
+# No upstream distro binaries.
+#
+# SeaweedFS is a distributed file/object store with an S3-compatible API. This
+# is QuenchWorks' default object-storage pick (MinIO gutted its community
+# edition in 2025). We ship the single-process `weed server -s3` model: one
+# binary runs master + volume + filer + the S3 gateway together.
+package:
+  name: quench-seaweedfs
+  version: 4.33
+  epoch: 0
+  description: "Quenchworks hardened SeaweedFS (S3-compatible object store), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      # go.mod requires go >= 1.25; pin a concrete recent toolchain (newest gets
+      # the latest std-lib security fixes, which matters for the 0-CVE gate).
+      - go-1.26
+
+pipeline:
+  # git-checkout, not fetch: building from the pinned git tag avoids the
+  # codeload.github.com CDN entirely (some upstream CDNs 403 GitHub Actions IPs),
+  # and is the robust source for a repo this size.
+  - uses: git-checkout
+    with:
+      repository: https://github.com/seaweedfs/seaweedfs
+      tag: ${{package.version}}
+      expected-commit: 55010be19b6755d72b4de6ace2072417f70aa72f
+  - runs: |
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local
+      # COMMIT is consumed by `weed version` / Prometheus metrics. The
+      # VERSION_NUMBER is compiled in from weed/util/version/constants.go, so we
+      # only need to stamp the commit. Build the single `weed` main package.
+      LDFLAGS="-s -w -X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=${{package.version}}"
+      go build -trimpath -ldflags "${LDFLAGS}" \
+        -o "${{targets.destdir}}/usr/bin/weed" ./weed
+  - runs: |
+      # Thin entrypoint. SeaweedFS writes all state under -dir, which fails on a
+      # read-only rootfs unless pinned to a writable mount (SEAWEED_DATA_DIR,
+      # default /data). The single-process `weed server -s3` starts master,
+      # volume, filer, and the S3 gateway together; the S3 API is on :8333.
+      #
+      # S3 credentials: if SEAWEED_S3_ACCESS_KEY + SEAWEED_S3_SECRET_KEY are set,
+      # we write a minimal s3 identities config granting that key Admin and pass
+      # -s3.config. If unset, S3 runs open (anonymous) -- the NetworkPolicy is the
+      # security boundary, consistent with the catalog posture. Extra flags pass
+      # through via "$@".
+      install -d "${{targets.destdir}}/usr/local/bin"
+      cat > "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh" <<'SCRIPT'
+      #!/bin/sh
+      set -eu
+      SEAWEED_DATA_DIR="${SEAWEED_DATA_DIR:-/data}"
+      SEAWEED_S3_PORT="${SEAWEED_S3_PORT:-8333}"
+      mkdir -p "${SEAWEED_DATA_DIR}"
+
+      set -- server \
+        -dir="${SEAWEED_DATA_DIR}" \
+        -s3 \
+        -s3.port="${SEAWEED_S3_PORT}" \
+        -ip.bind=0.0.0.0 \
+        "$@"
+
+      # Optional hardened S3 auth from env: build an identities config granting
+      # the admin key full access. Without it, S3 is open (anonymous).
+      if [ -n "${SEAWEED_S3_ACCESS_KEY:-}" ] && [ -n "${SEAWEED_S3_SECRET_KEY:-}" ]; then
+        S3_CONFIG="${SEAWEED_DATA_DIR}/.s3-config.json"
+        cat > "${S3_CONFIG}" <<JSON
+      {
+        "identities": [
+          {
+            "name": "admin",
+            "credentials": [
+              {
+                "accessKey": "${SEAWEED_S3_ACCESS_KEY}",
+                "secretKey": "${SEAWEED_S3_SECRET_KEY}"
+              }
+            ],
+            "actions": ["Admin", "Read", "List", "Tagging", "Write"]
+          }
+        ]
+      }
+      JSON
+        set -- "$@" -s3.config="${S3_CONFIG}"
+      fi
+
+      exec /usr/bin/weed "$@"
+      SCRIPT
+      chmod 0755 "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        weed version

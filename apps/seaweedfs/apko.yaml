@@ -1,0 +1,59 @@
+# Assembles the SeaweedFS single-node object-store runtime image. Minimal,
+# nonroot, multi-arch, SBOM by apko.
+#
+# Single-process `weed server -s3`: master + volume + filer + S3 gateway in one
+# process. The thin entrypoint pins all state to a writable mount
+# (SEAWEED_DATA_DIR, default /data) so the image runs on a read-only rootfs, and
+# the S3 API to :8333. S3 is open (anonymous) by default -- set
+# SEAWEED_S3_ACCESS_KEY/SEAWEED_S3_SECRET_KEY (chart Secret) to enable an admin
+# key; otherwise the NetworkPolicy is the security boundary, consistent with the
+# catalog posture.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - busybox                       # the thin entrypoint needs a tiny shell
+    - ca-certificates-bundle
+    - quench-seaweedfs@local
+
+accounts:
+  groups:
+    - groupname: seaweedfs
+      gid: 1001
+  users:
+    - username: seaweedfs
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/local/bin/docker-entrypoint.sh
+
+environment:
+  SEAWEED_DATA_DIR: /data
+  SEAWEED_S3_PORT: "8333"
+
+work-dir: /data
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-seaweedfs"
+  org.opencontainers.image.licenses: "Apache-2.0"
