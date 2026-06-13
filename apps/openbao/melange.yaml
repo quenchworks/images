@@ -1,0 +1,125 @@
+# Builds OpenBao (the `bao` server + Vault-compatible CLI) FROM SOURCE onto Wolfi.
+# OpenBao is the Linux Foundation's truly-open fork of HashiCorp Vault (which went BUSL);
+# OpenBao stays MPL-2.0 (OSI-clean). Single static Go binary, no CGO. Output is a signed
+# APK in Quenchworks' own repo -- no upstream distro binaries.
+#
+# BUILD METHOD: from-source from the pinned git tag (git-checkout + expected-commit),
+# CGO_ENABLED=0, built WITHOUT the `ui` build tag. The web UI is gated behind `//go:build
+# ui` and needs a heavy Node/ember asset build (web_ui/* is not in the source tree); the
+# server + `bao` CLI (HTTP API, KV, raft storage, auth, all secret engines) are fully
+# functional without it. This matches the etcd/nats/seaweedfs from-source pattern and is
+# on-brand for provenance. The web UI is a follow-up (the official binary bundles it).
+package:
+  name: quench-openbao
+  version: 2.5.4
+  epoch: 0
+  description: "Quenchworks hardened OpenBao (the truly-open MPL-2.0 fork of Vault), built from source on Wolfi"
+  copyright:
+    - license: MPL-2.0
+  dependencies:
+    runtime:
+      - busybox            # the entrypoint uses sh/mkdir/hostname
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - git
+      - go
+
+pipeline:
+  # Pin to the exact tag AND its commit sha for clean-room provenance.
+  - uses: git-checkout
+    with:
+      repository: https://github.com/openbao/openbao
+      tag: v${{package.version}}
+      expected-commit: 4f6d47246a053375271a5fd8af85c3b75695aa46
+  - runs: |
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      # The repo root is `package main` -> the `bao` binary (Vault-compatible CLI/API).
+      # Stamp version.GitCommit/BuildDate like upstream's scripts/build.sh (no `ui` tag).
+      go build -trimpath \
+        -ldflags "-s -w \
+          -X github.com/openbao/openbao/version.fullVersion=${{package.version}} \
+          -X github.com/openbao/openbao/version.GitCommit=4f6d47246a053375271a5fd8af85c3b75695aa46 \
+          -X github.com/openbao/openbao/version.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        -o "${{targets.destdir}}/usr/bin/bao" .
+
+      # Read-only-rootfs entrypoint. Seeds a bao.hcl into a writable path from env, then
+      # exec's the real (non-dev) raft server by default. BAO_DEV=1 -> dev mode (for the
+      # smoke test / quick start: auto-unsealed, in-memory, root token from BAO_DEV_ROOT_TOKEN).
+      install -d "${{targets.destdir}}/usr/bin"
+      cat > "${{targets.destdir}}/usr/bin/docker-entrypoint.sh" <<'EOS'
+      #!/bin/sh
+      set -eu
+
+      # Data + config must live on a writable mount (read-only rootfs). raft integrated
+      # storage writes its state under BAO_DATA_DIR.
+      BAO_DATA_DIR="${BAO_DATA_DIR:-/openbao/data}"
+      BAO_CONFIG_DIR="${BAO_CONFIG_DIR:-/openbao/config}"
+      mkdir -p "$BAO_DATA_DIR" "$BAO_CONFIG_DIR"
+
+      # The `bao` CLI token-helper writes ~/.vault-token; the default HOME (/home/openbao)
+      # is on the read-only rootfs. Dev mode FAILS to start without a writable HOME. Point
+      # HOME at the writable config dir so the token helper (and dev-mode bootstrap) work.
+      export HOME="$BAO_CONFIG_DIR"
+
+      # DEV MODE: auto-unsealed in-memory server for quick-start / smoke tests. NOT for prod.
+      if [ "${BAO_DEV:-0}" = "1" ]; then
+        exec bao server -dev \
+          -dev-listen-address="0.0.0.0:8200" \
+          -dev-root-token-id="${BAO_DEV_ROOT_TOKEN:-root}"
+      fi
+
+      # If the operator passes their own args, honor them verbatim.
+      if [ "$#" -gt 0 ]; then
+        exec bao "$@"
+      fi
+
+      # DEFAULT: real (non-dev) single node with raft integrated storage. Starts SEALED
+      # and UNINITIALIZED -- that is expected; `bao operator init` + unseal is an operator
+      # step (the chart documents it). disable_mlock=true because mlock needs CAP_IPC_LOCK
+      # which a nonroot/cap-dropped container cannot hold. TLS is OFF by default for the
+      # internal deployment (NetworkPolicy is the boundary); enabling TLS is a follow-up.
+      NODE_ID="${BAO_NODE_ID:-$(hostname 2>/dev/null || echo node1)}"
+      # api_addr / cluster_addr default to the container hostname so a node advertises a
+      # routable address; override via BAO_API_ADDR / BAO_CLUSTER_ADDR.
+      ADV="$(hostname -i 2>/dev/null | awk '{print $1}')"
+      [ -n "$ADV" ] || ADV="127.0.0.1"
+      API_ADDR="${BAO_API_ADDR:-http://${ADV}:8200}"
+      CLUSTER_ADDR="${BAO_CLUSTER_ADDR:-http://${ADV}:8201}"
+
+      CONFIG_FILE="$BAO_CONFIG_DIR/bao.hcl"
+      cat > "$CONFIG_FILE" <<HCL
+      disable_mlock = true
+      ui            = false
+
+      storage "raft" {
+        path    = "$BAO_DATA_DIR"
+        node_id = "$NODE_ID"
+      }
+
+      listener "tcp" {
+        address     = "0.0.0.0:8200"
+        tls_disable = true
+      }
+
+      api_addr     = "$API_ADDR"
+      cluster_addr = "$CLUSTER_ADDR"
+      HCL
+
+      exec bao server -config="$CONFIG_FILE"
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/docker-entrypoint.sh"
+
+# No in-build `test:` block: the binary starts a long-running server and a real node boots
+# sealed/uninitialized, so the functional smoke (dev-mode kv put/get roundtrip) runs on the
+# assembled image via test.sh instead.

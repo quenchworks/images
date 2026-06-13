@@ -1,0 +1,74 @@
+# Assembles the OpenBao runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# OpenBao is the truly-open MPL-2.0 fork of HashiCorp Vault (which went BUSL). The `bao`
+# binary is the Vault-compatible server + CLI. Configured by BAO_* env; the entrypoint
+# seeds a raft-storage bao.hcl into a writable path and runs `bao server` by default (a
+# real node boots SEALED + UNINITIALIZED -- init/unseal is an operator step). BAO_DEV=1
+# runs an auto-unsealed dev server for quick start / smoke tests. HTTP API on 8200,
+# cluster on 8201. disable_mlock=true (nonroot can't hold CAP_IPC_LOCK); TLS off by
+# default for the internal deployment (NetworkPolicy is the boundary; TLS is a follow-up).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - busybox             # entrypoint shell utilities (sh/mkdir/hostname/awk)
+    - ca-certificates-bundle
+    - quench-openbao@local
+
+accounts:
+  groups:
+    - groupname: openbao
+      gid: 1001
+  users:
+    - username: openbao
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/docker-entrypoint.sh
+
+environment:
+  BAO_DATA_DIR: /openbao/data
+  BAO_CONFIG_DIR: /openbao/config
+  # Make the in-image `bao` CLI talk to the local listener by default (TLS off).
+  BAO_ADDR: http://127.0.0.1:8200
+  PATH: /usr/bin:/bin
+
+work-dir: /openbao
+
+paths:
+  # the work-dir parent is auto-created 0700 root:root, which blocks the nonroot uid from
+  # traversing into the data/config mounts below -- own it 1001 and make it traversable.
+  - path: /openbao
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  # writable mount for a read-only rootfs: raft integrated storage writes its state here.
+  - path: /openbao/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+  # writable mount for the seeded bao.hcl config.
+  - path: /openbao/config
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-openbao"
+  org.opencontainers.image.licenses: "MPL-2.0"
