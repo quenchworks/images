@@ -1,0 +1,48 @@
+# Assembles the Harbor exporter runtime image. Minimal, nonroot, multi-arch,
+# SBOM by apko. harbor-exporter is the optional Prometheus metrics exporter.
+#
+# Listen: 8001 (HTTP). Health/scrape: GET /metrics.
+#
+# Config: ships NO live config. The chart supplies all config via HARBOR_ env
+# vars (DB DSN, core service host/port/scheme, redis URL, exporter.port,
+# exporter.metrics_path).
+#
+# Read-only rootfs friendly. Writable paths:
+#   - /tmp                 (general scratch)
+# Nothing else is written; the rootfs stays read-only.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - busybox
+    - ca-certificates-bundle
+    - harbor-exporter@local
+
+accounts:
+  groups:
+    - groupname: harbor
+      gid: 1001
+  users:
+    - username: harbor
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/docker-entrypoint.sh
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "harbor-exporter"
+  org.opencontainers.image.licenses: "Apache-2.0"

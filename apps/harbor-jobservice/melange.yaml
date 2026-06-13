@@ -1,0 +1,83 @@
+# Builds the Harbor jobservice from source onto Wolfi. Harbor is a CNCF
+# cloud-native container/OCI artifact registry; harbor-jobservice is its async
+# task runner -- it executes the background jobs Harbor schedules (image
+# replication, garbage collection, scan, retention, webhook delivery, ...),
+# backed by Redis. ONE static Go binary (harbor_jobservice), CGO-free,
+# multi-arch. Output is a signed APK in QuenchWorks' own repo.
+#
+# Source: github.com/goharbor/harbor @ tag v2.14.4 (Apache-2.0). The whole
+# Harbor backend lives in ONE Go module under src/; this image builds the
+# src/jobservice main package. Unlike harbor-core, jobservice does NOT import
+# the generated swagger restapi packages, so it needs no codegen.
+#
+# go.mod has no vendor/ dir -> build fetches modules from the proxy
+# (GOFLAGS=-mod=mod). go.mod requires go 1.25.x -> go-1.25 Wolfi toolchain.
+# Version stamped via -ldflags into src/pkg/version.{ReleaseVersion,GitCommit}
+# (RELEASEVERSION = contents of the VERSION file = "v2.14.4").
+package:
+  name: harbor-jobservice
+  version: 2.14.4
+  epoch: 0
+  description: "QuenchWorks hardened Harbor jobservice (async job runner), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - busybox
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - git
+      - go-1.25
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/goharbor/harbor/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: 513078479f38d6b605938980d4e6eae7c6f1576afcc522bcde5107f986bf5f46
+  - runs: |
+      export CGO_ENABLED=0
+      export GOTOOLCHAIN=local
+      export GOFLAGS=-mod=mod
+      export GOBUILDVCS=false
+
+      REL="$(cat VERSION)"        # -> v2.14.4
+      test "${REL}" = "v${{package.version}}" || { echo "VERSION mismatch: ${REL}"; exit 1; }
+
+      cd src
+      GITCOMMIT="v${{package.version}}"
+      LDFLAGS="-w -s \
+        -X github.com/goharbor/harbor/src/pkg/version.GitCommit=${GITCOMMIT} \
+        -X github.com/goharbor/harbor/src/pkg/version.ReleaseVersion=${REL}"
+      install -d "${{targets.destdir}}/usr/bin"
+      go build -trimpath -ldflags "${LDFLAGS}" \
+        -o "${{targets.destdir}}/usr/bin/harbor_jobservice" ./jobservice
+      cd ..
+
+      install -d "${{targets.destdir}}/usr/share/doc/harbor-jobservice"
+      cp LICENSE "${{targets.destdir}}/usr/share/doc/harbor-jobservice/" 2>/dev/null || true
+
+      # Thin entrypoint: exec harbor_jobservice. Config (incl. the job-logs dir)
+      # comes from the chart via env + mounted ConfigMap; ships NO live config.
+      cat > "${{targets.destdir}}/usr/bin/docker-entrypoint.sh" <<'EOS'
+      #!/bin/sh
+      set -eu
+      exec /usr/bin/harbor_jobservice "$@"
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/bin/harbor_jobservice
+        test -x /usr/bin/docker-entrypoint.sh
+        strings /usr/bin/harbor_jobservice | grep -q 'v2.14.4'

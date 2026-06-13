@@ -1,0 +1,51 @@
+# Assembles the Harbor jobservice runtime image. Minimal, nonroot, multi-arch,
+# SBOM by apko. harbor-jobservice runs Harbor's async background jobs
+# (replication, GC, scan, retention, webhooks), backed by Redis.
+#
+# Listen: 8080 (HTTP). Health: GET /api/v1/stats.
+#
+# Config: ships NO live config. The chart supplies env + a mounted ConfigMap
+# (config.yml, redis URL, core URL, job-logger config).
+#
+# Read-only rootfs friendly. Writable paths the chart must provide:
+#   - /tmp                 (general scratch)
+#   - /var/log/jobs        (job log files -- jobservice's file job-logger writes
+#                           per-job logs here; the chart mounts a writable
+#                           volume/tmpfs at the configured logger base dir).
+# Everything else stays read-only.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - busybox
+    - ca-certificates-bundle
+    - harbor-jobservice@local
+
+accounts:
+  groups:
+    - groupname: harbor
+      gid: 1001
+  users:
+    - username: harbor
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/docker-entrypoint.sh
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "harbor-jobservice"
+  org.opencontainers.image.licenses: "Apache-2.0"

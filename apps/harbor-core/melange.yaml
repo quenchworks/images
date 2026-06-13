@@ -1,0 +1,114 @@
+# Builds the Harbor core API server from source onto Wolfi. Harbor is a
+# CNCF cloud-native container/OCI artifact registry; harbor-core is its central
+# API + business-logic service (the brain: auth, projects, RBAC, replication
+# orchestration, the REST API under /api/v2.0). ONE static Go binary
+# (harbor_core), CGO-free, multi-arch. Output is a signed APK in QuenchWorks'
+# own repo -- no upstream distro binaries.
+#
+# Source: github.com/goharbor/harbor @ tag v2.14.4 (Apache-2.0). The whole
+# Harbor backend (core / jobservice / registryctl / exporter) lives in ONE Go
+# module under src/ (module github.com/goharbor/harbor/src, go 1.25.x); each
+# image builds the relevant main package from that module.
+#
+# CODEGEN: unlike the other three binaries, harbor_core depends on the swagger
+# REST server scaffolding (src/server/v2.0/{models,restapi/...}) which upstream
+# does NOT commit -- the Makefile's `gen_apis` target generates it from
+# api/v2.0/swagger.yaml with go-swagger v0.33.1 using the repo's custom
+# templates (tools/swagger/templates), app name "harbor", before compiling
+# core. We reproduce that exactly: install go-swagger v0.33.1, generate the
+# server into src/server/v2.0, then build. (jobservice/registryctl/exporter do
+# not import the generated restapi packages, so they need no codegen.)
+#
+# go.mod has no vendor/ dir, so the build fetches modules from the proxy
+# (GOFLAGS=-mod=mod). go.mod requires go 1.25.x; we use the go-1.25 Wolfi
+# toolchain. Version is stamped via -ldflags into
+# src/pkg/version.{ReleaseVersion,GitCommit} exactly as the root Makefile's
+# CORE_LDFLAGS does (RELEASEVERSION = contents of the VERSION file = "v2.14.4").
+package:
+  name: harbor-core
+  version: 2.14.4
+  epoch: 0
+  description: "QuenchWorks hardened Harbor core API server, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - busybox            # minimal shell for the thin entrypoint + debugging
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - git
+      # go.mod requires go >= 1.25.x; use the go-1.25 toolchain to pick up the
+      # latest stdlib CVE fixes (helps clear the Trivy gate without manual bumps).
+      - go-1.25
+
+pipeline:
+  # Build from the git tag source tarball. Pinned to the tag; verified by sha256.
+  - uses: fetch
+    with:
+      uri: https://github.com/goharbor/harbor/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: 513078479f38d6b605938980d4e6eae7c6f1576afcc522bcde5107f986bf5f46
+  - runs: |
+      export CGO_ENABLED=0
+      export GOTOOLCHAIN=local
+      export GOFLAGS=-mod=mod
+      export GOBUILDVCS=false
+
+      # Confirm the pinned version string (RELEASEVERSION = contents of VERSION).
+      REL="$(cat VERSION)"        # -> v2.14.4
+      test "${REL}" = "v${{package.version}}" || { echo "VERSION mismatch: ${REL}"; exit 1; }
+
+      # 1) Generate the swagger REST server (gen_apis) into src/server/v2.0.
+      #    Matches the root Makefile: go-swagger v0.33.1, repo custom templates,
+      #    --exclude-main, the three extra initialisms, app name "harbor".
+      export GOBIN=/tmp/gobin
+      install -d "${GOBIN}"
+      go install github.com/go-swagger/go-swagger/cmd/swagger@v0.33.1
+      rm -rf src/server/v2.0/models src/server/v2.0/restapi
+      "${GOBIN}/swagger" generate server \
+        --template-dir=tools/swagger/templates \
+        --exclude-main \
+        --additional-initialism=CVE --additional-initialism=GC --additional-initialism=OIDC \
+        -f api/v2.0/swagger.yaml -A harbor --target src/server/v2.0
+
+      # 2) Build harbor_core with the upstream CORE_LDFLAGS (version stamp).
+      cd src
+      GITCOMMIT="v${{package.version}}"
+      LDFLAGS="-w -s \
+        -X github.com/goharbor/harbor/src/pkg/version.GitCommit=${GITCOMMIT} \
+        -X github.com/goharbor/harbor/src/pkg/version.ReleaseVersion=${REL}"
+      install -d "${{targets.destdir}}/usr/bin"
+      go build -trimpath -ldflags "${LDFLAGS}" \
+        -o "${{targets.destdir}}/usr/bin/harbor_core" ./core
+      cd ..
+
+      # license for provenance
+      install -d "${{targets.destdir}}/usr/share/doc/harbor-core"
+      cp LICENSE "${{targets.destdir}}/usr/share/doc/harbor-core/" 2>/dev/null || true
+
+      # Thin entrypoint: exec harbor_core. Config comes entirely from the chart
+      # (env + mounted ConfigMap/Secret); this image ships NO live config.
+      cat > "${{targets.destdir}}/usr/bin/docker-entrypoint.sh" <<'EOS'
+      #!/bin/sh
+      set -eu
+      exec /usr/bin/harbor_core "$@"
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/bin/harbor_core
+        test -x /usr/bin/docker-entrypoint.sh
+        # No --version flag upstream: the release string is stamped into
+        # version.ReleaseVersion and logged at startup. Assert it's embedded.
+        strings /usr/bin/harbor_core | grep -q 'v2.14.4'

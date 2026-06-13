@@ -1,0 +1,52 @@
+# Assembles the Harbor core runtime image. Minimal, nonroot, multi-arch, SBOM
+# by apko. harbor-core is the central Harbor API/business-logic service.
+#
+# Listen: 8080 (HTTP API). Health: GET /api/v2.0/ping.
+#
+# Config: this image ships NO live config. The chart supplies everything via env
+# + mounted ConfigMaps/Secrets (DB DSN, redis, registry/jobservice URLs, the
+# token-signing key, auth config, conf/app.conf, etc).
+#
+# Read-only rootfs friendly. Writable paths the chart must provide as
+# volumes/tmpfs:
+#   - /tmp                         (general scratch)
+#   - a token-key cache dir (e.g. /etc/core/token mounted writable, or the
+#     chart's configured TOKEN_PRIVATE_KEY location) -- core writes/reads the
+#     token signing material there.
+# Everything else (the rootfs) stays read-only.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - busybox
+    - ca-certificates-bundle
+    - harbor-core@local
+
+accounts:
+  groups:
+    - groupname: harbor
+      gid: 1001
+  users:
+    - username: harbor
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/docker-entrypoint.sh
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "harbor-core"
+  org.opencontainers.image.licenses: "Apache-2.0"

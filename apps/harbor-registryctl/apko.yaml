@@ -1,0 +1,52 @@
+# Assembles the Harbor registryctl runtime image. Minimal, nonroot, multi-arch,
+# SBOM by apko. harbor-registryctl is the control sidecar for the Docker
+# distribution registry (drives blob GC, reports registry health to core).
+#
+# Listen: 8080 (HTTP). Health: GET /api/health.
+#
+# Config: ships NO live config. The chart supplies env + a mounted ConfigMap
+# (config.yml with the registry storage config + the registry's own config).
+#
+# Read-only rootfs friendly. Writable paths:
+#   - /tmp                 (general scratch)
+#   - /storage             (NOT shipped writable here -- at runtime the chart
+#                           mounts the SHARED registry storage volume, the same
+#                           PVC the distribution registry uses, so registryctl
+#                           can act on the blob store during GC).
+# Everything else stays read-only.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - busybox
+    - ca-certificates-bundle
+    - harbor-registryctl@local
+
+accounts:
+  groups:
+    - groupname: harbor
+      gid: 1001
+  users:
+    - username: harbor
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/docker-entrypoint.sh
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "harbor-registryctl"
+  org.opencontainers.image.licenses: "Apache-2.0"
