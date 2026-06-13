@@ -92,13 +92,27 @@ pipeline:
       #     does NOT set TrustedOrigins, so every UI POST /c/login 403s on 1.7.3.
       #     (Upstream dodges this only by staying on 1.7.2.)
       #
-      #     Fix WITHOUT reverting the CVE bump: rewrite csrf.go to compute a
-      #     host-only trusted-origins list (from config.ExtEndpoint()'s URL host
-      #     plus the comma-separated CSRF_TRUSTED_ORIGINS env hosts) and pass it
-      #     via csrf.TrustedOrigins(...). gorilla's TrustedOrigins check is
-      #     host-only + scheme-agnostic, so listing the access host makes http
-      #     login work for BOTH the Origin and Referer paths. gorilla/csrf stays
-      #     v1.7.3 (0-CVE preserved). The csrf.TrustedOrigins API exists in 1.7.3.
+      #     Fix WITHOUT reverting the CVE bump, generalized to work on ANY
+      #     host:port (e.g. an IDE/dashboard auto-port-forward on a random port)
+      #     rather than only an explicit allowlist:
+      #       (a) PRIMARY: gorilla 1.7.3 builds the expected origin as
+      #           "<scheme>://<r.Host>" and rejects mismatches. It derives the
+      #           scheme NOT from r.URL.Scheme or r.TLS but solely from the
+      #           PlaintextHTTPContextKey context value (false=>https, true=>http);
+      #           the exported csrf.PlaintextHTTPRequest(r) sets it true. For a
+      #           server request it defaults to https, so a browser http:// Origin
+      #           mismatches. In Middleware() below we read X-Forwarded-Proto
+      #           (forwarded by the proxy; defaults to its own http scheme) and,
+      #           unless it is "https", wrap the request with
+      #           csrf.PlaintextHTTPRequest(req) so gorilla computes
+      #           http://<r.Host>. Because the proxy forwards the real Host,
+      #           sameOrigin(browserOrigin, http://<r.Host>) MATCHES for ANY
+      #           host:port while a cross-site Origin still fails (CSRF intact).
+      #       (b) BELT-AND-SUSPENDERS: rewrite csrf.go to also compute a host-only
+      #           trusted-origins list (from config.ExtEndpoint()'s URL host plus
+      #           the comma-separated CSRF_TRUSTED_ORIGINS env hosts) via
+      #           csrf.TrustedOrigins(...), covering cross-origin/ingress cases.
+      #     gorilla/csrf stays v1.7.3 (0-CVE preserved). Both APIs exist in 1.7.3.
       cat > src/server/middleware/csrf/csrf.go <<'EOF'
       // Copyright Project Harbor Authors
       //
@@ -234,6 +248,26 @@ pipeline:
       			csrf.Path("/"))
       	})
       	return middleware.New(func(rw http.ResponseWriter, req *http.Request, next http.Handler) {
+      		// Make gorilla/csrf v1.7.3's same-origin check scheme-accurate behind a
+      		// TLS-terminating OR plain-HTTP reverse proxy. gorilla compares the
+      		// browser Origin/Referer against "<scheme>://<r.Host>" where scheme is
+      		// "https" UNLESS the request is flagged plaintext via the
+      		// PlaintextHTTPContextKey context value (gorilla does NOT read
+      		// r.URL.Scheme / r.TLS -- only that context key). For a server request
+      		// behind our proxy the scheme would otherwise default to https, so a
+      		// browser's http:// Origin mismatches and 403s on ANY host:port.
+      		//
+      		// We trust X-Forwarded-Proto (set by the front-door proxy) and default
+      		// to http when it is absent or "http": flag the request plaintext via
+      		// csrf.PlaintextHTTPRequest(req) so gorilla builds http://<r.Host>.
+      		// Since r.Host already equals the real access host:port (the proxy
+      		// forwards the original Host), sameOrigin(browserOrigin, http://r.Host)
+      		// then MATCHES for ANY host:port -- no allowlist needed -- while a
+      		// genuinely cross-site Origin still mismatches the Host (CSRF intact).
+      		// Only an explicit X-Forwarded-Proto: https keeps the strict https path.
+      		if xfp := strings.ToLower(strings.TrimSpace(req.Header.Get("X-Forwarded-Proto"))); xfp != "https" {
+      			req = csrf.PlaintextHTTPRequest(req)
+      		}
       		protect(attach(next)).ServeHTTP(rw, req)
       	}, csrfSkipper)
       }
@@ -261,6 +295,8 @@ pipeline:
       # Sanity: the rewritten file must reference the new env + API.
       grep -q 'CSRF_TRUSTED_ORIGINS' src/server/middleware/csrf/csrf.go
       grep -q 'csrf.TrustedOrigins' src/server/middleware/csrf/csrf.go
+      grep -q 'csrf.PlaintextHTTPRequest' src/server/middleware/csrf/csrf.go
+      grep -q 'X-Forwarded-Proto' src/server/middleware/csrf/csrf.go
 
       # 2) Build harbor_core with the upstream CORE_LDFLAGS (version stamp).
       cd src
