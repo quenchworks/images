@@ -1,0 +1,63 @@
+# Assembles the RustFS S3-compatible object-store runtime image.
+# Minimal, nonroot, multi-arch, SBOM by apko.
+#
+# RustFS is the NEWEST S3-compatible object-store ALTERNATIVE; the default
+# object-store pick is SeaweedFS, and Garage is the other alternative. The thin
+# entrypoint ensures the writable VOLUMES dir exists, wires the root creds + listen
+# addresses from env, and runs `rustfs server <VOLUMES> --address :9000`. All object
+# data lives under RUSTFS_VOLUMES (default /data), pinned to a writable mount so the
+# image runs on a read-only rootfs.
+#
+# S3 creds come from RUSTFS_ACCESS_KEY/RUSTFS_SECRET_KEY (chart Secret); if unset
+# RustFS uses its built-in default identity and the NetworkPolicy is the boundary.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - bash                          # the entrypoint is a shell script
+    - busybox
+    - ca-certificates-bundle
+    - quench-rustfs@local
+
+accounts:
+  groups:
+    - groupname: rustfs
+      gid: 1001
+  users:
+    - username: rustfs
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/local/bin/docker-entrypoint.sh
+
+environment:
+  RUSTFS_VOLUMES: /data
+  RUSTFS_ADDRESS: ":9000"
+  RUSTFS_CONSOLE_ADDRESS: ":9001"
+
+work-dir: /data
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-rustfs"
+  org.opencontainers.image.licenses: "Apache-2.0"

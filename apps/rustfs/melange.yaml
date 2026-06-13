@@ -1,0 +1,123 @@
+# Packages RustFS (a Rust, S3-compatible, MinIO-alternative object store) onto Wolfi.
+# RustFS is NOT built from source here: a from-source Rust build pulls a very large
+# crate tree (the release artifact is ~100MB; the build is heavy on a 2-core/7GB
+# GitHub runner and brutal under qemu on arm64). Instead we ship RustFS's OWN
+# official precompiled per-arch musl-static binary (the same upstream-artifact
+# pattern garage/clickhouse/scylladb/cockroachdb use), then harden it on a minimal
+# apko base and gate it 0-CVE with Trivy. This is clean-room-consistent: it is
+# upstream's published static binary, not a Bitnami chart, and the scan still fully
+# applies.
+#
+# The binary is a fully self-contained musl static-PIE executable -- it needs NO
+# runtime libs. We still ship bash/busybox/ca-certificates because the entrypoint
+# (writable data dir + creds + listen addr from env) is a shell script, and
+# ca-certificates lets RustFS talk TLS to any external endpoints.
+#
+# RustFS is the NEWEST S3-compatible object-store ALTERNATIVE in the lineup; the
+# default object-store pick is SeaweedFS, and Garage is the other alternative.
+# Upstream has not cut a stable tag yet (youngest project in the catalog) -- we pin
+# the latest published release (1.0.0-beta.x, the only artifacts RustFS ships).
+package:
+  name: quench-rustfs
+  # apk-version form of the upstream tag 1.0.0-beta.8. melange's version parser
+  # rejects the dash/dot pre-release form, so we use the apk pre-release suffix
+  # (_beta8) here and keep the real upstream tag in vars.upstream-tag for fetching.
+  version: 1.0.0_beta8
+  epoch: 0
+  description: "Quenchworks hardened RustFS (Rust S3-compatible object store), packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - bash                    # the entrypoint is a shell script
+      - busybox                 # mkdir/sha256sum used by the entrypoint
+      - ca-certificates-bundle
+
+vars:
+  # The real upstream release tag (RustFS has no stable tag yet; this is the latest
+  # published pre-release, the only artifacts they ship). Used to build the asset URL.
+  upstream-tag: 1.0.0-beta.8
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - curl
+      - unzip                   # RustFS ships its binary inside a .zip
+      - ca-certificates-bundle
+
+pipeline:
+  # RustFS publishes a separate per-target binary inside a per-target zip, so fetch
+  # the musl build matching the build arch by uname -m (x86_64 -> x86_64-musl,
+  # aarch64 -> aarch64-musl) with the arch-matching sha256 from the release's
+  # SHA256SUMS -- the wrong arch yields a non-executable / wrong-arch binary. The
+  # musl build links no external libs (verified: static-PIE, self-contained). We
+  # use the immutable v<version> asset name (NOT the mutable -latest alias).
+  - runs: |
+      VER="${{vars.upstream-tag}}"
+      case "$(uname -m)" in
+        x86_64)  asset="rustfs-linux-x86_64-musl-v${VER}.zip";  sha=8175fc82f23ec4ae42bc285c321f87f3fe1763d201c01537cb8e80acfa72aeaf ;;
+        aarch64) asset="rustfs-linux-aarch64-musl-v${VER}.zip"; sha=7003f45070ec634f85c21e3c46dcff4d25de22dd3af3f3a4a1ddbd1cea89502b ;;
+        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+      esac
+
+      url="https://github.com/rustfs/rustfs/releases/download/${VER}/${asset}"
+      curl -fsSL -o rustfs.zip "$url"
+      echo "${sha}  rustfs.zip" | sha256sum -c -
+      unzip -o rustfs.zip
+      install -Dm0755 rustfs "${{targets.destdir}}/usr/bin/rustfs"
+
+  - runs: |
+      # Thin entrypoint. RustFS stores all object data under its VOLUMES dir, which
+      # fails on a read-only rootfs unless pinned to a writable mount (RUSTFS_VOLUMES,
+      # default /data). `rustfs server <VOLUMES> --address :9000` starts the S3 API on
+      # :9000; the console (:9001) is enabled with RUSTFS_CONSOLE_ENABLE.
+      #
+      # S3 credentials: RUSTFS_ACCESS_KEY + RUSTFS_SECRET_KEY (chart Secret). If both
+      # are set the entrypoint passes --access-key/--secret-key so the root creds are
+      # deterministic; if unset RustFS falls back to its own default identity
+      # (rustfsadmin/rustfsadmin) -- the NetworkPolicy is then the boundary, consistent
+      # with the catalog posture. Extra flags pass through via "$@".
+      install -d "${{targets.destdir}}/usr/local/bin"
+      cat > "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh" <<'SCRIPT'
+      #!/bin/sh
+      set -eu
+      RUSTFS_VOLUMES="${RUSTFS_VOLUMES:-/data}"
+      RUSTFS_ADDRESS="${RUSTFS_ADDRESS:-:9000}"
+      RUSTFS_CONSOLE_ADDRESS="${RUSTFS_CONSOLE_ADDRESS:-:9001}"
+      mkdir -p "${RUSTFS_VOLUMES}"
+
+      # Preserve any user-supplied runtime args, then prepend our resolved defaults.
+      EXTRA_ARGS="$*"
+
+      set -- server "${RUSTFS_VOLUMES}" \
+        --address "${RUSTFS_ADDRESS}" \
+        --console-address "${RUSTFS_CONSOLE_ADDRESS}"
+
+      # Console is opt-in (chart can flip RUSTFS_CONSOLE_ENABLE=true to expose :9001).
+      if [ "${RUSTFS_CONSOLE_ENABLE:-}" = "true" ] || [ "${RUSTFS_CONSOLE_ENABLE:-}" = "1" ]; then
+        set -- "$@" --console-enable
+      fi
+
+      # Deterministic root credentials from env (chart Secret). RustFS reads
+      # RUSTFS_ACCESS_KEY/RUSTFS_SECRET_KEY natively too, but we pass them explicitly
+      # so the contract is unambiguous regardless of how the server resolves env.
+      if [ -n "${RUSTFS_ACCESS_KEY:-}" ] && [ -n "${RUSTFS_SECRET_KEY:-}" ]; then
+        set -- "$@" --access-key "${RUSTFS_ACCESS_KEY}" --secret-key "${RUSTFS_SECRET_KEY}"
+      fi
+
+      # shellcheck disable=SC2086
+      exec /usr/bin/rustfs "$@" ${EXTRA_ARGS}
+      SCRIPT
+      chmod 0755 "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/bin/rustfs
+        rustfs --version
+        test -x /usr/local/bin/docker-entrypoint.sh
