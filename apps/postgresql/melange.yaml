@@ -48,6 +48,16 @@ pipeline:
         --with-system-tzdata=/usr/share/zoneinfo
       make -j"$(nproc)"
       make DESTDIR="${{targets.destdir}}" install
+  # Build + install a curated set of dependency-free contrib extensions from the
+  # SAME source tree (no extra external packages). These all build with the configure
+  # flags above; btree_gin is required by Temporal's visibility schema. We do NOT run a
+  # blanket `make -C contrib install` because some contribs (uuid-ossp, sepgsql, bool_plperl,
+  # ...) need optional deps we don't configure and would fail the build.
+  - runs: |
+      for ext in btree_gin btree_gist pg_trgm pgcrypto hstore citext pg_stat_statements intarray ltree unaccent fuzzystrmatch tablefunc; do
+        make -C "contrib/$ext" -j"$(nproc)"
+        make -C "contrib/$ext" DESTDIR="${{targets.destdir}}" install
+      done
   # Bake the bootstrap entrypoint into the package (self-contained, no external file).
   # First boot runs initdb with a scram superuser password; subsequent boots just start.
   - runs: |
