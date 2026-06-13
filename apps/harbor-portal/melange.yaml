@@ -84,16 +84,36 @@ pipeline:
       # production container build exactly.
       cp ../../api/v2.0/swagger.yaml ./swagger.yaml
 
-      # `npm install --unsafe-perm` EXACTLY as upstream's portal Dockerfile -- not
-      # `npm ci`: the committed package-lock.json is not in strict sync with
-      # package.json (e.g. cytoscape/d3-selection are resolved at install time),
-      # which `npm ci` rejects but `npm install` reconciles, matching the upstream
-      # production build. The esbuild/vite optional deps are os/cpu-keyed npm
-      # optionalDependencies (@esbuild/linux-x64, @esbuild/linux-arm64, ...), so
-      # npm installs the correct native binary per arch automatically on both the
-      # amd64 and arm64 native runners -- no per-arch shim needed (unlike the
-      # alertmanager elm case). Runs the postinstall (ng-swagger-gen) faithfully.
-      npm install --unsafe-perm
+      # `npm install` (NOT npm ci): upstream's committed package-lock.json is not
+      # in strict sync with package.json (e.g. cytoscape/d3-selection resolve at
+      # install time), which `npm ci` rejects but `npm install` reconciles,
+      # matching the upstream production build. The esbuild/vite optional deps are
+      # os/cpu-keyed npm optionalDependencies (@esbuild/linux-x64,
+      # @esbuild/linux-arm64, ...), so npm installs the correct prebuilt binary
+      # per arch automatically on both runners.
+      #
+      # --ignore-scripts (ARM64 FIX): without it, npm runs the package postinstall
+      # hooks, one of which is @parcel/watcher's node-gyp build. On amd64 npm
+      # fetches @parcel/watcher's prebuilt x64 binary, but on arm64 the prebuilt
+      # selection fails and npm falls back to compiling it from source via
+      # node-gyp -- which dies on the Wolfi sandbox's Python 3.13 ("No module named
+      # 'distutils'", removed in Py3.12 and no longer shimmed by modern
+      # setuptools). @parcel/watcher is a *watch-mode-only* optional dep (used by
+      # `ng serve`), never by the production `ng build`, so skipping its native
+      # build costs us nothing. Same family of fix as the alertmanager elm case:
+      # skip the problematic install scripts and run only the one we need below.
+      npm install --unsafe-perm --ignore-scripts
+
+      # --ignore-scripts also skipped the harbor package's own `postinstall`, which
+      # we DO need: it generates the typed Angular API client from the OpenAPI
+      # spec via ng-swagger-gen. Reproduce it verbatim (package.json postinstall:
+      # convert-yaml-to-json -> ng-swagger-gen -> delete-swagger-json). The first
+      # script reads ./swagger.yaml (copied above) and writes ng-swagger-gen/
+      # swagger.json; ng-swagger-gen (in node_modules/.bin) emits the client into
+      # ng-swagger-gen/; the third cleans up the intermediate json.
+      node scripts/convert-yaml-to-json.js
+      ./node_modules/.bin/ng-swagger-gen -i ng-swagger-gen/swagger.json -o ng-swagger-gen
+      node scripts/delete-swagger-json.js
 
       # Stamp the production build timestamp into environment.prod.ts (upstream
       # `npm run generate-build-timestamp`).
@@ -114,7 +134,10 @@ pipeline:
       # swagger-ui-index.html (the build script renames index.html so it does not
       # clash with the SPA's index.html).
       cd app-swagger-ui
-      npm install --unsafe-perm
+      # --ignore-scripts here too: app-swagger-ui has no needed postinstall, and
+      # this avoids any transitive node-gyp build on arm64. The webpack build runs
+      # fine without lifecycle scripts.
+      npm install --unsafe-perm --ignore-scripts
       npm run build
       cd ..
 
