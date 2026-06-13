@@ -1,0 +1,97 @@
+# Assembles the Harbor Trivy scanner-adapter runtime image. Minimal, nonroot,
+# read-only-rootfs friendly, multi-arch, SBOM by apko. Ships TWO Go binaries:
+#   /usr/bin/scanner-trivy -- the HTTP API adapter (the entrypoint)
+#   /usr/bin/trivy         -- the Trivy CLI it shells out to (on PATH)
+#
+# This is the OPTIONAL Harbor v2.14.4 image-scanning component (the registry
+# works without it). Harbor v2.14.4 pins harbor-scanner-trivy v0.36.0 +
+# Trivy v0.70.0 (root Makefile TRIVYADAPTERVERSION / TRIVYVERSION).
+#
+# RUNTIME CONTRACT (the chart wires the rest):
+#   - Listens on :8080 (HTTP API; SCANNER_API_SERVER_ADDR default ":8080").
+#     8443 if the chart enables TLS (SCANNER_API_SERVER_TLS_*).
+#   - Health probe: GET /probe/healthy -> 200; readiness GET /probe/ready.
+#   - The adapter resolves the `trivy` binary via PATH (exec.LookPath) -> the
+#     baked /usr/bin/trivy is found with no config.
+#   - The image ships NO live config: the chart supplies SCANNER_* env, e.g.
+#       SCANNER_REDIS_URL / SCANNER_STORE_REDIS_URL / SCANNER_JOB_QUEUE_REDIS_URL
+#         -> Valkey (job queue + result data store)
+#       SCANNER_TRIVY_CACHE_DIR        (default /home/scanner/.cache/trivy)
+#       SCANNER_TRIVY_REPORTS_DIR      (default /home/scanner/.cache/reports)
+#       SCANNER_TRIVY_DB_REPOSITORY    (vuln DB OCI repo)
+#       SCANNER_API_SERVER_ADDR        (default :8080)
+#
+# READ-ONLY ROOTFS: the vuln DB is downloaded at RUNTIME (NOT baked into the
+# image) into the trivy cache dir; that dir, the reports dir, and /tmp must be
+# writable. We create /home/scanner/.cache/{trivy,reports} owned by the nonroot
+# user (uid 1001) so a writable mount (chart PVC/emptyDir) or tmpfs over
+# /home/scanner/.cache works under a read-only rootfs. The user is named
+# "scanner" so $HOME == /home/scanner matches the upstream default cache paths.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - busybox
+    - ca-certificates-bundle
+    - git                         # trivy fetches the vuln DB OCI repo at runtime
+    - quench-harbor-trivy-adapter@local
+
+accounts:
+  groups:
+    - groupname: scanner
+      gid: 1001
+  users:
+    - username: scanner
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/scanner-trivy
+
+environment:
+  HOME: /home/scanner
+  # Make the bundled CLI explicit on PATH (the adapter resolves it via LookPath).
+  PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Writable runtime dirs owned by the nonroot user. The vuln DB lands in the
+# trivy cache at RUNTIME; the chart mounts a writable PVC/emptyDir (or tmpfs)
+# over /home/scanner/.cache so this works under a read-only rootfs.
+paths:
+  - path: /home/scanner
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /home/scanner/.cache
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /home/scanner/.cache/trivy
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /home/scanner/.cache/reports
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+# Advisory only -- the chart's Service sets the actual port (8080 HTTP API).
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "harbor-trivy-adapter"
+  org.opencontainers.image.licenses: "Apache-2.0"
