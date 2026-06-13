@@ -1,0 +1,51 @@
+# Assembles the Loki runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+#
+# Loki is configured by a YAML config file (-config.file=...) mounted by the
+# chart. The entrypoint is the binary directly (/usr/bin/loki) -- no shell
+# wrapper needed; Loki exposes a /ready readiness endpoint and /metrics for
+# probes, so health checks do not require a shell. busybox is included only to
+# give operators a minimal shell for debugging; it is not on the entrypoint
+# path. Loki has NO bundled web UI (Grafana is its frontend) so no assets ship.
+#
+# Read-only rootfs friendly: Loki writes nothing to the rootfs. It needs a
+# writable storage path (the single-binary config uses path_prefix /loki for
+# chunks/rules/wal) plus /tmp; the chart mounts those as writable volumes. The
+# base image presumes no persistent state.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - busybox
+    - ca-certificates-bundle
+    - quench-loki@local
+
+accounts:
+  groups:
+    - groupname: loki
+      gid: 1001
+  users:
+    - username: loki
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/loki
+
+# Default ports: 3100 HTTP (API, /ready, /metrics), 9095 gRPC.
+# Advisory only -- the chart sets the actual server.http_listen_port / grpc.
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-loki"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"

@@ -1,0 +1,71 @@
+# Builds Grafana Loki from source onto Wolfi. Single static Go binary
+# (CGO disabled, netgo), multi-arch. Output is a signed APK in Quenchworks'
+# own repo. No upstream distro binaries.
+#
+# Loki is a horizontally-scalable, highly-available log aggregation system.
+# It has NO bundled web UI -- Grafana is its frontend -- so there is no Node
+# toolchain or asset-embedding step. We build from the git tag source tarball,
+# which vendors all Go dependencies (vendor/), so the build is fully offline
+# with -mod=vendor.
+#
+# We build the server `loki` binary (cmd/loki, the deliverable) and the
+# `logcli` CLI (cmd/logcli, trivial extra target) using the exact version
+# ldflags from upstream's Makefile so `loki -version` reports the pinned
+# release. AGPL-3.0 (same license tier as the shipped grafana image).
+package:
+  name: quench-loki
+  version: 3.7.2
+  epoch: 0
+  description: "Quenchworks hardened Grafana Loki (horizontally-scalable log aggregation system), built from source on Wolfi"
+  copyright:
+    - license: AGPL-3.0-only
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      # go.mod requires go >= 1.26.x; use the current go-1.26 toolchain to pick
+      # up the latest stdlib CVE fixes (clears the Trivy gate without bumps).
+      - go-1.26
+
+pipeline:
+  # Build from the git tag source tarball. Loki vendors all deps under vendor/,
+  # so the build needs no network. Pinned to the tag; verified by sha256.
+  - uses: fetch
+    with:
+      uri: https://github.com/grafana/loki/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: f91b7737cc0ca352dfb99e9307bc2f6a67135d6827922374ab4a31676d280790
+  - runs: |
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=vendor
+      export GOTOOLCHAIN=local
+      # Stamp version exactly like upstream's Makefile (VPREFIX = the stable
+      # Loki build package, which forwards into prometheus/common/version) so
+      # `loki -version` reports the pinned release.
+      VPREFIX=github.com/grafana/loki/v3/pkg/util/build
+      DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      LDFLAGS="-s -w -extldflags \"-static\" \
+        -X ${VPREFIX}.Version=${{package.version}} \
+        -X ${VPREFIX}.Branch=HEAD \
+        -X ${VPREFIX}.Revision=v${{package.version}} \
+        -X ${VPREFIX}.BuildUser=quenchworks \
+        -X ${VPREFIX}.BuildDate=${DATE}"
+      go build -trimpath -tags netgo -ldflags "${LDFLAGS}" \
+        -o "${{targets.destdir}}/usr/bin/loki" ./cmd/loki
+      go build -trimpath -tags netgo -ldflags "${LDFLAGS}" \
+        -o "${{targets.destdir}}/usr/bin/logcli" ./cmd/logcli
+
+test:
+  pipeline:
+    - runs: |
+        loki -version
+        logcli --version
