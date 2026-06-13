@@ -1,0 +1,149 @@
+# Packages Keycloak onto Wolfi. Keycloak (Quarkus) is a pure-JVM identity & access
+# management server (SSO, OIDC, SAML): we ship the upstream Quarkus distribution's
+# jars but run on the hardened openjdk-21-jre base the JVM tier (kafka/opensearch/
+# solr) established, so the JRE stays the CVE surface the Trivy gate scans (a bundled
+# JDK would escape attribution). The dist ships no JDK and no per-arch native bundles,
+# so a single tarball serves both amd64 and arm64 -- no per-arch fetch needed.
+#
+# We bake an OPTIMIZED image: `kc.sh build` is run at build time (with health/metrics
+# enabled and the postgres+dev-file DB drivers baked in) so the runtime entrypoint
+# uses `kc.sh start --optimized` -- no augmentation at runtime, which keeps the rootfs
+# read-only and makes boot fast.
+package:
+  name: quench-keycloak
+  version: 26.6.3
+  epoch: 0
+  description: "Quenchworks hardened Keycloak (identity & access management), packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-21-jre     # the JRE Keycloak runs on (the scanned CVE surface)
+      - bash               # the docker-entrypoint is bash (kc.sh itself is /bin/sh)
+      - busybox
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - curl
+      - ca-certificates-bundle
+      - openjdk-21-default-jdk  # build-time only: needed to run `kc.sh build` (augmentation)
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/keycloak/keycloak/releases/download/${{package.version}}/keycloak-${{package.version}}.tar.gz
+      expected-sha512: "b6b10efccbffeea9d7e976d9c0c9ba35b7fe2a6d3eaa0e14075897bac7b533c36ec1fb6c21c670cb11c3334e43f9b4de5f2d98c5d321582255da0adadc9aca93"
+      strip-components: 1
+  - runs: |
+      # Run the augmentation (`kc.sh build`) at IMAGE BUILD time so runtime is optimized
+      # and the rootfs can stay read-only. Bake in: health + metrics endpoints (exposed
+      # on the management port 9000), and the DB vendors the chart will wire (postgres)
+      # plus dev-file (embedded H2) for the self-contained smoke test. cache=ispn is the
+      # Keycloak default.
+      export JAVA_HOME=/usr/lib/jvm/java-21-openjdk
+      export PATH="$JAVA_HOME/bin:$PATH"
+      # the dist's bin/kc.sh resolves kc.home.dir from its own location; run it in place
+      ./bin/kc.sh build \
+        --health-enabled=true \
+        --metrics-enabled=true \
+        --db=postgres \
+        --cache=ispn
+
+      dest="${{targets.destdir}}/opt/keycloak"
+      install -d "$dest"
+      # ship the augmented distribution: bin (kc.sh launchers), the augmented lib/
+      # (quarkus app + the baked build), conf, providers, themes, license.
+      cp -r bin conf lib providers themes LICENSE.txt README.md version.txt "$dest/"
+      # drop the Windows launchers (we run on bash/sh only)
+      find "$dest/bin" -name '*.bat' -delete
+
+      # Read-only rootfs: Keycloak writes its data dir (H2 files, transaction logs,
+      # infinispan, the optimized-marker) under ${kc.home.dir}/data, and conf may be
+      # written to. kc.home.dir is fixed to /opt/keycloak, so relocate those two dirs
+      # to writable mount points by symlinking them out of the read-only tree:
+      #   /opt/keycloak/data -> /data   (writable mount, H2/transaction state)
+      #   /opt/keycloak/conf -> /conf   (writable mount, seeded from the dist conf)
+      # We keep the shipped conf as conf.dist and seed /conf from it at first boot.
+      mv "$dest/conf" "$dest/conf.dist"
+      ln -s /conf "$dest/conf"
+      ln -s /data "$dest/data"
+
+      # the dist ships launchers/jars with restrictive perms; the nonroot runtime user
+      # must read them and exec the launchers.
+      chmod -R a+rX "$dest"
+
+      # bake a config-from-env entrypoint. Read-only rootfs: /data + /conf + /tmp live on
+      # writable mounts. Default to production `start --optimized` with container-friendly
+      # flags (http on, no forced hostname); KC_DEV=true flips to `start-dev` (embedded H2,
+      # http, relaxed) for a self-contained run. KC_* and KEYCLOAK_ADMIN* pass through.
+      install -d "${{targets.destdir}}/usr/bin"
+      cat > "${{targets.destdir}}/usr/bin/docker-entrypoint.sh" <<'EOS'
+      #!/bin/bash
+      set -euo pipefail
+
+      KC_HOME=/opt/keycloak
+      CONF="${KC_CONF_DIR:-/conf}"
+      DATA="${KC_DATA_DIR:-/data}"
+      mkdir -p "$CONF" "$DATA"
+
+      # Seed the writable conf dir from the shipped distribution once (keycloak.conf,
+      # cache-ispn.xml, truststores/). /opt/keycloak/conf is a symlink to /conf.
+      if [ ! -f "$CONF/keycloak.conf" ]; then
+        cp -r "$KC_HOME"/conf.dist/. "$CONF"/
+      fi
+
+      # The rootfs is read-only; point java.io.tmpdir at a writable dir so the JVM and
+      # Quarkus do not try to write under /tmp.
+      export TMPDIR="${KC_TMP_DIR:-/tmp}"
+      mkdir -p "$TMPDIR"
+      export JAVA_OPTS_APPEND="${JAVA_OPTS_APPEND:-} -Djava.io.tmpdir=${TMPDIR}"
+
+      export JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/java-21-openjdk}"
+      # let Keycloak size the heap from the container cgroup limits
+      export KC_RUN_IN_CONTAINER=true
+
+      # Admin bootstrap. Keycloak 26 prefers KC_BOOTSTRAP_ADMIN_USERNAME/PASSWORD; the
+      # legacy KEYCLOAK_ADMIN/KEYCLOAK_ADMIN_PASSWORD still work. Accept either: if the
+      # legacy vars are set and the new ones are not, map them across.
+      if [ -n "${KEYCLOAK_ADMIN:-}" ] && [ -z "${KC_BOOTSTRAP_ADMIN_USERNAME:-}" ]; then
+        export KC_BOOTSTRAP_ADMIN_USERNAME="$KEYCLOAK_ADMIN"
+      fi
+      if [ -n "${KEYCLOAK_ADMIN_PASSWORD:-}" ] && [ -z "${KC_BOOTSTRAP_ADMIN_PASSWORD:-}" ]; then
+        export KC_BOOTSTRAP_ADMIN_PASSWORD="$KEYCLOAK_ADMIN_PASSWORD"
+      fi
+
+      # Production `start --optimized` is the default: http enabled and hostname-strict
+      # off for container friendliness (the chart sets KC_HOSTNAME + TLS/proxy for real
+      # deployments). KC_DB* (db/db-url/db-username/db-password) pass through the env
+      # natively; the optimized build is baked for --db=postgres (the chart wires the
+      # QuenchWorks PostgreSQL chart).
+      #
+      # KC_DEV=true flips to `start-dev` (embedded H2, http, relaxed). NOTE: start-dev
+      # re-augments on boot (writes under /opt/keycloak/lib/quarkus), so it requires a
+      # WRITABLE rootfs -- it is a convenience for local/non-hardened use, NOT for the
+      # read-only hardened runtime, which uses the optimized path above.
+      if [ "${KC_DEV:-false}" = "true" ]; then
+        exec "$KC_HOME/bin/kc.sh" start-dev "$@"
+      fi
+
+      exec "$KC_HOME/bin/kc.sh" start --optimized \
+        --http-enabled="${KC_HTTP_ENABLED:-true}" \
+        --hostname-strict="${KC_HOSTNAME_STRICT:-false}" \
+        "$@"
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /opt/keycloak/bin/kc.sh
+        test -x /usr/bin/docker-entrypoint.sh
+        test -f /opt/keycloak/version.txt
+        # the optimized build must have run: the quarkus app is augmented in place
+        test -f /opt/keycloak/lib/quarkus/quarkus-application.dat

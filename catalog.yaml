@@ -196,6 +196,13 @@ catalog:
     tier: low
     status: done # image + chart both shipped (AH 454a51ee). JVM Lucene search server on the shared openjdk-21-jre base; arch-independent binary dist (pure JVM, no per-arch native bundles), Windows .cmd launchers dropped, procps added (bin/solr needs full `ps -p`, busybox lacks it). Single-node standalone by default (SolrCloud opt-in via SOLR_ZK_HOST). SOLR_HOME/logs/pid/tmp relocated to writable /var/solr mount for read-only rootfs; SOLR_JETTY_HOST=0.0.0.0. No auth by default (NetworkPolicy is the boundary). HTTP API 8983. Published multi-arch 0-CVE: ghcr.io/quenchworks/images/solr:10.0.0@sha256:1d571ba13744f758e25b095e409e242b1ffb490f9c99c0ae111819eda2956509. Probe httpGet /solr/admin/info/health (lighter) or /solr/admin/info/system on 8983 (both 200 unauthenticated). Lucene 10.3.2. Solr 10 starts --user-managed for standalone (cloud-by-default otherwise). Chart 0.0.2.
 
+  - name: keycloak
+    version: "26.6.3"
+    source: https://github.com/keycloak/keycloak
+    license: Apache-2.0
+    tier: standard
+    status: built # identity & access management (SSO/OIDC/SAML), JVM/Quarkus on openjdk-21. Ships the upstream Quarkus distribution keycloak-26.6.3.tar.gz (sha512-verified), no bundled JDK (pure JVM, arch-independent -- one tarball serves amd64+arm64). OPTIMIZED image: `kc.sh build` baked at image-build time (--health-enabled --metrics-enabled --db=postgres --cache=ispn) so runtime is `kc.sh start --optimized` (no runtime augmentation, read-only rootfs). Read-only rootfs: data dir + conf symlinked out of /opt/keycloak to writable /data + /conf mounts (conf seeded from conf.dist on first boot), java.io.tmpdir -> writable /tmp. Container-friendly defaults: --http-enabled=true --hostname-strict=false. Admin bootstrap KC_BOOTSTRAP_ADMIN_USERNAME/PASSWORD (legacy KEYCLOAK_ADMIN/KEYCLOAK_ADMIN_PASSWORD mapped). DB via KC_DB/KC_DB_URL/KC_DB_USERNAME/KC_DB_PASSWORD (baked --db=postgres; chart wires the QuenchWorks PostgreSQL chart). HTTP 8080 / management (health/metrics) 9000. Probe httpGet /health/ready on 9000. Smoke-tested read-only against a Postgres sidecar: health/ready UP, GET / 302, /admin/master/console/ 200, admin token acquired, nonroot uid 1001.
+
   - name: pulsar
     version: "4.0.11"
     source: https://github.com/apache/pulsar

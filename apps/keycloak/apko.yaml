@@ -1,0 +1,67 @@
+# Assembles the Keycloak runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Configured by KC_*/KEYCLOAK_ADMIN* env (the entrypoint seeds /conf, relocates the
+# data dir + tmp to writable mounts and runs the OPTIMIZED start). HTTP on 8080,
+# management (health/metrics) on 9000. Production `start --optimized` by default;
+# KC_DEV=true flips to `start-dev` (embedded H2) for a self-contained run.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-keycloak@local
+
+accounts:
+  groups:
+    - groupname: keycloak
+      gid: 1001
+  users:
+    - username: keycloak
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/docker-entrypoint.sh
+
+environment:
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  KC_HOME: /opt/keycloak
+  KC_CONF_DIR: /conf
+  KC_DATA_DIR: /data
+  # Keycloak sizes the heap from the container cgroup limits when this is set.
+  KC_RUN_IN_CONTAINER: "true"
+  # main HTTP listener (8080) and the separate management port (9000) for
+  # /health, /health/ready, /health/live and /metrics.
+  KC_HTTP_PORT: "8080"
+  KC_HTTP_MANAGEMENT_PORT: "9000"
+  PATH: /usr/lib/jvm/java-21-openjdk/bin:/usr/bin:/opt/keycloak/bin
+
+work-dir: /opt/keycloak
+
+paths:
+  - path: /conf
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-keycloak"
+  org.opencontainers.image.licenses: "Apache-2.0"
