@@ -87,6 +87,15 @@ pipeline:
       # bump the two laggards to v1.43.0 (the fixed version) to clear the gate.
       go get go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.43.0
       go get go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.43.0
+      # Three FIXABLE gobinary CVEs in harbor_core's Go module graph; clear them
+      # with dep bumps (all leaf/patch/minor bumps -- plain `go get`, NO
+      # `go mod tidy`, to avoid a full-module tidy walking generated dirs):
+      #   helm.sh/helm/v3            v3.18.5  -> v3.20.2 (CVE-2026-35206)
+      #   github.com/Azure/go-ntlmssp v0.0.0-20221128193559 -> v0.1.1
+      #   github.com/gorilla/csrf    v1.7.2   -> v1.7.3
+      go get helm.sh/helm/v3@v3.20.2
+      go get github.com/Azure/go-ntlmssp@v0.1.1
+      go get github.com/gorilla/csrf@v1.7.3
       GITCOMMIT="v${{package.version}}"
       LDFLAGS="-w -s \
         -X github.com/goharbor/harbor/src/pkg/version.GitCommit=${GITCOMMIT} \
