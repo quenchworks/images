@@ -175,6 +175,13 @@ catalog:
     tier: standard
     status: done # image + chart both shipped (AH quench-prometheus a1ea88ca). Chart: charts/quench/prometheus, StatefulSet + PVC /prometheus, prometheus.yml ConfigMap + --web.enable-lifecycle reload, /-/healthy+/-/ready probes, released. metrics server / TSDB; completes the observability stack with the exporters + VictoriaMetrics. 0-CVE multi-arch, nonroot; Go static (prometheus + promtool, CGO off, netgo+builtinassets). Server built from the git tag pinned to its commit with go-1.26; the embedded Mantine web UI is also built from source (Node 22 in the build sandbox only, never in the runtime/scan surface) via `make assets` + go:embed. Thin entrypoint pins --storage.tsdb.path=$PROM_TSDB_PATH (default /prometheus, writable mount for read-only rootfs), --config.file=/etc/prometheus/prometheus.yml (chart mounts a ConfigMap over it), --web.listen-address=:9090, --web.enable-lifecycle; extra flags pass through. No auth by default (NetworkPolicy is the boundary). Published multi-arch 0-CVE: ghcr.io/quenchworks/images/prometheus:3.12.0@sha256:d6ed6b8d309e0c621ab73b1416669510e54211740db935e0a5fd1ec5a001056a. HTTP API + UI on 9090.
 
+  - name: grafana
+    version: "13.0.2"
+    source: https://github.com/grafana/grafana
+    license: AGPL-3.0-only
+    tier: standard
+    status: built # dashboards; completes the observability stack; OSS edition (AGPL), official tarball.
+
   - name: nginx
     version: "1.30.2"
     source: https://github.com/nginx/nginx

@@ -1,0 +1,75 @@
+# Assembles the Grafana OSS runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+#
+# Ships upstream's official OSS release tarball (the frontend build is infeasible on a
+# hosted runner). Grafana is a single self-contained static Go binary plus its frontend
+# assets, installed under the standard homepath /usr/share/grafana. The thin entrypoint
+# pins every writable path (data/logs/plugins/provisioning) to mounts so the image runs
+# on a read-only rootfs. Configured by GF_PATHS_*, GF_SECURITY_* and any GF_<SECTION>_<KEY>
+# env (or a mounted grafana.ini). HTTP/UI + API on 3000.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - busybox            # the thin entrypoint needs a tiny shell + mkdir
+    - bash               # the entrypoint is bash
+    - ca-certificates-bundle
+    - tzdata
+    - quench-grafana@local
+
+accounts:
+  groups:
+    - groupname: grafana
+      gid: 1001
+  users:
+    - username: grafana
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/docker-entrypoint.sh
+
+environment:
+  GF_PATHS_DATA: /var/lib/grafana
+  GF_PATHS_LOGS: /var/log/grafana
+  GF_PATHS_PLUGINS: /var/lib/grafana/plugins
+  GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+  GF_PATHS_CONFIG: /etc/grafana/grafana.ini
+  PATH: /usr/bin:/bin
+
+work-dir: /usr/share/grafana
+
+paths:
+  # writable mounts for a read-only rootfs: data tree (SQLite grafana.db + sessions +
+  # plugins), logs, and the provisioning dir (seeded/empty, a chart may mount over it).
+  - path: /var/lib/grafana
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/log/grafana
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /etc/grafana/provisioning
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-grafana"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"

@@ -1,0 +1,135 @@
+# Packages Grafana OSS onto Wolfi. Grafana is NOT built from source here: the frontend
+# is an enormous JS/TS build (webpack/yarn) that needs node + hundreds of CPU-minutes and
+# gigabytes of RAM -- infeasible on a 2-core/7GB GitHub runner. Instead we ship Grafana's
+# OWN official OSS release tarball (the upstream-artifact pattern kafka/clickhouse use),
+# then harden it on a minimal apko base and gate it 0-CVE with Trivy. This is clean-room-
+# consistent: it is upstream's published artifact (AGPL-3.0 OSS edition), not a Bitnami
+# chart, and the scan still fully applies. The `grafana` binary is a single self-contained
+# static Go executable (statically linked, no glibc/libc needed); the scannable surface is
+# the tiny Wolfi base plus the Grafana Go buildinfo.
+package:
+  name: quench-grafana
+  version: 13.0.2
+  epoch: 0
+  description: "Quenchworks hardened Grafana OSS, packaged on Wolfi"
+  copyright:
+    - license: AGPL-3.0-only
+  dependencies:
+    runtime:
+      - bash               # the entrypoint is bash
+      - busybox            # mkdir/cp/sha256sum used by the entrypoint
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - curl
+      - ca-certificates-bundle
+
+pipeline:
+  # Grafana publishes separate amd64/arm64 OSS tarballs, so fetch the one matching the
+  # build arch by uname -m (x86_64->amd64, aarch64->arm64) with the arch-matching sha256
+  # (dl.grafana.com publishes a .tar.gz.sha256 companion). Using the wrong arch yields a
+  # wrong-arch binary. The tarball extracts to grafana-13.0.2/ with bin/grafana (single
+  # multi-call binary: `grafana server` / `grafana cli`), public/ (frontend assets),
+  # conf/ (defaults.ini + provisioning samples). We install the whole tree under the
+  # standard homepath /usr/share/grafana.
+  - runs: |
+      VER="${{package.version}}"
+      case "$(uname -m)" in
+        x86_64)  garch=amd64; sha=6720d8b0b48d92e2b33b7bf30b38480c12964ccd87285e5e754aa554165edf2d ;;
+        aarch64) garch=arm64; sha=beabeddf14dd5f435ac0c6d7fac71a585381515e879cc44eeea79a4ff7f7e52c ;;
+        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+      esac
+
+      url="https://dl.grafana.com/oss/release/grafana-${VER}.linux-${garch}.tar.gz"
+      curl -fsSL -o grafana.tar.gz "$url"
+      echo "${sha}  grafana.tar.gz" | sha256sum -c -
+      tar -xzf grafana.tar.gz
+
+      SRC="grafana-${VER}"
+      HOME_DIR="${{targets.destdir}}/usr/share/grafana"
+      install -d "$HOME_DIR"
+
+      # Ship the runtime tree: the static binary, the frontend assets, the bundled
+      # plugins, the default conf, the license. Drop docs/Dockerfile/packaging (build
+      # cruft) and anything not linux to keep the image lean.
+      cp -a "${SRC}/bin"             "$HOME_DIR/bin"
+      cp -a "${SRC}/public"          "$HOME_DIR/public"
+      cp -a "${SRC}/conf"            "$HOME_DIR/conf"
+      cp -a "${SRC}/plugins-bundled" "$HOME_DIR/plugins-bundled"
+      cp -a "${SRC}/tools"           "$HOME_DIR/tools" 2>/dev/null || true
+      install -Dm0644 "${SRC}/LICENSE"   "$HOME_DIR/LICENSE"
+      install -Dm0644 "${SRC}/NOTICE.md" "$HOME_DIR/NOTICE.md" 2>/dev/null || true
+      install -Dm0644 "${SRC}/VERSION"   "$HOME_DIR/VERSION"
+
+      # the grafana binary may ship as bin/grafana plus a bin/grafana-server symlink in
+      # some builds; v13 ships just bin/grafana (the multi-call binary). Drop any
+      # darwin/windows helpers if present.
+      rm -f "$HOME_DIR"/bin/*.exe "$HOME_DIR"/bin/*windows* "$HOME_DIR"/bin/*darwin* 2>/dev/null || true
+
+      # readable/traversable everywhere; binaries executable
+      chmod -R a+rX "$HOME_DIR"
+      chmod 0755 "$HOME_DIR/bin/grafana"
+
+      # put grafana on PATH (the homepath stays /usr/share/grafana)
+      install -d "${{targets.destdir}}/usr/bin"
+      ln -sf /usr/share/grafana/bin/grafana "${{targets.destdir}}/usr/bin/grafana"
+
+      # ship the dist default conf as the read-only base config at the standard path.
+      # The entrypoint points GF_PATHS_CONFIG here; all tunables come from GF_* env / a
+      # mounted grafana.ini. Grafana merges defaults.ini under any custom config.
+      install -d "${{targets.destdir}}/etc/grafana"
+      install -Dm0644 "${SRC}/conf/defaults.ini" "${{targets.destdir}}/etc/grafana/grafana.ini"
+      chmod -R a+rX "${{targets.destdir}}/etc/grafana"
+
+      # the read-only-rootfs entrypoint
+      install -d "${{targets.destdir}}/usr/bin"
+      cat > "${{targets.destdir}}/usr/bin/docker-entrypoint.sh" <<'EOS'
+      #!/bin/bash
+      set -euo pipefail
+
+      # Standard Grafana homepath (read-only) holds the binary + frontend + conf.
+      GF_HOME="/usr/share/grafana"
+
+      # All mutable state lives under writable mounts so the rootfs can stay read-only.
+      # Grafana reads GF_PATHS_* (and any GF_<SECTION>_<KEY>) from the environment.
+      export GF_PATHS_DATA="${GF_PATHS_DATA:-/var/lib/grafana}"
+      export GF_PATHS_LOGS="${GF_PATHS_LOGS:-/var/log/grafana}"
+      export GF_PATHS_PLUGINS="${GF_PATHS_PLUGINS:-/var/lib/grafana/plugins}"
+      export GF_PATHS_PROVISIONING="${GF_PATHS_PROVISIONING:-/etc/grafana/provisioning}"
+      GF_PATHS_CONFIG="${GF_PATHS_CONFIG:-/etc/grafana/grafana.ini}"
+      export GF_PATHS_CONFIG
+
+      # create every writable dir Grafana touches on a read-only rootfs
+      mkdir -p \
+        "$GF_PATHS_DATA" \
+        "$GF_PATHS_DATA/png" \
+        "$GF_PATHS_LOGS" \
+        "$GF_PATHS_PLUGINS" \
+        "$GF_PATHS_PROVISIONING/datasources" \
+        "$GF_PATHS_PROVISIONING/dashboards" \
+        "$GF_PATHS_PROVISIONING/plugins" \
+        "$GF_PATHS_PROVISIONING/alerting" \
+        "$GF_PATHS_PROVISIONING/access-control"
+
+      exec grafana server \
+        --homepath="$GF_HOME" \
+        --config="$GF_PATHS_CONFIG" \
+        --packaging=docker \
+        "$@"
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/share/grafana/bin/grafana
+        grafana --version | grep -q "13.0.2"
+        test -d /usr/share/grafana/public/build
+        test -f /etc/grafana/grafana.ini
