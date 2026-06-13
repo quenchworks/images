@@ -1,0 +1,89 @@
+# Builds PgBouncer from source onto Wolfi. Output is a signed APK in Quenchworks'
+# own repo. No upstream distro binaries. PgBouncer is C / autotools; we build from
+# the official release tarball (pgbouncer-<ver>.tar.gz) which ships a pre-generated
+# configure and the bundled libusual, so no autogen.sh / submodule fetch is needed.
+package:
+  name: quench-pgbouncer
+  version: 1.25.2
+  epoch: 0
+  description: "Quenchworks hardened PgBouncer, built from source on Wolfi (nonroot, read-only rootfs)"
+  copyright:
+    - license: ISC
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - openssl-dev       # TLS (client + server)
+      - libevent-dev      # required event loop
+      - c-ares-dev        # async DNS resolver (preferred over the bundled getaddrinfo)
+      - linux-headers
+      - pkgconf
+
+pipeline:
+  - uses: fetch
+    with:
+      # Official GitHub release tarball; autotools-ready, bundles libusual.
+      uri: https://github.com/pgbouncer/pgbouncer/releases/download/pgbouncer_1_25_2/pgbouncer-${{package.version}}.tar.gz
+      expected-sha256: "924ad35113fd0a71c8e2dbe85b5d03445532e2b7b37a9f8a48983beea238b332"
+  - runs: |
+      # TLS via OpenSSL, async DNS via c-ares. PAM and systemd are intentionally
+      # omitted to keep the runtime surface lean.
+      ./configure \
+        --prefix=/usr \
+        --with-openssl \
+        --with-cares \
+        --without-pam \
+        --without-systemd
+      # Build only the binary. The default `make install` target also regenerates
+      # the man pages from Markdown via python3 (doc/filter.py), which isn't in the
+      # build env and isn't needed at runtime, so we build + install just the
+      # pgbouncer executable explicitly.
+      make -j"$(nproc)" pgbouncer
+
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/usr/bin"
+      install -m 0755 pgbouncer "$destdir/usr/bin/pgbouncer"
+
+      # PgBouncer ships no live config; the chart supplies pgbouncer.ini + auth
+      # (userlist.txt / auth_query) as a ConfigMap/Secret. We drop a minimal sample
+      # pgbouncer.ini tuned for nonroot + read-only rootfs: socket/pid under a
+      # writable dir, logs to stderr. The chart mounts its own config over this.
+      install -d "$destdir/etc/pgbouncer"
+      cat > "$destdir/etc/pgbouncer/pgbouncer.ini" <<'EOF'
+      ; Quenchworks hardened PgBouncer sample config.
+      ; The chart replaces this with a real pgbouncer.ini (ConfigMap) plus auth
+      ; (userlist.txt Secret or auth_query). Tuned for nonroot (uid 1001) and a
+      ; read-only rootfs: socket + pidfile live under a writable mount, logs to
+      ; stderr (logfile empty). Adjust [databases] to point at your PostgreSQL.
+      [databases]
+      ; example = host=postgresql port=5432 dbname=example
+
+      [pgbouncer]
+      listen_addr = 0.0.0.0
+      listen_port = 6432
+      auth_type = trust
+      ; auth_file = /etc/pgbouncer/userlist.txt   ; chart mounts this Secret
+      ; Writable paths for a read-only rootfs (mount a tmpfs / emptyDir here):
+      unix_socket_dir = /var/run/pgbouncer
+      pidfile = /var/run/pgbouncer/pgbouncer.pid
+      logfile =
+      admin_users = postgres
+      pool_mode = transaction
+      max_client_conn = 100
+      default_pool_size = 20
+      EOF
+
+test:
+  pipeline:
+    - runs: |
+        pgbouncer --version
