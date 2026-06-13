@@ -1,0 +1,72 @@
+# Assembles the Elasticsearch runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Configured by ES_* env (the entrypoint writes elasticsearch.yml). HTTP API on 9200,
+# transport on 9300. Single-node with xpack.security DISABLED by default.
+#
+# !!! LICENSE: Elasticsearch's default distribution is dual SSPL-1.0 / Elastic License
+# !!! 2.0 -- NEITHER is OSI-approved open source. Do NOT represent it as open source.
+# !!! CAUTION TIER. CLEAN ALTERNATIVE: OpenSearch (Apache-2.0, shipped at #11) -- prefer it.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-elasticsearch@local
+
+accounts:
+  groups:
+    - groupname: elasticsearch
+      gid: 1001
+  users:
+    - username: elasticsearch
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/docker-entrypoint.sh
+
+environment:
+  ES_JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  ES_PATH_CONF: /conf
+  ES_PATH_DATA: /data
+  ES_PATH_LOGS: /var/log/elasticsearch
+  ES_TMPDIR: /data/tmp
+  # keep the smoke/default footprint modest; override in the chart
+  ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+  PATH: /usr/lib/jvm/java-21-openjdk/bin:/usr/bin:/opt/elasticsearch/bin
+
+work-dir: /opt/elasticsearch
+
+paths:
+  - path: /conf
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+  - path: /var/log/elasticsearch
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-elasticsearch"
+  # SSPL-1.0 AND Elastic License 2.0 both apply -- NEITHER is OSI open source.
+  org.opencontainers.image.licenses: "SSPL-1.0"

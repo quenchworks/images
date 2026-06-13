@@ -1,0 +1,145 @@
+# Packages Elasticsearch onto Wolfi. Elasticsearch is a JVM app: we ship the upstream
+# binary distribution's jars/modules but DROP its bundled JDK and run on the hardened
+# Wolfi-packaged OpenJDK 21, so the Wolfi-attributed JDK stays the CVE surface the Trivy
+# gate scans (the bundled ES JDK would escape attribution).
+#
+# JRE-vs-JDK NOTE: unlike OpenSearch (which runs on openjdk-21-jre), Elasticsearch 9.x's
+# entitlements framework (org.elasticsearch.entitlement) REQUIRES the `jdk.attach`
+# module, which is NOT present in openjdk-21-jre (verified: ES 9.4 boot dies with
+# "Module jdk.attach not found"). So we depend on the full `openjdk-21` package -- still
+# a hardened, Trivy-scannable, Wolfi-maintained OpenJDK 21 at the same
+# /usr/lib/jvm/java-21-openjdk path (bumped on fixable CVEs like the JRE would be), NOT
+# the stripped bundled ES JDK.
+#
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+# !!! LICENSE WARNING -- NOT OPEN SOURCE !!!
+# Elasticsearch's default distribution is dual-licensed under the Server Side Public
+# License v1 (SSPL-1.0) AND the Elastic License 2.0 (ELv2). NEITHER is OSI-approved
+# open source. Do NOT represent Elasticsearch as open source. CAUTION TIER.
+#   >>> CLEAN ALTERNATIVE: OpenSearch (Apache-2.0, already shipped at catalog #11) is the
+#   >>> truly-open drop-in fork of Elasticsearch -- PREFER IT for new deployments. <<<
+# SPDX below is SSPL-1.0; ELv2 ALSO applies to this distribution.
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+package:
+  name: quench-elasticsearch
+  version: 9.4.2
+  epoch: 0
+  description: "Quenchworks hardened Elasticsearch, packaged on Wolfi (SSPL-1.0/ELv2 -- NOT OSI open source; OpenSearch is the clean alt)"
+  copyright:
+    - license: SSPL-1.0  # dual SSPL-1.0 / Elastic License 2.0 -- NEITHER is OSI-approved
+  dependencies:
+    runtime:
+      - openjdk-21         # full Wolfi OpenJDK 21 (the scanned CVE surface). ES 9.x needs
+                           # the jdk.attach module, absent from openjdk-21-jre.
+      - bash               # the elasticsearch bin/* launchers are bash
+      - busybox
+      - libstdc++          # ES nativeaccess libvec.so (SIMD vector distance) + libzstd.so
+                           # (stored-fields compression) NEED libstdc++.so.6; without it
+                           # the whole NativeAccess provider fails to load and Zstd is null,
+                           # which fails shard recovery (cluster goes red). Verified locally.
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - curl
+      - ca-certificates-bundle
+
+pipeline:
+  # Elasticsearch ships ARCH-SPECIFIC distributions (they bundle a native JDK + native
+  # libs), so fetch the tarball matching the build arch -- not a fixed one, or the arm64
+  # package ends up with x86_64 binaries (this was a real bug in the OpenSearch build).
+  - runs: |
+      case "$(uname -m)" in
+        x86_64)  esarch=x86_64;  sha=b57636655b3807b663a6d87e74609c47ed78e6c8ba31848f0650e5fdc746b68e205005046bac6875e32563fdc71a60717f769714dfb490a0bdc85f24d556b6be ;;
+        aarch64) esarch=aarch64; sha=918893375084f17fd4b07ffdb06424a75a9a995490419f47f1bf555b3cc1f8b743c78fecaf0f04cc221fb0a53beeb4d65ba75a9f8d5b36a5742afd230a764915 ;;
+        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+      esac
+      url="https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-${{package.version}}-linux-${esarch}.tar.gz"
+      curl -fsSL -o es.tar.gz "$url"
+      echo "${sha}  es.tar.gz" | sha512sum -c -
+      mkdir -p src && tar -xzf es.tar.gz -C src --strip-components 1
+      cd src
+      dest="${{targets.destdir}}/opt/elasticsearch"
+      install -d "$dest"
+      # ship bin, lib, modules, config, plugins; drop the bundled JDK (we run on
+      # openjdk-21-jre so the JRE stays the attributed CVE surface).
+      cp -r bin config lib modules plugins LICENSE.txt NOTICE.txt "$dest/"
+      rm -rf "$dest/jdk"
+      # the linux tarball ships POSIX launchers only (no Windows .bat), but be defensive.
+      find "$dest/bin" -name '*.bat' -delete
+      # Elasticsearch ships config/ with restrictive perms; the nonroot runtime user must
+      # be able to read them to seed the writable conf dir (and execute the launchers).
+      chmod -R a+rX "$dest"
+      # bake a config-from-env entrypoint. The read-only rootfs means config, data, and
+      # logs live under writable mounts; ES_* env override defaults.
+      install -d "${{targets.destdir}}/usr/bin"
+      cat > "${{targets.destdir}}/usr/bin/docker-entrypoint.sh" <<'EOS'
+      #!/bin/bash
+      set -euo pipefail
+
+      ES_HOME=/opt/elasticsearch
+      CONF="${ES_PATH_CONF:-/conf}"
+      DATA="${ES_PATH_DATA:-/data}"
+      LOGS="${ES_PATH_LOGS:-/var/log/elasticsearch}"
+      mkdir -p "$CONF" "$DATA" "$LOGS"
+
+      # The rootfs is read-only, so /tmp is not writable. jvm.options sets
+      # -Djava.io.tmpdir=${ES_TMPDIR}; the SERVER JVM unpacks native libs / creates temp
+      # under it, so point ES_TMPDIR at a writable path or it dies on the read-only /tmp.
+      export ES_TMPDIR="${ES_TMPDIR:-$DATA/tmp}"
+      mkdir -p "$ES_TMPDIR"
+
+      # The bin/elasticsearch LAUNCHER runs a small bootstrap JVM (ServerLauncher) that
+      # parses jvm.options and calls Files.createTempDirectory under ITS java.io.tmpdir
+      # (defaults to /tmp) BEFORE ES_TMPDIR is applied to the server -- on a read-only
+      # rootfs that throws (JvmOption.setWorkingDir). The launcher unsets
+      # JAVA_TOOL_OPTIONS/_JAVA_OPTIONS but honors+appends CLI_JAVA_OPTS, so steer the
+      # bootstrap JVM's tmpdir at the writable dir too.
+      export CLI_JAVA_OPTS="-Djava.io.tmpdir=${ES_TMPDIR} ${CLI_JAVA_OPTS:-}"
+
+      # seed the config dir from the distribution once (jvm.options, log4j2.properties,
+      # role/user files Elasticsearch needs alongside elasticsearch.yml)
+      if [ ! -f "$CONF/jvm.options" ]; then
+        cp -r "$ES_HOME"/config/. "$CONF"/
+      fi
+      # jvm.options ships relative log/error paths resolved from the (read-only) CWD;
+      # repoint them at the writable LOGS dir so the JVM can create them. (java.io.tmpdir
+      # already uses ${ES_TMPDIR}; HeapDumpPath ships commented out.)
+      sed -i \
+        -e "s#:file=gc.log#:file=${LOGS}/gc.log#" \
+        -e "s#-XX:ErrorFile=hs_err#-XX:ErrorFile=${LOGS}/hs_err#" \
+        "$CONF/jvm.options"
+
+      # generate elasticsearch.yml from env (single-node). xpack.security is DISABLED by
+      # default: ES 8.x+ defaults security ON and auto-generates certs/passwords on first
+      # boot, which is painful for a single-node hardened image -- disabling it matches the
+      # established QuenchWorks posture (security off for an internal deployment, the
+      # NetworkPolicy is the boundary). Re-enable + configure TLS for production.
+      {
+        echo "cluster.name: ${ES_CLUSTER_NAME:-quench-elasticsearch}"
+        echo "node.name: ${ES_NODE_NAME:-${HOSTNAME:-node-1}}"
+        echo "network.host: 0.0.0.0"
+        echo "http.port: ${ES_HTTP_PORT:-9200}"
+        echo "transport.port: ${ES_TRANSPORT_PORT:-9300}"
+        echo "discovery.type: ${ES_DISCOVERY_TYPE:-single-node}"
+        echo "path.data: $DATA"
+        echo "path.logs: $LOGS"
+        echo "xpack.security.enabled: ${ES_SECURITY_ENABLED:-false}"
+        if [ -n "${ES_CONFIG_EXTRA:-}" ]; then printf '%s\n' "${ES_CONFIG_EXTRA}"; fi
+      } > "$CONF/elasticsearch.yml"
+
+      export ES_JAVA_HOME="${ES_JAVA_HOME:-/usr/lib/jvm/java-21-openjdk}"
+      export ES_PATH_CONF="$CONF"
+      exec "$ES_HOME/bin/elasticsearch"
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /opt/elasticsearch/bin/elasticsearch
