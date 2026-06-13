@@ -1,0 +1,55 @@
+# Assembles the OpenTelemetry Collector runtime image. Minimal, nonroot,
+# multi-arch, SBOM by apko.
+#
+# The collector is configured by a YAML config file (--config=...). It REQUIRES
+# a config to start; the chart mounts one. This base image ships NO default
+# config -- the entrypoint is the binary directly (/usr/bin/otelcol-contrib) and
+# the chart supplies `--config=/etc/otelcol-contrib/config.yaml`. busybox is
+# included only to give operators a minimal shell for debugging; it is not on the
+# entrypoint path.
+#
+# Read-only rootfs friendly: the collector writes nothing to the rootfs. The
+# file_storage extension (if enabled by config) needs a writable directory and
+# /tmp, which the chart mounts as writable volumes; the base image presumes no
+# persistent state.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - busybox
+    - ca-certificates-bundle
+    - quench-otel-collector@local
+
+accounts:
+  groups:
+    - groupname: otel
+      gid: 1001
+  users:
+    - username: otel
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/otelcol-contrib
+
+# Default ports (advisory; the actual listeners come from the mounted config):
+#   4317  OTLP gRPC receiver
+#   4318  OTLP HTTP receiver
+#   8888  the collector's own Prometheus metrics
+#   13133 health_check extension
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-otel-collector"
+  org.opencontainers.image.licenses: "Apache-2.0"

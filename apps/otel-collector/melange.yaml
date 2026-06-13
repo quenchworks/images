@@ -1,0 +1,86 @@
+# Builds the OpenTelemetry Collector "contrib" distribution (otelcol-contrib)
+# from source onto Wolfi. Single static Go binary (CGO disabled), multi-arch.
+# Output is a signed APK in Quenchworks' own repo. No upstream distro binaries.
+#
+# The OpenTelemetry Collector is a vendor-agnostic telemetry pipeline that
+# receives, processes and exports traces, metrics and logs. There is no single
+# upstream "collector" Go module to compile: the binary is ASSEMBLED by the
+# OpenTelemetry Collector Builder (ocb / cmd/builder) from a manifest that lists
+# every receiver/processor/exporter/extension/connector to include.
+#
+# DISTRIBUTION CHOICE -- we build the OFFICIAL "otelcol-contrib" distribution
+# (the widely-used full-component build), using the EXACT manifest.yaml that
+# upstream's opentelemetry-collector-releases repo uses to cut the official
+# otelcol-contrib binaries for the v0.154.0 tag (vendored here verbatim as
+# manifest.yaml; module github.com/open-telemetry/opentelemetry-collector-releases/contrib,
+# version 0.154.0, build_tags "grpcnotrace"). This guarantees component parity
+# with the upstream release while building 100% from source on Wolfi.
+#
+# BUILD METHOD -- ocb is the canonical, supported way to build a collector
+# distribution; building the contrib repo's in-repo cmd/otelcontribcol is
+# explicitly "testing only" and itself just shells out to ocb. ocb generates a
+# Go module (main.go + go.mod) under ./_build wiring in all listed components,
+# then runs `go build`. ocb resolves the component modules from the Go module
+# proxy at build time (network); melange build pipelines have network (same as
+# our traefik build which uses -mod=mod), so this is reproducible from the
+# pinned, fully version-locked manifest. We pin ocb to the same version as the
+# distribution (OTELCOL_BUILDER_VERSION 0.154.0 in the releases Makefile).
+#
+# VERSION STAMP -- ocb writes the dist.version (0.154.0) into the generated
+# command's BuildInfo, so `otelcol-contrib --version` reports 0.154.0 without
+# any manual ldflags (upstream's goreleaser only passes -s -w, which we match).
+package:
+  name: quench-otel-collector
+  version: 0.154.0
+  epoch: 0
+  description: "Quenchworks hardened OpenTelemetry Collector (contrib distribution; vendor-agnostic traces/metrics/logs pipeline), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      # ocb/components require go >= 1.24; upstream CI uses ~1.26. Use the current
+      # go-1.26 toolchain to pick up the latest stdlib CVE fixes (helps clear the
+      # Trivy gate without manual bumps).
+      - go-1.26
+
+pipeline:
+  - runs: |
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local
+      export GOPATH="${PWD}/.gopath"
+      export GOBIN="${GOPATH}/bin"
+      export PATH="${GOBIN}:${PATH}"
+
+      # Install the OpenTelemetry Collector Builder (ocb) pinned to the exact
+      # version used to cut the official otelcol-contrib 0.154.0 release.
+      CGO_ENABLED=0 go install -trimpath -ldflags="-s -w" \
+        go.opentelemetry.io/collector/cmd/builder@v${{package.version}}
+
+      # Generate the distribution module from the vendored official manifest and
+      # build the static binary. ocb's manifest sets output_path ./_build and
+      # build_tags grpcnotrace; we match upstream's goreleaser ldflags (-s -w)
+      # and -trimpath. ocb invokes `go build` internally.
+      builder --config=manifest.yaml \
+        --ldflags="-s -w" \
+        --skip-strict-versioning
+
+      install -Dm0755 ./_build/otelcol-contrib \
+        "${{targets.destdir}}/usr/bin/otelcol-contrib"
+
+test:
+  pipeline:
+    - runs: |
+        otelcol-contrib --version
