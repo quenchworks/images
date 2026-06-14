@@ -1,0 +1,623 @@
+# Builds the Coolify core application (coolify-app) FROM SOURCE on Wolfi with melange.
+#
+# coolify-app is the heavy core of the Coolify wave: a PHP 8.4 / Laravel 12 + Livewire
+# app with a Node 24 / Vite-built frontend. Upstream ships it as
+# ghcr.io/coollabsio/coolify, built FROM serversideup/php:8.4-fpm-nginx-alpine (an
+# Alpine base wiring php-fpm + nginx + s6-overlay together) with the app layered on top.
+# We do NOT inherit that base image -- clean-room rule. We reconstruct the whole runtime
+# from Wolfi packages (php-8.4 + php-8.4-fpm + extensions, QuenchWorks' own nginx,
+# postgresql-18-client, git/git-lfs/openssh-client) in apko.yaml, and build the PHP
+# vendor tree + the Vite assets here from the committed lockfiles at coolify tag v4.1.2.
+#
+# Coolify pins coolify v4.1.2 (versions.json) at commit
+# e7dff30b7c998c301fd91bd169727b90c59ec291. This melange package produces the assembled
+# application tree under /var/www/html:
+#   * vendor/         -- `composer install --no-dev --no-scripts` against composer.lock
+#   * public/build/   -- `npm ci && npm run build` (Vite) static assets
+#   * app source      -- app/, bootstrap/, config/, database/, lang/, public/, routes/,
+#                        storage/, templates/, resources/views/, artisan, openapi.yaml,
+#                        changelogs/, composer.json, composer.lock
+#   * optimized autoloader -- `composer dump-autoload --optimize`
+# plus the supervisor wiring (see below) and the runtime config files.
+#
+# SUPERVISOR CHOICE -- supervisord, NOT s6-overlay. Upstream uses s6-overlay, but
+# s6-overlay (the s6-rc service runtime: s6-svscan, s6-rc, with-contenv, execlineb -P,
+# the /etc/s6-overlay/s6-rc.d layout) is NOT packaged in Wolfi -- Wolfi only has the
+# lower-level `s6` + `execline` libraries, not the overlay's init/supervision tree or
+# its CVE-tracked release apk. Vendoring the s6-overlay release tarball would reintroduce
+# an untracked upstream binary blob (exactly what the clean-room/0-CVE posture forbids).
+# Wolfi DOES ship `supervisor` (supervisord, CVE-tracked), which maps cleanly onto the
+# same service model. We port the 6 upstream s6 services + php-fpm + nginx to supervisord
+# programs and reproduce the s6 ordering with a one-shot bootstrap (db-migration ->
+# init-seeder -> init-script, gated on DB availability) followed by the long-running
+# workers (scheduler-worker, horizon, nightwatch-agent) + php-fpm + nginx. nightwatch is
+# disabled by default (NIGHTWATCH_ENABLED).
+package:
+  name: quench-coolify-app
+  version: 4.1.2
+  epoch: 0
+  description: "Quenchworks hardened Coolify core app (PHP 8.4 / Laravel 12 + Livewire, Vite assets), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0   # coolify is Apache-2.0
+  dependencies:
+    runtime:
+      # PHP runtime + FPM + the extension set the app needs (see apko.yaml for the full
+      # rationale; declared here so the package pulls them even when installed directly).
+      - php-8.4
+      - php-8.4-fpm
+      - php-8.4-fpm-config
+      - php-8.4-config
+      - php-8.4-opcache
+      - php-8.4-opcache-config
+      - php-8.4-ctype
+      - php-8.4-ctype-config
+      - php-8.4-curl
+      - php-8.4-curl-config
+      - php-8.4-dom
+      - php-8.4-dom-config
+      - php-8.4-fileinfo
+      - php-8.4-fileinfo-config
+      - php-8.4-iconv
+      - php-8.4-iconv-config
+      - php-8.4-mbstring
+      - php-8.4-mbstring-config
+      - php-8.4-openssl
+      - php-8.4-openssl-config
+      - php-8.4-pcntl
+      - php-8.4-pcntl-config
+      - php-8.4-posix
+      - php-8.4-posix-config
+      - php-8.4-simplexml
+      - php-8.4-simplexml-config
+      - php-8.4-sodium
+      - php-8.4-sodium-config
+      - php-8.4-phar
+      - php-8.4-phar-config
+      - php-8.4-xml
+      - php-8.4-xml-config
+      - php-8.4-xmlreader
+      - php-8.4-xmlreader-config
+      - php-8.4-xmlwriter
+      - php-8.4-xmlwriter-config
+      - php-8.4-pdo
+      - php-8.4-pdo-config
+      - php-8.4-pdo_pgsql
+      - php-8.4-pdo_pgsql-config
+      - php-8.4-pgsql
+      - php-8.4-pgsql-config
+      - php-8.4-redis
+      - php-8.4-redis-config
+      - php-8.4-bcmath
+      - php-8.4-bcmath-config
+      - php-8.4-gd
+      - php-8.4-gd-config
+      - php-8.4-zip
+      - php-8.4-zip-config
+      - php-8.4-intl
+      - php-8.4-intl-config
+      - php-8.4-sockets
+      - php-8.4-sockets-config
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - bash
+      - ca-certificates-bundle
+      - git
+      - composer
+      # PHP + the extensions composer's platform check + the build steps need. composer
+      # install validates the platform ext-* requirements from composer.lock, and
+      # `composer dump-autoload` / `artisan` boot need the same extensions present.
+      - php-8.4
+      - php-8.4-phar
+      - php-8.4-phar-config
+      - php-8.4-curl
+      - php-8.4-curl-config
+      - php-8.4-openssl
+      - php-8.4-openssl-config
+      - php-8.4-mbstring
+      - php-8.4-mbstring-config
+      - php-8.4-ctype
+      - php-8.4-ctype-config
+      - php-8.4-iconv
+      - php-8.4-iconv-config
+      - php-8.4-dom
+      - php-8.4-dom-config
+      - php-8.4-simplexml
+      - php-8.4-simplexml-config
+      - php-8.4-xml
+      - php-8.4-xml-config
+      - php-8.4-xmlreader
+      - php-8.4-xmlreader-config
+      - php-8.4-xmlwriter
+      - php-8.4-xmlwriter-config
+      - php-8.4-fileinfo
+      - php-8.4-fileinfo-config
+      - php-8.4-sodium
+      - php-8.4-sodium-config
+      - php-8.4-pcntl
+      - php-8.4-pcntl-config
+      - php-8.4-posix
+      - php-8.4-posix-config
+      - php-8.4-pdo
+      - php-8.4-pdo-config
+      - php-8.4-pdo_pgsql
+      - php-8.4-pdo_pgsql-config
+      - php-8.4-pgsql
+      - php-8.4-pgsql-config
+      - php-8.4-redis
+      - php-8.4-redis-config
+      - php-8.4-bcmath
+      - php-8.4-bcmath-config
+      - php-8.4-gd
+      - php-8.4-gd-config
+      - php-8.4-zip
+      - php-8.4-zip-config
+      - php-8.4-intl
+      - php-8.4-intl-config
+      - php-8.4-sockets
+      - php-8.4-sockets-config
+      # Node 24 toolchain for the Vite frontend build.
+      - nodejs-24
+      - npm
+
+pipeline:
+  - uses: git-checkout
+    with:
+      repository: https://github.com/coollabsio/coolify
+      tag: v4.1.2
+      expected-commit: e7dff30b7c998c301fd91bd169727b90c59ec291
+      destination: coolify
+
+  - name: Install PHP (Composer) production dependencies
+    runs: |
+      set -eu
+      export COMPOSER_ALLOW_SUPERUSER=1
+      export COMPOSER_NO_INTERACTION=1
+      export COMPOSER_CACHE_DIR="$(mktemp -d)"
+      export HOME="$(mktemp -d)"
+
+      cd coolify
+      # Reproduce upstream's composer stage: install from the committed composer.lock,
+      # production deps only, no plugins/scripts (scripts run artisan which needs a DB).
+      composer install --no-dev --no-interaction --no-plugins --no-scripts --prefer-dist
+      test -f vendor/autoload.php
+
+  - name: Build the Vite frontend assets (Node 24)
+    runs: |
+      set -eu
+      export npm_config_cache="$(mktemp -d)"
+      export HOME="$(mktemp -d)"
+      export NPM_CONFIG_REGISTRY="https://registry.npmjs.org"
+      # `playwright` is a dependency whose postinstall downloads browser binaries; the
+      # build never runs a browser, so skip that fetch to keep the build hermetic.
+      export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+      export PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1
+
+      cd coolify
+      # Reproduce upstream's static-assets stage: npm ci against the committed lockfile,
+      # then `vite build` -> public/build/.
+      npm ci
+      npm run build
+      test -d public/build
+      test -f public/build/manifest.json
+
+  - name: Assemble the application tree under /var/www/html and optimize the autoloader
+    runs: |
+      set -eu
+      export COMPOSER_ALLOW_SUPERUSER=1
+      export COMPOSER_NO_INTERACTION=1
+      export COMPOSER_CACHE_DIR="$(mktemp -d)"
+      export HOME="$(mktemp -d)"
+
+      destdir="${{targets.destdir}}"
+      app="$destdir/var/www/html"
+      install -d "$app"
+
+      cd coolify
+      # The exact source tree upstream's final stage copies (Dockerfile COPY list), plus
+      # vendor/ (composer) and public/build/ (vite). Keep it tight -- no tests/dev tooling.
+      cp -a vendor "$app/vendor"
+      cp -a app bootstrap config database lang public routes storage templates artisan \
+            openapi.yaml changelogs composer.json composer.lock "$app/"
+      # .env.production is the seed the entrypoint copies to .env when the chart doesn't
+      # mount one (upstream's app:init/worker gating reads .env). Not in the Dockerfile
+      # COPY list because serversideup's entrypoint handles it; we carry it explicitly.
+      cp -a .env.production "$app/.env.production"
+      install -d "$app/resources"
+      cp -a resources/views "$app/resources/views"
+
+      # Regenerate an optimized classmap autoloader against the assembled tree (same as
+      # upstream's `composer dump-autoload`). --no-scripts: scripts hit artisan/the DB.
+      cd "$app"
+      composer dump-autoload --optimize --no-scripts --no-interaction
+      php -r 'require "vendor/autoload.php"; echo "autoload ok\n";'
+
+      # serversideup's base ships public/healthcheck (a tiny PHP file the nginx
+      # /healthcheck location FastCGI-passes to). Coolify's repo does not carry it, so we
+      # provide an equivalent that returns "OK" -- this is what the chart/k8s probe hits.
+      cat > "$app/public/healthcheck" <<'EOF'
+      <?php
+      // QuenchWorks coolify-app liveness endpoint (replaces serversideup's base file).
+      http_response_code(200);
+      header('Content-Type: text/plain');
+      echo "OK";
+      EOF
+
+      # /var/www/html/.env is shipped as a SYMLINK to /tmp/coolify.env (a writable tmpfs
+      # on a read-only rootfs). Laravel resolves environmentPath()/.env relative to the
+      # base path, so the file MUST live at /var/www/html/.env; the symlink keeps the
+      # rootfs read-only while letting the entrypoint write the actual file under /tmp.
+      # If the chart mounts a real .env over this path (Secret), that simply wins.
+      ln -sf /tmp/coolify.env "$app/.env"
+
+  - name: Install nginx site config (FastCGI to php-fpm, port 8080, /var/www/html/public)
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/etc/nginx/conf.d"
+      # Port of upstream's docker/production/etc/nginx/site-opts.d/http.conf, adapted for
+      # the QuenchWorks nginx layout: it is included from quench-nginx's nginx.conf via
+      # /etc/nginx/conf.d/*.conf. We listen on 8080 (nonroot can't bind <1024, matches
+      # upstream which already used 8080), serve /var/www/html/public, and FastCGI-pass
+      # .php (+ the /healthcheck endpoint) to php-fpm on 127.0.0.1:9000.
+      cat > "$destdir/etc/nginx/conf.d/coolify.conf" <<'EOF'
+      server {
+          listen 8080 default_server;
+          listen [::]:8080 default_server;
+
+          root /var/www/html/public;
+          index index.html index.htm index.php;
+          server_name _;
+          charset utf-8;
+
+          client_max_body_size 2048M;
+          client_body_buffer_size 256k;
+
+          access_log off;
+
+          location /healthcheck {
+              access_log off;
+              fastcgi_read_timeout 5s;
+              include        fastcgi_params;
+              fastcgi_param  SCRIPT_NAME     /healthcheck;
+              fastcgi_param  SCRIPT_FILENAME $document_root/healthcheck;
+              fastcgi_pass   127.0.0.1:9000;
+          }
+
+          location / {
+              try_files $uri $uri/ /index.php?$query_string;
+          }
+
+          location ~ \.php$ {
+              fastcgi_pass   127.0.0.1:9000;
+              fastcgi_index  index.php;
+              fastcgi_param  SCRIPT_FILENAME  $document_root$fastcgi_script_name;
+              include        fastcgi_params;
+              fastcgi_buffers 16 16k;
+              fastcgi_buffer_size 32k;
+              fastcgi_read_timeout 99;
+          }
+      }
+      EOF
+
+  - name: Install php-fpm + php.ini overrides for nonroot / read-only rootfs
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/etc/php/php-fpm.d"
+      install -d "$destdir/etc/php/conf.d"
+
+      # The Wolfi php-8.4-fpm-config pool sets `user = nobody / group = nobody`, which a
+      # nonroot master (uid 9999) cannot apply (only root can setuid the workers). Ship a
+      # zzz pool override that (a) drops user/group so workers inherit the runtime uid,
+      # (b) pins the listen socket to 127.0.0.1:9000 (what the nginx FastCGI block uses),
+      # (c) keeps the master in the foreground and logs to stderr (supervisord captures).
+      cat > "$destdir/etc/php/php-fpm.d/zzz-coolify.conf" <<'EOF'
+      [global]
+      daemonize = no
+      error_log = /proc/self/fd/2
+
+      [www]
+      ; run as the invoking (nonroot) user -- no setuid by the master
+      listen = 127.0.0.1:9000
+      catch_workers_output = yes
+      decorate_workers_output = no
+      clear_env = no
+      ; Allow the extensionless /healthcheck script (the Wolfi pool defaults to .php only;
+      ; the nginx /healthcheck location FastCGI-passes SCRIPT_FILENAME .../public/healthcheck
+      ; which has no .php extension). The only FastCGI-reachable scripts are public/*.php
+      ; and public/healthcheck, both ours, so clearing the extension allowlist is safe here.
+      security.limit_extensions =
+      pm = dynamic
+      pm.max_children = 20
+      pm.start_servers = 2
+      pm.min_spare_servers = 1
+      pm.max_spare_servers = 4
+      access.log = /proc/self/fd/2
+      EOF
+
+      # Coolify's PHP overrides (port of docker/production/etc/php/conf.d/zzz-custom-php.ini),
+      # plus opcache on. Logs to the Laravel storage path (writable tmpfs at runtime).
+      cat > "$destdir/etc/php/conf.d/zzz-coolify.ini" <<'EOF'
+      error_reporting = E_ERROR
+      error_log = /var/www/html/storage/logs/php-error.log
+      log_errors = Off
+      log_errors_max_len = 8192
+      ignore_repeated_errors = On
+      ignore_repeated_source = On
+      upload_max_filesize = 256M
+      post_max_size = 256M
+      memory_limit = 512M
+      opcache.enable = 1
+      opcache.enable_cli = 0
+      EOF
+
+  - name: Install the supervisord configuration (php-fpm, nginx + the 6 ported services)
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/etc/supervisor.d"
+      install -d "$destdir/etc/coolify"
+
+      # Main supervisord config at /etc/coolify/supervisord.conf (NOT /etc/supervisord.conf
+      # -- that path is shipped by the Wolfi supervisor-config package and would conflict
+      # in apko's solve). The entrypoint points supervisord at this file explicitly. It's
+      # nonroot-friendly (no privileged ops), logs to stdout, pid + sock under /tmp
+      # (writable tmpfs on a read-only rootfs), and includes the per-service drop-ins.
+      cat > "$destdir/etc/coolify/supervisord.conf" <<'EOF'
+      [supervisord]
+      nodaemon=true
+      user=www-data
+      logfile=/dev/stdout
+      logfile_maxbytes=0
+      pidfile=/tmp/supervisord.pid
+
+      [unix_http_server]
+      file=/tmp/supervisor.sock
+
+      [supervisorctl]
+      serverurl=unix:///tmp/supervisor.sock
+
+      [rpcinterface:supervisor]
+      supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+
+      [include]
+      files = /etc/supervisor.d/*.conf
+      EOF
+
+      # php-fpm + nginx are the always-on web tier.
+      cat > "$destdir/etc/supervisor.d/php-fpm.conf" <<'EOF'
+      [program:php-fpm]
+      command=/usr/bin/php-fpm --nodaemonize --fpm-config /etc/php/php-fpm.conf
+      autostart=true
+      autorestart=true
+      priority=10
+      stdout_logfile=/dev/stdout
+      stdout_logfile_maxbytes=0
+      stderr_logfile=/dev/stderr
+      stderr_logfile_maxbytes=0
+      EOF
+
+      cat > "$destdir/etc/supervisor.d/nginx.conf" <<'EOF'
+      [program:nginx]
+      command=/usr/bin/nginx -g "daemon off;"
+      autostart=true
+      autorestart=true
+      priority=20
+      stdout_logfile=/dev/stdout
+      stdout_logfile_maxbytes=0
+      stderr_logfile=/dev/stderr
+      stderr_logfile_maxbytes=0
+      EOF
+
+      # The bootstrap one-shots (db-migration -> init-seeder -> init-script), reproduced
+      # as a single ordered wrapper so supervisord doesn't have to model oneshot DAGs.
+      # It blocks until the DB is reachable (the s6 db-migration dependency), then runs
+      # the three artisan steps in upstream's dependency order, then exits 0. Run as an
+      # autostart program with startsecs=0 + autorestart=false (a "oneshot" in
+      # supervisord terms).
+      cat > "$destdir/etc/supervisor.d/bootstrap.conf" <<'EOF'
+      [program:bootstrap]
+      command=/usr/bin/coolify-bootstrap.sh
+      directory=/var/www/html
+      autostart=true
+      autorestart=false
+      startsecs=0
+      exitcodes=0
+      priority=5
+      stdout_logfile=/dev/stdout
+      stdout_logfile_maxbytes=0
+      stderr_logfile=/dev/stderr
+      stderr_logfile_maxbytes=0
+      EOF
+
+      # Long-running workers. They self-gate on the .env flags exactly like the upstream
+      # s6 run scripts (sleep infinity when disabled), so they're always-on programs.
+      cat > "$destdir/etc/supervisor.d/scheduler-worker.conf" <<'EOF'
+      [program:scheduler-worker]
+      command=/usr/bin/coolify-scheduler.sh
+      directory=/var/www/html
+      autostart=true
+      autorestart=true
+      priority=30
+      stdout_logfile=/dev/stdout
+      stdout_logfile_maxbytes=0
+      stderr_logfile=/dev/stderr
+      stderr_logfile_maxbytes=0
+      EOF
+
+      cat > "$destdir/etc/supervisor.d/horizon.conf" <<'EOF'
+      [program:horizon]
+      command=/usr/bin/coolify-horizon.sh
+      directory=/var/www/html
+      autostart=true
+      autorestart=true
+      priority=30
+      stdout_logfile=/dev/stdout
+      stdout_logfile_maxbytes=0
+      stderr_logfile=/dev/stderr
+      stderr_logfile_maxbytes=0
+      EOF
+
+      # nightwatch-agent: disabled by default (only starts when NIGHTWATCH_ENABLED=true in
+      # .env, mirroring upstream). autostart=false so it doesn't even spin a sleep loop.
+      cat > "$destdir/etc/supervisor.d/nightwatch-agent.conf" <<'EOF'
+      [program:nightwatch-agent]
+      command=/usr/bin/coolify-nightwatch.sh
+      directory=/var/www/html
+      autostart=false
+      autorestart=true
+      priority=40
+      stdout_logfile=/dev/stdout
+      stdout_logfile_maxbytes=0
+      stderr_logfile=/dev/stderr
+      stderr_logfile_maxbytes=0
+      EOF
+
+  - name: Install the service wrapper scripts (ports of the upstream s6 run/up scripts)
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/usr/bin"
+
+      # bootstrap: db-migration (start:migration) -> init-seeder (start:seeder) ->
+      # init-script (app:init), gated on DB availability like the s6 db-migration oneshot.
+      cat > "$destdir/usr/bin/coolify-bootstrap.sh" <<'EOF'
+      #!/bin/sh
+      set -eu
+      cd /var/www/html
+      echo "[bootstrap] waiting for the database to accept connections..."
+      # Wait up to ~5 min for the DB; `php artisan db:monitor` is overkill, use a tiny
+      # PDO probe via artisan tinker-free inline script. Falls through to migration which
+      # would otherwise fail-fast if the DB never comes up.
+      i=0
+      until php -r '
+        $h=getenv("DB_HOST")?:"coolify-db";
+        $p=getenv("DB_PORT")?:"5432";
+        $d=getenv("DB_DATABASE")?:"coolify";
+        $u=getenv("DB_USERNAME")?:"coolify";
+        $w=getenv("DB_PASSWORD")?:"";
+        try { new PDO("pgsql:host=$h;port=$p;dbname=$d", $u, $w, [PDO::ATTR_TIMEOUT=>3]); exit(0); }
+        catch (Throwable $e) { fwrite(STDERR, $e->getMessage()."\n"); exit(1); }
+      ' 2>/dev/null; do
+        i=$((i+1))
+        if [ "$i" -ge 60 ]; then
+          echo "[bootstrap] database not reachable after ~5min; running migration anyway (will fail-fast if truly down)"
+          break
+        fi
+        sleep 5
+      done
+      echo "[bootstrap] running database migrations (artisan start:migration)"
+      php artisan start:migration
+      echo "[bootstrap] running seeder (artisan start:seeder)"
+      php artisan start:seeder
+      echo "[bootstrap] running app init (artisan app:init)"
+      php artisan app:init
+      echo "[bootstrap] complete"
+      EOF
+      chmod 0755 "$destdir/usr/bin/coolify-bootstrap.sh"
+
+      # scheduler-worker: verbatim port of the s6 scheduler-worker run script.
+      cat > "$destdir/usr/bin/coolify-scheduler.sh" <<'EOF'
+      #!/bin/sh
+      cd /var/www/html
+      if grep -qE '^SCHEDULER_ENABLED=false' .env 2>/dev/null; then
+          echo "   INFO  Scheduler is disabled, sleeping."
+          exec sleep infinity
+      fi
+      echo "   INFO  Scheduler is enabled, starting..."
+      exec php artisan schedule:work
+      EOF
+      chmod 0755 "$destdir/usr/bin/coolify-scheduler.sh"
+
+      # horizon: verbatim port of the s6 horizon run script.
+      cat > "$destdir/usr/bin/coolify-horizon.sh" <<'EOF'
+      #!/bin/sh
+      cd /var/www/html
+      if grep -qE '^HORIZON_ENABLED=false' .env 2>/dev/null; then
+          echo "   INFO  Horizon is disabled, sleeping."
+          exec sleep infinity
+      fi
+      echo "   INFO  Horizon is enabled, starting..."
+      exec php artisan horizon
+      EOF
+      chmod 0755 "$destdir/usr/bin/coolify-horizon.sh"
+
+      # nightwatch-agent: verbatim port of the s6 nightwatch-agent run script.
+      cat > "$destdir/usr/bin/coolify-nightwatch.sh" <<'EOF'
+      #!/bin/sh
+      cd /var/www/html
+      if grep -qE '^NIGHTWATCH_ENABLED=true' .env 2>/dev/null; then
+          echo "   INFO  Nightwatch is enabled, starting..."
+          exec php artisan nightwatch:agent
+      fi
+      echo "   INFO  Nightwatch is disabled, sleeping."
+      exec sleep infinity
+      EOF
+      chmod 0755 "$destdir/usr/bin/coolify-nightwatch.sh"
+
+      # Container entrypoint: prime .env from .env.production if absent (the worker gating
+      # greps .env, and artisan needs config), recreate the storage tree, then supervisord.
+      cat > "$destdir/usr/bin/coolify-entrypoint.sh" <<'EOF'
+      #!/bin/sh
+      set -eu
+      cd /var/www/html
+      # Laravel needs storage/ subdirs to exist (writable tmpfs at runtime); recreate the
+      # framework cache tree on every boot since storage/ is an emptyDir/tmpfs.
+      mkdir -p storage/framework/cache/data \
+               storage/framework/sessions \
+               storage/framework/views \
+               storage/app/public \
+               storage/app/ssh/keys \
+               storage/app/ssh/mux \
+               storage/logs \
+               bootstrap/cache 2>/dev/null || true
+      # .env is a symlink to /tmp/coolify.env (writable tmpfs). Seed it from .env.production
+      # if the file doesn't exist yet (i.e. the chart didn't mount a real .env over it).
+      if [ ! -e /tmp/coolify.env ]; then
+          if [ -f .env.production ]; then cp .env.production /tmp/coolify.env; else : > /tmp/coolify.env; fi
+      fi
+      exec supervisord -c /etc/coolify/supervisord.conf
+      EOF
+      chmod 0755 "$destdir/usr/bin/coolify-entrypoint.sh"
+
+  - name: Sanity-check the assembled tree
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      app="$destdir/var/www/html"
+      test -f "$app/artisan"
+      test -f "$app/vendor/autoload.php"
+      test -d "$app/public/build"
+      test -f "$app/public/healthcheck"
+      test -f "$destdir/etc/nginx/conf.d/coolify.conf"
+      test -f "$destdir/etc/coolify/supervisord.conf"
+      test -x "$destdir/usr/bin/coolify-entrypoint.sh"
+      test -x "$destdir/usr/bin/coolify-bootstrap.sh"
+
+test:
+  pipeline:
+    - runs: |
+        set -eu
+        test -f /var/www/html/artisan
+        test -f /var/www/html/vendor/autoload.php
+        test -d /var/www/html/public/build
+        php --version
+        php -m | grep -qi pdo_pgsql
+        php -m | grep -qi redis
+        # Seed the env target (the shipped .env is a symlink to /tmp/coolify.env) and the
+        # storage tree so the Laravel bootstrap has somewhere to write, then prove artisan
+        # boots enough to print its version.
+        cp /var/www/html/.env.production /tmp/coolify.env
+        mkdir -p /var/www/html/storage/logs \
+                 /var/www/html/storage/framework/cache/data \
+                 /var/www/html/storage/framework/sessions \
+                 /var/www/html/storage/framework/views \
+                 /var/www/html/bootstrap/cache
+        cd /var/www/html && php artisan --version
