@@ -16,6 +16,7 @@ permissions:
   contents: read
   packages: write        # push to GHCR
   id-token: write        # cosign keyless
+  attestations: write    # SLSA build provenance + SBOM attestation
 
 env:
   GHCR_IMAGE: ghcr.io/quenchworks/images/clickhouse
@@ -114,6 +115,29 @@ jobs:
 
       - name: Sign the multi-arch index (cosign keyless)
         run: cosign sign --yes "${GHCR_IMAGE}@${{ steps.merge.outputs.digest }}"
+
+      - name: Generate SBOM (SPDX) for the signed index
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.GHCR_IMAGE }}@${{ steps.merge.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: false
+
+      - name: Attest the SBOM (keyless, pushed to GHCR)
+        uses: actions/attest-sbom@v2
+        with:
+          subject-name: ${{ env.GHCR_IMAGE }}
+          subject-digest: ${{ steps.merge.outputs.digest }}
+          sbom-path: sbom.spdx.json
+          push-to-registry: true
+
+      - name: Attest build provenance (SLSA, pushed to GHCR)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.GHCR_IMAGE }}
+          subject-digest: ${{ steps.merge.outputs.digest }}
+          push-to-registry: true
 
       - name: Notify the charts repo
         env:
