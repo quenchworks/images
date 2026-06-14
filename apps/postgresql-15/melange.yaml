@@ -1,0 +1,107 @@
+# Builds the postgresql package from source onto Wolfi. Output is a signed APK in
+# Quenchworks' own repo. No upstream distro binaries.
+# This is the PostgreSQL 15.x variant (Coolify pins PG 15); the default postgresql image tracks 18.x.
+package:
+  name: quench-postgresql-15
+  version: 15.18
+  epoch: 0
+  description: "Quenchworks hardened PostgreSQL 15, built from source on Wolfi"
+  copyright:
+    - license: PostgreSQL
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - tzdata           # postgres is built --with-system-tzdata and reads it at runtime
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - openssl-dev
+      - readline-dev
+      - zlib-dev
+      - icu-dev
+      - linux-headers
+      - pkgconf
+      - perl                # required by the build for some generated headers
+      - bison               # parser generator (gram.y)
+      - flex                # scanner generator (scan.l)
+
+pipeline:
+  - uses: fetch
+    with:
+      # Official release tarball with a published, stable sha256.
+      uri: https://ftp.postgresql.org/pub/source/v${{package.version}}/postgresql-${{package.version}}.tar.bz2
+      expected-sha256: "11df0df97fe3ea4ba9a791faaf39cee1d2fe571e78885b5b55d8517d27c323b4"
+  - runs: |
+      ./configure \
+        --prefix=/usr \
+        --with-openssl \
+        --with-readline \
+        --with-zlib \
+        --with-icu \
+        --with-system-tzdata=/usr/share/zoneinfo
+      make -j"$(nproc)"
+      make DESTDIR="${{targets.destdir}}" install
+  # Build + install a curated set of dependency-free contrib extensions from the
+  # SAME source tree (no extra external packages). These all build with the configure
+  # flags above; btree_gin is required by Temporal's visibility schema. We do NOT run a
+  # blanket `make -C contrib install` because some contribs (uuid-ossp, sepgsql, bool_plperl,
+  # ...) need optional deps we don't configure and would fail the build.
+  - runs: |
+      for ext in btree_gin btree_gist pg_trgm pgcrypto hstore citext pg_stat_statements intarray ltree unaccent fuzzystrmatch tablefunc; do
+        make -C "contrib/$ext" -j"$(nproc)"
+        make -C "contrib/$ext" DESTDIR="${{targets.destdir}}" install
+      done
+  # Bake the bootstrap entrypoint into the package (self-contained, no external file).
+  # First boot runs initdb with a scram superuser password; subsequent boots just start.
+  - runs: |
+      install -d "${{targets.destdir}}/usr/local/bin"
+      cat > "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh" <<'SCRIPT'
+      #!/bin/sh
+      set -eu
+      PGDATA="${PGDATA:-/var/lib/postgresql/data}"
+      POSTGRES_USER="${POSTGRES_USER:-postgres}"
+      POSTGRES_DB="${POSTGRES_DB:-$POSTGRES_USER}"
+      SOCKET_DIR="${PGSOCKET_DIR:-/var/run/postgresql}"
+
+      if [ ! -s "$PGDATA/PG_VERSION" ]; then
+        if [ -z "${POSTGRES_PASSWORD:-}" ]; then
+          echo "POSTGRES_PASSWORD is required for first initialization" >&2
+          exit 1
+        fi
+        pwfile="$(mktemp)"
+        printf '%s' "$POSTGRES_PASSWORD" > "$pwfile"
+        initdb -D "$PGDATA" -U "$POSTGRES_USER" \
+          --auth-local=scram-sha-256 --auth-host=scram-sha-256 \
+          --pwfile="$pwfile" --encoding=UTF8 --locale=C
+        rm -f "$pwfile"
+
+        # listen on all interfaces; the cluster network is the trust boundary, auth is scram
+        printf "\nlisten_addresses = '*'\n" >> "$PGDATA/postgresql.conf"
+        printf "host all all all scram-sha-256\n" >> "$PGDATA/pg_hba.conf"
+
+        # create the application database when it differs from the default
+        if [ "$POSTGRES_DB" != "postgres" ] && [ "$POSTGRES_DB" != "$POSTGRES_USER" ]; then
+          pg_ctl -D "$PGDATA" -o "-c listen_addresses='' -k $SOCKET_DIR" -w start
+          PGPASSWORD="$POSTGRES_PASSWORD" createdb -h "$SOCKET_DIR" -U "$POSTGRES_USER" "$POSTGRES_DB"
+          pg_ctl -D "$PGDATA" -m fast -w stop
+        fi
+      fi
+
+      exec postgres -D "$PGDATA" -k "$SOCKET_DIR"
+      SCRIPT
+      chmod 0755 "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        postgres --version
+        initdb --version
+        psql --version
