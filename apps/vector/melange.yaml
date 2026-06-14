@@ -1,0 +1,142 @@
+# Builds Vector (high-performance observability data pipeline for logs/metrics) FROM
+# SOURCE on Wolfi with melange. Vector is a Rust project (large Cargo workspace);
+# upstream pins rust 1.92 in its rust-toolchain.toml, so we build with Wolfi's
+# rust-1.92 toolchain to match. Built from source (not an upstream binary) so the
+# Trivy scan attributes the vendored crates correctly and we can `cargo update` to
+# clear any fixable CVE.
+#
+# Build deps mirror upstream's build environment: protobuf-dev (protoc) for the
+# Protocol Buffers codegen used by the `api` (gRPC) and several components
+# (opentelemetry, vector source/sink), cmake + clang + lld for the native deps, plus
+# build-base. OpenSSL is provided by Wolfi's openssl-dev (we do NOT use the vendored
+# openssl-src path -- using Wolfi's system OpenSSL keeps the crypto stack on Wolfi's
+# patched, CVE-tracked library rather than a frozen vendored copy).
+#
+# FEATURE SET (documented trim): Vector's full `default` feature (`enable-unix`)
+# pulls in EVERY source/transform/sink, including kafka (librdkafka via cmake + SASL +
+# optional GSSAPI/Kerberos), pulsar, nats, the AWS/GCP/Azure SDK sinks, mongodb and
+# postgres metrics, journald and dnstap. Those bloat the build massively and drag in
+# native crypto/auth stacks (sasl/gssapi/krb5) that are a recurring CVE source. We
+# therefore build with `--no-default-features` and a CURATED feature set covering the
+# common observability sources/transforms/sinks plus the API -- pure-Rust components
+# only, no kafka/pulsar/nats/mongodb/cloud-SDK natives. The API (GraphQL + /health on
+# 8686) is included so the chart can probe health. VRL stdlib is included so the
+# `remap` transform works. Trimmed-out components (kafka, pulsar, nats, aws_*, gcp_*,
+# azure_*, mongodb_metrics, postgresql_metrics, journald, dnstap, docker_logs,
+# kubernetes_logs) can be re-added later per-component if a chart needs them.
+package:
+  name: quench-vector
+  version: 0.56.0
+  epoch: 0
+  description: "Quenchworks hardened Vector (Rust observability data pipeline for logs/metrics), built from source on Wolfi"
+  copyright:
+    - license: MPL-2.0
+  dependencies:
+    runtime:
+      - bash                    # the entrypoint is a shell script
+      - busybox                 # mkdir used by the entrypoint
+      - ca-certificates-bundle  # Vector talks TLS to external endpoints (loki/es/http sinks)
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - bash
+      - curl
+      - git
+      - cmake
+      - clang                   # native C/C++ deps in the crate tree
+      - lld                     # link with lld
+      - pkgconf
+      - protobuf-dev            # provides protoc for the prost/tonic codegen
+      - openssl-dev             # system OpenSSL (NOT vendored) for TLS-capable components
+      - perl                    # openssl-sys build scripts probe with perl
+      - rust-1.92               # Wolfi rust toolchain (matches upstream rust-toolchain.toml 1.92)
+
+pipeline:
+  - uses: git-checkout
+    with:
+      repository: https://github.com/vectordotdev/vector
+      tag: v${{package.version}}
+      expected-commit: 6817c0218e1af8efc484c3a74317fc1192a5a450
+      destination: vector
+
+  # Build the vector binary, release profile, locked to the committed Cargo.lock.
+  # --no-default-features + a curated feature set (see header) keeps the build lean and
+  # CVE-light: common sources/transforms/sinks + the API, all pure-Rust components.
+  # PROTOC points the prost/tonic build scripts at Wolfi's protoc. OPENSSL_NO_VENDOR
+  # forces openssl-sys to link Wolfi's system OpenSSL instead of building a vendored
+  # copy. No target-cpu pin, so the binary runs on any baseline x86-64 / aarch64.
+  - runs: |
+      cd vector
+      export PROTOC="$(command -v protoc)"
+      export OPENSSL_NO_VENDOR=1
+      FEATURES="api,\
+      enrichment-tables,\
+      secrets,\
+      vrl/stdlib,\
+      codecs-syslog,\
+      sources-demo_logs,\
+      sources-file,\
+      sources-http_server,\
+      sources-http_client,\
+      sources-internal_logs,\
+      sources-internal_metrics,\
+      sources-host_metrics,\
+      sources-prometheus,\
+      sources-syslog,\
+      sources-socket,\
+      sources-stdin,\
+      sources-file_descriptor,\
+      sources-statsd,\
+      sources-opentelemetry,\
+      sources-vector,\
+      transforms,\
+      sinks-console,\
+      sinks-blackhole,\
+      sinks-file,\
+      sinks-http,\
+      sinks-prometheus,\
+      sinks-loki,\
+      sinks-elasticsearch,\
+      sinks-socket,\
+      sinks-opentelemetry,\
+      sinks-vector"
+      cargo build --release --locked --no-default-features --features "${FEATURES}" --bin vector
+      install -Dm0755 target/release/vector "${{targets.destdir}}/usr/bin/vector"
+
+  # Ship a minimal default config so the image runs standalone (the chart supplies the
+  # real config via a mounted ConfigMap at the same path). Default: demo_logs source ->
+  # console sink, with the API enabled on 0.0.0.0:8686 so /health works out of the box.
+  - runs: |
+      install -d "${{targets.destdir}}/etc/vector"
+      cat > "${{targets.destdir}}/etc/vector/vector.yaml" <<'CFG'
+      # Minimal default Vector config (overridden by the chart's ConfigMap mount).
+      api:
+        enabled: true
+        address: "0.0.0.0:8686"
+      sources:
+        demo:
+          type: demo_logs
+          format: json
+          interval: 1
+      sinks:
+        out:
+          type: console
+          inputs: ["demo"]
+          encoding:
+            codec: json
+      CFG
+      chmod 0644 "${{targets.destdir}}/etc/vector/vector.yaml"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/bin/vector
+        vector --version
+        test -f /etc/vector/vector.yaml

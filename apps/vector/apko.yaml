@@ -1,0 +1,63 @@
+# Assembles the Vector observability-pipeline runtime image.
+# Minimal, nonroot, multi-arch, read-only-rootfs friendly, SBOM by apko.
+#
+# Vector serves its GraphQL + health API on :8686 (when api.enabled is set, which the
+# bundled default config does). The entrypoint runs the binary against a config at
+# /etc/vector/vector.yaml -- the image ships a minimal default there; the chart mounts
+# its real config over the same path. Disk buffers and Vector's own state live under
+# VECTOR_DATA_DIR (/vector-data-dir), a writable mount, so the image runs on a
+# read-only rootfs. /tmp is writable for any component scratch.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - bash                          # the entrypoint is a shell script
+    - busybox
+    - ca-certificates-bundle
+    - quench-vector@local
+
+accounts:
+  groups:
+    - groupname: vector
+      gid: 1001
+  users:
+    - username: vector
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/vector --config /etc/vector/vector.yaml
+
+environment:
+  VECTOR_DATA_DIR: /vector-data-dir
+
+work-dir: /vector-data-dir
+
+paths:
+  - path: /vector-data-dir
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+  - path: /tmp
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o1777
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-vector"
+  org.opencontainers.image.licenses: "MPL-2.0"
