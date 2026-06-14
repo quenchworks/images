@@ -1,0 +1,73 @@
+# Assembles the Coolify helper image: Coolify's on-demand BUILD ENGINE.
+#
+# PRIVILEGED BY DESIGN -- READ THIS BEFORE "HARDENING" THE USER/CAPS
+# -----------------------------------------------------------------
+# The Coolify control plane runs one helper container per deployment with the HOST Docker
+# socket (/var/run/docker.sock) mounted in, and the helper drives `docker build` /
+# `docker compose` / buildpacks on the host daemon to build & launch the user's app image.
+# Talking to the host's root Docker daemon REQUIRES root in the helper (and is equivalent
+# to host root). Therefore this image intentionally RUNS AS ROOT and does NOT drop to a
+# nonroot uid: a nonroot/cap-dropped helper cannot reach the socket nor invoke the
+# build toolchain, which breaks Coolify's deploy path. This is a documented, by-design
+# privilege -- not a hardening gap. What IS hardened is the SOFTWARE SURFACE: every tool
+# is a CVE-tracked Wolfi apk or built-from-source (melange), and the image passes a hard
+# 0-CVE Trivy gate. Do not "fix" the root user here; it would make the helper non-functional.
+#
+# ENTRYPOINT: tini (PID 1, reaps the docker/build child processes the helper spawns) ->
+# coolify-helper-entrypoint (seeds railpack's pinned mise at /tmp/railpack/mise) -> CMD.
+# CMD is `tail -f /dev/null` exactly like upstream: the helper is a long-lived container
+# the Coolify control plane `docker exec`s build commands into, not a one-shot.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - bash                          # build scripts / entrypoint
+    - busybox                       # tar, coreutils, sh the helper shells out to
+    - curl                          # the helper / buildpacks fetch over HTTP(S)
+    - ca-certificates-bundle        # TLS trust for registries + downloads
+    - tini                          # PID 1 init that reaps build child processes
+    - git                           # clone the app repo to build (CVE-tracked)
+    - git-lfs                       # large-file repos (CVE-tracked)
+    - openssh-client                # git over ssh + deploy keys (CVE-tracked)
+    - docker-cli                    # `docker` -- drives the mounted host daemon (CVE-tracked)
+    - docker-compose                # `docker compose` v2 plugin (/usr/libexec/docker/cli-plugins)
+    - docker-cli-buildx             # `docker buildx` plugin (/usr/libexec/docker/cli-plugins)
+    - mc                            # minio client (Wolfi 0.20250813.083541 == upstream RELEASE.2025-08-13T08-35-41Z)
+    - quench-coolify-helper-tools@local  # from-source pack, railpack, nixpacks, mise + seeding entrypoint
+
+# RUNS AS ROOT -- by design (see header). No `accounts.run-as`: the image stays uid 0 so
+# it can read the mounted host docker socket and drive the build toolchain.
+
+entrypoint:
+  # tini as PID 1 (reaps the many short-lived build children), then our wrapper seeds
+  # railpack's mise and execs the CMD.
+  command: /sbin/tini -- /usr/local/bin/coolify-helper-entrypoint
+
+cmd: tail -f /dev/null
+
+environment:
+  # railpack stores its mise under /tmp/railpack/mise (seeded by the entrypoint); make
+  # the from-source tools discoverable on PATH alongside the Wolfi docker plugins.
+  PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  # buildx/compose plugins live in Wolfi's libexec dir; docker-cli already searches it,
+  # but be explicit so a non-default HOME doesn't hide them.
+  DOCKER_CLI_PLUGIN_DIR: /usr/libexec/docker/cli-plugins
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-coolify-helper"
+  org.opencontainers.image.description: "Hardened Coolify build-engine helper (PRIVILEGED BY DESIGN: runs as root with the host docker socket mounted). Docker CLI + compose + buildx + buildpacks pack/nixpacks/railpack/mise + minio mc, all CVE-tracked Wolfi or from-source."
+  # coolify-helper is Apache-2.0 (Coolify). Bundled tools: pack Apache-2.0, railpack MIT,
+  # nixpacks MIT, mise MIT, docker/compose/buildx Apache-2.0, mc AGPL-3.0 (minio client).
+  org.opencontainers.image.licenses: "Apache-2.0 AND AGPL-3.0-or-later"

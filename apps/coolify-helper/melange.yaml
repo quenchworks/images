@@ -1,0 +1,212 @@
+# Builds the Coolify helper component's NON-Wolfi build tools FROM SOURCE on Wolfi.
+#
+# WHAT coolify-helper IS, AND WHY IT IS PRIVILEGED BY DESIGN
+# ---------------------------------------------------------
+# coolify-helper (upstream ghcr.io/coollabsio/coolify-helper) is Coolify's on-demand
+# BUILD ENGINE. The Coolify control plane spins up a helper container per deployment,
+# mounts the HOST Docker socket (/var/run/docker.sock) into it, and the helper drives
+# `docker build` / `docker compose` / buildpacks on the host daemon to build and run a
+# user's application image. Because it talks to the host's root Docker daemon, the helper
+# RUNS AS ROOT and is privileged BY DESIGN -- mounting the docker socket is equivalent to
+# host root. This is NOT a hardening defect we can fix: a nonroot, cap-dropped helper
+# cannot read the host socket nor invoke the buildkit/buildpack toolchain, and would
+# break Coolify's deploy path entirely. So apko.yaml deliberately does NOT force a
+# nonroot user. What we DO harden is the SOFTWARE SURFACE: every bundled tool is either a
+# CVE-tracked Wolfi package or BUILT FROM SOURCE here at a pinned release (no curled
+# upstream release blobs, no untracked layers), and the whole image passes a hard 0-CVE
+# Trivy gate (--ignore-unfixed). The privileged runtime posture is documented here, in
+# apko.yaml, and in test.sh.
+#
+# UPSTREAM PIN
+# ------------
+# Coolify pins helper.version 1.0.14 (versions.json) at coolify tag v4.1.2
+# (commit e7dff30b7c998c301fd91bd169727b90c59ec291). The upstream helper Dockerfile
+# (docker/coolify-helper/Dockerfile) is FROM alpine:3.21 and bundles, by curling release
+# binaries: docker (28.0.0), docker compose (2.38.2), buildx (0.25.0), buildpacks `pack`
+# (0.38.2), nixpacks (1.41.0), railpack (0.23.0), mise (2026.3.17), minio `mc`
+# (RELEASE.2025-08-13T08-35-41Z), plus apk packages bash curl git git-lfs openssh-client
+# tar tini. We reproduce that toolset, but split by provenance:
+#
+#   * FROM WOLFI (CVE-tracked apk, pinned in apko.yaml), instead of curled blobs:
+#       docker-cli, docker-compose (compose v2 plugin), docker-cli-buildx (buildx plugin),
+#       mc (minio client -- Wolfi 0.20250813.083541 == upstream RELEASE.2025-08-13T08-35-41Z),
+#       git, git-lfs, openssh-client, tini, bash, curl, busybox (tar/coreutils),
+#       ca-certificates-bundle. Wolfi tracks current upstreams, so versions are NEWER
+#       than the alpine Dockerfile's frozen pins (e.g. docker-cli 28.x->latest, compose
+#       v2 latest) -- that is intentional: we follow the CVE-patched line, not a frozen tag.
+#
+#   * BUILT FROM SOURCE here (Go/Rust toolchains in Wolfi), instead of curled blobs --
+#     these four have NO Wolfi package:
+#       pack     0.38.2   (Go)   -- buildpacks/pack, `go build` with client.Version ldflag
+#       railpack 0.23.0   (Go)   -- railwayapp/railpack, `go build ./cmd/cli`
+#       nixpacks 1.41.0   (Rust) -- railwayapp/nixpacks, `cargo build --release`
+#       mise     2026.3.17 (Rust)-- jdx/mise, `cargo build --release`
+#
+# NO VENDORED BINARY EXCEPTIONS: every one of the four non-Wolfi tools compiles cleanly
+# from source here, so nothing is curled as a frozen release blob.
+#
+# RAILPACK <-> MISE COUPLING: railpack shells out to a mise binary it expects at
+# /tmp/railpack/mise/mise-<MISE_VERSION> (core/mise: InstallDir=/tmp/railpack/mise,
+# binary name mise-<version>). If absent it downloads a GLIBC mise from GitHub, which
+# fails on musl. Upstream's alpine Dockerfile pre-places a musl mise there at build time;
+# but /tmp is wiped on container start, so a build-time copy would not survive. We instead
+# install our from-source mise at the stable /usr/local/bin/mise and ship an entrypoint
+# wrapper (coolify-helper-entrypoint) that seeds /tmp/railpack/mise/mise-<version> from it
+# on every start, then execs the container CMD -- so railpack finds the pinned mise without
+# any network download. mise's pinned version MUST match railpack's core/mise/version.txt
+# (2026.3.17 at railpack v0.23.0); bump the two in lockstep.
+package:
+  name: quench-coolify-helper-tools
+  version: 1.0.14
+  epoch: 0
+  description: "From-source build tools for the Quenchworks hardened Coolify helper (pack, railpack, nixpacks, mise) plus the railpack<->mise seeding entrypoint"
+  copyright:
+    - license: Apache-2.0   # coolify-helper itself is Apache-2.0 (pack Apache-2.0, railpack MIT, nixpacks MIT, mise MIT)
+  dependencies:
+    runtime:
+      - bash      # the entrypoint wrapper is a bash script
+      - busybox   # install/mkdir/cp used by the entrypoint
+
+vars:
+  pack-version: 0.38.2
+  railpack-version: 0.23.0
+  nixpacks-version: 1.41.0
+  # MUST equal railpack v0.23.0's core/mise/version.txt; railpack looks for
+  # /tmp/railpack/mise/mise-<this> at runtime.
+  mise-version: 2026.3.17
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - bash
+      - ca-certificates-bundle
+      - git
+      - go-1.26        # railpack go.mod requires go 1.26; pack needs go 1.24+
+      - rust-1.96      # provides cargo/rustc; nixpacks (edition 2021) + mise (rust-version 1.88) build with it
+      - openssl-dev    # mise links openssl (native-tls); pkgconf finds it
+      - pkgconf
+
+pipeline:
+  # ---- pack (Go) -- buildpacks/pack v0.38.2 ----
+  - uses: git-checkout
+    with:
+      repository: https://github.com/buildpacks/pack
+      tag: v${{vars.pack-version}}
+      expected-commit: f1c347c6a645f1ff682dabc2b11fcdf3154f2aa9
+      destination: pack-src
+
+  - name: Build pack from source
+    runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOPATH="$(mktemp -d)"
+      export GOCACHE="$(mktemp -d)"
+      cd pack-src
+      # Mirror the upstream Makefile build target: ldflags inject the version into
+      # pkg/client.Version; main package is the repo root (main.go imports ./cmd).
+      go build -trimpath \
+        -ldflags "-s -w -X 'github.com/buildpacks/pack/pkg/client.Version=${{vars.pack-version}}'" \
+        -o "${{targets.destdir}}/usr/local/bin/pack" .
+      "${{targets.destdir}}/usr/local/bin/pack" version
+
+  # ---- railpack (Go) -- railwayapp/railpack v0.23.0 ----
+  - uses: git-checkout
+    with:
+      repository: https://github.com/railwayapp/railpack
+      tag: v${{vars.railpack-version}}
+      expected-commit: ffdb0331677897577eafe61edc600aafdec387be
+      destination: railpack-src
+
+  - name: Build railpack from source
+    runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOPATH="$(mktemp -d)"
+      export GOCACHE="$(mktemp -d)"
+      cd railpack-src
+      # Mirror .goreleaser.yml: main ./cmd/cli, binary railpack, version ldflag.
+      go build -trimpath \
+        -ldflags "-s -w -X main.version=${{vars.railpack-version}}" \
+        -o "${{targets.destdir}}/usr/local/bin/railpack" ./cmd/cli
+      "${{targets.destdir}}/usr/local/bin/railpack" --version
+
+  # ---- nixpacks (Rust) -- railwayapp/nixpacks v1.41.0 ----
+  - uses: git-checkout
+    with:
+      repository: https://github.com/railwayapp/nixpacks
+      tag: v${{vars.nixpacks-version}}
+      expected-commit: bece51fbebac1d59709061a36e59dc9e0cf7ad3f
+      destination: nixpacks-src
+
+  - name: Build nixpacks from source
+    runs: |
+      set -eu
+      export CARGO_HOME="$(mktemp -d)"
+      cd nixpacks-src
+      # Single binary crate `nixpacks` (src/main.rs). Release profile, locked deps.
+      cargo build --release --locked --bin nixpacks
+      install -Dm0755 target/release/nixpacks "${{targets.destdir}}/usr/local/bin/nixpacks"
+      "${{targets.destdir}}/usr/local/bin/nixpacks" --version
+
+  # ---- mise (Rust) -- jdx/mise v2026.3.17 ----
+  - uses: git-checkout
+    with:
+      repository: https://github.com/jdx/mise
+      tag: v${{vars.mise-version}}
+      expected-commit: 073698a857f1237d0359e203ca52ce8b3957f5bd
+      destination: mise-src
+
+  - name: Build mise from source
+    runs: |
+      set -eu
+      export CARGO_HOME="$(mktemp -d)"
+      cd mise-src
+      # mise is the workspace root binary crate. Build release; openssl-dev satisfies
+      # its native-tls link. Stable path /usr/local/bin/mise; the entrypoint seeds the
+      # railpack-expected /tmp/railpack/mise/mise-<version> copy at start.
+      cargo build --release --bin mise
+      install -Dm0755 target/release/mise "${{targets.destdir}}/usr/local/bin/mise"
+      "${{targets.destdir}}/usr/local/bin/mise" --version
+
+  # ---- railpack<->mise seeding entrypoint ----
+  - name: Install the entrypoint wrapper that seeds railpack's mise path
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/usr/local/bin"
+      cat > "$destdir/usr/local/bin/coolify-helper-entrypoint" <<EOF
+      #!/usr/bin/env bash
+      # Seed the mise binary at the path railpack hardcodes (/tmp/railpack/mise/mise-<ver>)
+      # from our from-source /usr/local/bin/mise, so railpack never tries to download a
+      # glibc mise (which would fail on this musl image). Then exec whatever CMD was given.
+      set -euo pipefail
+      MISE_VERSION="${{vars.mise-version}}"
+      RAILPACK_MISE_DIR="/tmp/railpack/mise"
+      mkdir -p "\$RAILPACK_MISE_DIR"
+      if [ ! -x "\$RAILPACK_MISE_DIR/mise-\$MISE_VERSION" ]; then
+        cp /usr/local/bin/mise "\$RAILPACK_MISE_DIR/mise-\$MISE_VERSION"
+        chmod 0755 "\$RAILPACK_MISE_DIR/mise-\$MISE_VERSION"
+      fi
+      exec "\$@"
+      EOF
+      chmod 0755 "$destdir/usr/local/bin/coolify-helper-entrypoint"
+      bash -n "$destdir/usr/local/bin/coolify-helper-entrypoint"
+
+test:
+  pipeline:
+    - runs: |
+        set -eu
+        pack version
+        railpack --version
+        nixpacks --version
+        mise --version
+        test -x /usr/local/bin/coolify-helper-entrypoint
+        bash -n /usr/local/bin/coolify-helper-entrypoint
