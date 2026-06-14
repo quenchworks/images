@@ -1,0 +1,151 @@
+# Builds Meilisearch (fast, typo-tolerant full-text search engine) FROM SOURCE on
+# Wolfi with melange. Meilisearch is a Rust project (Cargo workspace); upstream pins
+# rust 1.91.1 in its rust-toolchain.toml, so we build with Wolfi's rust-1.91 toolchain
+# to match. Built from source (not an upstream binary) so the Trivy scan attributes
+# the vendored crates correctly and we can `cargo update` to clear any fixable CVE.
+#
+# Build deps mirror upstream's Dockerfile, which only needs build-base + openssl-dev
+# (Meilisearch has no protobuf/gRPC codegen, so no protoc/cmake/clang are required).
+# We use Wolfi's system OpenSSL via openssl-dev + OPENSSL_NO_VENDOR=1 so the crypto
+# stack stays on Wolfi's patched, CVE-tracked library rather than a frozen vendored
+# copy. perl is present because openssl-sys's build script probes with perl.
+#
+# MINI-DASHBOARD (bundled, hermetic / NO build-time network fetch):
+# Meilisearch's `default` features are ["meilisearch-types/all-tokenizations",
+# "mini-dashboard"]. The `mini-dashboard` feature runs crates/meilisearch/build.rs,
+# which by default DOWNLOADS a prebuilt web-UI build.zip from GitHub at `cargo build`
+# time (the pinned meilisearch/mini-dashboard release in [package.metadata.mini-dashboard]:
+# assets-url v0.4.1/build.zip, sha1 c4de9bfd4bd4ddb87a62cbe00a4150bdf0b6f9d1) and
+# verifies its sha1, then `static_files::resource_dir(..).build()` embeds the assets
+# into $OUT_DIR/generated.rs (included by src/lib.rs). melange builds with NO network,
+# so that fetch cannot succeed in a hermetic build.
+#
+# We DO ship the dashboard, the Qdrant way: vendor the EXACT pinned build.zip
+# ourselves (checksum-verified) and feed it to the build offline. We apply a tiny,
+# surgical patch to build.rs so that when MEILI_MINI_DASHBOARD_ASSETS points at a
+# local file it reads the zip from disk instead of fetching over the network; the
+# upstream sha1 integrity assert is left UNTOUCHED, so a tampered local copy is
+# rejected exactly as a tampered download would be. We pre-download that build.zip
+# with `curl` and verify its sha256 (75f1f8b4...) before the build, then enable the
+# `mini-dashboard` + `meilisearch-types/all-tokenizations` features. Result: the
+# dashboard is compiled INTO the binary (served at GET /), reproducibly, with zero
+# build-time internet access. The bundled web UI is a vendored prebuilt upstream
+# artifact (provenance note for the catalog), not an OS package -- it is not a
+# CVE-scanned surface; the gobinary/Rust-crate scan covers the compiled code.
+package:
+  name: quench-meilisearch
+  version: 1.46.1
+  epoch: 0
+  description: "Quenchworks hardened Meilisearch (Rust full-text search engine) with bundled mini-dashboard, built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - bash                    # the entrypoint is a shell script
+      - busybox                 # mkdir used by the entrypoint
+      - ca-certificates-bundle  # Meilisearch talks TLS to external endpoints (dumps to S3, webhooks)
+
+vars:
+  # Pinned meilisearch/mini-dashboard release whose build.zip we vendor into the
+  # binary. Matches [package.metadata.mini-dashboard] in crates/meilisearch/Cargo.toml
+  # for this tag. Pure static web assets, arch-agnostic, so one checksum covers both.
+  dashboard-tag: v0.4.1
+  # sha256 of the pinned build.zip (its upstream sha1 is verified again by build.rs).
+  dashboard-sha256: 75f1f8b4fee7ff60179f519b853fa2f0cef347df95b24d9fc705e433797ac64d
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - bash
+      - curl                    # vendors the pinned mini-dashboard build.zip
+      - git
+      - pkgconf
+      - openssl-dev             # system OpenSSL (NOT vendored) for the TLS stack
+      - perl                    # openssl-sys build scripts probe with perl
+      - rust-1.91               # Wolfi rust toolchain (matches upstream rust-toolchain.toml 1.91.1)
+
+pipeline:
+  - uses: git-checkout
+    with:
+      repository: https://github.com/meilisearch/meilisearch
+      tag: v${{package.version}}
+      expected-commit: d81f2de99bff6f98e382a34fdbd60a49a570ff84
+      destination: meilisearch
+
+  # Vendor the EXACT pinned mini-dashboard build.zip and verify its sha256. This is
+  # the same artifact crates/meilisearch/build.rs would otherwise fetch at compile
+  # time; we bring it in ahead of time (checksum-gated) so the build stays offline.
+  - runs: |
+      cd meilisearch
+      url="https://github.com/meilisearch/mini-dashboard/releases/download/${{vars.dashboard-tag}}/build.zip"
+      curl -fsSL -o mini-dashboard.zip "$url"
+      echo "${{vars.dashboard-sha256}}  mini-dashboard.zip" | sha256sum -c -
+
+  # Surgical patch: make build.rs read the vendored zip from MEILI_MINI_DASHBOARD_ASSETS
+  # instead of fetching over the network. The upstream sha1 integrity assert is kept,
+  # so the embedded assets are still verified against Cargo.toml's pinned sha1.
+  - runs: |
+      cd meilisearch
+      bf=crates/meilisearch/build.rs
+      grep -q 'let dashboard_assets_bytes = get(url)?.bytes()?;' "$bf" \
+        || { echo "build.rs fetch line not found -- upstream changed; revisit the patch"; exit 1; }
+      # Replace the single network-fetch line with a local-file branch keyed off
+      # MEILI_MINI_DASHBOARD_ASSETS; the sha1 assert that follows is left untouched.
+      perl -0pi -e 's/        let dashboard_assets_bytes = get\(url\)\?\.bytes\(\)\?;\n/        \/\/ Quenchworks: hermetic\/offline build. When MEILI_MINI_DASHBOARD_ASSETS\n        \/\/ points at a local copy of the pinned build.zip, read it from disk instead\n        \/\/ of fetching over the network. The sha1 integrity check below is preserved,\n        \/\/ so a tampered local file is rejected exactly as a tampered download would be.\n        let dashboard_assets_bytes = match env::var("MEILI_MINI_DASHBOARD_ASSETS") {\n            Ok(path) => std::fs::read(&path)\n                .with_context(|| format!("reading vendored mini-dashboard assets from {path}"))?\n                .into(),\n            Err(_) => get(url)?.bytes()?,\n        };\n/' "$bf"
+      grep -q 'MEILI_MINI_DASHBOARD_ASSETS' "$bf" \
+        || { echo "build.rs patch did not apply"; exit 1; }
+
+  # Build the meilisearch binary, release profile, locked to the committed Cargo.lock.
+  # mini-dashboard + all-tokenizations = upstream's full default feature set: the web
+  # dashboard is embedded (offline, from our vendored zip) and the full multi-language
+  # typo-tolerant tokenization (CJK, Hebrew, Thai, etc.) is kept. MEILI_MINI_DASHBOARD_ASSETS
+  # points build.rs at the vendored zip so it never touches the network. OPENSSL_NO_VENDOR
+  # forces openssl-sys to link Wolfi's system OpenSSL. No target-cpu pin, so the binary
+  # runs on any baseline x86-64 / aarch64.
+  - runs: |
+      cd meilisearch
+      export OPENSSL_NO_VENDOR=1
+      export MEILI_MINI_DASHBOARD_ASSETS="$PWD/mini-dashboard.zip"
+      cargo build --release --locked \
+        --features mini-dashboard,meilisearch-types/all-tokenizations \
+        --bin meilisearch
+      install -Dm0755 target/release/meilisearch "${{targets.destdir}}/usr/bin/meilisearch"
+
+  - runs: |
+      # Thin entrypoint. Meilisearch defaults its DB to ./data.ms relative to the
+      # working dir and writes dumps/snapshots under it, which fails on a read-only
+      # rootfs unless pinned to a writable mount. We pin the DB path to a `data.ms`
+      # subdir of the writable /meili_data mount (MEILI_DB_PATH points at the LMDB env
+      # dir itself -- if it pointed at the parent /meili_data while dumps/snapshots also
+      # lived there, Meilisearch's DB-version inference would fail). dumps/snapshots are
+      # SIBLINGS of data.ms under the same mount. We only create the dumps/snapshots
+      # dirs and the data.ms PARENT (Meilisearch creates the LMDB env dir itself). Extra
+      # flags pass through via "$@".
+      install -d "${{targets.destdir}}/usr/local/bin"
+      cat > "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh" <<'SCRIPT'
+      #!/bin/bash
+      set -euo pipefail
+
+      MEILI_DB_PATH="${MEILI_DB_PATH:-/meili_data/data.ms}"
+      MEILI_DUMP_DIR="${MEILI_DUMP_DIR:-/meili_data/dumps}"
+      MEILI_SNAPSHOT_DIR="${MEILI_SNAPSHOT_DIR:-/meili_data/snapshots}"
+      mkdir -p "$(dirname "${MEILI_DB_PATH}")" "${MEILI_DUMP_DIR}" "${MEILI_SNAPSHOT_DIR}"
+
+      export MEILI_DB_PATH MEILI_DUMP_DIR MEILI_SNAPSHOT_DIR
+
+      exec /usr/bin/meilisearch "$@"
+      SCRIPT
+      chmod 0755 "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/bin/meilisearch
+        meilisearch --version
+        test -x /usr/local/bin/docker-entrypoint.sh

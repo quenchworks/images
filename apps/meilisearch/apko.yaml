@@ -1,0 +1,72 @@
+# Assembles the Meilisearch full-text search-engine runtime image.
+# Minimal, nonroot, multi-arch, read-only-rootfs friendly, SBOM by apko.
+#
+# Meilisearch serves its REST search API on :7700. The thin entrypoint ensures the
+# writable DB dir + dumps + snapshots dirs exist (pinned via MEILI_* env under
+# /meili_data) then runs the binary. All state lives under /meili_data (a writable
+# mount / PVC) so the image runs on a read-only rootfs.
+#
+# Auth: MEILI_MASTER_KEY (supplied by the chart from a Secret) protects every API
+# route except GET /health. MEILI_ENV=production makes the master key MANDATORY.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - bash                          # the entrypoint is a shell script
+    - busybox
+    - ca-certificates-bundle
+    - quench-meilisearch@local
+
+accounts:
+  groups:
+    - groupname: meilisearch
+      gid: 1001
+  users:
+    - username: meilisearch
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/local/bin/docker-entrypoint.sh
+
+environment:
+  MEILI_HTTP_ADDR: "0.0.0.0:7700"
+  # The LMDB database lives in a `data.ms` subdir of the writable mount (upstream's
+  # default layout). MEILI_DB_PATH must point at the LMDB env dir itself, NOT the
+  # parent: Meilisearch's version inference treats the DB path as the env dir, and a
+  # parent dir that also holds sibling dirs (dumps/snapshots) makes inference fail.
+  # The dumps/snapshots dirs are SIBLINGS of data.ms under the same /meili_data mount.
+  MEILI_DB_PATH: /meili_data/data.ms
+  MEILI_DUMP_DIR: /meili_data/dumps
+  MEILI_SNAPSHOT_DIR: /meili_data/snapshots
+
+work-dir: /meili_data
+
+paths:
+  - path: /meili_data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+  - path: /tmp
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o1777
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-meilisearch"
+  org.opencontainers.image.licenses: "MIT"
