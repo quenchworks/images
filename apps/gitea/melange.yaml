@@ -1,0 +1,111 @@
+# Builds Gitea from source onto Wolfi. Single static Go binary (CGO disabled),
+# multi-arch. Output is a signed APK in Quenchworks' own repo. No upstream distro
+# binaries.
+#
+# Gitea is a lightweight self-hosted Git service (Go backend + an embedded Vue web
+# frontend). Building the frontend would need a Node toolchain (esbuild/webpack),
+# but the OFFICIAL release SOURCE tarball (gitea-src-<ver>.tar.gz) already ships
+# the PREBUILT web assets under public/assets/ (769 files) AND the generated
+# bindata.dat blobs (modules/{public,templates,options,migration}/bindata.dat).
+# So we build ONLY the Go backend with the `bindata` build tag, which embeds those
+# prebuilt blobs into the binary -- NO Node toolchain is needed at build time.
+#
+# We do NOT run upstream's `make build` / `go generate` (generate-bindata.go): the
+# bindata.dat files already ship in the source tarball, so re-generating them is
+# unnecessary (and would need the frontend assets to be (re)built). We invoke
+# `go build` directly with the same TAGS + version ldflags upstream's Makefile uses.
+#
+# Database: the chart uses POSTGRES (pure-Go pgx/lib-pq driver), so we DROP the
+# sqlite and pam build tags -- both pull cgo (sqlite -> mattn/go-sqlite3, pam ->
+# libpam) -- and build CGO_ENABLED=0 for a fully static binary. Postgres + mysql +
+# mssql drivers are all pure-Go and compiled in unconditionally.
+package:
+  name: quench-gitea
+  version: 1.26.2
+  epoch: 0
+  description: "Quenchworks hardened Gitea (lightweight self-hosted Git service), built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - busybox            # minimal shell for the thin entrypoint + debugging
+      - git                # gitea shells out to `git` for all repo operations
+      - openssh-keygen     # `gitea` generates the host SSH key / .ssh on first boot
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - git
+      # go.mod requires go >= 1.26.x; use the current go-1.26 toolchain to pick up
+      # the latest stdlib CVE fixes (clears the Trivy gate without manual bumps).
+      - go-1.26
+
+pipeline:
+  # Build from the official release SOURCE tarball, which already contains the
+  # prebuilt public/assets web bundle AND the generated bindata.dat blobs (so the
+  # `bindata` tag embeds the UI without Node). Pinned to the published asset;
+  # verified by sha256 (matches the upstream gitea-src-<ver>.tar.gz.sha256).
+  - uses: fetch
+    with:
+      uri: https://github.com/go-gitea/gitea/releases/download/v${{package.version}}/gitea-src-${{package.version}}.tar.gz
+      expected-sha256: ce1462ad93dcbf3221a452457008b8159cbab3d0c93958179b88649df1e401cf
+      strip-components: 1
+  - runs: |
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local
+      # Stamp main.Version + main.Tags exactly like upstream's Makefile so
+      # `gitea --version` reports the pinned release. The release source ships a
+      # VERSION file (1.26.2); we pass the same value directly.
+      TAGS="bindata"
+      LDFLAGS="-s -w -X main.Version=${{package.version}} -X 'main.Tags=${TAGS}'"
+
+      # 0-CVE gate: the upstream go.mod pins two modules with fixable advisories that
+      # the OS-layer image scan misses (the 115MB binary exceeds Trivy's per-file cap
+      # when read back from the image tar, so a gobinary scan is needed to see them).
+      # Bump them to their fixed patch releases -- drop-in, no API changes:
+      #   github.com/Azure/go-ntlmssp  v0.1.0 -> v0.1.1 (CVE-2026-32952, DoS)
+      #   github.com/go-git/go-git/v5  v5.19.0 -> v5.19.1 (CVE-2026-45571/45570, panic/DoS)
+      go get github.com/Azure/go-ntlmssp@v0.1.1
+      go get github.com/go-git/go-git/v5@v5.19.1
+
+      install -d "${{targets.destdir}}/usr/bin"
+      go build -trimpath -tags "${TAGS}" -ldflags "${LDFLAGS}" \
+        -o "${{targets.destdir}}/usr/bin/gitea" .
+
+      # license marker for provenance
+      install -d "${{targets.destdir}}/usr/share/doc/gitea"
+      cp LICENSE "${{targets.destdir}}/usr/share/doc/gitea/" 2>/dev/null || true
+
+      # A thin entrypoint: exec `gitea web` with the chart-mounted config. Gitea
+      # presumes a writable work dir (GITEA_WORK_DIR / /data: repos, lfs, ssh) and
+      # a config file (GITEA_APP_INI / /etc/gitea/app.ini); the CHART mounts both
+      # as writable volumes. With no config present the entrypoint still boots so
+      # the smoke test can supply a minimal app.ini via GITEA_APP_INI.
+      cat > "${{targets.destdir}}/usr/bin/docker-entrypoint.sh" <<'EOS'
+      #!/bin/sh
+      set -eu
+
+      export GITEA_WORK_DIR="${GITEA_WORK_DIR:-/data}"
+      export GITEA_APP_INI="${GITEA_APP_INI:-/etc/gitea/app.ini}"
+      mkdir -p "$GITEA_WORK_DIR" "$(dirname "$GITEA_APP_INI")" 2>/dev/null || true
+
+      exec /usr/bin/gitea web --config "$GITEA_APP_INI" "$@"
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        gitea --version
+        gitea --version | grep -q "${{package.version}}"
+        test -x /usr/bin/gitea
+        test -x /usr/bin/docker-entrypoint.sh

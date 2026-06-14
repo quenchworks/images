@@ -1,0 +1,73 @@
+# Assembles the Gitea runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Gitea is ONE Go binary (gitea) with the web frontend embedded via the `bindata`
+# tag. The chart mounts the config (app.ini) and the writable data dir; the thin
+# entrypoint runs `gitea web --config /etc/gitea/app.ini`.
+#
+# Ports (the chart's app.ini sets the actual binds):
+#   3000 HTTP, 2222 SSH. SSH is on 2222 (not 22) because the nonroot uid 1001
+#   cannot bind a privileged port (<1024); the chart's Service maps it.
+#
+# Read-only rootfs friendly: Gitea writes to its work dir (/data: repos, lfs,
+# attachments, the host SSH key under /data/ssh), the config dir (/etc/gitea:
+# app.ini, rendered/written by the chart) and /tmp. All three are mounted writable
+# by the chart (this base image presumes none).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - busybox
+    - ca-certificates-bundle
+    - git
+    - openssh-keygen
+    - quench-gitea@local
+
+accounts:
+  groups:
+    - groupname: gitea
+      gid: 1001
+  users:
+    - username: gitea
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/docker-entrypoint.sh
+
+environment:
+  GITEA_WORK_DIR: /data
+  GITEA_APP_INI: /etc/gitea/app.ini
+  # Gitea uses USER for the git author identity of internal operations; ensure it
+  # resolves under the nonroot account.
+  USER: gitea
+  HOME: /data
+
+work-dir: /data
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /etc/gitea
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-gitea"
+  org.opencontainers.image.licenses: "MIT"
