@@ -1,0 +1,133 @@
+# Builds HAProxy from source onto Wolfi. Output is a signed APK in Quenchworks' own
+# repo. No upstream distro binaries. HAProxy uses its own hand-written Makefile (not
+# autoconf): the build is driven entirely by TARGET=... and USE_* feature flags.
+# Configured for a nonroot (uid 1001), read-only-rootfs runtime: frontends listen on
+# unprivileged ports (uid 1001 can't bind <1024), the pidfile + admin socket live
+# under a writable runtime dir (/var/lib/haproxy, a tmpfs at runtime), and it logs to
+# stdout/stderr. The image ships a minimal sample config only; the chart mounts the
+# real one.
+package:
+  name: quench-haproxy
+  version: 3.4.0
+  epoch: 0
+  description: "Quenchworks hardened HAProxy, built from source on Wolfi (nonroot, read-only rootfs)"
+  copyright:
+    - license: GPL-2.0-or-later
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - pcre2
+      - zlib
+      - openssl
+      # lua is linked statically (liblua.a) so no lua runtime package is needed.
+      - busybox
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - pcre2-dev
+      - zlib-dev
+      - openssl-dev
+      - lua5.4-dev
+      - linux-headers
+      - pkgconf
+
+pipeline:
+  - uses: fetch
+    with:
+      # Official haproxy.org release tarball for the latest STABLE branch (3.4.0).
+      # sha256 from haproxy.org/download/3.4/src/releases.json.
+      uri: https://www.haproxy.org/download/3.4/src/haproxy-${{package.version}}.tar.gz
+      expected-sha256: "9298f565c2a9ba8a4e7f89c54be2c5d3fd960b5b304eb5515e15d29d2c15d4f7"
+  - runs: |
+      # HAProxy's Makefile is driven by TARGET + USE_* flags (no ./configure).
+      #  - TARGET=linux-glibc: the Wolfi (glibc) target with epoll/tproxy/etc.
+      #  - USE_OPENSSL: TLS termination/origination (recommended by upstream).
+      #  - USE_PCRE2 + USE_PCRE2_JIT: PCRE2 regex with JIT for speed.
+      #  - USE_ZLIB: HTTP compression via zlib.
+      #  - USE_LUA: Lua scripting. Wolfi ships lua5.4 with headers under
+      #    /usr/include/lua5.4 and a static liblua.a under /usr/lib/lua5.4, linked
+      #    via LUA_LIB_NAME=lua / LUA_INC / LUA_LIB so the runtime needs no lua pkg.
+      # SBINDIR=/usr/bin: Wolfi's usrmerge policy keeps all binaries under /usr/bin
+      # (no /usr/sbin), so the haproxy binary lands at /usr/bin/haproxy.
+      make -j"$(nproc)" \
+        TARGET=linux-glibc \
+        USE_OPENSSL=1 \
+        USE_PCRE2=1 \
+        USE_PCRE2_JIT=1 \
+        USE_ZLIB=1 \
+        USE_LUA=1 \
+        LUA_LIB_NAME=lua \
+        LUA_INC=/usr/include/lua5.4 \
+        LUA_LIB=/usr/lib/lua5.4
+      make install PREFIX=/usr SBINDIR=/usr/bin DESTDIR="${{targets.destdir}}"
+
+      destdir="${{targets.destdir}}"
+
+      # Confirm the binary landed where the entrypoint expects it.
+      test -x "$destdir/usr/bin/haproxy"
+
+      # Documentation (man pages) is dropped to keep this a lean runtime package and
+      # satisfy the Wolfi maninfo linter.
+      rm -rf "$destdir/usr/share/man" "$destdir/usr/share/doc"
+
+      # Writable runtime dir for the pidfile + admin/stats socket. Shipped empty and
+      # owned so the chart can mount a tmpfs over it on a read-only rootfs.
+      install -d -m 0755 "$destdir/var/lib/haproxy"
+
+      # A minimal sample config so `haproxy -c` works out of the box and the image is
+      # self-describing. The chart mounts the REAL config over /etc/haproxy/haproxy.cfg.
+      install -d -m 0755 "$destdir/etc/haproxy"
+      cat > "$destdir/etc/haproxy/haproxy.cfg" <<'EOF'
+      # Quenchworks hardened HAProxy minimal sample config.
+      # Nonroot (uid 1001) + read-only rootfs: no `user`/`group`/`chroot`/`daemon`
+      # (we already run as uid 1001 in the foreground as PID 1). The pidfile and the
+      # stats admin socket live under /var/lib/haproxy (mount a writable tmpfs there).
+      # Frontends bind UNPRIVILEGED ports only. The chart replaces this file.
+      global
+          log stdout format raw local0
+          maxconn 4096
+          # admin/stats socket under the writable runtime dir
+          stats socket /var/lib/haproxy/admin.sock mode 660 level admin
+
+      defaults
+          log     global
+          mode    http
+          option  httplog
+          option  dontlognull
+          timeout connect 5s
+          timeout client  50s
+          timeout server  50s
+
+      # Built-in stats + health page on an unprivileged port.
+      frontend stats
+          bind *:8404
+          stats enable
+          stats uri /stats
+          stats refresh 10s
+          # lightweight always-200 health endpoint for k8s probes
+          monitor-uri /healthz
+
+      # Sample HTTP frontend -> backend (the chart overrides this).
+      frontend http_in
+          bind *:8080
+          default_backend app
+
+      backend app
+          # No servers by default; returns 503 until the chart configures real ones.
+          # The stats frontend above is what the probes hit.
+          mode http
+      EOF
+
+test:
+  pipeline:
+    - runs: |
+        haproxy -v
+        haproxy -c -f /etc/haproxy/haproxy.cfg
