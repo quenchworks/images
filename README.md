@@ -1,24 +1,43 @@
-# Quenchworks images
+# QuenchWorks images
 
-The image factory. Builds hardened container images from source on
-[Wolfi](https://github.com/wolfi-dev) with [melange](https://github.com/chainguard-dev/melange)
-and [apko](https://github.com/chainguard-dev/apko), scans them with a hard 0-CVE gate, signs them
-with cosign, and publishes to GHCR.
+The image factory. It builds hardened container images from source on [Wolfi](https://github.com/wolfi-dev) with [melange](https://github.com/chainguard-dev/melange) and [apko](https://github.com/chainguard-dev/apko), holds them to a hard 0-CVE gate, signs them with cosign, and publishes to GHCR.
 
-Part of [Quenchworks](https://github.com/quenchworks). Browse the catalog at
-[quenchworks.mkabumattar.com/images](https://quenchworks.mkabumattar.com/images).
+**62 hardened images** for the infrastructure you actually run. No Dockerfiles. Nothing inherited from another distro. Free, signed, and rebuilt daily.
+
+Part of [QuenchWorks](https://github.com/quenchworks), the 0-CVE replacement for the Bitnami catalog. Browse every image, with versions and digests, at [quenchworks.mkabumattar.com/images](https://quenchworks.mkabumattar.com/images).
 
 ## What ships here
 
-**29 images** across databases, caches, search, message queues, coordination, and metrics. Every one:
+Every image in the catalog:
 
-- is **built from source** (no Dockerfile, nothing inherited from another distro); where an upstream
-  is infeasible to compile in CI (ClickHouse, ScyllaDB, CockroachDB, Dragonfly, MongoDB), we ship
-  the project's own official binary and harden the base around it,
-- passes a hard **0 fixable CVE** gate (Trivy, fail-on-fixable) before anything is published,
+- is **built from source**, no Dockerfile, nothing carried over from another distro. Where an upstream is infeasible to compile in CI (ClickHouse, ScyllaDB, CockroachDB, Dragonfly, MongoDB), we ship the project's own official binary and harden the base around it,
+- clears a hard **0 fixable CVE** gate (Trivy, fail-on-fixable) before anything is published,
 - runs as **nonroot (uid 1001)** on a **read-only root filesystem**,
-- is **multi-arch**: a linux/amd64 + linux/arm64 index, signed and pinned by digest,
-- ships an **SBOM** and is **cosign-signed** (keyless OIDC).
+- ships as a **multi-arch** index (linux/amd64 + linux/arm64), signed and pinned by digest,
+- carries an **SBOM** and a **cosign** keyless signature.
+
+The catalog spans databases, caches, search and vector, streaming, coordination, observability, gateways and proxies, object storage, secrets and identity, plus a container registry (Harbor), Git (Gitea), and CI/IaC (Atlantis).
+
+## Pull and verify
+
+```bash
+docker pull ghcr.io/quenchworks/images/redis
+
+cosign verify ghcr.io/quenchworks/images/redis \
+  --certificate-identity-regexp 'https://github.com/quenchworks/.+' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+## How a build runs
+
+1. **melange** compiles the app from source into a signed APK.
+2. **apko** assembles a minimal, nonroot, multi-arch image and writes it to a local tar.
+3. **Trivy** scans that tar with `--exit-code 1 --ignore-unfixed`. A single fixable CVE fails the build, and nothing is published.
+4. Only once the gate passes, apko publishes to `ghcr.io/quenchworks/images/<app>` as a multi-arch index.
+5. **cosign** signs the digest (keyless).
+6. A dispatch tells the [charts](https://github.com/quenchworks/charts) repo to repin the matching chart to the new digest.
+
+The build runs on every change **and once a day**. That daily rebuild is the point: a clean scan stays true tomorrow instead of quietly aging out.
 
 ## Layout
 
@@ -30,42 +49,14 @@ apps/<app>/test.sh           smoke test the built image
 .github/workflows/           per-app build, scan, sign, dispatch
 ```
 
-## How a build runs
-
-1. melange compiles the app from source into a signed APK.
-2. apko assembles a minimal, nonroot, multi-arch image and writes it to a local tar.
-3. Trivy scans that tar with `--exit-code 1 --ignore-unfixed`. A fixable CVE fails the build, and
-   nothing is published.
-4. Only after the gate passes, apko publishes to `ghcr.io/quenchworks/images/<app>` as a multi-arch
-   index.
-5. cosign signs the digest (keyless).
-6. A dispatch tells the [charts](https://github.com/quenchworks/charts) repo to repin the matching
-   chart to the new digest.
-
-The build runs on change and once a day, so a clean scan stays true rather than aging out.
-
-## Verify an image
-
-```bash
-cosign verify ghcr.io/quenchworks/images/redis \
-  --certificate-identity-regexp 'https://github.com/quenchworks/.+' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com
-```
-
 ## Add an app
 
-Add a row to `catalog.yaml`, then create `apps/<app>/` with a melange build, an apko config, and a
-test. Charts are authored separately in the [charts](https://github.com/quenchworks/charts) repo,
-from each app's own upstream docs. See [CONTRIBUTING](https://github.com/quenchworks/.github/blob/main/CONTRIBUTING.md).
+Add a row to `catalog.yaml`, then create `apps/<app>/` with a melange build, an apko config, and a test. Charts are authored separately in the [charts](https://github.com/quenchworks/charts) repo, from each app's own upstream docs. See [CONTRIBUTING](https://github.com/quenchworks/.github/blob/main/CONTRIBUTING.md).
 
 ## A note on licensing
 
-Most of the catalog is OSI-clean. Four datastores are source-available and carried with a loud
-license note in `catalog.yaml` and on the website, because they are **not** OSI-approved open source:
-MongoDB and Elasticsearch (SSPL-1.0), CockroachDB and Dragonfly (BSL-1.1). Each names the clean
-alternative we recommend instead (Valkey, OpenSearch, FerretDB + DocumentDB).
+Most of the catalog is OSI-clean. Four datastores are source-available and carried with a loud license note in `catalog.yaml` and on the website, because they are **not** OSI-approved open source: MongoDB and Elasticsearch (SSPL-1.0), CockroachDB and Dragonfly (BUSL-1.1). Each names the clean alternative we recommend instead: Valkey, OpenSearch, FerretDB + DocumentDB.
 
 ## License
 
-MIT for this repository's build configs and tooling. Each built image carries its upstream
-software's own license, recorded in `catalog.yaml` and the image labels.
+MIT for this repository's build configs and tooling. Each built image carries its upstream software's own license, recorded in `catalog.yaml` and the image labels.
