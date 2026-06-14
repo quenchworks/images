@@ -1,0 +1,56 @@
+# Assembles the Temporal CLI runtime image. Minimal, nonroot, multi-arch, SBOM
+# by apko. This is a CLI, NOT a server: there is no long-running process and no
+# listening port. It is the `temporal` command-line client for the Temporal
+# workflow engine -- the companion to the quench-temporal server image. Use it
+# against a running Temporal frontend, e.g.:
+#   docker run --rm ghcr.io/quenchworks/images/temporal-cli \
+#     --address temporal-frontend:7233 workflow list
+#
+# The entrypoint is the binary itself (/usr/bin/temporal), so `docker run <img>
+# <args>` forwards args straight to the CLI.
+#
+# Read-only rootfs friendly: the CLI writes nothing to the rootfs for normal
+# remote commands. Some subcommands (env config, the bundled dev-server) may
+# write under $HOME/.config/temporalio; we point HOME at /tmp so that, with a
+# read-only rootfs + a writable /tmp tmpfs, those paths land somewhere writable
+# instead of erroring. Run with `--read-only --tmpfs /tmp`.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-temporal-cli@local
+
+accounts:
+  groups:
+    - groupname: temporal
+      gid: 1001
+  users:
+    - username: temporal
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/temporal
+
+environment:
+  # CLI config / dev-server state lives under $HOME/.config/temporalio; point
+  # HOME at the writable tmpfs so a read-only rootfs doesn't break those paths.
+  HOME: /tmp
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-temporal-cli"
+  org.opencontainers.image.licenses: "MIT"

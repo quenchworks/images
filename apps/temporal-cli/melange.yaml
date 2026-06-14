@@ -1,0 +1,90 @@
+# Builds the Temporal CLI (`temporal`) from source onto Wolfi. This is the
+# command-line client for Temporal -- the companion to the already-shipped
+# quench-temporal server image (same upstream org, temporalio). It talks to a
+# Temporal frontend over gRPC, e.g.:
+#   temporal --address <host>:7233 workflow list
+#   temporal operator namespace create ...
+# and also bundles a dev-server (`temporal server start-dev`) for local use.
+#
+# ONE static, CGO-free (CGO_ENABLED=0) Go binary, multi-arch. Output is a signed
+# APK in QuenchWorks' own repo -- no upstream distro binaries.
+#
+# Build notes:
+#   - Upstream cmd is ./cmd/temporal, binary name `temporal` (matches upstream's
+#     .goreleaser.yml: dir cmd/temporal, binary temporal).
+#   - The release version is injected via ldflags into
+#     github.com/temporalio/cli/internal/temporalcli.Version (default "0.0.0-DEV"),
+#     exactly as upstream's goreleaser does
+#     (-X .../internal/temporalcli.Version={{.Version}}). `temporal --version`
+#     then prints e.g. "1.7.2 (Server <ver>, UI <ver>)".
+#   - go.mod requires go >= 1.26.x; use the current go-1.26 Wolfi toolchain to
+#     pick up the latest stdlib CVE fixes (clears the Trivy gate without manual
+#     bumps). GOTOOLCHAIN=local pins to that toolchain.
+#   - The generated sources (internal/temporalcli/commands.gen.go,
+#     cliext/flags.gen.go) are committed in the release tarball, so no `make gen`
+#     / codegen step is needed -- a plain `go build ./cmd/temporal` works.
+#   - No vendor/ dir; melange fetches modules via the default module proxy
+#     (GOFLAGS=-mod=mod).
+package:
+  name: quench-temporal-cli
+  version: 1.7.2
+  epoch: 0
+  description: "Quenchworks hardened Temporal CLI (the `temporal` command-line client for the Temporal workflow engine), built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle    # TLS to the frontend over gRPC
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - git
+      # go.mod requires go >= 1.26.x; use the current go-1.26 toolchain.
+      - go-1.26
+
+pipeline:
+  # Build from the git tag source tarball. Pinned to the tag; verified by sha256.
+  - uses: fetch
+    with:
+      uri: https://github.com/temporalio/cli/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: 09045e1b257c008c543cdb998eb05431a9b2ec9b233c5f0c3c6705bfc89a128d
+  - runs: |
+      export CGO_ENABLED=0
+      export GOTOOLCHAIN=local
+      export GOFLAGS=-mod=mod
+
+      # 0-CVE bump: the v1.7.2 go.mod pins the (indirect) AWS SDK
+      # github.com/aws/aws-sdk-go-v2/service/lambda at v1.88.0, which carries a
+      # FIXED MEDIUM DoS-via-panic advisory (GHSA-xmrv-pmrh-hhx2, fixed in
+      # 1.88.5). Since it's a fixed CVE, Trivy's --ignore-unfixed gate would NOT
+      # waive it -- so force the patched minor before building. It's a leaf dep
+      # (the CLI links the lambda client for `temporal env`/nexus paths), so the
+      # bump is behavior-preserving. tidy keeps go.sum consistent.
+      go get github.com/aws/aws-sdk-go-v2/service/lambda@v1.88.5
+      go mod tidy
+
+      # Stamp the version exactly like upstream's goreleaser so
+      # `temporal --version` reports the pinned release. -s -w strips debug info.
+      LDFLAGS="-s -w -X github.com/temporalio/cli/internal/temporalcli.Version=${{package.version}}"
+
+      install -d "${{targets.destdir}}/usr/bin"
+      go build -trimpath -ldflags "${LDFLAGS}" \
+        -o "${{targets.destdir}}/usr/bin/temporal" ./cmd/temporal
+
+      # license marker for provenance
+      install -d "${{targets.destdir}}/usr/share/doc/temporal-cli"
+      cp LICENSE "${{targets.destdir}}/usr/share/doc/temporal-cli/" 2>/dev/null || true
+
+test:
+  pipeline:
+    - runs: |
+        temporal --version
+        temporal --help
