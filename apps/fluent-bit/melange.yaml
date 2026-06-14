@@ -1,0 +1,133 @@
+# Builds Fluent Bit from source onto Wolfi via melange (CMake build). Output is a
+# signed APK in Quenchworks' own repo. No upstream distro binaries. Fluent Bit is a
+# lightweight, high-performance log/metrics processor and shipper (C / CMake).
+#
+# Configured for a nonroot (uid 1001), read-only-rootfs runtime: the binary lands at
+# /usr/bin/fluent-bit, a minimal default config ships at /fluent-bit/etc/fluent-bit.conf
+# (dummy input -> stdout output + HTTP monitoring server on :2020), and the chart mounts
+# the real config over it. All runtime writes go to /tmp (+ an optional buffer/storage
+# dir the chart mounts writable).
+package:
+  name: quench-fluent-bit
+  version: 5.0.7
+  epoch: 0
+  description: "Quenchworks hardened Fluent Bit, built from source on Wolfi (nonroot, read-only rootfs)"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - openssl
+      - zlib
+      - yaml             # libyaml: FLB_CONFIG_YAML links libyaml at runtime
+      - busybox
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - cmake
+      - flex             # scanner generator (record accessor / stream processor parsers)
+      - bison            # parser generator
+      - openssl-dev
+      - zlib-dev
+      - yaml-dev         # libyaml headers for FLB_CONFIG_YAML
+      - linux-headers
+      - pkgconf
+
+pipeline:
+  - uses: fetch
+    with:
+      # Official Fluent Bit git tag tarball; sha256 computed and verified locally.
+      uri: https://github.com/fluent/fluent-bit/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: "a760cdce272d6025100346d27315cc03a9b3466e5a8a24aaae6f2ad6a9cda29f"
+  - runs: |
+      # Out-of-tree CMake build (Fluent Bit ships bundled vendor libs: msgpack, monkey,
+      # chunkio, cmetrics, etc. -- built statically into the single binary).
+      #
+      # Lean, 0-CVE-friendly feature set:
+      #   FLB_RELEASE=On / FLB_DEBUG=Off  -> -O2 -DNDEBUG, no -g bloat
+      #   FLB_BINARY=On / FLB_SHARED_LIB=Off -> ship only the executable, no libfluent-bit.so
+      #   FLB_HTTP_SERVER=On              -> the monitoring/health server on :2020
+      #                                      (/, /api/v1/health, /api/v1/metrics, /api/v1/uptime)
+      #   FLB_CONFIG_YAML=On              -> classic .conf AND YAML config support
+      # Disabled to trim surface / avoid heavy optional runtimes and their CVE exposure:
+      #   FLB_EXAMPLES, FLB_TESTS_INTERNAL, FLB_TESTS_RUNTIME -> no test/example binaries
+      #   FLB_WASM, FLB_WAMRC             -> WASM runtime (large, rarely used here)
+      #   FLB_LUAJIT                      -> embedded Lua scripting (extra C surface)
+      #   FLB_BACKTRACE                   -> libbacktrace (debug crash dumps; not needed in prod)
+      #   FLB_CHUNK_TRACE                 -> chunk tracing dev feature
+      # Kept (ON by default with FLB_ALL=No): tail/dummy/forward inputs; stdout/http/
+      # forward/es/loki outputs; the full default core input/output/filter set.
+      cmake -S . -B build \
+        -DCMAKE_BUILD_TYPE=None \
+        -DCMAKE_INSTALL_PREFIX=/usr \
+        -DFLB_RELEASE=On \
+        -DFLB_DEBUG=Off \
+        -DFLB_BINARY=On \
+        -DFLB_SHARED_LIB=Off \
+        -DFLB_EXAMPLES=Off \
+        -DFLB_TESTS_INTERNAL=Off \
+        -DFLB_TESTS_RUNTIME=Off \
+        -DFLB_HTTP_SERVER=On \
+        -DFLB_CONFIG_YAML=On \
+        -DFLB_WASM=Off \
+        -DFLB_WAMRC=Off \
+        -DFLB_LUAJIT=Off \
+        -DFLB_BACKTRACE=Off \
+        -DFLB_CHUNK_TRACE=Off
+      cmake --build build -j"$(nproc)"
+      DESTDIR="${{targets.destdir}}" cmake --install build
+
+      destdir="${{targets.destdir}}"
+
+      # The binary installs to /usr/bin/fluent-bit. CMake also drops sample configs
+      # under /usr/etc/fluent-bit; we ship our own minimal default at the conventional
+      # /fluent-bit/etc/fluent-bit.conf (the chart mounts the real config over this).
+      install -d "$destdir/fluent-bit/etc"
+      install -d "$destdir/fluent-bit/bin"
+
+      # Minimal default config: dummy input -> stdout output, plus the HTTP monitoring
+      # server on :2020 so the image is self-checkable (health/metrics) out of the box.
+      cat > "$destdir/fluent-bit/etc/fluent-bit.conf" <<'EOF'
+      # Quenchworks hardened Fluent Bit default config.
+      # Nonroot (uid 1001) + read-only rootfs: the HTTP monitoring server is enabled on
+      # :2020 (/api/v1/health, /api/v1/metrics, /). The chart mounts the real config over
+      # this file. Storage buffering (if enabled) must point at a writable dir under /tmp.
+      [SERVICE]
+          Flush        1
+          Daemon       Off
+          Log_Level    info
+          HTTP_Server  On
+          HTTP_Listen  0.0.0.0
+          HTTP_Port    2020
+          Health_Check On
+
+      [INPUT]
+          Name   dummy
+          Tag    dummy.local
+          Dummy  {"message": "quenchworks fluent-bit default config"}
+
+      [OUTPUT]
+          Name   stdout
+          Match  *
+      EOF
+
+      # Convenience symlink at /fluent-bit/bin/fluent-bit (matches upstream image layout
+      # where folks reference /fluent-bit/bin/fluent-bit).
+      ln -sf /usr/bin/fluent-bit "$destdir/fluent-bit/bin/fluent-bit"
+
+      # A writable parsers file location is not needed for the default config; the chart
+      # mounts any parsers it needs.
+
+test:
+  pipeline:
+    - runs: |
+        fluent-bit --version
+        fluent-bit --version | grep -q "v${{package.version}}"
