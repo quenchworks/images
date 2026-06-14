@@ -1,0 +1,42 @@
+# Assembles the node_exporter runtime image. Minimal, nonroot, multi-arch, SBOM
+# by apko. Listens on :9100 and serves metrics at /metrics.
+#
+# node_exporter reads the host /proc, /sys and rootfs; the chart's DaemonSet
+# bind-mounts those read-only. The image itself needs no writable state and runs
+# happily on a read-only rootfs as the nonroot uid 1001. No auth by default --
+# the NetworkPolicy is the security boundary, consistent with the catalog posture.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-node-exporter@local
+
+accounts:
+  groups:
+    - groupname: exporter
+      gid: 1001
+  users:
+    - username: exporter
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/node_exporter
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-node-exporter"
+  org.opencontainers.image.licenses: "Apache-2.0"

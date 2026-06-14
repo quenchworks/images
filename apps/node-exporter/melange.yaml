@@ -1,0 +1,75 @@
+# Builds the Prometheus node_exporter from source onto Wolfi. One static Go
+# binary, no CGO. Output is a signed APK in Quenchworks' own repo. No upstream
+# distro binaries. Same Prometheus-family Go-from-source pattern as alertmanager
+# / postgres-exporter.
+#
+# node_exporter exposes hardware/OS metrics from *NIX kernels. It reads the host
+# /proc, /sys and root filesystem; in Kubernetes a DaemonSet bind-mounts those
+# into the container. The IMAGE just ships the static binary (nonroot uid 1001,
+# read-only rootfs friendly); the chart/DaemonSet supplies the host mounts.
+package:
+  name: quench-node-exporter
+  version: 1.11.1
+  epoch: 0
+  description: "Quenchworks hardened Prometheus node_exporter (hardware/OS metrics), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      # go.mod declares go 1.25; .promu.yml pins the build toolchain to 1.26. Use
+      # go-1.26 (newest, clears stdlib CVE advisories) and GOTOOLCHAIN=local so
+      # go.mod's 1.25 directive does not trigger a toolchain download.
+      - go-1.26
+
+pipeline:
+  # git-checkout (not fetch) pinned to the release tag's commit: builds from the
+  # verified git tag, avoiding the codeload CDN. Mirrors the alertmanager image.
+  - uses: git-checkout
+    with:
+      repository: https://github.com/prometheus/node_exporter
+      tag: v${{package.version}}
+      expected-commit: 0dd664dece3f8319f6bec5a221acd2c7ad13a23d
+
+  - name: Build node_exporter (static, CGO off)
+    runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's 1.25
+      export GO111MODULE=on
+
+      REVISION="$(git rev-parse HEAD)"
+      DATE="$(date -u +'%Y%m%d-%H:%M:%S')"
+      VERPKG="github.com/prometheus/common/version"
+      # Mirror upstream/promu version stamping so `node_exporter --version`,
+      # the /metrics build_info and node_exporter_build_info report v1.11.1.
+      LDFLAGS="-s -w \
+        -X ${VERPKG}.Version=${{package.version}} \
+        -X ${VERPKG}.Revision=${REVISION} \
+        -X ${VERPKG}.Branch=HEAD \
+        -X ${VERPKG}.BuildUser=quenchworks \
+        -X ${VERPKG}.BuildDate=${DATE}"
+
+      # netgo: pure-Go resolver (no libc dependency, matches upstream's static
+      # build, which sets the netgo tag in .promu.yml). main package is at root.
+      go build -trimpath -tags "netgo" -ldflags "${LDFLAGS}" \
+        -o "${{targets.destdir}}/usr/bin/node_exporter" .
+
+  # The exporter user is provided by apko (accounts), not the package, to avoid
+  # conflicting with wolfi-baselayout's /etc files.
+
+test:
+  pipeline:
+    - runs: node_exporter --version

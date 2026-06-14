@@ -1,0 +1,48 @@
+# Assembles the blackbox_exporter runtime image. Minimal, nonroot, multi-arch,
+# SBOM by apko. Listens on :9115; /metrics for its own metrics, /probe to run a
+# probe, /-/healthy + /-/ready for liveness.
+#
+# The default --config.file is /etc/blackbox_exporter/blackbox.yml (shipped by
+# the package; the chart mounts a ConfigMap over it). The server only reads its
+# config and needs no writable state, so it runs on a read-only rootfs as the
+# nonroot uid 1001. No auth by default -- the NetworkPolicy is the security
+# boundary, consistent with the catalog posture.
+#
+# NOTE: the icmp prober needs CAP_NET_RAW (raw sockets); HTTP/DNS/TCP/gRPC
+# probes work as the unprivileged uid 1001 with no added caps. The chart grants
+# NET_RAW only if ICMP probing is enabled.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-blackbox-exporter@local
+
+accounts:
+  groups:
+    - groupname: exporter
+      gid: 1001
+  users:
+    - username: exporter
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/blackbox_exporter --config.file=/etc/blackbox_exporter/blackbox.yml
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-blackbox-exporter"
+  org.opencontainers.image.licenses: "Apache-2.0"
