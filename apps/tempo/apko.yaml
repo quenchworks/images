@@ -1,0 +1,52 @@
+# Assembles the Tempo runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+#
+# Tempo is configured by a YAML config file (-config.file=...) supplied by the
+# chart. The entrypoint is the binary directly (/usr/bin/tempo) -- no shell
+# wrapper needed; Tempo exposes a /ready readiness endpoint and /metrics for
+# probes, so health checks do not require a shell. busybox is included only to
+# give operators a minimal shell for debugging; it is not on the entrypoint
+# path. Tempo has NO bundled web UI (Grafana is its frontend) so no assets ship.
+#
+# Read-only rootfs friendly: Tempo writes nothing to the rootfs. It needs a
+# writable storage path (the single-binary config uses a local/filesystem trace
+# backend plus a WAL, e.g. under /var/tempo) plus /tmp; the chart mounts those as
+# writable volumes. The base image presumes no persistent state.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - busybox
+    - ca-certificates-bundle
+    - quench-tempo@local
+
+accounts:
+  groups:
+    - groupname: tempo
+      gid: 1001
+  users:
+    - username: tempo
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/tempo
+
+# Default ports: 3200 HTTP (API, /ready, /metrics), 4317 OTLP gRPC,
+# 4318 OTLP HTTP, 9095 gRPC. Advisory only -- the chart sets the actual
+# server.http_listen_port / receiver ports via the mounted config.
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-tempo"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"

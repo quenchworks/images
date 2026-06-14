@@ -1,0 +1,64 @@
+# Builds Grafana Tempo from source onto Wolfi. Single static Go binary
+# (CGO disabled, netgo), multi-arch. Output is a signed APK in Quenchworks'
+# own repo. No upstream distro binaries.
+#
+# Tempo is a high-volume, minimal-cost distributed tracing backend (same Grafana
+# family as the shipped Loki). It has NO bundled web UI -- Grafana is its
+# frontend -- so there is no Node toolchain or asset-embedding step. We build
+# from the git tag source tarball, which vendors all Go dependencies (vendor/),
+# so the build is fully offline with -mod=vendor.
+#
+# We build the server `tempo` binary (cmd/tempo, the deliverable) using the exact
+# version ldflags from upstream's Makefile so `tempo --version` reports the
+# pinned release. AGPL-3.0 (same license tier as the shipped grafana/loki images).
+package:
+  name: quench-tempo
+  version: 2.10.7
+  epoch: 0
+  description: "Quenchworks hardened Grafana Tempo (distributed tracing backend), built from source on Wolfi"
+  copyright:
+    - license: AGPL-3.0-only
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      # go.mod requires go >= 1.26.x; use the current go-1.26 toolchain to pick
+      # up the latest stdlib CVE fixes (clears the Trivy gate without bumps).
+      - go-1.26
+
+pipeline:
+  # Build from the git tag source tarball. Tempo vendors all deps under vendor/,
+  # so the build needs no network. Pinned to the tag; verified by sha256.
+  - uses: fetch
+    with:
+      uri: https://github.com/grafana/tempo/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: 61c0e210df228d3cd77232a1c7f0c9e66f8337f11398322721c89e13ecf6385a
+  - runs: |
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=vendor
+      export GOTOOLCHAIN=local
+      # Stamp version exactly like upstream's Makefile (LD_FLAGS sets main.{Version,
+      # Branch,Revision}; cmd/tempo/main.go forwards them into prometheus/common/
+      # version) so `tempo --version` reports the pinned release. Upstream's VERSION
+      # file carries the leading "v", so Version="v${version}" to match it.
+      go build -trimpath -tags netgo \
+        -ldflags "-s -w -extldflags \"-static\" \
+          -X main.Version=v${{package.version}} \
+          -X main.Branch=HEAD \
+          -X main.Revision=v${{package.version}}" \
+        -o "${{targets.destdir}}/usr/bin/tempo" ./cmd/tempo
+
+test:
+  pipeline:
+    - runs: |
+        tempo --version
