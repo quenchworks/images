@@ -1,0 +1,201 @@
+# Builds the Coolify realtime component FROM SOURCE on Wolfi with melange.
+#
+# coolify-realtime is a TWO-process container (run together by a thin entrypoint):
+#   1. soketi   -- a self-hosted Pusher-compatible WebSocket server (the "realtime"
+#                  pub/sub the Coolify UI subscribes to). Listens on :6001.
+#   2. terminal -- a small Node WebSocket server (ws + node-pty) that bridges the
+#                  Coolify UI's xterm.js terminal to an `ssh` PTY on the target host.
+#                  Listens on :6002.
+# Upstream ships this as ghcr.io/coollabsio/coolify-realtime, built FROM the prebuilt
+# quay.io/soketi/soketi:1.6-16-alpine image with the terminal server layered on top
+# (docker/coolify-realtime/Dockerfile in the coolify repo). We DON'T inherit their
+# image -- we build BOTH halves from source on Wolfi so the Trivy scan attributes the
+# real dependency tree and nothing comes from an untracked upstream layer.
+#
+# Coolify pins realtime_version 1.0.16 (versions.json) at coolify tag v4.1.2, and that
+# Dockerfile pins soketi 1.6-16-alpine (== soketi release 1.6.1) and cloudflared
+# 2025.7.0. We map those to from-source / Wolfi-tracked equivalents:
+#   * soketi      -> built from the soketi 1.6.1 git tag (TypeScript -> `tsc`), pruned
+#                    to production deps, installed under /app (same layout: /app/bin/
+#                    server.js is the entrypoint soketi expects).
+#   * terminal    -> the three upstream files (terminal-server.js, terminal-utils.js,
+#                    package.json) from coolify v4.1.2, with `npm ci` against the
+#                    committed package-lock.json. node-pty 1.1.0 is a NATIVE addon, so
+#                    build-base + python3 are present and we `npm rebuild node-pty`
+#                    exactly as upstream does to compile it for the build arch.
+#   * cloudflared -> NOT vendored as an upstream binary blob. The terminal server only
+#                    shells out to `cloudflared access ssh` as an ssh ProxyCommand when
+#                    a target host sits behind a Cloudflare tunnel; we satisfy that at
+#                    RUNTIME with Wolfi's CVE-tracked `cloudflared` package (apko.yaml),
+#                    instead of curl-ing a frozen GitHub release.
+#
+# Node toolchain -- pinned to nodejs-18 for BOTH build and runtime, and here's why it
+# is NOT a free choice: soketi 1.6.1 depends on uWebSockets.js 20.10.0, which ships
+# PREBUILT native binaries (uws_<platform>_<arch>_<nodeABI>.node) and refuses to run on
+# anything newer than Node 18 ("supports only Node.js 14, 16 and 18"). Its loader picks
+# the file by process.versions.modules (the Node ABI: 93=node16, 108=node18, 127=node22),
+# and the package only bundles up to ABI 108 -- so Node 20/22/24 fail with "Cannot find
+# module ./uws_linux_x64_<abi>.node". Upstream's own image tag (1.6-16-alpine) runs soketi
+# on Node 16. node-pty 1.1.0 (compiled from source here) runs fine on Node 18, so Node 18
+# is the single CVE-tracked runtime that satisfies BOTH halves. (When we bump soketi to a
+# release whose uWebSockets.js supports a newer Node, bump this in lockstep.)
+#
+# uWebSockets.js also bundles prebuilt .node files for EVERY platform/arch (linux/darwin/
+# win, x64/arm64). melange's dependency scanner reads those foreign binaries and would
+# emit an impossible cross-arch SO dependency (e.g. so:ld-linux-aarch64.so.1 on an amd64
+# package), which breaks apko's solve. The soketi step below therefore strips every
+# prebuilt that does not match the BUILD platform+arch, keeping only the linux/<arch>
+# binaries this image can actually load.
+package:
+  name: quench-coolify-realtime
+  version: 1.0.16
+  epoch: 0
+  description: "Quenchworks hardened Coolify realtime (soketi WebSocket server + node-pty terminal bridge), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0   # coolify itself is Apache-2.0; soketi is AGPL-3.0 (see annotations)
+  dependencies:
+    runtime:
+      - bash                    # the entrypoint + soketi-entrypoint are shell scripts
+      - busybox                 # mkfifo/date/sleep/kill used by the entrypoint
+      - ca-certificates-bundle  # TLS to external endpoints
+      - nodejs-18               # runs both soketi (/app/bin/server.js) and the terminal server
+      - openssh-client          # the terminal server spawns `ssh` to reach target hosts
+      - cloudflared             # `cloudflared access ssh` ProxyCommand for tunneled hosts (CVE-tracked)
+
+vars:
+  # soketi release that the upstream realtime Dockerfile's 1.6-16-alpine tag tracks.
+  soketi-version: 1.6.1
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base              # node-pty native addon (make + g++)
+      - busybox
+      - bash
+      - ca-certificates-bundle
+      - git
+      - nodejs-18
+      - npm
+      - python3                 # node-gyp (node-pty) build dependency
+
+pipeline:
+  # Coolify repo at tag v4.1.2 carries the realtime sources under
+  # docker/coolify-realtime/ (terminal-server.js, terminal-utils.js, package.json,
+  # package-lock.json, soketi-entrypoint.sh) -- realtime_version 1.0.16.
+  - uses: git-checkout
+    with:
+      repository: https://github.com/coollabsio/coolify
+      tag: v4.1.2
+      expected-commit: e7dff30b7c998c301fd91bd169727b90c59ec291
+      destination: coolify
+
+  # soketi from its own source tree at the 1.6.1 release tag, built and pruned the
+  # same way soketi's own Dockerfile does (tsc build -> prod-only deps), then placed
+  # under /app so /app/bin/server.js works exactly as the entrypoint expects.
+  - uses: git-checkout
+    with:
+      repository: https://github.com/soketi/soketi
+      tag: ${{vars.soketi-version}}
+      expected-commit: 5d188786beaf683aca2115a6247dcdc15c29ac77
+      destination: soketi
+
+  - name: Build soketi from source and install it under /app
+    runs: |
+      set -eu
+      export npm_config_cache="$(mktemp -d)"
+      export HOME="$(mktemp -d)"
+      export NPM_CONFIG_REGISTRY="https://registry.npmjs.org"
+      export PYTHONUNBUFFERED=1
+
+      cd soketi
+      # Reproduce soketi's Dockerfile build: install full deps, compile TS -> dist/,
+      # then reinstall production-only deps (ignore-scripts: soketi's prod deps need
+      # no native build, and this avoids any node-gyp surprise on arm64).
+      npm ci
+      npm run build
+      npm ci --omit=dev --ignore-scripts
+      npm prune --production
+
+      # Strip uWebSockets.js prebuilts that don't match this build's linux/<arch>, so
+      # (a) melange's dep scanner doesn't emit a cross-arch SO dependency that breaks
+      # apko's solve, and (b) the image only carries the binary it can actually load.
+      # Map the Wolfi/melange arch to the uWS arch token (x86_64->x64, aarch64->arm64).
+      case "$(uname -m)" in
+        x86_64)  uws_arch=x64 ;;
+        aarch64) uws_arch=arm64 ;;
+        *) echo "unexpected build arch $(uname -m)"; exit 1 ;;
+      esac
+      uwsdir=node_modules/uWebSockets.js
+      if [ -d "$uwsdir" ]; then
+        # delete every prebuilt that is NOT linux_<uws_arch>_*
+        find "$uwsdir" -maxdepth 1 -name 'uws_*.node' \
+          ! -name "uws_linux_${uws_arch}_*.node" -delete
+        # the Node-18 ABI prebuilt (108) we depend on must remain.
+        ls "$uwsdir"/uws_linux_${uws_arch}_108.node >/dev/null \
+          || { echo "uWS Node-18 (ABI 108) prebuilt missing for linux/${uws_arch}"; ls "$uwsdir"/uws_*.node || true; exit 1; }
+      fi
+      # @msgpackr-extract similarly ships an arch-keyed optional dep dir; keep only ours.
+      find node_modules/@msgpackr-extract -maxdepth 1 -type d \
+        -name "msgpackr-extract-linux-*" ! -name "msgpackr-extract-linux-${uws_arch}" \
+        -exec rm -rf {} + 2>/dev/null || true
+
+      # Lay out /app exactly like the soketi image (bin/, dist/, node_modules/).
+      appdir="${{targets.destdir}}/app"
+      install -d "$appdir"
+      cp -a bin dist node_modules package.json package-lock.json "$appdir"/
+      cp -a LICENSE README.md "$appdir"/ 2>/dev/null || true
+      # Sanity: the entrypoint soketi-entrypoint.sh runs `node /app/bin/server.js start`,
+      # and bin/server.js does require('./../dist/cli') -> dist/cli/index.js -> dist/cli/cli.js.
+      test -f "$appdir/bin/server.js"
+      test -f "$appdir/dist/cli/cli.js"
+
+  - name: Build the terminal server (ws + native node-pty) and install it under /terminal
+    runs: |
+      set -eu
+      export npm_config_cache="$(mktemp -d)"
+      export HOME="$(mktemp -d)"
+      export NPM_CONFIG_REGISTRY="https://registry.npmjs.org"
+      export PYTHONUNBUFFERED=1
+
+      cd coolify/docker/coolify-realtime
+      # Reproduce the realtime Dockerfile: npm ci against the committed lockfile, then
+      # rebuild the node-pty native addon for THIS build arch (amd64/arm64 native
+      # runners, no emulation). build-base + python3 supply the toolchain.
+      npm ci
+      npm rebuild node-pty --update-binary
+
+      termdir="${{targets.destdir}}/terminal"
+      install -d "$termdir"
+      cp -a terminal-server.js terminal-utils.js package.json package-lock.json node_modules "$termdir"/
+      # Sanity: the native node-pty addon (.node) must have compiled.
+      find "$termdir/node_modules/node-pty" -name '*.node' | grep -q . \
+        || { echo "node-pty native addon (.node) was not built"; exit 1; }
+
+  - name: Install the soketi-entrypoint and a thin wrapper entrypoint
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      # Ship upstream's soketi-entrypoint.sh verbatim at /soketi-entrypoint.sh (it
+      # supervises both `node /terminal/terminal-server.js` and
+      # `node /app/bin/server.js start`, wires up log FIFOs, and forwards signals).
+      install -Dm0755 coolify/docker/coolify-realtime/soketi-entrypoint.sh \
+        "$destdir/soketi-entrypoint.sh"
+      # Verify the supervised paths the entrypoint hardcodes line up with our layout.
+      grep -q '/terminal/terminal-server.js' "$destdir/soketi-entrypoint.sh"
+      grep -q '/app/bin/server.js' "$destdir/soketi-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        set -eu
+        test -f /app/bin/server.js
+        test -f /app/dist/cli/cli.js
+        test -f /terminal/terminal-server.js
+        test -f /terminal/terminal-utils.js
+        find /terminal/node_modules/node-pty -name '*.node' | grep -q .
+        test -x /soketi-entrypoint.sh
+        node --version

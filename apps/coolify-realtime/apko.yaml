@@ -1,0 +1,77 @@
+# Assembles the Coolify realtime runtime image: soketi (WebSocket pub/sub, :6001) +
+# the node-pty terminal bridge (:6002), supervised by the upstream soketi-entrypoint.
+# Minimal, nonroot (uid 1001), multi-arch, read-only-rootfs friendly, SBOM by apko.
+#
+# Ports:
+#   6001/tcp  soketi  -- Pusher-compatible WebSocket server the Coolify UI subscribes to
+#   6002/tcp  terminal-- ws server bridging xterm.js to an ssh PTY on the target host
+#
+# Read-only rootfs: the entrypoint writes its log FIFOs under /tmp, and node-pty spawns
+# the ssh PTY with cwd=$HOME, so /tmp and the user's home (/home/coolify) are the only
+# writable surfaces -- both are tmpfs/emptyDir-friendly mounts. soketi keeps no state
+# (it's a stateless pub/sub broker), so no PVC is required.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - bash                          # entrypoints are shell scripts
+    - busybox                       # mkfifo/date/sleep/kill in the entrypoint
+    - ca-certificates-bundle
+    - nodejs-18                     # runs soketi + the terminal server (uWebSockets.js 20.10.0 caps at Node 18)
+    - openssh-client                # the terminal server spawns `ssh`
+    - cloudflared                   # ProxyCommand for Cloudflare-tunneled hosts (CVE-tracked)
+    - quench-coolify-realtime@local
+
+accounts:
+  groups:
+    - groupname: coolify
+      gid: 1001
+  users:
+    - username: coolify
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /bin/sh /soketi-entrypoint.sh
+
+environment:
+  HOME: /home/coolify
+  # soketi binds 0.0.0.0:6001 by default; terminal-server.js listens on :6002.
+  # Make the bind host explicit and quiet soketi's debug unless overridden.
+  SOKETI_HOST: "0.0.0.0"
+  SOKETI_PORT: "6001"
+
+work-dir: /terminal
+
+paths:
+  # node-pty spawns the ssh PTY with cwd=$HOME -- give the nonroot user a writable home.
+  - path: /home/coolify
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+  # the entrypoint creates its log FIFOs under /tmp.
+  - path: /tmp
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o1777
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-coolify-realtime"
+  # The image bundles soketi (AGPL-3.0) alongside the Coolify terminal server
+  # (Apache-2.0); the effective combined-distribution license is AGPL-3.0.
+  org.opencontainers.image.licenses: "AGPL-3.0-or-later"
