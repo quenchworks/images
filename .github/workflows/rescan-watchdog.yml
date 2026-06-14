@@ -1,0 +1,97 @@
+name: rescan-watchdog
+
+# Surfaces silently-failing daily rebuilds. The 0-CVE gate fails a build when a
+# new fixable CVE appears, but a failed *scheduled* run is otherwise invisible.
+# This watchdog runs a few hours after the 03:00 build cron, collects any
+# build-* runs that failed in the last ~26h, and opens/updates a single
+# tracking issue so the failures are not missed.
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  actions: read
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Detect failed daily rebuilds and report
+        run: |
+          set -euo pipefail
+
+          REPO="${GITHUB_REPOSITORY}"
+          TODAY="$(date -u +%F)"
+          SINCE="$(date -u -d '26 hours ago' +%Y-%m-%dT%H:%M:%SZ)"
+          TITLE="Daily rebuild failures: ${TODAY}"
+
+          echo "Looking for failed build-* runs since ${SINCE}"
+
+          # List recent failed workflow runs (JSON), then keep only build-* workflows
+          # whose failure started within the lookback window.
+          gh run list \
+            --repo "${REPO}" \
+            --status failure \
+            --limit 200 \
+            --json name,displayTitle,workflowName,conclusion,createdAt,url,databaseId \
+            > all_runs.json
+
+          jq --arg since "${SINCE}" '
+            [ .[]
+              | select((.workflowName // .name) | startswith("build-"))
+              | select(.createdAt >= $since)
+            ]' all_runs.json > failed.json
+
+          COUNT="$(jq 'length' failed.json)"
+          echo "Found ${COUNT} failed build-* run(s) in window."
+
+          # Find an already-open tracking issue for today (avoid duplicates).
+          EXISTING="$(gh issue list \
+            --repo "${REPO}" \
+            --state open \
+            --search "in:title \"${TITLE}\"" \
+            --json number,title \
+            --jq "[.[] | select(.title == \"${TITLE}\")][0].number // empty")"
+
+          if [ "${COUNT}" -eq 0 ]; then
+            echo "No failures detected."
+            if [ -n "${EXISTING}" ]; then
+              echo "Closing stale tracking issue #${EXISTING}."
+              gh issue close "${EXISTING}" \
+                --repo "${REPO}" \
+                --comment "All \`build-*\` rebuilds recovered as of ${TODAY}. Closing automatically."
+            fi
+            exit 0
+          fi
+
+          # Build the issue body listing each failed workflow with a run link.
+          {
+            echo "Automated watchdog detected **${COUNT}** failed \`build-*\` workflow run(s) in the last ~26h (as of ${TODAY} UTC)."
+            echo ""
+            echo "A failed scheduled build usually means the 0-CVE gate caught a new fixable CVE. Investigate and re-run."
+            echo ""
+            echo "| Workflow | Run |"
+            echo "| --- | --- |"
+            jq -r '.[] | "| \(.workflowName // .name) | [\(.databaseId)](\(.url)) |"' failed.json
+          } > body.md
+
+          if [ -n "${EXISTING}" ]; then
+            echo "Updating existing tracking issue #${EXISTING}."
+            gh issue edit "${EXISTING}" --repo "${REPO}" --body-file body.md
+          else
+            echo "Opening new tracking issue."
+            gh issue create \
+              --repo "${REPO}" \
+              --title "${TITLE}" \
+              --body-file body.md \
+              --label "ci"
+          fi
