@@ -1,0 +1,67 @@
+# Builds Caddy from source onto Wolfi. Single static Go binary (CGO disabled),
+# multi-arch. Output is a signed APK in Quenchworks' own repo. No upstream distro
+# binaries.
+#
+# Caddy is a fast, extensible web server with automatic HTTPS.
+#
+# We build from the official "buildable-artifact" release tarball, which is a
+# self-contained, fully-vendored source tree (main.go at the repo root +
+# vendor/). Building it offline with -mod=vendor reproduces the exact module
+# graph upstream ships, so no Go proxy access is needed at build time. The
+# artifact's go.mod has `require github.com/caddyserver/caddy/v2 v2.11.4`, so
+# `debug.ReadBuildInfo()` already reports the version; we ALSO stamp
+# caddy/v2.CustomVersion via ldflags as a belt-and-suspenders so `caddy version`
+# always prints the pinned tag regardless of build-info quirks.
+package:
+  name: quench-caddy
+  version: 2.11.4
+  epoch: 0
+  description: "Quenchworks hardened Caddy (fast, extensible web server with automatic HTTPS), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      # The buildable-artifact go.mod requires go >= 1.26; use the current
+      # go-1.26 toolchain to pick up the latest stdlib CVE fixes (clears the
+      # Trivy gate without manual bumps).
+      - go-1.26
+
+pipeline:
+  # Build from the official buildable-artifact, a vendored source tree. Pinned to
+  # the published asset; verified by sha256.
+  - uses: fetch
+    with:
+      uri: https://github.com/caddyserver/caddy/releases/download/v${{package.version}}/caddy_${{package.version}}_buildable-artifact.tar.gz
+      expected-sha256: 33777097f666d60d78bfb74df06978c933f32aa5a0d4ce0b0c5d028489984187
+      # The buildable-artifact tarball has files at the root (no top-level
+      # directory), so do NOT strip a leading path component (default is 1).
+      strip-components: 0
+  - runs: |
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=vendor
+      export GOTOOLCHAIN=local
+      # Stamp the version so `caddy version` reports the pinned release even if
+      # build-info extraction ever changes. CustomVersion is Caddy's documented
+      # override hook (caddy.go).
+      LDFLAGS="-s -w \
+        -X github.com/caddyserver/caddy/v2.CustomVersion=v${{package.version}}"
+      go build -trimpath -ldflags "${LDFLAGS}" \
+        -installsuffix nocgo \
+        -o "${{targets.destdir}}/usr/bin/caddy" .
+
+test:
+  pipeline:
+    - runs: |
+        caddy version

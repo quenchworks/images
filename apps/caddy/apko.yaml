@@ -1,0 +1,59 @@
+# Assembles the Caddy runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+#
+# Caddy is configured by a Caddyfile (or JSON) mounted by the chart. The
+# entrypoint runs `caddy run --config /etc/caddy/Caddyfile`; busybox is included
+# only to give operators a minimal shell for debugging and is not required on the
+# entrypoint path.
+#
+# Read-only rootfs friendly: Caddy persists state (certs, locks, autosaved
+# config) under $XDG_DATA_HOME and $XDG_CONFIG_HOME. We point those at /data and
+# /config so a read-only rootfs only needs those two paths (plus /tmp) mounted
+# writable -- which the chart does via emptyDir.
+#
+# Ports are UNPRIVILEGED: uid 1001 cannot bind <1024, so HTTP is 8080, HTTPS is
+# 8443, and the admin API is 2019. These are advisory; the actual listeners come
+# from the mounted Caddyfile.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - busybox
+    - ca-certificates-bundle
+    - quench-caddy@local
+
+accounts:
+  groups:
+    - groupname: caddy
+      gid: 1001
+  users:
+    - username: caddy
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# Caddy writes state under $XDG_DATA_HOME (certs/locks) and $XDG_CONFIG_HOME
+# (autosaved config). Point both at writable mounts so the rootfs stays
+# read-only. The chart mounts /data and /config as writable emptyDir volumes.
+environment:
+  XDG_DATA_HOME: /data
+  XDG_CONFIG_HOME: /config
+
+entrypoint:
+  command: /usr/bin/caddy run --config /etc/caddy/Caddyfile
+
+# Default ports (advisory): 8080 http, 8443 https, 2019 admin API.
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-caddy"
+  org.opencontainers.image.licenses: "Apache-2.0"
