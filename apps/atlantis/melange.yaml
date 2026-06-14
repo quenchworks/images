@@ -1,0 +1,113 @@
+# Builds Atlantis from source onto Wolfi, and bundles OpenTofu (also from
+# source) as the Terraform-compatible execution engine. Two static, CGO-free
+# (CGO_ENABLED=0) Go binaries, multi-arch. Output is a signed APK in
+# QuenchWorks' own repo -- no upstream distro binaries.
+#
+# Atlantis is Terraform/OpenTofu pull-request automation: it listens for VCS
+# webhooks, clones the PR branch, runs `plan`/`apply`, and posts the output
+# back as PR comments. It is a single Go binary (`atlantis`) that embeds its
+# web UI templates and static assets via go:embed (server/server.go
+# `//go:embed static`, server/controllers/web_templates `//go:embed templates/*`,
+# server/events/markdown_renderer.go `//go:embed templates/*`), so NO Node
+# toolchain is needed -- the release source tree carries the assets and the
+# compiled binary serves them.
+#
+# Deliverables shipped in this package:
+#   - /usr/bin/atlantis  (cmd ./, the server + CLI)  -- the deliverable
+#   - /usr/bin/tofu      (OpenTofu, github.com/opentofu/opentofu, MPL-2.0) --
+#     the execution engine. We BUNDLE OPENTOFU, NOT TERRAFORM: Terraform moved
+#     to BUSL-1.1 (source-available, not clean); OpenTofu is MPL-2.0 (clean).
+#     Atlantis selects it with `--default-tf-distribution=opentofu`
+#     (env: ATLANTIS_DEFAULT_TF_DISTRIBUTION=opentofu); with that flag Atlantis
+#     resolves the `tofu` binary on PATH (DistributionOpenTofu.BinName()=="tofu").
+#
+# Runtime deps:
+#   - git           Atlantis shells out to `git` to clone/fetch PR branches
+#                   (server/events/working_dir.go exec.Command("git", ...)).
+#   - openssh-client  for ssh:// clone URLs / known_hosts.
+#   - ca-certificates-bundle  TLS to the VCS API + provider registries.
+#
+# Both projects build CGO-free with the default module proxy (no vendor/ dir).
+# Atlantis go.mod requires go >= 1.25.x and OpenTofu >= 1.26.x; we use the
+# current go-1.26 Wolfi toolchain for both to pick up the latest stdlib CVE
+# fixes (clears the Trivy gate without manual bumps).
+package:
+  name: quench-atlantis
+  version: 0.44.0
+  epoch: 0
+  description: "Quenchworks hardened Atlantis (Terraform/OpenTofu pull-request automation), built from source on Wolfi; bundles OpenTofu"
+  copyright:
+    - license: Apache-2.0       # Atlantis
+    - license: MPL-2.0          # bundled OpenTofu
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - git                # Atlantis clones/fetches PR branches via the git CLI
+      - openssh-client     # ssh:// clone URLs
+      - busybox            # minimal shell for debugging / the thin entrypoint path
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - git
+      # Atlantis go.mod needs go >= 1.25.x, OpenTofu >= 1.26.x; use go-1.26 for both.
+      - go-1.26
+
+pipeline:
+  # 1) Atlantis from the git tag source tarball. Pinned to the tag; sha256-verified.
+  - uses: fetch
+    with:
+      uri: https://github.com/runatlantis/atlantis/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: ba871944e95a3b366f877d16e061e72e11ba02b898f131d22d3620aabee87fd0
+      strip-components: 0
+  - runs: |
+      cd atlantis-${{package.version}}
+      export CGO_ENABLED=0
+      export GOTOOLCHAIN=local
+      export GOFLAGS=-mod=mod
+      # Stamp version/commit/date into main.* exactly like upstream's goreleaser
+      # (-X main.version / main.commit / main.date), so `atlantis version` prints
+      # the pinned tag. We have no git metadata in a tarball build, so commit is
+      # the well-known marker and date is the build timestamp.
+      DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      LDFLAGS="-s -w \
+        -X main.version=${{package.version}} \
+        -X main.commit=quenchworks \
+        -X main.date=${DATE}"
+      install -d "${{targets.destdir}}/usr/bin"
+      go build -trimpath -ldflags "${LDFLAGS}" \
+        -o "${{targets.destdir}}/usr/bin/atlantis" .
+      install -d "${{targets.destdir}}/usr/share/doc/atlantis"
+      cp LICENSE "${{targets.destdir}}/usr/share/doc/atlantis/LICENSE.atlantis" 2>/dev/null || true
+
+  # 2) OpenTofu from its git tag source tarball. Pinned to the tag; sha256-verified.
+  #    MPL-2.0. Built CGO-free; version is embedded from version/VERSION, we only
+  #    set version.dev=no to strip the -dev prerelease marker so `tofu version`
+  #    reports the clean release (matches upstream scripts/build.sh LD_FLAGS).
+  - uses: fetch
+    with:
+      uri: https://github.com/opentofu/opentofu/archive/refs/tags/v1.12.2.tar.gz
+      expected-sha256: f1e13ed2c1552ea7828156a10588a544d8b6b0d2c25f801a07fdf666734604fd
+      strip-components: 0
+  - runs: |
+      cd opentofu-1.12.2
+      export CGO_ENABLED=0
+      export GOTOOLCHAIN=local
+      export GOFLAGS=-mod=mod
+      LDFLAGS="-s -w -X 'github.com/opentofu/opentofu/version.dev=no'"
+      go build -trimpath -ldflags "${LDFLAGS}" \
+        -o "${{targets.destdir}}/usr/bin/tofu" ./cmd/tofu
+      cp LICENSE "${{targets.destdir}}/usr/share/doc/atlantis/LICENSE.opentofu" 2>/dev/null || true
+
+test:
+  pipeline:
+    - runs: |
+        atlantis version
+        tofu version
