@@ -51,8 +51,21 @@ jobs:
 
       - name: Install apko (native ${{ matrix.arch.platform }})
         working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # authenticate the API call to dodge the 60/hr anon rate-limit (403)
         run: |
-          APKO_VER="$(curl -fsSL https://api.github.com/repos/chainguard-dev/apko/releases/latest | grep -m1 '"tag_name"' | cut -d'"' -f4)"
+          set -euo pipefail
+          # Resolve the latest apko tag via the authenticated GitHub API, with a
+          # few retries -- the anonymous endpoint intermittently 403s on shared
+          # runners, which previously left APKO_VER empty and 404'd the download.
+          APKO_VER=""
+          for i in 1 2 3 4 5; do
+            APKO_VER="$(gh api repos/chainguard-dev/apko/releases/latest --jq .tag_name 2>/dev/null || true)"
+            [ -n "$APKO_VER" ] && break
+            echo "apko version lookup attempt $i failed; retrying..." >&2; sleep 5
+          done
+          [ -n "$APKO_VER" ] || { echo "could not resolve latest apko version"; exit 1; }
+          echo "apko ${APKO_VER}"
           curl -fsSL "https://github.com/chainguard-dev/apko/releases/download/${APKO_VER}/apko_${APKO_VER#v}_linux_${{ matrix.arch.platform }}.tar.gz" \
             | sudo tar xz --strip-components=1 -C /usr/local/bin
           apko version | head -1
