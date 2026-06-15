@@ -1,0 +1,68 @@
+# Assembles a hardened Erlang/OTP (BEAM) runtime/base image directly from
+# Wolfi's own versioned `erlang-NN` packages. No Dockerfile, NO melange build --
+# apko pulls the pinned `erlang-__OTPVER__` package straight from the Wolfi `os`
+# repository, so each OTP major is a pure package-assembly.
+#
+# IMAGE-ONLY -- no Helm chart. This is a LANGUAGE/BASE image: the 0-CVE, signed,
+# nonroot, multi-arch answer to `erlang:slim`. Developers `FROM` it (like
+# Chainguard's language images) or `docker run <img> -eval '...'` directly.
+#
+# NOTE: Wolfi versions Erlang into per-major packages (erlang-25 .. erlang-29),
+# so -- like Go/Rust/Python -- we ship the latest 3 stable majors via a matrix.
+# `__OTPVER__` is a build-time placeholder CI substitutes (27 / 28 / 29).
+#
+# SHELL REQUIRED: Erlang's `erl`/`erlc`/`escript` front-ends are POSIX-sh
+# wrapper scripts (they compute ROOTDIR then exec the `erlexec` ELF binary), and
+# `os:cmd/1` shells out at runtime. So a minimal `busybox` providing /bin/sh is
+# a HARD runtime dependency for BEAM -- it cannot run fully shell-less. busybox
+# is 0-CVE in Wolfi and adds no extra writable state.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - busybox                      # /bin/sh -- required by erl/erlc/escript
+    - erlang-__OTPVER__            # the pinned OTP major from Wolfi (BEAM + erts)
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# `erl` as the entrypoint: `docker run <img> -noshell -eval '...' -s init stop`,
+# etc. erlc / escript are also on PATH at /usr/bin.
+entrypoint:
+  command: /usr/bin/erl
+
+# HOME under the writable tmpfs so the BEAM's on-disk state (e.g. ~/.erlang
+# cookie, Mnesia dirs if used) works on a read-only rootfs.
+environment:
+  HOME: /tmp
+
+work-dir: /home/nonroot
+
+paths:
+  - path: /home/nonroot
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-erlang"
+  org.opencontainers.image.licenses: "Apache-2.0"

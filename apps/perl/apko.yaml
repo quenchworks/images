@@ -1,0 +1,62 @@
+# Assembles a hardened Perl interpreter/base image directly from Wolfi's own
+# `perl` package. No Dockerfile, NO melange build -- apko pulls the prebuilt
+# `perl` package straight from the Wolfi `os` repository, so the image is a pure
+# package-assembly.
+#
+# IMAGE-ONLY -- no Helm chart. This is a LANGUAGE/BASE image: the 0-CVE, signed,
+# nonroot, multi-arch answer to `perl:slim`. Developers `FROM` it (like
+# Chainguard's language images) or `docker run <img> script.pl` directly.
+#
+# VERSIONING: Wolfi ships a SINGLE floating `perl` package (not per-minor
+# packages), so there is nothing to fan a matrix over. We publish ONE tag -- the
+# `5` major line -- tracking whatever 5.x Wolfi has packaged; the DAILY rebuild
+# keeps it current and re-runs the 0-CVE gate.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - perl                         # the Perl interpreter from Wolfi (0-CVE)
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# Interpreter as the entrypoint: `docker run <img> -v`, `<img> -e '...'`,
+# `<img> script.pl`. `perl` and the versioned `perl5.x.y` both resolve here.
+entrypoint:
+  command: /usr/bin/perl
+
+# HOME under the writable tmpfs so CPAN/local::lib style writes work on a
+# read-only rootfs (a single `--tmpfs /tmp` is enough).
+environment:
+  HOME: /tmp
+
+work-dir: /home/nonroot
+
+paths:
+  - path: /home/nonroot
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-perl"
+  org.opencontainers.image.licenses: "Artistic-1.0-Perl OR GPL-1.0-or-later"

@@ -1,0 +1,76 @@
+# Assembles a hardened Elixir (BEAM) runtime/base image directly from Wolfi's
+# own `elixir-1.18` package. No Dockerfile, NO melange build -- apko pulls the
+# prebuilt `elixir-1.18` package (which depends on `erlang`, auto-pulled)
+# straight from the Wolfi `os` repository, so the image is a pure
+# package-assembly.
+#
+# IMAGE-ONLY -- no Helm chart. This is a LANGUAGE/BASE image: the 0-CVE, signed,
+# nonroot, multi-arch answer to `elixir:slim`. Developers `FROM` it (like
+# Chainguard's language images) or `docker run <img> -e '...'` / run a script.
+#
+# VERSIONING: Wolfi currently ships a SINGLE versioned `elixir-1.18` package, so
+# we publish ONE tag -- `1.18`. The package pulls its required Erlang/OTP
+# automatically. The DAILY rebuild keeps both current and re-runs the 0-CVE gate
+# (a future `elixir-1.19` would be added as a second tag, ruby/python-style).
+#
+# SHELL REQUIRED: Elixir's `elixir`/`iex`/`mix` front-ends (and the Erlang/OTP
+# they wrap) are POSIX-sh scripts, so a minimal `busybox` providing /bin/sh is a
+# HARD runtime dependency for BEAM -- it cannot run fully shell-less. busybox is
+# 0-CVE in Wolfi.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - busybox                      # /bin/sh -- required by elixir/iex/mix + erl
+    - elixir-1.18                  # Elixir from Wolfi; pulls erlang as a dep
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# `elixir` as the entrypoint: `docker run <img> --version`, `<img> -e '...'`,
+# `<img> script.exs`. iex / mix / elixirc are on PATH at /usr/local/bin.
+entrypoint:
+  command: /usr/local/bin/elixir
+
+# HOME / MIX_HOME / HEX_HOME under the writable tmpfs so mix + hex work on a
+# read-only rootfs. LANG/LC_ALL + ELIXIR_ERL_OPTIONS=+fnu force UTF-8 name
+# encoding -- without it the BEAM defaults to latin1 and Elixir prints a noisy
+# "running with native name encoding of latin1" warning on every invocation.
+environment:
+  HOME: /tmp
+  MIX_HOME: /tmp/.mix
+  HEX_HOME: /tmp/.hex
+  LANG: C.UTF-8
+  LC_ALL: C.UTF-8
+  ELIXIR_ERL_OPTIONS: "+fnu"
+
+work-dir: /home/nonroot
+
+paths:
+  - path: /home/nonroot
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-elixir"
+  org.opencontainers.image.licenses: "Apache-2.0"
