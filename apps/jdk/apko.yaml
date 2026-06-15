@@ -1,0 +1,67 @@
+# Assembles a hardened OpenJDK (JDK) base image directly from Wolfi's own
+# versioned `openjdk-N-default-jdk` packages. No Dockerfile, NO melange build --
+# apko pulls the pinned `openjdk-__VER__-default-jdk` (which pulls the matching
+# `openjdk-N` JDK) straight from the Wolfi `os` repository, so each LTS line is
+# a pure package-assembly.
+#
+# IMAGE-ONLY -- no Helm chart. This is a LANGUAGE/JDK image: the 0-CVE, signed,
+# nonroot, multi-arch answer to `eclipse-temurin:N-jdk`. Developers `FROM` it
+# (like Chainguard's language images) or run `java` directly.
+#
+# TEMPLATE NOTE: `__VER__` is a build-time placeholder. CI substitutes the LTS
+# major (17 / 21 / 25) per matrix entry with `sed` before apko runs, so this
+# single file covers every shipped version. JAVA_HOME also carries the same
+# placeholder (Wolfi installs to /usr/lib/jvm/java-N-openjdk). To roll this
+# pattern to another runtime, copy this file and swap the package names +
+# entrypoint.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - openjdk-__VER__-default-jdk   # full JDK (java + javac + jshell) for this LTS, pinned by Wolfi
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# The JVM launcher as the entrypoint: `docker run <img> -version`,
+# `docker run <img> -jar app.jar`, etc. Lives at /usr/bin/java in Wolfi.
+entrypoint:
+  command: /usr/bin/java
+
+# HOME under a writable mount so tools that touch caches/prefs work on a
+# read-only rootfs; JAVA_HOME points at the Wolfi JDK install for this LTS.
+environment:
+  HOME: /home/nonroot
+  JAVA_HOME: /usr/lib/jvm/java-__VER__-openjdk
+  LANG: C.UTF-8
+
+work-dir: /home/nonroot
+
+paths:
+  - path: /home/nonroot
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-jdk"
+  org.opencontainers.image.licenses: "GPL-2.0-with-classpath-exception"
