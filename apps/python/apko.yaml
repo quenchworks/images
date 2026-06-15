@@ -1,0 +1,63 @@
+# Assembles a hardened Python runtime/base image directly from Wolfi's own
+# versioned python packages. No Dockerfile, NO melange build -- apko pulls the
+# pinned `python-__PYVER__` package (plus its matching pip) straight from the
+# Wolfi `os` repository, so each minor version is a pure package-assembly.
+#
+# IMAGE-ONLY -- no Helm chart. This is a LANGUAGE/BASE image: the 0-CVE, signed,
+# nonroot, multi-arch answer to `python:3.x-slim`. Developers `FROM` it (like
+# Chainguard's language images) or run scripts directly.
+#
+# TEMPLATE NOTE: `__PYVER__` is a build-time placeholder. CI substitutes the
+# minor version (3.12 / 3.13 / 3.14) per matrix entry with `sed` before apko
+# runs, so this single file covers every shipped version. To roll this pattern
+# to another runtime, copy this file and swap the package names + entrypoint.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - python-__PYVER__            # the pinned CPython minor release from Wolfi
+    - py__PYVER__-pip             # matching pip for this exact interpreter
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# Interpreter as the entrypoint: `docker run <img> script.py` or `-c '...'`.
+# `python3` and `python3.__PYVER__` both resolve to this interpreter.
+entrypoint:
+  command: /usr/bin/python3
+
+# HOME under a writable mount so pip / venvs work on a read-only rootfs.
+environment:
+  HOME: /home/nonroot
+  PYTHONUNBUFFERED: "1"
+
+work-dir: /home/nonroot
+
+paths:
+  - path: /home/nonroot
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-python"
+  org.opencontainers.image.licenses: "PSF-2.0"
