@@ -1,0 +1,68 @@
+# Assembles a hardened Ruby runtime/base image directly from Wolfi's own
+# versioned ruby packages. No Dockerfile, NO melange build -- apko pulls the
+# pinned `ruby-__RBVER__` package (plus its matching `ruby__RBVER__-bundler`)
+# straight from the Wolfi `os` repository, so each minor version is a pure
+# package-assembly. `gem` ships inside the ruby package itself.
+#
+# IMAGE-ONLY -- no Helm chart. This is a LANGUAGE/BASE image: the 0-CVE, signed,
+# nonroot, multi-arch answer to `ruby:3.x-slim`. Developers `FROM` it (like
+# Chainguard's language images) or run scripts directly.
+#
+# TEMPLATE NOTE: `__RBVER__` is a build-time placeholder. CI substitutes the
+# minor version (3.2 / 3.3 / 3.4) per matrix entry with `sed` before apko runs.
+# Note Wolfi names the bundler subpackage `ruby<minor>-bundler` (no dash before
+# the version), so the single `__RBVER__` token renders both `ruby-3.4` and
+# `ruby3.4-bundler` correctly.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - ruby-__RBVER__              # the pinned Ruby minor release from Wolfi (ships gem)
+    - ruby__RBVER__-bundler       # matching Bundler for this exact interpreter
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# Interpreter as the entrypoint: `docker run <img> script.rb` or `-e '...'`.
+entrypoint:
+  command: /usr/bin/ruby
+
+# HOME + a writable GEM_HOME so `gem install` / bundler work on a read-only
+# rootfs. GEM_HOME points at /tmp so a single `--tmpfs /tmp` (the same knob
+# Python's pip needs) is enough, with no extra volume required.
+environment:
+  HOME: /home/nonroot
+  GEM_HOME: /tmp/.gem
+  BUNDLE_PATH: /tmp/.gem
+  BUNDLE_USER_HOME: /tmp/.bundle
+
+work-dir: /home/nonroot
+
+paths:
+  - path: /home/nonroot
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-ruby"
+  org.opencontainers.image.licenses: "Ruby"
