@@ -4,7 +4,7 @@ The image factory. It builds hardened container images from source on [Wolfi](ht
 
 **62 hardened images** for the infrastructure you actually run. No Dockerfiles. Nothing inherited from another distro. Free, signed, and rebuilt daily.
 
-Part of [QuenchWorks](https://github.com/quenchworks), the 0-CVE replacement for the Bitnami catalog. Browse every image, with versions and digests, at [quenchworks.mkabumattar.com/images](https://quenchworks.mkabumattar.com/images).
+Part of [QuenchWorks](https://github.com/quenchworks), the 0-CVE replacement for the Bitnami catalog. Browse every image, with versions and digests, at [quench-works.com/images](https://quench-works.com/images).
 
 ## What ships here
 
