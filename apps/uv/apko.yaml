@@ -1,0 +1,70 @@
+# Assembles a hardened uv image directly from Wolfi's own `uv` package layered
+# onto a pinned Python runtime. No Dockerfile, NO melange build -- apko pulls the
+# `uv` binary plus `python-__PYVER__` (and its pip) straight from the Wolfi `os`
+# repository, so this is a pure package-assembly.
+#
+# IMAGE-ONLY -- no Helm chart. This is a BUILD/PACKAGE-TOOL image: the 0-CVE,
+# signed, nonroot, multi-arch answer to `ghcr.io/astral-sh/uv`. Developers `FROM`
+# it in CI or run `uv` directly.
+#
+# TEMPLATE NOTE: `__PYVER__` is a build-time placeholder. CI substitutes the
+# Python minor (3.13) per matrix entry with `sed` before apko runs. uv is a
+# single self-contained binary at /usr/bin/uv (no shell, no interpreter needed to
+# launch it); the Python interpreter is bundled so `uv run`/`uv pip` have a
+# system Python to target and `python3 --version` works.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - uv                          # the self-contained uv binary (/usr/bin/uv)
+    - python-__PYVER__            # the pinned CPython minor uv targets
+    - py__PYVER__-pip             # matching pip for this exact interpreter
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# uv as the entrypoint: `docker run <img> --version`, `docker run <img> pip install ...`.
+entrypoint:
+  command: /usr/bin/uv
+
+# HOME under a writable mount; uv's cache + python install dirs are pointed at
+# /tmp so a single `--tmpfs /tmp` keeps uv happy on a read-only rootfs.
+environment:
+  HOME: /home/nonroot
+  UV_CACHE_DIR: /tmp/.uv-cache
+  UV_PYTHON_INSTALL_DIR: /tmp/.uv-python
+  XDG_DATA_HOME: /tmp/.local/share
+  XDG_CACHE_HOME: /tmp/.cache
+  XDG_CONFIG_HOME: /tmp/.config
+  PYTHONUNBUFFERED: "1"
+
+work-dir: /home/nonroot
+
+paths:
+  - path: /home/nonroot
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-uv"
+  org.opencontainers.image.licenses: "Apache-2.0 OR MIT"
