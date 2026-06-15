@@ -505,3 +505,45 @@ catalog:
     license: MIT
     tier: standard
     status: done # image + chart both shipped. Chart oci://ghcr.io/quenchworks/charts/meilisearch:0.0.1@sha256:add5d4c7686e79fe466b73733e2bd9f26f792870cc0735f3880f494a16112724 (AH 280e461c-2cdb-42e6-9600-705b68755883; single-node StatefulSet pinned by digest, mandatory master-key auth via generated/lookup-persisted Secret wired to MEILI_MASTER_KEY, MEILI_ENV=production, writable /meili_data PVC + emptyDir /tmp, ClusterIP :7700 http, unauthenticated /health probe, nonroot uid 1001 + readOnlyRootFilesystem + drop ALL; release CI run https://github.com/quenchworks/charts/actions/runs/27497693524 green: kind gate proved /health 200 available + GET /keys WITH master key 200 / WITHOUT 401 / WRONG 403 + mini-dashboard embedded (prod GET / returns JSON status, dashboard assets in the binary; dashboard HTML served at / only in MEILI_ENV=development) + typo-tolerant search roundtrip (q=interstelar matched id:1), OCI push, cosign keyless, ArtifactHub metadata). NOTE: Meilisearch deliberately disables serving the mini-dashboard at / in production mode (MEILI_ENV=production) for security -- the dashboard HTML is served at / only in development mode; the bundled assets are confirmed embedded in the binary either way. Meilisearch: fast, typo-tolerant Rust full-text search engine with a bundled web mini-dashboard. 0-CVE multi-arch (amd64+arm64), nonroot uid 1001, read-only rootfs friendly. MIT. BUILD-METHOD: BUILT FROM SOURCE on Wolfi via melange from the pinned git tag v1.46.1 (git-checkout + expected-commit d81f2de99bff6f98e382a34fdbd60a49a570ff84). Meilisearch is a Rust Cargo workspace; built with Wolfi rust-1.91 (matches upstream rust-toolchain.toml 1.91.1) via `cargo build --release --locked --features mini-dashboard,meilisearch-types/all-tokenizations --bin meilisearch`, no target-cpu pin so the binary runs on any baseline x86-64/aarch64. OPENSSL_NO_VENDOR=1 links Wolfi's system OpenSSL (NOT vendored) so the crypto stack stays on Wolfi's CVE-tracked lib; build deps build-base, busybox, bash, curl, git, pkgconf, openssl-dev, perl, rust-1.91. No protoc/cmake/clang needed (Meilisearch has no protobuf/gRPC codegen). BUNDLED MINI-DASHBOARD (hermetic, NO build-time network fetch): upstream's `mini-dashboard` feature runs crates/meilisearch/build.rs which by default DOWNLOADS the prebuilt web-UI build.zip from GitHub at compile time (pinned meilisearch/mini-dashboard v0.4.1 build.zip, upstream sha1 c4de9bfd4bd4ddb87a62cbe00a4150bdf0b6f9d1 in [package.metadata.mini-dashboard]). melange builds with NO network, so we VENDOR the EXACT pinned build.zip ourselves the Qdrant way: pre-download with curl + verify sha256 75f1f8b4fee7ff60179f519b853fa2f0cef347df95b24d9fc705e433797ac64d, then a surgical build.rs patch reads the zip from MEILI_MINI_DASHBOARD_ASSETS (local file) instead of fetching over the network -- the upstream sha1 integrity assert is LEFT UNTOUCHED so a tampered local copy is rejected exactly as a tampered download would be. Result: the dashboard is compiled INTO the binary (served at GET /), reproducibly, with zero build-time internet access. The bundled web UI is a vendored prebuilt upstream artifact (provenance note), not an OS package -- not a CVE-scanned surface; the Rust-crate/binary scan covers the compiled code. AUTH: MEILI_MASTER_KEY (supplied by the chart from a Secret) protects every API route except GET /health; MEILI_ENV=production makes the master key MANDATORY. PORT: 7700 (REST search API; GET /health unauthenticated; GET / serves the embedded mini-dashboard HTML). ENTRYPOINT: /usr/local/bin/docker-entrypoint.sh -> exec /usr/bin/meilisearch "$@" (thin script ensures the writable DB + dumps + snapshots dirs exist). READ-ONLY ROOTFS: all state lives under /meili_data (writable mount/PVC) -- MEILI_DB_PATH=/meili_data/data.ms (the LMDB env dir itself, NOT the parent, so DB-version inference works), MEILI_DUMP_DIR=/meili_data/dumps + MEILI_SNAPSHOT_DIR=/meili_data/snapshots as siblings; needs writable /meili_data + /tmp (apko paths uid 1001). RUNTIME deps: bash+busybox (entrypoint) + ca-certificates-bundle (TLS to external dump/webhook endpoints). TRIVY 0-CVE (--ignore-unfixed CRITICAL..LOW): local x86_64 scan 0 findings (Wolfi base clean; from-source Rust binary so vendored crates attributed). CVE-BUMPS: none. Verified locally x86_64: read-only rootfs + tmpfs /meili_data+/tmp, MEILI_ENV=production with master key, `meilisearch --version` -> v1.46.1, GET :7700/health -> 200, GET /keys WITH master key -> 200 / WITHOUT or WRONG key -> 401/403, GET / serves the bundled mini-dashboard HTML, nonroot uid 1001. arm64 built+scanned native on ubuntu-24.04-arm in CI. KEEP repository_dispatch-to-charts. Published multi-arch 0-CVE (image CI green, both arches built+scanned+published, merge signed cosign keyless + dispatched charts repo; latest rebuild run https://github.com/quenchworks/images/actions/runs/27497110837): ghcr.io/quenchworks/images/meilisearch:1.46.1@sha256:7d14064eaa571c4040e76a46148051c76a36a8e45d1f081355f8b64a8fd2b2b1 (index, current 1.46.1 tag; amd64 sha256:d79dc55101cd3ac18d97dd0385cffdee95c6cd6df322d3e5883590dbd6f42bd4, arm64 sha256:0d3a524e86283149d7e251a052d7cd48784bc54c7a256f6d86394c51c7f5ecae; cosign-signed). The first published index sha256:555ce4af13a6a5175f9c4e694ab06fb153cb31bae7183742cbbe248c0bed2152 (run 27496384885) remains signed+pullable; the tag was re-pushed by a second from-source build (not bit-reproducible) carrying a smoke-test fix.
+  - name: dotnet
+    version: "8, 9, 10"
+    source: https://github.com/dotnet/runtime
+    license: MIT
+    tier: standard
+    status: done # IMAGE-ONLY language/base (SDK) image; ghcr.io/quenchworks/images/dotnet:8|9|10 (no :latest). .NET SDK assembled apko-from-Wolfi (dotnet-8/9/10-sdk; 8 LTS, 9 STS, 10 LTS). 0-CVE multi-arch (amd64+arm64), nonroot uid 1001, read-only-rootfs friendly (DOTNET_CLI_HOME/NUGET_PACKAGES under /home/nonroot, telemetry off). entrypoint /usr/bin/dotnet. Build via build-dotnet.yml matrix (version x arch), no melange, no chart dispatch.
+  - name: jdk
+    version: "17, 21, 25"
+    source: https://openjdk.org
+    license: GPL-2.0-with-classpath-exception
+    tier: standard
+    status: done # IMAGE-ONLY language/base JDK; ghcr.io/quenchworks/images/jdk:17|21|25. OpenJDK full JDK (openjdk-N-default-jdk, includes javac+jshell). apko-from-Wolfi, 0-CVE multi-arch (amd64+arm64), nonroot uid 1001. entrypoint /usr/bin/java. No melange, no chart dispatch.
+  - name: node
+    version: "20, 22, 24"
+    source: https://github.com/nodejs/node
+    license: MIT
+    tier: standard
+    status: done # IMAGE-ONLY language/base; ghcr.io/quenchworks/images/node:20|22|24 + npm. apko-from-Wolfi (nodejs-N). 0-CVE multi-arch (amd64+arm64), nonroot uid 1001, read-only-rootfs friendly (npm cache on /tmp). entrypoint /usr/bin/node.
+  - name: ruby
+    version: "3.2, 3.3, 3.4"
+    source: https://github.com/ruby/ruby
+    license: Ruby
+    tier: standard
+    status: done # IMAGE-ONLY language/base; ghcr.io/quenchworks/images/ruby:3.2|3.3|3.4 + bundler/gem. apko-from-Wolfi (ruby-3.X + ruby3.X-bundler). 0-CVE multi-arch (amd64+arm64), nonroot uid 1001 (GEM_HOME/BUNDLE_PATH on /tmp). entrypoint /usr/bin/ruby.
+  - name: php
+    version: "8.3, 8.4, 8.5"
+    source: https://github.com/php/php-src
+    license: PHP-3.01
+    tier: standard
+    status: done # IMAGE-ONLY language/base; ghcr.io/quenchworks/images/php:8.3|8.4|8.5 cli + common extensions (openssl, mbstring, curl, intl, gd, zip, pdo + pdo_sqlite/mysql/pgsql + mysqlnd, etc.). apko-from-Wolfi (php-8.X). 0-CVE multi-arch (amd64+arm64), nonroot uid 1001. entrypoint /usr/bin/php.
+  - name: go
+    version: "1.24, 1.25, 1.26"
+    source: https://github.com/golang/go
+    license: BSD-3-Clause
+    tier: standard
+    status: done # IMAGE-ONLY language/base (toolchain, for builds); ghcr.io/quenchworks/images/go:1.24|1.25|1.26. apko-from-Wolfi (go-1.X). 0-CVE multi-arch (amd64+arm64), nonroot uid 1001 (writable GOCACHE=/tmp/gocache GOPATH=/tmp/go on read-only rootfs). entrypoint /usr/bin/go. Pairs with a minimal runtime/static base for the multi-stage final image.
+  - name: rust
+    version: "1.94, 1.95, 1.96"
+    source: https://github.com/rust-lang/rust
+    license: MIT OR Apache-2.0
+    tier: standard
+    status: done # IMAGE-ONLY language/base (toolchain: cargo+rustc+clippy+rustfmt, for builds); ghcr.io/quenchworks/images/rust:1.94|1.95|1.96. apko-from-Wolfi (rust-1.X + build-base). 0-CVE multi-arch (amd64+arm64), nonroot uid 1001 (writable CARGO_HOME=/tmp/cargo on read-only rootfs; RUSTFLAGS workaround for the Wolfi gcc-16 LTO linker plugin). entrypoint /usr/bin/cargo. Pairs with a minimal runtime/static base for the multi-stage final image.
