@@ -1,0 +1,85 @@
+# Assembles a hardened Composer image directly from Wolfi's own `composer`
+# package layered onto a pinned PHP runtime. No Dockerfile, NO melange build --
+# apko pulls `composer` plus `php-__PHPVER__` (and the extensions Composer needs)
+# straight from the Wolfi `os` repository, so this is a pure package-assembly.
+#
+# IMAGE-ONLY -- no Helm chart. This is a BUILD/PACKAGE-TOOL image: the 0-CVE,
+# signed, nonroot, multi-arch answer to the official `composer` image. Developers
+# `FROM` it in CI or run `composer` directly.
+#
+# TEMPLATE NOTE: `__PHPVER__` is a build-time placeholder. CI substitutes the PHP
+# minor (8.4) per matrix entry with `sed` before apko runs. /usr/bin/composer is
+# a phar with a `#!/usr/bin/env php` shebang; this is a shell-less, env-less
+# image, so the entrypoint runs the phar THROUGH the php interpreter directly.
+# Composer needs the openssl/mbstring/ctype/phar extensions (each ext + its
+# loader config) and `git` for VCS-based installs.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - git                             # VCS source installs
+    - php-__PHPVER__                  # the pinned PHP CLI (provides /usr/bin/php)
+    # --- extensions Composer requires (each ext + its loader config) ---
+    - php-__PHPVER__-openssl
+    - php-__PHPVER__-openssl-config
+    - php-__PHPVER__-mbstring
+    - php-__PHPVER__-mbstring-config
+    - php-__PHPVER__-ctype
+    - php-__PHPVER__-ctype-config
+    - php-__PHPVER__-phar
+    - php-__PHPVER__-phar-config
+    - php-__PHPVER__-iconv
+    - php-__PHPVER__-iconv-config
+    - php-__PHPVER__-curl
+    - php-__PHPVER__-curl-config
+    - php-__PHPVER__-zip
+    - php-__PHPVER__-zip-config
+    - composer                        # the Composer phar (/usr/bin/composer)
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# composer as the entrypoint: `docker run <img> --version`, `docker run <img> install`.
+# /usr/bin/composer is a `#!/usr/bin/env php` phar; run it THROUGH the php
+# interpreter so it works on a shell-less, env-less image and Docker can append args.
+entrypoint:
+  command: /usr/bin/php /usr/bin/composer
+
+# HOME + COMPOSER_HOME under the writable tmpfs so composer's cache/config work
+# on a read-only rootfs with a single `--tmpfs /tmp`.
+environment:
+  HOME: /tmp
+  COMPOSER_HOME: /tmp/.composer
+  COMPOSER_CACHE_DIR: /tmp/.composer/cache
+  COMPOSER_NO_INTERACTION: "1"
+
+work-dir: /home/nonroot
+
+paths:
+  - path: /home/nonroot
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-composer"
+  org.opencontainers.image.licenses: "MIT"
