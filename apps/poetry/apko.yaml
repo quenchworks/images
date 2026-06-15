@@ -1,0 +1,73 @@
+# Assembles a hardened Poetry image directly from Wolfi's own `poetry` package
+# layered onto a pinned Python runtime. No Dockerfile, NO melange build -- apko
+# pulls `py__PYVER__-poetry-bin` (which provides /usr/bin/poetry and pulls the
+# `py__PYVER__-poetry` module + its CPython base) straight from the Wolfi `os`
+# repository, so this is a pure package-assembly.
+#
+# IMAGE-ONLY -- no Helm chart. This is a BUILD/PACKAGE-TOOL image: the 0-CVE,
+# signed, nonroot, multi-arch answer to the community `poetry` images.
+# Developers `FROM` it in CI or run `poetry` directly.
+#
+# TEMPLATE NOTE: `__PYVER__` is a build-time placeholder. CI substitutes the
+# Python minor (3.13) per matrix entry with `sed` before apko runs. Wolfi ships
+# Poetry as a Python module; `py<ver>-poetry-bin` adds the /usr/bin/poetry
+# console-script (a `#!/usr/bin/python<ver>` launcher). The matching pip is added
+# so Poetry's venv tooling has it available.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - python-__PYVER__            # the pinned CPython minor Poetry runs on
+    - py__PYVER__-pip             # matching pip for this exact interpreter
+    - py__PYVER__-poetry-bin      # Poetry + the /usr/bin/poetry console-script
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# poetry as the entrypoint: `docker run <img> --version`, `docker run <img> install`.
+entrypoint:
+  command: /usr/bin/poetry
+
+# HOME + POETRY_HOME + cache/config dirs live on the writable /tmp tmpfs so
+# Poetry (and the virtualenvs it creates) work on a read-only rootfs with a
+# single `--tmpfs /tmp`.
+environment:
+  HOME: /tmp
+  POETRY_HOME: /tmp/.poetry
+  POETRY_CACHE_DIR: /tmp/.cache/pypoetry
+  POETRY_VIRTUALENVS_PATH: /tmp/.cache/pypoetry/virtualenvs
+  XDG_DATA_HOME: /tmp/.local/share
+  XDG_CACHE_HOME: /tmp/.cache
+  XDG_CONFIG_HOME: /tmp/.config
+  PYTHONUNBUFFERED: "1"
+
+work-dir: /home/nonroot
+
+paths:
+  - path: /home/nonroot
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-poetry"
+  org.opencontainers.image.licenses: "MIT"
