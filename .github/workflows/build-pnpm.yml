@@ -56,8 +56,13 @@ jobs:
 
       - name: Install apko (native ${{ matrix.arch.platform }})
         working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          APKO_VER="$(curl -fsSL https://api.github.com/repos/chainguard-dev/apko/releases/latest | grep -m1 '"tag_name"' | cut -d'"' -f4)"
+          # Authenticate the API call: the anonymous GitHub API rate limit is
+          # easily exhausted when many matrix jobs resolve the latest apko tag at
+          # the same time, which surfaced as transient 403/404s on this step.
+          APKO_VER="$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" https://api.github.com/repos/chainguard-dev/apko/releases/latest | grep -m1 '"tag_name"' | cut -d'"' -f4)"
           curl -fsSL "https://github.com/chainguard-dev/apko/releases/download/${APKO_VER}/apko_${APKO_VER#v}_linux_${{ matrix.arch.platform }}.tar.gz" \
             | sudo tar xz --strip-components=1 -C /usr/local/bin
           apko version | head -1
