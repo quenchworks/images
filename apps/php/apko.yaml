@@ -1,0 +1,117 @@
+# Assembles a hardened PHP runtime/base image directly from Wolfi's own
+# versioned php packages. No Dockerfile, NO melange build -- apko pulls the
+# pinned `php-__PHPVER__` CLI plus a sensible default set of extensions straight
+# from the Wolfi `os` repository, so each minor version is a pure
+# package-assembly.
+#
+# IMAGE-ONLY -- no Helm chart. This is a LANGUAGE/BASE image: the 0-CVE, signed,
+# nonroot, multi-arch answer to `php:8.x-cli`. Developers `FROM` it (like
+# Chainguard's language images) or run scripts directly.
+#
+# TEMPLATE NOTE: `__PHPVER__` is a build-time placeholder. CI substitutes the
+# minor version (8.3 / 8.4 / 8.5) per matrix entry with `sed` before apko runs.
+# Wolfi splits each extension into `php-<ver>-<ext>` (the .so) and
+# `php-<ver>-<ext>-config` (the conf.d/*.ini that loads it); BOTH are needed for
+# `php -m` to report the extension, so each is paired below. `json` is built
+# into the PHP core and has no separate package. `opcache` is intentionally
+# omitted because it is not packaged for 8.5, keeping the set identical across
+# all three shipped minors.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - php-__PHPVER__                  # the pinned PHP CLI (provides /usr/bin/php)
+    # --- sensible default extension set (each ext + its loader config) ---
+    - php-__PHPVER__-openssl
+    - php-__PHPVER__-openssl-config
+    - php-__PHPVER__-mbstring
+    - php-__PHPVER__-mbstring-config
+    - php-__PHPVER__-curl
+    - php-__PHPVER__-curl-config
+    - php-__PHPVER__-ctype
+    - php-__PHPVER__-ctype-config
+    - php-__PHPVER__-iconv
+    - php-__PHPVER__-iconv-config
+    - php-__PHPVER__-fileinfo
+    - php-__PHPVER__-fileinfo-config
+    - php-__PHPVER__-sodium
+    - php-__PHPVER__-sodium-config
+    - php-__PHPVER__-bcmath
+    - php-__PHPVER__-bcmath-config
+    - php-__PHPVER__-sockets
+    - php-__PHPVER__-sockets-config
+    - php-__PHPVER__-intl
+    - php-__PHPVER__-intl-config
+    - php-__PHPVER__-gd
+    - php-__PHPVER__-gd-config
+    - php-__PHPVER__-zip
+    - php-__PHPVER__-zip-config
+    - php-__PHPVER__-phar
+    - php-__PHPVER__-phar-config
+    # XML family
+    - php-__PHPVER__-dom
+    - php-__PHPVER__-dom-config
+    - php-__PHPVER__-xml
+    - php-__PHPVER__-xml-config
+    - php-__PHPVER__-xmlreader
+    - php-__PHPVER__-xmlreader-config
+    - php-__PHPVER__-xmlwriter
+    - php-__PHPVER__-xmlwriter-config
+    - php-__PHPVER__-simplexml
+    - php-__PHPVER__-simplexml-config
+    # PDO + common drivers. mysqlnd is the MySQL native driver pdo_mysql links
+    # against (provides mysqlnd_get_client_info); it must be present and load
+    # first (its 20-mysqlnd.ini sorts before 30-pdo_mysql.ini) or pdo_mysql.so
+    # fails with an undefined-symbol error at startup.
+    - php-__PHPVER__-pdo
+    - php-__PHPVER__-pdo-config
+    - php-__PHPVER__-mysqlnd
+    - php-__PHPVER__-mysqlnd-config
+    - php-__PHPVER__-pdo_sqlite
+    - php-__PHPVER__-pdo_sqlite-config
+    - php-__PHPVER__-pdo_mysql
+    - php-__PHPVER__-pdo_mysql-config
+    - php-__PHPVER__-pdo_pgsql
+    - php-__PHPVER__-pdo_pgsql-config
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# Interpreter as the entrypoint: `docker run <img> script.php` or `-r '...'`.
+entrypoint:
+  command: /usr/bin/php
+
+# HOME under a writable mount; composer/cache consumers can point at /tmp.
+environment:
+  HOME: /home/nonroot
+
+work-dir: /home/nonroot
+
+paths:
+  - path: /home/nonroot
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-php"
+  org.opencontainers.image.licenses: "PHP-3.01"
