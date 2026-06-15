@@ -2,18 +2,19 @@ name: build-yarn
 
 # Hardened Yarn package-manager images, assembled straight from Wolfi's
 # versioned yarn packages with apko -- NO melange/from-source step, since Wolfi
-# already packages Yarn. A MATRIX fans out over the Classic (1.x) and Berry
-# (4.x) lines; each one runs a NATIVE per-arch apko build (no QEMU), the hard
-# 0-CVE Trivy gate, then a per-version merge job that assembles + signs +
-# attests the multi-arch index.
+# already packages Yarn. A MATRIX fans out over the Yarn line(s); each one runs
+# a NATIVE per-arch apko build (no QEMU), the hard 0-CVE Trivy gate, then a
+# per-version merge job that assembles + signs + attests the multi-arch index.
+# Only Classic (1.x, the `yarn` package) is built for now -- Berry (4.x,
+# `yarn-berry`) is dropped for now.
 #
 # IMAGE-ONLY: yarn is a build/package-tool image with no Helm chart, so there is
 # NO charts-repo dispatch.
 #
-# TEMPLATE: Wolfi packages Classic as `yarn` (1.x) and Berry as `yarn-berry`
-# (4.x). The matrix carries both the tool-version TAG and the apko PACKAGE name;
-# apps/yarn/apko.yaml carries the `__YARNPKG__` placeholder CI substitutes per
-# entry. No :latest tag is ever published.
+# TEMPLATE: Wolfi packages Classic as `yarn` (1.x). The matrix carries the
+# tool-version TAG and the apko PACKAGE name; apps/yarn/apko.yaml carries the
+# `__YARNPKG__` placeholder CI substitutes per entry. No :latest tag is ever
+# published.
 on:
   push:
     paths:
@@ -39,13 +40,12 @@ jobs:
       matrix:
         # tag = Yarn major line (real axis, crossed with arch); the `include`
         # block attaches the matching Wolfi package name `pkg` to each tag.
-        tag: ["1", "4"]
+        tag: ["1"]
         arch:
           - { name: x86_64,  platform: amd64, runner: ubuntu-latest }
           - { name: aarch64, platform: arm64, runner: ubuntu-24.04-arm }   # native arm64, free for public repos
         include:
           - { tag: "1", pkg: "yarn" }
-          - { tag: "4", pkg: "yarn-berry" }
     runs-on: ${{ matrix.arch.runner }}
     defaults:
       run:
@@ -104,7 +104,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        tag: ["1", "4"]
+        tag: ["1"]
     steps:
       - uses: actions/checkout@v5
       - uses: sigstore/cosign-installer@v3
