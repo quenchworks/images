@@ -1,0 +1,111 @@
+name: cleanup-package-version
+
+# Reusable, manual GHCR cleanup tool for RETIRING a version line of a
+# container package owned by the quenchworks org. Deletes the specific tag(s)
+# you name (e.g. an index plus its per-arch children), and for each deleted
+# index it also removes the matching cosign `.sig` referrer tag so no dangling
+# signature artifacts are left behind.
+#
+# It runs with the workflow's GITHUB_TOKEN (permissions: packages: write),
+# which CAN delete container-package versions this repo published -- no PAT
+# with delete:packages required. Triggered on demand via workflow_dispatch.
+#
+# Generic: change `package` / `tags` to retire any line of any images/* package.
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: "Package name under images/ (e.g. yarn)"
+        required: true
+        default: "yarn"
+      tags:
+        description: "Space-separated tags to delete (index + per-arch children)"
+        required: true
+        default: "4 4-amd64 4-arm64"
+
+permissions:
+  packages: write
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      ORG: quenchworks
+    steps:
+      - name: Delete the named tags (and their cosign .sig referrers)
+        run: |
+          set -euo pipefail
+
+          PKG="images/${{ inputs.package }}"
+          # URL-encode the `/` in the package path for the GHCR API.
+          ENC="${PKG//\//%2F}"
+          TAGS="${{ inputs.tags }}"
+
+          echo "::group::Snapshot package versions for ${PKG}"
+          # Snapshot every version once; we resolve tag -> version id locally so
+          # we never re-page after deletions start mutating the list.
+          gh api --paginate "/orgs/${ORG}/packages/container/${ENC}/versions" > versions.json
+          echo "snapshotted $(jq 'length' versions.json) versions"
+          echo "::endgroup::"
+
+          # Collect the cosign signature tags derived from each deleted index,
+          # so we can sweep them after the main tags are gone.
+          SIG_TAGS=""
+
+          for TAG in ${TAGS}; do
+            echo "::group::Tag ${TAG}"
+            # version ids whose container tag set contains this exact tag
+            IDS="$(jq -r --arg t "${TAG}" \
+              '.[] | select(.metadata.container.tags // [] | index($t)) | .id' versions.json)"
+
+            if [ -z "${IDS}" ]; then
+              echo "no version found carrying tag '${TAG}', skipping"
+              echo "::endgroup::"
+              continue
+            fi
+
+            for ID in ${IDS}; do
+              # `.name` is the sha256:... digest of this version; derive the
+              # cosign signature tag convention: sha256-<digest>.sig
+              DIGEST="$(jq -r --arg id "${ID}" \
+                '.[] | select(.id == ($id|tonumber)) | .name' versions.json)"
+              case "${DIGEST}" in
+                sha256:*)
+                  SIG="sha256-${DIGEST#sha256:}.sig"
+                  SIG_TAGS="${SIG_TAGS} ${SIG}"
+                  echo "deleting version id=${ID} tag=${TAG} digest=${DIGEST} (sig referrer: ${SIG})"
+                  ;;
+                *)
+                  echo "deleting version id=${ID} tag=${TAG} (digest=${DIGEST})"
+                  ;;
+              esac
+              gh api --method DELETE \
+                "/orgs/${ORG}/packages/container/${ENC}/versions/${ID}"
+            done
+            echo "::endgroup::"
+          done
+
+          # Best-effort sweep of the cosign signature referrers for the indexes
+          # we just deleted. These are tagged versions too, so resolve and drop
+          # them the same way; failures here must not fail the run.
+          if [ -n "${SIG_TAGS}" ]; then
+            echo "::group::Cosign .sig referrer sweep"
+            for SIG in ${SIG_TAGS}; do
+              SIG_IDS="$(jq -r --arg t "${SIG}" \
+                '.[] | select(.metadata.container.tags // [] | index($t)) | .id' versions.json || true)"
+              if [ -z "${SIG_IDS}" ]; then
+                echo "no version found carrying sig tag '${SIG}', skipping"
+                continue
+              fi
+              for SID in ${SIG_IDS}; do
+                echo "deleting cosign signature version id=${SID} tag=${SIG}"
+                gh api --method DELETE \
+                  "/orgs/${ORG}/packages/container/${ENC}/versions/${SID}" || true
+              done
+            done
+            echo "::endgroup::"
+          fi
+
+          echo "cleanup complete for ${PKG}: tags [${TAGS}]"
