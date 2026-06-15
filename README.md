@@ -21,9 +21,10 @@ The catalog spans databases, caches, search and vector, streaming, coordination,
 ## Pull and verify
 
 ```bash
-docker pull ghcr.io/quenchworks/images/redis
+# images are tagged by version (there is no :latest); swap redis:8.8.0 for any image and version
+docker pull ghcr.io/quenchworks/images/redis:8.8.0
 
-cosign verify ghcr.io/quenchworks/images/redis \
+cosign verify ghcr.io/quenchworks/images/redis:8.8.0 \
   --certificate-identity-regexp 'https://github.com/quenchworks/.+' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
