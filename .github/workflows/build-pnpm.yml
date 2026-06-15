@@ -38,13 +38,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # tag = pnpm major line; pkg = the Wolfi package spec that resolves it.
-        include:
-          - { tag: "10", pkg: "pnpm=~10" }
-          - { tag: "11", pkg: "pnpm-11" }
+        # tag = pnpm major line (real axis, crossed with arch); the `include`
+        # block attaches the matching Wolfi package spec `pkg` to each tag.
+        tag: ["10", "11"]
         arch:
           - { name: x86_64,  platform: amd64, runner: ubuntu-latest }
           - { name: aarch64, platform: arm64, runner: ubuntu-24.04-arm }   # native arm64, free for public repos
+        include:
+          - { tag: "10", pkg: "pnpm=~10" }
+          - { tag: "11", pkg: "pnpm-11" }
     runs-on: ${{ matrix.arch.runner }}
     defaults:
       run:

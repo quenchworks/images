@@ -37,13 +37,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # tag = Yarn major line; pkg = the Wolfi package that resolves it.
-        include:
-          - { tag: "1", pkg: "yarn" }
-          - { tag: "4", pkg: "yarn-berry" }
+        # tag = Yarn major line (real axis, crossed with arch); the `include`
+        # block attaches the matching Wolfi package name `pkg` to each tag.
+        tag: ["1", "4"]
         arch:
           - { name: x86_64,  platform: amd64, runner: ubuntu-latest }
           - { name: aarch64, platform: arm64, runner: ubuntu-24.04-arm }   # native arm64, free for public repos
+        include:
+          - { tag: "1", pkg: "yarn" }
+          - { tag: "4", pkg: "yarn-berry" }
     runs-on: ${{ matrix.arch.runner }}
     defaults:
       run:
