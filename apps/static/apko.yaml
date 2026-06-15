@@ -1,0 +1,71 @@
+# Assembles a near-empty hardened base for STATIC binaries -- the QuenchWorks
+# answer to `gcr.io/distroless/static`. No Dockerfile, NO melange build: apko
+# pulls only three foundational Wolfi packages (no shell, no package manager,
+# no libc beyond the baselayout) straight from the Wolfi `os` repository.
+#
+# Contents (deliberately minimal):
+#   - wolfi-baselayout       -> /etc skeleton, /etc/passwd + /etc/group, FHS dirs
+#   - ca-certificates-bundle -> /etc/ssl/certs/ca-certificates.crt for TLS
+#   - tzdata                 -> /usr/share/zoneinfo for time-zone aware binaries
+# There is NO /bin/sh, NO apk, NO coreutils. A statically-linked Go or Rust
+# final-stage binary is COPYed on top and run directly as the entrypoint.
+#
+# IMAGE-ONLY -- no Helm chart. This is a BASE image: developers
+# `FROM ghcr.io/quenchworks/images/static` in the final stage of a multi-stage
+# build for a compiled-language service.
+#
+# VERSIONLESS: unlike the language runtimes there is no upstream "version" here
+# -- it is a rolling base kept current by the daily rebuild, so it is published
+# as `static:latest` (the ONE acceptable :latest in this repo). No `__VER__`
+# placeholder and no build matrix.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout          # /etc/passwd, /etc/group, FHS skeleton (no shell)
+    - ca-certificates-bundle    # /etc/ssl/certs/ca-certificates.crt for TLS roots
+    - tzdata                    # /usr/share/zoneinfo for timezone-aware binaries
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# No entrypoint: this base ships no executable of its own. A consuming image
+# COPYs its static binary in and sets the entrypoint. We still default the
+# process user to the nonroot uid below via `run-as`.
+
+environment:
+  HOME: /home/nonroot
+  LANG: C.UTF-8
+  # Make the bundled CA roots discoverable by Go (SSL_CERT_FILE) and most
+  # TLS libraries without the binary having to hard-code the path.
+  SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+  SSL_CERT_DIR: /etc/ssl/certs
+
+work-dir: /home/nonroot
+
+paths:
+  - path: /home/nonroot
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-static"
+  org.opencontainers.image.licenses: "Apache-2.0"
