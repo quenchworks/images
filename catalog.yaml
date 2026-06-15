@@ -547,3 +547,99 @@ catalog:
     license: MIT OR Apache-2.0
     tier: standard
     status: done # IMAGE-ONLY language/base (toolchain: cargo+rustc+clippy+rustfmt, for builds); ghcr.io/quenchworks/images/rust:1.94|1.95|1.96. apko-from-Wolfi (rust-1.X + build-base). 0-CVE multi-arch (amd64+arm64), nonroot uid 1001 (writable CARGO_HOME=/tmp/cargo on read-only rootfs; RUSTFLAGS workaround for the Wolfi gcc-16 LTO linker plugin). entrypoint /usr/bin/cargo. Pairs with a minimal runtime/static base for the multi-stage final image.
+  - name: static
+    version: "latest" # VERSIONLESS -- the single published tag is static:latest (the one acceptable :latest in this repo)
+    source: https://github.com/wolfi-dev # assembled minimal/empty base (Wolfi os: ca-certs + baselayout, no shell/pkg-mgr)
+    license: MIT # assembled base image (Wolfi packaging is MIT)
+    tier: standard
+    status: done # IMAGE-ONLY (no chart), RUNTIME-BASE; ghcr.io/quenchworks/images/static:latest. apko-from-Wolfi (minimal static/scratch-like base for FROM in multi-stage final images). 0-CVE multi-arch (amd64+arm64), nonroot uid 1001, read-only-rootfs friendly. Family: Runtime base.
+  - name: jre
+    version: "17, 21, 25" # OpenJDK JRE LTS/current majors, each its own tag (no :latest)
+    source: https://openjdk.org
+    license: GPL-2.0-with-classpath-exception
+    tier: standard
+    status: done # IMAGE-ONLY (no chart), RUNTIME-BASE; ghcr.io/quenchworks/images/jre:17|21|25. apko-from-Wolfi (openjdk-N-jre). 0-CVE multi-arch (amd64+arm64), nonroot uid 1001, read-only-rootfs friendly. Family: Runtime base (Java runtime, pairs with jdk for builds).
+  - name: dotnet-runtime
+    version: "8, 9, 10" # .NET runtime majors, each its own tag (no :latest)
+    source: https://github.com/dotnet/runtime
+    license: MIT
+    tier: standard
+    status: done # IMAGE-ONLY (no chart), RUNTIME-BASE; ghcr.io/quenchworks/images/dotnet-runtime:8|9|10. apko-from-Wolfi (dotnet-N-runtime). 0-CVE multi-arch (amd64+arm64), nonroot uid 1001, read-only-rootfs friendly. Family: Runtime base (.NET runtime for console/worker apps, pairs with dotnet SDK for builds).
+  - name: aspnet
+    version: "8, 9, 10" # ASP.NET Core runtime majors, each its own tag (no :latest)
+    source: https://github.com/dotnet/runtime
+    license: MIT
+    tier: standard
+    status: done # IMAGE-ONLY (no chart), RUNTIME-BASE; ghcr.io/quenchworks/images/aspnet:8|9|10. apko-from-Wolfi (aspnet-N-runtime). 0-CVE multi-arch (amd64+arm64), nonroot uid 1001, read-only-rootfs friendly. Family: Runtime base (ASP.NET Core runtime for web apps, pairs with dotnet SDK for builds).
+  - name: bun
+    version: "1" # Wolfi ships a single floating `bun` package -> one tag (1) tracking latest 1.x, kept current by daily rebuild
+    source: https://github.com/oven-sh/bun
+    license: MIT
+    tier: standard
+    status: done # IMAGE-ONLY (no chart), LANGUAGE-RUNTIME; ghcr.io/quenchworks/images/bun:1. apko-from-Wolfi (bun, single floating pkg, no version matrix). 0-CVE multi-arch (amd64+arm64), nonroot uid 1001, read-only-rootfs friendly (BUN_INSTALL_CACHE_DIR=/tmp). entrypoint /usr/bin/bun (bunx on PATH). Family: Language runtime.
+  - name: deno
+    version: "2" # Wolfi ships a single floating `deno` package -> one tag (2) tracking latest 2.x, kept current by daily rebuild
+    source: https://github.com/denoland/deno
+    license: MIT
+    tier: standard
+    status: done # IMAGE-ONLY (no chart), LANGUAGE-RUNTIME; ghcr.io/quenchworks/images/deno:2. apko-from-Wolfi (deno, single floating pkg, no version matrix). 0-CVE multi-arch (amd64+arm64), nonroot uid 1001, read-only-rootfs friendly (DENO_DIR=/tmp/deno). entrypoint /usr/bin/deno. Family: Language runtime.
+  - name: erlang
+    version: "27, 28, 29" # Erlang/OTP majors from Wolfi's versioned erlang-NN packages, each its own tag (no :latest)
+    source: https://www.erlang.org
+    license: Apache-2.0
+    tier: standard
+    status: done # IMAGE-ONLY (no chart), LANGUAGE-RUNTIME; ghcr.io/quenchworks/images/erlang:27|28|29. apko-from-Wolfi (erlang-NN, per-major). 0-CVE multi-arch (amd64+arm64), nonroot uid 1001, read-only-rootfs friendly (HOME on writable tmpfs). Family: Language runtime (BEAM/erts).
+  - name: elixir
+    version: "1.18" # Wolfi currently ships a single versioned elixir-1.18 package -> one tag (1.18); a future 1.19 would add a second tag (ruby/python-style)
+    source: https://elixir-lang.org
+    license: Apache-2.0
+    tier: standard
+    status: done # IMAGE-ONLY (no chart), LANGUAGE-RUNTIME; ghcr.io/quenchworks/images/elixir:1.18. apko-from-Wolfi (elixir-1.18, pulls erlang + busybox for /bin/sh). 0-CVE multi-arch (amd64+arm64), nonroot uid 1001, read-only-rootfs friendly. entrypoint elixir. Family: Language runtime.
+  - name: perl
+    version: "5" # Wolfi ships a single floating `perl` package -> one tag (5) tracking latest 5.x, kept current by daily rebuild
+    source: https://www.perl.org
+    license: Artistic-1.0-Perl OR GPL-1.0-or-later
+    tier: standard
+    status: done # IMAGE-ONLY (no chart), LANGUAGE-RUNTIME; ghcr.io/quenchworks/images/perl:5. apko-from-Wolfi (perl, single floating pkg, no version matrix). 0-CVE multi-arch (amd64+arm64), nonroot uid 1001, read-only-rootfs friendly. entrypoint /usr/bin/perl. Family: Language runtime.
+  - name: pnpm
+    version: "10, 11" # pnpm majors, each its own tag (no :latest)
+    source: https://pnpm.io
+    license: MIT
+    tier: standard
+    status: done # IMAGE-ONLY (no chart), BUILD-TOOL; ghcr.io/quenchworks/images/pnpm:10|11. apko-from-Wolfi. 0-CVE multi-arch (amd64+arm64), nonroot uid 1001, read-only-rootfs friendly. Family: Build tool (Node package manager, pairs with node).
+  - name: yarn
+    version: "1, 4" # Yarn Classic (1) + Berry (4), each its own tag (no :latest)
+    source: https://yarnpkg.com
+    license: BSD-2-Clause # Yarn Classic (1) is BSD-2-Clause; Berry (4) is also BSD-2-Clause
+    tier: standard
+    status: done # IMAGE-ONLY (no chart), BUILD-TOOL; ghcr.io/quenchworks/images/yarn:1|4. apko-from-Wolfi. 0-CVE multi-arch (amd64+arm64), nonroot uid 1001, read-only-rootfs friendly. Family: Build tool (Node package manager, pairs with node).
+  - name: composer
+    version: "2" # Composer 2.x, one tag (no :latest)
+    source: https://getcomposer.org
+    license: MIT
+    tier: standard
+    status: done # IMAGE-ONLY (no chart), BUILD-TOOL; ghcr.io/quenchworks/images/composer:2. apko-from-Wolfi. 0-CVE multi-arch (amd64+arm64), nonroot uid 1001, read-only-rootfs friendly. Family: Build tool (PHP dependency manager, pairs with php).
+  - name: maven
+    version: "3.9" # Maven 3.9.x, one tag (no :latest)
+    source: https://maven.apache.org
+    license: Apache-2.0
+    tier: standard
+    status: done # IMAGE-ONLY (no chart), BUILD-TOOL; ghcr.io/quenchworks/images/maven:3.9. apko-from-Wolfi. 0-CVE multi-arch (amd64+arm64), nonroot uid 1001, read-only-rootfs friendly. Family: Build tool (Java build, pairs with jdk).
+  - name: gradle
+    version: "9" # Gradle 9.x, one tag (no :latest)
+    source: https://gradle.org
+    license: Apache-2.0
+    tier: standard
+    status: done # IMAGE-ONLY (no chart), BUILD-TOOL; ghcr.io/quenchworks/images/gradle:9. apko-from-Wolfi. 0-CVE multi-arch (amd64+arm64), nonroot uid 1001, read-only-rootfs friendly. Family: Build tool (Java build, pairs with jdk).
+  - name: uv
+    version: "0.11" # uv 0.11.x, one tag (no :latest)
+    source: https://github.com/astral-sh/uv
+    license: MIT OR Apache-2.0
+    tier: standard
+    status: done # IMAGE-ONLY (no chart), BUILD-TOOL; ghcr.io/quenchworks/images/uv:0.11. apko-from-Wolfi. 0-CVE multi-arch (amd64+arm64), nonroot uid 1001, read-only-rootfs friendly. Family: Build tool (fast Python package/project manager, pairs with python).
+  - name: poetry
+    version: "2" # Poetry 2.x, one tag (no :latest)
+    source: https://python-poetry.org
+    license: MIT
+    tier: standard
+    status: done # IMAGE-ONLY (no chart), BUILD-TOOL; ghcr.io/quenchworks/images/poetry:2. apko-from-Wolfi. 0-CVE multi-arch (amd64+arm64), nonroot uid 1001, read-only-rootfs friendly. Family: Build tool (Python dependency manager, pairs with python).
