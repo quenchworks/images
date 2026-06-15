@@ -1,0 +1,76 @@
+# Assembles a hardened pnpm package-manager image directly from Wolfi's own
+# versioned `pnpm` package layered onto a pinned Node.js runtime. No Dockerfile,
+# NO melange build -- apko pulls the `pnpm-__PNPMVER__` package plus `nodejs-22`
+# straight from the Wolfi `os` repository, so each pnpm major line is a pure
+# package-assembly.
+#
+# IMAGE-ONLY -- no Helm chart. This is a BUILD/PACKAGE-TOOL image: the 0-CVE,
+# signed, nonroot, multi-arch answer to the community `pnpm` images. Developers
+# `FROM` it in CI or run `pnpm` directly (`docker run <img> install`).
+#
+# TEMPLATE NOTE: `__PNPMVER__` is a build-time placeholder. CI substitutes the
+# pnpm major-line package suffix per matrix entry with `sed` before apko runs.
+# Wolfi packages the major lines as `pnpm` (the current 10.x line) and
+# `pnpm-11` (the 11.x line); both ship pnpm as a node `.cjs` whose
+# `#!/usr/bin/env node` shebang resolves against the bundled Node runtime, so
+# nodejs-22 is added explicitly to give `node -v` and to back the launcher.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - nodejs-22                   # LTS Node runtime backing pnpm's launcher
+    - npm                         # standalone npm; depends on cmd:node
+    - __PNPMPKG__                 # the pinned pnpm package line from Wolfi
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# pnpm as the entrypoint: `docker run <img> install`, `docker run <img> --version`.
+# /usr/bin/pnpm is a `#!/usr/bin/env node` .cjs; this is a shell-less, env-less
+# image, so the shebang cannot self-exec. We run the launcher THROUGH the node
+# interpreter (the same way a `FROM` consumer's wrapper does), which also lets
+# Docker append the user's pnpm args after the script path.
+entrypoint:
+  command: /usr/bin/node /usr/lib/node_modules/pnpm/bin/pnpm.cjs
+
+# HOME under a writable mount; pnpm's store/cache and npm's cache are pointed at
+# /tmp so a single `--tmpfs /tmp` keeps everything happy on a read-only rootfs.
+environment:
+  HOME: /home/nonroot
+  PNPM_HOME: /tmp/.pnpm
+  XDG_DATA_HOME: /tmp/.local/share
+  XDG_CACHE_HOME: /tmp/.cache
+  XDG_CONFIG_HOME: /tmp/.config
+  NPM_CONFIG_CACHE: /tmp/.npm
+  NODE_ENV: production
+
+work-dir: /home/nonroot
+
+paths:
+  - path: /home/nonroot
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-pnpm"
+  org.opencontainers.image.licenses: "MIT"
