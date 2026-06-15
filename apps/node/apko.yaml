@@ -1,0 +1,66 @@
+# Assembles a hardened Node.js runtime/base image directly from Wolfi's own
+# versioned nodejs packages. No Dockerfile, NO melange build -- apko pulls the
+# pinned `nodejs-__NODEVER__` package (plus the version-independent `npm`)
+# straight from the Wolfi `os` repository, so each major line is a pure
+# package-assembly.
+#
+# IMAGE-ONLY -- no Helm chart. This is a LANGUAGE/BASE image: the 0-CVE, signed,
+# nonroot, multi-arch answer to `node:20-slim`. Developers `FROM` it (like
+# Chainguard's language images) or run scripts directly.
+#
+# TEMPLATE NOTE: `__NODEVER__` is a build-time placeholder. CI substitutes the
+# major version (20 / 22 / 24) per matrix entry with `sed` before apko runs, so
+# this single file covers every shipped version. `npm` is a standalone Wolfi
+# package that resolves `cmd:node`, so it tracks whichever nodejs is installed.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - nodejs-__NODEVER__          # the pinned Node.js major line from Wolfi
+    - npm                         # standalone npm; depends on cmd:node
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# Interpreter as the entrypoint: `docker run <img> script.js` or `-e '...'`.
+entrypoint:
+  command: /usr/bin/node
+
+# HOME stays under a writable mount; npm's cache is pointed at /tmp so a single
+# `--tmpfs /tmp` (the same knob Python's pip needs) keeps npm happy on a
+# read-only rootfs, with no extra volume required.
+environment:
+  HOME: /home/nonroot
+  NPM_CONFIG_CACHE: /tmp/.npm
+  NODE_ENV: production
+
+work-dir: /home/nonroot
+
+paths:
+  - path: /home/nonroot
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-node"
+  org.opencontainers.image.licenses: "MIT"
