@@ -1,0 +1,71 @@
+# Assembles a hardened .NET SDK base image directly from Wolfi's own versioned
+# `dotnet-N-sdk` packages. No Dockerfile, NO melange build -- apko pulls the
+# pinned `dotnet-__VER__-sdk` package (which pulls its matching runtime +
+# targeting packs) straight from the Wolfi `os` repository, so each major band
+# is a pure package-assembly.
+#
+# IMAGE-ONLY -- no Helm chart. This is a LANGUAGE/SDK image: the 0-CVE, signed,
+# nonroot, multi-arch developer answer to `mcr.microsoft.com/dotnet/sdk:N`.
+# Developers `FROM` it (like Chainguard's language images) or run `dotnet`
+# directly.
+#
+# TEMPLATE NOTE: `__VER__` is a build-time placeholder. CI substitutes the
+# major version (8 / 9 / 10) per matrix entry with `sed` before apko runs, so
+# this single file covers every shipped version. To roll this pattern to
+# another runtime, copy this file and swap the package names + entrypoint.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - dotnet-__VER__-sdk          # the pinned .NET SDK band from Wolfi (pulls runtime + aspnet + targeting packs)
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# The .NET driver as the entrypoint: `docker run <img> --version`,
+# `docker run <img> build`, etc. Lives at /usr/bin/dotnet in Wolfi.
+entrypoint:
+  command: /usr/bin/dotnet
+
+# .NET wants a writable HOME / CLI home for NuGet, the SDK first-run experience,
+# and extraction caches. Point them under a writable mount so the SDK works on a
+# read-only rootfs. Telemetry + first-run banner are disabled for clean,
+# reproducible, network-free runs.
+environment:
+  HOME: /home/nonroot
+  DOTNET_CLI_HOME: /home/nonroot
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1"
+  NUGET_PACKAGES: /home/nonroot/.nuget/packages
+
+work-dir: /home/nonroot
+
+paths:
+  - path: /home/nonroot
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-dotnet"
+  org.opencontainers.image.licenses: "MIT"
