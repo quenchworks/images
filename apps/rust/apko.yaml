@@ -1,0 +1,75 @@
+# Assembles a hardened Rust toolchain (cargo + rustc) image directly from
+# Wolfi's own versioned `rust-1.X` packages. No Dockerfile, NO melange build --
+# apko pulls the pinned `rust-__RUSTVER__` package straight from the Wolfi `os`
+# repository. That single package PROVIDES cargo, rustc, rustfmt, clippy, etc.,
+# so each minor version is a pure package-assembly.
+#
+# IMAGE-ONLY -- no Helm chart. This is a LANGUAGE/SDK image: the 0-CVE, signed,
+# nonroot, multi-arch answer to `rust:1.x`. Developers `FROM` it to build their
+# crates (like Chainguard's rust image) or `docker run <img> build ...`.
+#
+# NOTE: Wolfi DOES version Rust into per-minor packages (rust-1.69 .. rust-1.96),
+# so -- like Go/Python -- we ship the latest 3 stable minors via a matrix.
+# `__RUSTVER__` is a build-time placeholder CI substitutes (1.94 / 1.95 / 1.96).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - rust-__RUSTVER__            # pinned Rust minor; provides cargo + rustc
+    - build-base                  # gcc + binutils ld: the C toolchain cargo
+                                  # shells out to for the final link step
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# `cargo` as the entrypoint: `docker run <img> --version`, `<img> build`, etc.
+entrypoint:
+  command: /usr/bin/cargo
+
+# cargo needs a WRITABLE CARGO_HOME (registry cache, git db) and build target
+# dir. On a read-only rootfs these MUST live under a writable mount (tmpfs /tmp).
+#
+# RUSTFLAGS works around a Wolfi gcc-16 quirk: when rustc links via `cc`, gcc
+# auto-enables its LTO linker plugin and then fails ("'-fuse-linker-plugin', but
+# liblto_plugin.so not found") even though the plugin file is present. We turn
+# the plugin off (-fno-use-linker-plugin); that side-effect drops gcc's own crt*
+# / libgcc search dir, so we re-add it with -B/-L. The gcc host triple differs
+# per arch (x86_64-pc / aarch64-pc) and gcc silently ignores a -B dir that does
+# not exist, so we list BOTH and the right one wins on each arch. The gcc major
+# (16) is pinned to what build-base currently ships; the DAILY rebuild's smoke
+# test will catch a Wolfi gcc-major bump if/when the path changes.
+environment:
+  HOME: /tmp
+  CARGO_HOME: /tmp/cargo
+  RUSTFLAGS: "-C link-arg=-fno-use-linker-plugin -C link-arg=-B/usr/lib/gcc/x86_64-pc-linux-gnu/16 -C link-arg=-L/usr/lib/gcc/x86_64-pc-linux-gnu/16 -C link-arg=-B/usr/lib/gcc/aarch64-pc-linux-gnu/16 -C link-arg=-L/usr/lib/gcc/aarch64-pc-linux-gnu/16"
+
+work-dir: /home/nonroot
+
+paths:
+  - path: /home/nonroot
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-rust"
+  org.opencontainers.image.licenses: "MIT OR Apache-2.0"
