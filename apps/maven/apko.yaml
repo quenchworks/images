@@ -1,0 +1,69 @@
+# Assembles a hardened Maven image directly from Wolfi's own versioned
+# `maven-__MVNVER__` package layered onto a pinned OpenJDK. No Dockerfile, NO
+# melange build -- apko pulls `maven-3.9` plus `openjdk-__JDKVER__-default-jdk`
+# straight from the Wolfi `os` repository, so this is a pure package-assembly.
+#
+# IMAGE-ONLY -- no Helm chart. This is a BUILD-TOOL image: the 0-CVE, signed,
+# nonroot, multi-arch answer to the official `maven` image. Developers `FROM` it
+# in CI or run `mvn` directly.
+#
+# TEMPLATE NOTE: `__MVNVER__`/`__JDKVER__` are build-time placeholders. CI
+# substitutes the Maven line (3.9) and the JDK LTS (21) per matrix entry with
+# `sed` before apko runs. /usr/bin/mvn is a `/bin/sh` launcher that needs a
+# POSIX shell (busybox: sh + dirname/tr/expr) AND a JDK on JAVA_HOME/PATH; both
+# are added below. busybox's post-install wires up /bin/sh + applet symlinks at
+# assembly time.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - busybox                            # /bin/sh + dirname/tr/expr for the mvn launcher
+    - openjdk-__JDKVER__-default-jdk     # full JDK (java + javac) that mvn drives
+    - maven-__MVNVER__                   # the pinned Maven line from Wolfi (/usr/bin/mvn)
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# mvn as the entrypoint: `docker run <img> -version`, `docker run <img> package`.
+entrypoint:
+  command: /usr/bin/mvn
+
+# JAVA_HOME points at the Wolfi JDK install for this LTS. HOME + MAVEN_USER_HOME
+# live on the writable /tmp tmpfs so the local repo (~/.m2) works on a read-only
+# rootfs with a single `--tmpfs /tmp`.
+environment:
+  HOME: /tmp
+  JAVA_HOME: /usr/lib/jvm/java-__JDKVER__-openjdk
+  MAVEN_USER_HOME: /tmp/.m2
+  LANG: C.UTF-8
+
+work-dir: /home/nonroot
+
+paths:
+  - path: /home/nonroot
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-maven"
+  org.opencontainers.image.licenses: "Apache-2.0"
