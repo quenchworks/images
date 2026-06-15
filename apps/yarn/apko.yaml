@@ -1,0 +1,75 @@
+# Assembles a hardened Yarn package-manager image directly from Wolfi's own
+# versioned yarn packages layered onto a pinned Node.js runtime. No Dockerfile,
+# NO melange build -- apko pulls the `__YARNPKG__` package plus `nodejs-22`
+# straight from the Wolfi `os` repository, so each Yarn line is a pure
+# package-assembly.
+#
+# IMAGE-ONLY -- no Helm chart. This is a BUILD/PACKAGE-TOOL image: the 0-CVE,
+# signed, nonroot, multi-arch answer to the community `yarn`/`node` CI images.
+# Developers `FROM` it in CI or run `yarn` directly.
+#
+# TEMPLATE NOTE: `__YARNPKG__` is a build-time placeholder. CI substitutes the
+# Wolfi package per matrix entry with `sed` before apko runs: `yarn` is the
+# Classic 1.x line, `yarn-berry` is the modern 4.x (Berry) line. The `/usr/bin/yarn`
+# launcher is a `/bin/sh` wrapper that `exec node`s the bundled CLI, so BOTH a
+# POSIX shell (busybox: sh + dirname/readlink/sed) and the node runtime are
+# required -- both are added below. busybox's post-install creates /bin/sh and
+# the coreutils applet symlinks at assembly time.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - busybox                     # provides /bin/sh + dirname/readlink/sed for the yarn launcher
+    - nodejs-22                   # LTS Node runtime the yarn launcher exec's
+    - npm                         # standalone npm; depends on cmd:node
+    - __YARNPKG__                 # the pinned Yarn package line from Wolfi
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# yarn as the entrypoint: `docker run <img> --version`, `docker run <img> install`.
+entrypoint:
+  command: /usr/bin/yarn
+
+# HOME under a writable mount; yarn's cache/global dirs and npm's cache are
+# pointed at /tmp so a single `--tmpfs /tmp` keeps everything happy on a
+# read-only rootfs.
+environment:
+  HOME: /home/nonroot
+  YARN_CACHE_FOLDER: /tmp/.yarn-cache
+  XDG_DATA_HOME: /tmp/.local/share
+  XDG_CACHE_HOME: /tmp/.cache
+  XDG_CONFIG_HOME: /tmp/.config
+  NPM_CONFIG_CACHE: /tmp/.npm
+  NODE_ENV: production
+
+work-dir: /home/nonroot
+
+paths:
+  - path: /home/nonroot
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-yarn"
+  org.opencontainers.image.licenses: "BSD-2-Clause"
