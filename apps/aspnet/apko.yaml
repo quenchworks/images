@@ -1,0 +1,80 @@
+# Assembles a hardened ASP.NET Core RUNTIME base image directly from Wolfi's own
+# versioned `aspnet-N-runtime` packages. No Dockerfile, NO melange build -- apko
+# pulls the pinned `aspnet-__VER__-runtime` package straight from the Wolfi `os`
+# repository. That package depends on `dotnet-N-runtime` (which pulls the
+# `dotnet-N` host -> `/usr/bin/dotnet` + Microsoft.NETCore.App) and layers the
+# Microsoft.AspNetCore.App shared framework on top -- WITHOUT the SDK. So each
+# major band is a pure package-assembly and stays RUNTIME-ONLY.
+#
+# This is the run-time companion to the `dotnet` (SDK) image for web/API
+# services: publish your ASP.NET Core app with quench-dotnet, then run the
+# framework-dependent output on quench-aspnet. There is deliberately NO SDK here.
+#
+# IMAGE-ONLY -- no Helm chart. This is a LANGUAGE RUNTIME image: the 0-CVE,
+# signed, nonroot, multi-arch answer to `mcr.microsoft.com/dotnet/aspnet:N`.
+# Developers `FROM` it in the final stage of a multi-stage build, or run
+# `dotnet app.dll` directly.
+#
+# TEMPLATE NOTE: `__VER__` is a build-time placeholder. CI substitutes the major
+# version (8 / 9 / 10) per matrix entry with `sed` before apko runs, so this
+# single file covers every shipped version. To roll this pattern to another
+# runtime, copy this file and swap the package names + entrypoint.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - aspnet-__VER__-runtime      # ASP.NET Core runtime band (pulls dotnet-N-runtime + Microsoft.AspNetCore.App); NO SDK
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# The .NET driver as the entrypoint: `docker run <img> --info`,
+# `docker run <img> app.dll`, etc. Lives at /usr/bin/dotnet in Wolfi (provided
+# by the dotnet-N host package pulled in transitively).
+entrypoint:
+  command: /usr/bin/dotnet
+
+# .NET wants a writable HOME / CLI home for extraction caches and the first-run
+# experience. Point them under a writable mount so the runtime works on a
+# read-only rootfs. Telemetry + first-run banner are disabled for clean,
+# reproducible, network-free runs.
+environment:
+  HOME: /home/nonroot
+  DOTNET_CLI_HOME: /home/nonroot
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1"
+  # Bind Kestrel to all interfaces on 8080 by default so the image is usable as
+  # a web-service base out of the box (overridable by the consuming app).
+  ASPNETCORE_URLS: http://+:8080
+
+work-dir: /home/nonroot
+
+paths:
+  - path: /home/nonroot
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quenchworks.mkabumattar.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-aspnet"
+  org.opencontainers.image.licenses: "MIT"
