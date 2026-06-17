@@ -1,21 +1,25 @@
 #!/usr/bin/env bash
-# Smoke test for a built quench-node image. Usage: test.sh <image-ref> <major>
-# where <major> is the expected Node.js major version, e.g. 22.
+# Smoke test for a built quench-node image. Usage: test.sh <image-ref> <expect>
+# where <expect> is the expected Node.js version prefix -- either a bare major
+# (e.g. 22) or the specific published version (e.g. 22.22.3).
 #
 # This is a LANGUAGE/BASE image: the interpreter IS the entrypoint, there is no
 # long-running service to ping. So we exercise node + npm directly under a
 # READ-ONLY rootfs and confirm the nonroot uid.
 set -euo pipefail
 
-IMAGE="${1:?usage: test.sh <image-ref> <major>}"
-MAJOR="${2:?usage: test.sh <image-ref> <major>}"   # e.g. 22
+IMAGE="${1:?usage: test.sh <image-ref> <expect>}"
+EXPECT="${2:?usage: test.sh <image-ref> <expect>}"   # e.g. 22 or 22.22.3
 
-echo "== node -v matches v$MAJOR (default entrypoint) =="
+echo "== node -v matches v$EXPECT (default entrypoint) =="
 ver="$(docker run --rm --read-only --tmpfs /tmp "$IMAGE" -v 2>&1)"
 echo "$ver"
+# Accept an exact version match or a dotted prefix (so both a bare major like
+# `20` and a specific tag like `20.20.2` validate against e.g. `v20.20.2`).
 case "$ver" in
-  "v$MAJOR."*) : ;;
-  *) echo "expected 'v$MAJOR.*', got '$ver'"; exit 1 ;;
+  "v$EXPECT") : ;;
+  "v$EXPECT."*) : ;;
+  *) echo "expected 'v$EXPECT' or 'v$EXPECT.*', got '$ver'"; exit 1 ;;
 esac
 
 echo "== a real script runs =="

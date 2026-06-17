@@ -8,10 +8,14 @@
 # nonroot, multi-arch answer to `node:20-slim`. Developers `FROM` it (like
 # Chainguard's language images) or run scripts directly.
 #
-# TEMPLATE NOTE: `__NODEVER__` is a build-time placeholder. CI substitutes the
-# major version (20 / 22 / 24) per matrix entry with `sed` before apko runs, so
-# this single file covers every shipped version. `npm` is a standalone Wolfi
-# package that resolves `cmd:node`, so it tracks whichever nodejs is installed.
+# TEMPLATE NOTE: Wolfi packages Node by MAJOR (`nodejs-<major>`), so the apko
+# install pulls the MAJOR line via the `__NODEVER__` placeholder, while the
+# PUBLISHED IMAGE TAG is the SPECIFIC version. CI seds two placeholders per
+# matrix entry before apko runs: `__NODEVER__` -> the major (e.g. 20 / 22 / 24 /
+# 26), the Wolfi package; `__NODEFULL__` -> the specific version (e.g. 20.20.2),
+# stamped into the image's version annotation. This single file covers every
+# shipped version. `npm` is a standalone Wolfi package that resolves `cmd:node`,
+# so it tracks whichever nodejs is installed.
 contents:
   keyring:
     - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
@@ -64,3 +68,4 @@ annotations:
   org.opencontainers.image.vendor: "Quenchworks"
   org.opencontainers.image.title: "quench-node"
   org.opencontainers.image.licenses: "MIT"
+  org.opencontainers.image.version: "__NODEFULL__"   # specific version = published tag

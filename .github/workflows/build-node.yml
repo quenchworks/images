@@ -2,17 +2,20 @@ name: build-node
 
 # Hardened Node.js base/runtime images, assembled straight from Wolfi's
 # versioned `nodejs-NN` packages with apko -- NO melange/from-source step, since
-# Wolfi already packages Node. A MATRIX fans out over the latest 3 stable major
-# lines; each one runs a NATIVE per-arch apko build (no QEMU), the hard 0-CVE
+# Wolfi already packages Node. A MATRIX fans out over the stable major lines;
+# each one runs a NATIVE per-arch apko build (no QEMU), the hard 0-CVE
 # Trivy gate, then a per-version merge job that assembles + signs + attests the
 # multi-arch index.
 #
 # IMAGE-ONLY: Node is a base/runtime image with no Helm chart, so there is NO
 # charts-repo dispatch.
 #
-# TEMPLATE: to add another major (or another runtime), copy a matrix entry and
-# change `nodever`; apps/node/apko.yaml carries the `__NODEVER__` placeholder
-# that CI substitutes per entry. No :latest tag is ever published.
+# TEMPLATE: to add another major (or another runtime), copy a matrix entry with
+# the major (used to pick the Wolfi `nodejs-<major>` package) and the specific
+# version that becomes the PUBLISHED TAG. apps/node/apko.yaml carries the
+# `__NODEVER__` (major, the package) and `__NODEFULL__` (specific version, the
+# version annotation) placeholders that CI substitutes per entry. No :latest tag
+# is ever published.
 on:
   push:
     paths:
@@ -36,8 +39,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # latest 3 stable Wolfi-packaged majors x both native arches.
-        nodever: ["20", "22", "24"]
+        # Wolfi packages Node by MAJOR (`nodejs-<major>`), so `major` drives the
+        # apko package install while `ver` is the SPECIFIC version published as
+        # the image TAG. Both axes are crossed with arch.
+        node:
+          - { major: "20", ver: "20.20.2" }
+          - { major: "22", ver: "22.22.3" }
+          - { major: "24", ver: "24.16.0" }
+          - { major: "26", ver: "26.3.0" }
         arch:
           - { name: x86_64,  platform: amd64, runner: ubuntu-latest }
           - { name: aarch64, platform: arm64, runner: ubuntu-24.04-arm }   # native arm64, free for public repos
@@ -50,14 +59,22 @@ jobs:
 
       - name: Install apko (native ${{ matrix.arch.platform }})
         working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          APKO_VER="$(curl -fsSL https://api.github.com/repos/chainguard-dev/apko/releases/latest | grep -m1 '"tag_name"' | cut -d'"' -f4)"
+          # Authenticate the API call: the anonymous GitHub API rate limit is
+          # easily exhausted when many matrix jobs resolve the latest apko tag at
+          # the same time, which surfaced as transient 403/404s on this step.
+          APKO_VER="$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" https://api.github.com/repos/chainguard-dev/apko/releases/latest | grep -m1 '"tag_name"' | cut -d'"' -f4)"
           curl -fsSL "https://github.com/chainguard-dev/apko/releases/download/${APKO_VER}/apko_${APKO_VER#v}_linux_${{ matrix.arch.platform }}.tar.gz" \
             | sudo tar xz --strip-components=1 -C /usr/local/bin
           apko version | head -1
 
-      - name: Render apko config for Node.js ${{ matrix.nodever }}
-        run: sed "s/__NODEVER__/${{ matrix.nodever }}/g" apko.yaml > apko.rendered.yaml
+      - name: Render apko config for Node.js ${{ matrix.node.ver }} (pkg nodejs-${{ matrix.node.major }})
+        run: |
+          sed -e "s/__NODEVER__/${{ matrix.node.major }}/g" \
+              -e "s/__NODEFULL__/${{ matrix.node.ver }}/g" \
+              apko.yaml > apko.rendered.yaml
 
       - name: Assemble single-arch image for the scan gate
         run: apko build apko.rendered.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}
@@ -77,7 +94,7 @@ jobs:
           docker load < image.tar
           # apko load tags the image as <ref>-<arch>; the scan ref ended in the platform.
           docker tag "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}-${{ matrix.arch.platform }}" node-smoke:local
-          bash test.sh node-smoke:local "${{ matrix.nodever }}"
+          bash test.sh node-smoke:local "${{ matrix.node.ver }}"
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -87,7 +104,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish the single-arch image
-        run: apko publish apko.rendered.yaml "${GHCR_IMAGE}:${{ matrix.nodever }}-${{ matrix.arch.platform }}" --arch ${{ matrix.arch.name }}
+        run: apko publish apko.rendered.yaml "${GHCR_IMAGE}:${{ matrix.node.ver }}-${{ matrix.arch.platform }}" --arch ${{ matrix.arch.name }}
 
   merge:
     needs: build
@@ -95,7 +112,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        nodever: ["20", "22", "24"]
+        ver: ["20.20.2", "22.22.3", "24.16.0", "26.3.0"]
     steps:
       - uses: actions/checkout@v5
       - uses: sigstore/cosign-installer@v3
@@ -110,11 +127,11 @@ jobs:
       - name: Assemble the multi-arch index
         id: merge
         run: |
-          docker buildx imagetools create -t "${GHCR_IMAGE}:${{ matrix.nodever }}" \
-            "${GHCR_IMAGE}:${{ matrix.nodever }}-amd64" "${GHCR_IMAGE}:${{ matrix.nodever }}-arm64"
-          digest="$(docker buildx imagetools inspect "${GHCR_IMAGE}:${{ matrix.nodever }}" --format '{{.Manifest.Digest}}')"
+          docker buildx imagetools create -t "${GHCR_IMAGE}:${{ matrix.ver }}" \
+            "${GHCR_IMAGE}:${{ matrix.ver }}-amd64" "${GHCR_IMAGE}:${{ matrix.ver }}-arm64"
+          digest="$(docker buildx imagetools inspect "${GHCR_IMAGE}:${{ matrix.ver }}" --format '{{.Manifest.Digest}}')"
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
-          echo "published ${GHCR_IMAGE}:${{ matrix.nodever }}@${digest}"
+          echo "published ${GHCR_IMAGE}:${{ matrix.ver }}@${digest}"
 
       - name: Sign the multi-arch index (cosign keyless)
         run: cosign sign --yes "${GHCR_IMAGE}@${{ steps.merge.outputs.digest }}"
