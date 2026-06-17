@@ -54,4 +54,4 @@ if docker run --rm --read-only --tmpfs /tmp "$IMAGE" \
   echo "rootfs was writable, expected read-only"; exit 1
 fi
 
-echo "smoke test passed (Node.js $MAJOR, npm $npmver, nonroot uid: $uid, read-only rootfs)"
+echo "smoke test passed (Node.js $EXPECT, npm $npmver, nonroot uid: $uid, read-only rootfs)"
