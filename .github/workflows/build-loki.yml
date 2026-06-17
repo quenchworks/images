@@ -15,7 +15,6 @@ permissions:
   contents: read
   packages: write        # push to GHCR
   id-token: write        # cosign keyless
-  attestations: write    # SLSA build provenance + SBOM attestation
 
 env:
   GHCR_IMAGE: ghcr.io/quenchworks/images/loki
@@ -41,6 +40,8 @@ jobs:
 
       - name: Install melange and apko (native ${{ matrix.platform }})
         working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           sudo apt-get update && sudo apt-get install -y bubblewrap
           # Ubuntu 24.04 restricts unprivileged user namespaces, which breaks melange's
@@ -49,7 +50,7 @@ jobs:
           MELANGE_VER=v0.53.0
           curl -fsSL "https://github.com/chainguard-dev/melange/releases/download/${MELANGE_VER}/melange_${MELANGE_VER#v}_linux_${{ matrix.platform }}.tar.gz" \
             | sudo tar xz --strip-components=1 -C /usr/local/bin
-          APKO_VER="$(curl -fsSL https://api.github.com/repos/chainguard-dev/apko/releases/latest | grep -m1 '"tag_name"' | cut -d'"' -f4)"
+          APKO_VER="$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" https://api.github.com/repos/chainguard-dev/apko/releases/latest | grep -m1 '"tag_name"' | cut -d'"' -f4)"
           curl -fsSL "https://github.com/chainguard-dev/apko/releases/download/${APKO_VER}/apko_${APKO_VER#v}_linux_${{ matrix.platform }}.tar.gz" \
             | sudo tar xz --strip-components=1 -C /usr/local/bin
           melange version | head -1
@@ -115,28 +116,71 @@ jobs:
       - name: Sign the multi-arch index (cosign keyless)
         run: cosign sign --yes "${GHCR_IMAGE}@${{ steps.merge.outputs.digest }}"
 
-      - name: Generate SBOM (SPDX) for the signed index
-        uses: anchore/sbom-action@v0
-        with:
-          image: ${{ env.GHCR_IMAGE }}@${{ steps.merge.outputs.digest }}
-          format: spdx-json
-          output-file: sbom.spdx.json
-          upload-artifact: false
+      # SBOM + provenance via COSIGN (Sigstore -> GHCR), NOT actions/attest-*.
+      # The GitHub-API attestation store (actions/attest-sbom, attest-build-
+      # provenance) is gated by org billing/visibility and 403s on a private
+      # repo. cosign attest is keyless (id-token: write) and writes the
+      # attestation alongside the image in GHCR, with no GitHub billing gate.
 
-      - name: Attest the SBOM (keyless, pushed to GHCR)
-        uses: actions/attest-sbom@v2
-        with:
-          subject-name: ${{ env.GHCR_IMAGE }}
-          subject-digest: ${{ steps.merge.outputs.digest }}
-          sbom-path: sbom.spdx.json
-          push-to-registry: true
+      - name: Generate SPDX SBOM for the index (syft, by digest)
+        run: |
+          # syft is not preinstalled on the runner; pull its official installer.
+          curl -fsSL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+            | sudo sh -s -- -b /usr/local/bin
+          syft "${GHCR_IMAGE}@${{ steps.merge.outputs.digest }}" -o spdx-json=sbom.spdx.json
+          test -s sbom.spdx.json
 
-      - name: Attest build provenance (SLSA, pushed to GHCR)
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-name: ${{ env.GHCR_IMAGE }}
-          subject-digest: ${{ steps.merge.outputs.digest }}
-          push-to-registry: true
+      - name: Attest the SBOM (cosign keyless -> GHCR)
+        run: |
+          cosign attest --yes \
+            --type spdxjson \
+            --predicate sbom.spdx.json \
+            "${GHCR_IMAGE}@${{ steps.merge.outputs.digest }}"
+
+      - name: Build SLSA provenance predicate
+        run: |
+          cat > provenance.json <<EOF
+          {
+            "buildType": "https://github.com/quenchworks/images/build-loki",
+            "builder": {
+              "id": "${{ github.server_url }}/${{ github.workflow_ref }}"
+            },
+            "invocation": {
+              "configSource": {
+                "uri": "git+${{ github.server_url }}/${{ github.repository }}@${{ github.ref }}",
+                "digest": { "sha1": "${{ github.sha }}" },
+                "entryPoint": ".github/workflows/build-loki.yml"
+              },
+              "environment": {
+                "github_repository": "${{ github.repository }}",
+                "github_ref": "${{ github.ref }}",
+                "github_sha": "${{ github.sha }}",
+                "github_run_id": "${{ github.run_id }}",
+                "github_run_attempt": "${{ github.run_attempt }}"
+              }
+            },
+            "metadata": {
+              "buildInvocationId": "${{ github.run_id }}-${{ github.run_attempt }}",
+              "completeness": { "parameters": true, "environment": false, "materials": false },
+              "reproducible": false
+            },
+            "materials": [
+              {
+                "uri": "git+${{ github.server_url }}/${{ github.repository }}@${{ github.ref }}",
+                "digest": { "sha1": "${{ github.sha }}" }
+              }
+            ]
+          }
+          EOF
+          # Validate it is well-formed JSON before attesting.
+          python3 -c 'import json,sys; json.load(open("provenance.json"))'
+
+      - name: Attest build provenance (SLSA, cosign keyless -> GHCR)
+        run: |
+          cosign attest --yes \
+            --type slsaprovenance \
+            --predicate provenance.json \
+            "${GHCR_IMAGE}@${{ steps.merge.outputs.digest }}"
 
       - name: Notify the charts repo
         env:
