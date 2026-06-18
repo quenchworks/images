@@ -95,13 +95,35 @@ if [ "$PUSH" != "1" ]; then
   exit 0
 fi
 
-# --- publish the multi-arch index ------------------------------------------
+# --- publish: one image per arch, then merge into a multi-arch manifest -----
+# Mirrors the old GitHub Actions flow: each arch is published to its own tag
+# (:VERSION-amd64, :VERSION-arm64), then `crane index append` merges them into
+# the version tag (:VERSION) as a single multi-platform manifest. apko publish
+# is pure assembly, so per-arch publish needs no qemu (only melange did).
 command -v cosign >/dev/null || { echo "❌ cosign not installed"; exit 1; }
-echo "⬆  apko publish $GHCR:$VERSION ($ARCHES) ..."
-apko publish "$APKO" "$GHCR:$VERSION" --arch "$ARCHES" >/dev/null
+command -v crane  >/dev/null || { echo "❌ crane not installed"; exit 1; }
+
+arch_suffix() { case "$1" in x86_64) echo amd64;; aarch64) echo arm64;; *) echo "$1";; esac; }
+
+IFS=',' read -ra ARCH_LIST <<< "$ARCHES"
+PER_ARCH=()
+for a in "${ARCH_LIST[@]}"; do
+  [ -z "$a" ] && continue
+  tag="$GHCR:$VERSION-$(arch_suffix "$a")"
+  echo "⬆  apko publish $tag ($a) ..."
+  apko publish "$APKO" "$tag" --arch "$a" >/dev/null
+  PER_ARCH+=("$tag")
+done
+
+echo "🧩 crane index append → $GHCR:$VERSION (merged multi-arch manifest) ..."
+MERGE_ARGS=()
+for r in "${PER_ARCH[@]}"; do MERGE_ARGS+=( -m "$r" ); done
+crane index append "${MERGE_ARGS[@]}" -t "$GHCR:$VERSION" >/dev/null
+
 DIGEST="$(crane digest "$GHCR:$VERSION")"
 REF="$GHCR@$DIGEST"
-echo "   $REF"
+echo "   merged: $REF"
+echo "   per-arch: ${PER_ARCH[*]}"
 
 # --- sign + attest (key-based; no OIDC locally) ----------------------------
 export COSIGN_PASSWORD="${COSIGN_PASSWORD:-$(cat "$ROOT/.secrets/cosign.password" 2>/dev/null || true)}"
