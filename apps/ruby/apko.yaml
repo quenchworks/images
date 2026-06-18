@@ -1,6 +1,6 @@
 # Assembles a hardened Ruby runtime/base image directly from Wolfi's own
 # versioned ruby packages. No Dockerfile, NO melange build -- apko pulls the
-# pinned `ruby-__RBVER__` package (plus its matching `ruby__RBVER__-bundler`)
+# pinned `ruby-__VER__` package (plus its matching `ruby__VER__-bundler`)
 # straight from the Wolfi `os` repository, so each minor version is a pure
 # package-assembly. `gem` ships inside the ruby package itself.
 #
@@ -8,10 +8,10 @@
 # nonroot, multi-arch answer to `ruby:3.x-slim`. Developers `FROM` it (like
 # Chainguard's language images) or run scripts directly.
 #
-# TEMPLATE NOTE: `__RBVER__` is a build-time placeholder. CI substitutes the
+# TEMPLATE NOTE: `__VER__` is a build-time placeholder. CI substitutes the
 # minor version (3.2 / 3.3 / 3.4) per matrix entry with `sed` before apko runs.
 # Note Wolfi names the bundler subpackage `ruby<minor>-bundler` (no dash before
-# the version), so the single `__RBVER__` token renders both `ruby-3.4` and
+# the version), so the single `__VER__` token renders both `ruby-3.4` and
 # `ruby3.4-bundler` correctly.
 contents:
   keyring:
@@ -21,8 +21,8 @@ contents:
   packages:
     - wolfi-baselayout
     - ca-certificates-bundle
-    - ruby-__RBVER__              # the pinned Ruby minor release from Wolfi (ships gem)
-    - ruby__RBVER__-bundler       # matching Bundler for this exact interpreter
+    - ruby-__VER__              # the pinned Ruby minor release from Wolfi (ships gem)
+    - ruby__VER__-bundler       # matching Bundler for this exact interpreter
 
 accounts:
   groups:

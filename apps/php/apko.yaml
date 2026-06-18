@@ -1,6 +1,6 @@
 # Assembles a hardened PHP runtime/base image directly from Wolfi's own
 # versioned php packages. No Dockerfile, NO melange build -- apko pulls the
-# pinned `php-__PHPVER__` CLI plus a sensible default set of extensions straight
+# pinned `php-__VER__` CLI plus a sensible default set of extensions straight
 # from the Wolfi `os` repository, so each minor version is a pure
 # package-assembly.
 #
@@ -8,7 +8,7 @@
 # nonroot, multi-arch answer to `php:8.x-cli`. Developers `FROM` it (like
 # Chainguard's language images) or run scripts directly.
 #
-# TEMPLATE NOTE: `__PHPVER__` is a build-time placeholder. CI substitutes the
+# TEMPLATE NOTE: `__VER__` is a build-time placeholder. CI substitutes the
 # minor version (8.3 / 8.4 / 8.5) per matrix entry with `sed` before apko runs.
 # Wolfi splits each extension into `php-<ver>-<ext>` (the .so) and
 # `php-<ver>-<ext>-config` (the conf.d/*.ini that loads it); BOTH are needed for
@@ -24,59 +24,59 @@ contents:
   packages:
     - wolfi-baselayout
     - ca-certificates-bundle
-    - php-__PHPVER__                  # the pinned PHP CLI (provides /usr/bin/php)
+    - php-__VER__                  # the pinned PHP CLI (provides /usr/bin/php)
     # --- sensible default extension set (each ext + its loader config) ---
-    - php-__PHPVER__-openssl
-    - php-__PHPVER__-openssl-config
-    - php-__PHPVER__-mbstring
-    - php-__PHPVER__-mbstring-config
-    - php-__PHPVER__-curl
-    - php-__PHPVER__-curl-config
-    - php-__PHPVER__-ctype
-    - php-__PHPVER__-ctype-config
-    - php-__PHPVER__-iconv
-    - php-__PHPVER__-iconv-config
-    - php-__PHPVER__-fileinfo
-    - php-__PHPVER__-fileinfo-config
-    - php-__PHPVER__-sodium
-    - php-__PHPVER__-sodium-config
-    - php-__PHPVER__-bcmath
-    - php-__PHPVER__-bcmath-config
-    - php-__PHPVER__-sockets
-    - php-__PHPVER__-sockets-config
-    - php-__PHPVER__-intl
-    - php-__PHPVER__-intl-config
-    - php-__PHPVER__-gd
-    - php-__PHPVER__-gd-config
-    - php-__PHPVER__-zip
-    - php-__PHPVER__-zip-config
-    - php-__PHPVER__-phar
-    - php-__PHPVER__-phar-config
+    - php-__VER__-openssl
+    - php-__VER__-openssl-config
+    - php-__VER__-mbstring
+    - php-__VER__-mbstring-config
+    - php-__VER__-curl
+    - php-__VER__-curl-config
+    - php-__VER__-ctype
+    - php-__VER__-ctype-config
+    - php-__VER__-iconv
+    - php-__VER__-iconv-config
+    - php-__VER__-fileinfo
+    - php-__VER__-fileinfo-config
+    - php-__VER__-sodium
+    - php-__VER__-sodium-config
+    - php-__VER__-bcmath
+    - php-__VER__-bcmath-config
+    - php-__VER__-sockets
+    - php-__VER__-sockets-config
+    - php-__VER__-intl
+    - php-__VER__-intl-config
+    - php-__VER__-gd
+    - php-__VER__-gd-config
+    - php-__VER__-zip
+    - php-__VER__-zip-config
+    - php-__VER__-phar
+    - php-__VER__-phar-config
     # XML family
-    - php-__PHPVER__-dom
-    - php-__PHPVER__-dom-config
-    - php-__PHPVER__-xml
-    - php-__PHPVER__-xml-config
-    - php-__PHPVER__-xmlreader
-    - php-__PHPVER__-xmlreader-config
-    - php-__PHPVER__-xmlwriter
-    - php-__PHPVER__-xmlwriter-config
-    - php-__PHPVER__-simplexml
-    - php-__PHPVER__-simplexml-config
+    - php-__VER__-dom
+    - php-__VER__-dom-config
+    - php-__VER__-xml
+    - php-__VER__-xml-config
+    - php-__VER__-xmlreader
+    - php-__VER__-xmlreader-config
+    - php-__VER__-xmlwriter
+    - php-__VER__-xmlwriter-config
+    - php-__VER__-simplexml
+    - php-__VER__-simplexml-config
     # PDO + common drivers. mysqlnd is the MySQL native driver pdo_mysql links
     # against (provides mysqlnd_get_client_info); it must be present and load
     # first (its 20-mysqlnd.ini sorts before 30-pdo_mysql.ini) or pdo_mysql.so
     # fails with an undefined-symbol error at startup.
-    - php-__PHPVER__-pdo
-    - php-__PHPVER__-pdo-config
-    - php-__PHPVER__-mysqlnd
-    - php-__PHPVER__-mysqlnd-config
-    - php-__PHPVER__-pdo_sqlite
-    - php-__PHPVER__-pdo_sqlite-config
-    - php-__PHPVER__-pdo_mysql
-    - php-__PHPVER__-pdo_mysql-config
-    - php-__PHPVER__-pdo_pgsql
-    - php-__PHPVER__-pdo_pgsql-config
+    - php-__VER__-pdo
+    - php-__VER__-pdo-config
+    - php-__VER__-mysqlnd
+    - php-__VER__-mysqlnd-config
+    - php-__VER__-pdo_sqlite
+    - php-__VER__-pdo_sqlite-config
+    - php-__VER__-pdo_mysql
+    - php-__VER__-pdo_mysql-config
+    - php-__VER__-pdo_pgsql
+    - php-__VER__-pdo_pgsql-config
 
 accounts:
   groups:

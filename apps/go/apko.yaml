@@ -1,13 +1,13 @@
 # Assembles a hardened Go toolchain (SDK) image directly from Wolfi's own
 # versioned `go-1.X` packages. No Dockerfile, NO melange build -- apko pulls the
-# pinned `go-__GOVER__` package straight from the Wolfi `os` repository, so each
+# pinned `go-__VER__` package straight from the Wolfi `os` repository, so each
 # minor version is a pure package-assembly.
 #
 # IMAGE-ONLY -- no Helm chart. This is a LANGUAGE/SDK image: the 0-CVE, signed,
 # nonroot, multi-arch answer to `golang:1.x`. Developers `FROM` it to build their
 # Go programs (like Chainguard's go image) or `docker run <img> build ...`.
 #
-# TEMPLATE NOTE: `__GOVER__` is a build-time placeholder. CI substitutes the
+# TEMPLATE NOTE: `__VER__` is a build-time placeholder. CI substitutes the
 # minor version (1.24 / 1.25 / 1.26) per matrix entry with `sed` before apko
 # runs, so this single file covers every shipped version.
 contents:
@@ -18,7 +18,7 @@ contents:
   packages:
     - wolfi-baselayout
     - ca-certificates-bundle
-    - go-__GOVER__                # the pinned Go toolchain minor from Wolfi
+    - go-__VER__                # the pinned Go toolchain minor from Wolfi
                                   # (pulls bash + build-base for cgo as deps)
 
 accounts:

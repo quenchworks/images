@@ -1,5 +1,5 @@
 # Assembles a hardened Maven image directly from Wolfi's own versioned
-# `maven-__MVNVER__` package layered onto a pinned OpenJDK. No Dockerfile, NO
+# `maven-__VER__` package layered onto a pinned OpenJDK. No Dockerfile, NO
 # melange build -- apko pulls `maven-3.9` plus `openjdk-__JDKVER__-default-jdk`
 # straight from the Wolfi `os` repository, so this is a pure package-assembly.
 #
@@ -7,7 +7,7 @@
 # nonroot, multi-arch answer to the official `maven` image. Developers `FROM` it
 # in CI or run `mvn` directly.
 #
-# TEMPLATE NOTE: `__MVNVER__`/`__JDKVER__` are build-time placeholders. CI
+# TEMPLATE NOTE: `__VER__`/`__JDKVER__` are build-time placeholders. CI
 # substitutes the Maven line (3.9) and the JDK LTS (21) per matrix entry with
 # `sed` before apko runs. /usr/bin/mvn is a `/bin/sh` launcher that needs a
 # POSIX shell (busybox: sh + dirname/tr/expr) AND a JDK on JAVA_HOME/PATH; both
@@ -23,7 +23,7 @@ contents:
     - ca-certificates-bundle
     - busybox                            # /bin/sh + dirname/tr/expr for the mvn launcher
     - openjdk-__JDKVER__-default-jdk     # full JDK (java + javac) that mvn drives
-    - maven-__MVNVER__                   # the pinned Maven line from Wolfi (/usr/bin/mvn)
+    - maven-__VER__                   # the pinned Maven line from Wolfi (/usr/bin/mvn)
 
 accounts:
   groups:

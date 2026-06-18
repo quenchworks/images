@@ -1,6 +1,6 @@
 # Assembles a hardened Rust toolchain (cargo + rustc) image directly from
 # Wolfi's own versioned `rust-1.X` packages. No Dockerfile, NO melange build --
-# apko pulls the pinned `rust-__RUSTVER__` package straight from the Wolfi `os`
+# apko pulls the pinned `rust-__VER__` package straight from the Wolfi `os`
 # repository. That single package PROVIDES cargo, rustc, rustfmt, clippy, etc.,
 # so each minor version is a pure package-assembly.
 #
@@ -10,7 +10,7 @@
 #
 # NOTE: Wolfi DOES version Rust into per-minor packages (rust-1.69 .. rust-1.96),
 # so -- like Go/Python -- we ship the latest 3 stable minors via a matrix.
-# `__RUSTVER__` is a build-time placeholder CI substitutes (1.94 / 1.95 / 1.96).
+# `__VER__` is a build-time placeholder CI substitutes (1.94 / 1.95 / 1.96).
 contents:
   keyring:
     - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
@@ -19,7 +19,7 @@ contents:
   packages:
     - wolfi-baselayout
     - ca-certificates-bundle
-    - rust-__RUSTVER__            # pinned Rust minor; provides cargo + rustc
+    - rust-__VER__            # pinned Rust minor; provides cargo + rustc
     - build-base                  # gcc + binutils ld: the C toolchain cargo
                                   # shells out to for the final link step
 

@@ -1,6 +1,6 @@
 # Assembles a hardened Erlang/OTP (BEAM) runtime/base image directly from
 # Wolfi's own versioned `erlang-NN` packages. No Dockerfile, NO melange build --
-# apko pulls the pinned `erlang-__OTPVER__` package straight from the Wolfi `os`
+# apko pulls the pinned `erlang-__VER__` package straight from the Wolfi `os`
 # repository, so each OTP major is a pure package-assembly.
 #
 # IMAGE-ONLY -- no Helm chart. This is a LANGUAGE/BASE image: the 0-CVE, signed,
@@ -9,7 +9,7 @@
 #
 # NOTE: Wolfi versions Erlang into per-major packages (erlang-25 .. erlang-29),
 # so -- like Go/Rust/Python -- we ship the latest 3 stable majors via a matrix.
-# `__OTPVER__` is a build-time placeholder CI substitutes (27 / 28 / 29).
+# `__VER__` is a build-time placeholder CI substitutes (27 / 28 / 29).
 #
 # SHELL REQUIRED: Erlang's `erl`/`erlc`/`escript` front-ends are POSIX-sh
 # wrapper scripts (they compute ROOTDIR then exec the `erlexec` ELF binary), and
@@ -25,7 +25,7 @@ contents:
     - wolfi-baselayout
     - ca-certificates-bundle
     - busybox                      # /bin/sh -- required by erl/erlc/escript
-    - erlang-__OTPVER__            # the pinned OTP major from Wolfi (BEAM + erts)
+    - erlang-__VER__            # the pinned OTP major from Wolfi (BEAM + erts)
 
 accounts:
   groups:
