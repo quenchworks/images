@@ -96,16 +96,8 @@ scan: check-tools require-app
 .PHONY: build-all
 build-all: check-tools check-key
 	$(eval CMD=build-all)
-	@mkdir -p $(LOG_DIR)
-	@echo "🏗  building every app one at a time (placeholder/runtime apps are skipped for now)…"
-	@ok=0; skip=0; fail=0; failed=""; \
-	for d in apps/*/; do a=$$(basename "$$d"); \
-	  printf '\n──── %s ────\n' "$$a"; \
-	  if PUSH=1 $(BUILD) "$$a" "" >> $(LOG_FILE) 2>&1; then ok=$$((ok+1)); echo "✅ $$a"; \
-	  elif [ $$? -eq 2 ]; then skip=$$((skip+1)); echo "⏭  $$a (needs render — skipped)"; \
-	  else fail=$$((fail+1)); failed="$$failed $$a"; echo "❌ $$a"; fi; done; \
-	echo ""; echo "done: $$ok built, $$skip skipped, $$fail failed.$${failed:+ Failed:$$failed}"; \
-	echo "📊 log: $(LOG_FILE)"
+	@echo "🏗  building every app, every version, one at a time (arches=$(ARCHES), push=$(PUSH))…"
+	$(call run_with_log,PUSH=$(PUSH) ARCHES=$(ARCHES) GHCR_OWNER=$(OWNER) COSIGN_KEY=$(COSIGN_KEY) scripts/build-all.sh)
 
 # ------------------------------------------
 # Verify (what your users run, key-based)
