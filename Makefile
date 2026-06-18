@@ -99,6 +99,16 @@ build-all: check-tools check-key
 	@echo "🏗  building every app, every version, one at a time (arches=$(ARCHES), push=$(PUSH))…"
 	$(call run_with_log,PUSH=$(PUSH) ARCHES=$(ARCHES) GHCR_OWNER=$(OWNER) COSIGN_KEY=$(COSIGN_KEY) scripts/build-all.sh)
 
+# Whole catalog, JOBS apps in parallel (each app builds all its versions in
+# order). The native build strategy: 2 at a time, next starts as one finishes.
+# Optional APPS="redis nginx" limits to a subset.
+JOBS ?= 2
+.PHONY: catalog
+catalog: check-tools check-key
+	$(eval CMD=catalog)
+	@echo "🏗  catalog — $(JOBS) apps in parallel, every version, multi-arch (arches=$(ARCHES), push=$(PUSH))…"
+	$(call run_with_log,PUSH=$(PUSH) ARCHES=$(ARCHES) GHCR_OWNER=$(OWNER) COSIGN_KEY=$(COSIGN_KEY) JOBS=$(JOBS) scripts/build-catalog.sh $(APPS))
+
 # ------------------------------------------
 # Verify (what your users run, key-based)
 # ------------------------------------------

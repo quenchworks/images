@@ -25,6 +25,13 @@ GHCR="ghcr.io/${OWNER}/images/${APP}"
 COSIGN_KEY="${COSIGN_KEY:-$ROOT/.secrets/cosign.key}"
 APPDIR="$ROOT/apps/$APP"
 
+# Route build temp to the big disk, NOT the small RAM-backed tmpfs at /tmp.
+# melange's bubblewrap sandbox + cargo/go unpack large trees via mktemp (honors
+# TMPDIR); on a 14G tmpfs two parallel heavy builds hit "no space left on
+# device". /var/tmp lives on the main disk. Override with QUENCH_TMPDIR.
+export TMPDIR="${QUENCH_TMPDIR:-/var/tmp/quench-build}"
+mkdir -p "$TMPDIR"
+
 [ -d "$APPDIR" ]            || { echo "❌ no such app: apps/$APP"; exit 1; }
 [ -f "$APPDIR/apko.yaml" ] || { echo "❌ apps/$APP/apko.yaml missing"; exit 1; }
 cd "$APPDIR"
