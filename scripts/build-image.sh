@@ -29,8 +29,21 @@ APPDIR="$ROOT/apps/$APP"
 [ -f "$APPDIR/apko.yaml" ] || { echo "❌ apps/$APP/apko.yaml missing"; exit 1; }
 cd "$APPDIR"
 
-# --- version: explicit arg > melange.yaml > catalog > "latest" -------------
+# --- per-app build config (uniform "pass the version from outside") ---------
+# apps/<app>/build.conf may declare:  VERSIONS=(...)  and a  render <version>
+# function that prints a sed program substituting that app's placeholders.
+HAS_CONF=0
+if [ -f build.conf ]; then
+  # shellcheck disable=SC1091
+  source ./build.conf
+  HAS_CONF=1
+fi
+
+# --- version: explicit arg > build.conf newest > melange.yaml > catalog > latest
 VERSION="$VERSION_ARG"
+if [ -z "$VERSION" ] && [ "$HAS_CONF" = 1 ] && [ "${#VERSIONS[@]}" -gt 0 ]; then
+  VERSION="${VERSIONS[$(( ${#VERSIONS[@]} - 1 ))]}"     # newest = last in the list
+fi
 if [ -z "$VERSION" ] && [ -f melange.yaml ]; then
   VERSION="$(awk '/^  version:/{print $2; exit}' melange.yaml)"
 fi
@@ -39,11 +52,19 @@ if [ -z "$VERSION" ]; then
   [ -z "$VERSION" ] && VERSION="latest"
 fi
 
-# --- guard: unrendered placeholder (node/python/etc. need a rendered apko) --
-if grep -vE '^[[:space:]]*#' apko.yaml | grep -q '__[A-Z0-9_]*__'; then
-  echo "❌ apps/$APP/apko.yaml has an unrendered placeholder (e.g. __NODEVER__)."
-  echo "   Placeholder/runtime apps need a per-app render step; not yet supported here."
-  exit 2
+# --- render placeholders, if any, via the app's render() --------------------
+APKO=apko.yaml
+MEL=melange.yaml
+needs_render() { grep -vE '^[[:space:]]*#' "$1" 2>/dev/null | grep -q '__[A-Z0-9_]*__'; }
+if needs_render apko.yaml || { [ -f melange.yaml ] && needs_render melange.yaml; }; then
+  if [ "$HAS_CONF" = 1 ] && declare -F render >/dev/null; then
+    SED_PROG="$(render "$VERSION")"
+    sed -e "$SED_PROG" apko.yaml > apko.rendered.yaml; APKO=apko.rendered.yaml
+    [ -f melange.yaml ] && { sed -e "$SED_PROG" melange.yaml > melange.rendered.yaml; MEL=melange.rendered.yaml; }
+  else
+    echo "❌ apps/$APP has placeholders (e.g. __VER__) but no build.conf render() — add apps/$APP/build.conf."
+    exit 2
+  fi
 fi
 
 echo "🏗  $APP:$VERSION   arches=$ARCHES   push=$PUSH"
@@ -57,13 +78,13 @@ if [ -f melange.yaml ]; then
     docker run --privileged --rm tonistiigi/binfmt --install arm64 >/dev/null 2>&1 || true
   fi
   echo "📦 melange build ($ARCHES) ..."
-  melange build melange.yaml --arch "$ARCHES" --signing-key melange.rsa --out-dir ./packages
+  melange build "$MEL" --arch "$ARCHES" --signing-key melange.rsa --out-dir ./packages
 fi
 
 # --- 0-CVE gate: assemble the native arch and scan the tar -----------------
 NATIVE="$(uname -m)"; [ "$NATIVE" = "arm64" ] && NATIVE="aarch64"
 echo "🔎 apko build (scan tar, $NATIVE) ..."
-apko build apko.yaml "$GHCR:scan" image.tar --arch "$NATIVE" >/dev/null
+apko build "$APKO" "$GHCR:scan" image.tar --arch "$NATIVE" >/dev/null
 echo "🛡  trivy 0-CVE gate ..."
 trivy image --input image.tar --exit-code 1 --ignore-unfixed \
   --severity CRITICAL,HIGH,MEDIUM,LOW --scanners vuln --quiet
@@ -77,7 +98,7 @@ fi
 # --- publish the multi-arch index ------------------------------------------
 command -v cosign >/dev/null || { echo "❌ cosign not installed"; exit 1; }
 echo "⬆  apko publish $GHCR:$VERSION ($ARCHES) ..."
-apko publish apko.yaml "$GHCR:$VERSION" --arch "$ARCHES" >/dev/null
+apko publish "$APKO" "$GHCR:$VERSION" --arch "$ARCHES" >/dev/null
 DIGEST="$(crane digest "$GHCR:$VERSION")"
 REF="$GHCR@$DIGEST"
 echo "   $REF"
