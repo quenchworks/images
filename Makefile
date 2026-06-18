@@ -83,8 +83,8 @@ login:
 .PHONY: build
 build: check-tools check-key require-app
 	$(eval CMD=build-$(APP))
-	@echo "🏗  building $(APP) $(if $(VERSION),$(VERSION),(auto)) → $(GHCR)/$(APP)"
-	$(call run_with_log,PUSH=$(PUSH) $(BUILD) "$(APP)" "$(VERSION)")
+	@[ -n "$(VERSION)" ] && echo "🏗  building $(APP):$(VERSION) → $(GHCR)/$(APP)" || echo "🏗  building ALL versions of $(APP) → $(GHCR)/$(APP)"
+	$(call run_with_log,if [ -n "$(VERSION)" ]; then PUSH=$(PUSH) $(BUILD) "$(APP)" "$(VERSION)"; else PUSH=$(PUSH) ARCHES=$(ARCHES) GHCR_OWNER=$(OWNER) COSIGN_KEY=$(COSIGN_KEY) scripts/build-all.sh "$(APP)"; fi)
 	@echo "📊 log: $(LOG_FILE)"
 
 .PHONY: scan

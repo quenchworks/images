@@ -1,13 +1,24 @@
 #!/usr/bin/env bash
-# Build EVERY app, EVERY version, one at a time (the full local cutover).
-# For build.conf apps it iterates VERSIONS; others build once (version auto).
-# Continues past failures and prints a summary. Honors PUSH / ARCHES from env.
-set -uo pipefail   # not -e: one failing app must not stop the catalog
+# Build EVERY version of every app (or one app, if a name is passed), one at a
+# time. For build.conf apps it iterates VERSIONS; others build once (version
+# auto). Continues past failures and prints a summary. Honors PUSH / ARCHES.
+#
+# Usage: build-all.sh           # whole catalog, every version
+#        build-all.sh <app>     # one app, every version
+set -uo pipefail   # not -e: one failing build must not stop the rest
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; cd "$ROOT"
 export PATH="$HOME/.local/bin:$PATH"
 
+FILTER="${1:-}"
+if [ -n "$FILTER" ]; then
+  [ -d "apps/$FILTER" ] || { echo "❌ no such app: apps/$FILTER"; exit 1; }
+  DIRS=("apps/$FILTER/")
+else
+  DIRS=(apps/*/)
+fi
+
 ok=0; skip=0; fail=0; failed=""
-for d in apps/*/; do
+for d in "${DIRS[@]}"; do
   a="$(basename "$d")"
   vers=""
   [ -f "$d/build.conf" ] && vers="$(bash -c "source '$d/build.conf'; printf '%s ' \"\${VERSIONS[@]:-}\"" 2>/dev/null || true)"
