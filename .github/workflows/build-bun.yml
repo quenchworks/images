@@ -1,36 +1,47 @@
 name: build-bun
 
-# LANGUAGE-RUNTIMES track. Hardened Bun image, assembled straight from
-# Wolfi's prebuilt `bun` package with apko -- NO melange/from-source step,
-# since Wolfi already packages it (0-CVE). Each native per-arch apko build runs
-# (no QEMU), the hard 0-CVE Trivy gate, then a merge job assembles + signs +
-# attests the multi-arch index.
-#
-# VERSIONING: Wolfi ships a SINGLE floating `bun` package (no per-minor split), so there is no version matrix -- one tag tracks the latest 1.x.
-#
-# IMAGE-ONLY: Bun is a base image with no Helm chart, so there is NO
-# charts-repo dispatch. No :latest tag is ever published -- the single published
-# tag is `1`, kept current by the DAILY rebuild.
+# LANGUAGE-RUNTIMES track. Hardened Bun image from Wolfi's prebuilt `bun`
+# package with apko -- NO melange. build.conf is the SINGLE SOURCE OF TRUTH:
+# VERSIONS holds the full X.Y.Z (used as-is as the tag); Wolfi ships a single
+# floating `bun` package so PKG maps the version to `bun` and apko.yaml's
+# __PKG__ is replaced with it. Native per-arch build (amd64 + arm64, no QEMU),
+# hard 0-CVE gate, merge + sign + attest. IMAGE-ONLY, manual trigger only.
 on:
   workflow_dispatch:
 permissions:
   contents: read
-  packages: write        # push to GHCR
-  id-token: write        # cosign keyless + attestation signing
-  attestations: write    # SLSA build provenance + SBOM attestation
+  packages: write
+  id-token: write
+  attestations: write
 
 env:
+  APP: bun
   GHCR_IMAGE: ghcr.io/quenchworks/images/bun
-  IMAGE_TAG: "1"
 
 jobs:
+  prep:
+    runs-on: ubuntu-latest
+    outputs:
+      vers: ${{ steps.v.outputs.vers }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: v
+        run: |
+          set -euo pipefail
+          source "apps/${APP}/build.conf"
+          latest3=("${VERSIONS[@]: -3}")
+          echo "building: ${latest3[*]}"
+          echo "vers=$(printf '%s\n' "${latest3[@]}" | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: prep
     strategy:
       fail-fast: false
       matrix:
+        ver: ${{ fromJson(needs.prep.outputs.vers) }}
         arch:
           - { name: x86_64,  platform: amd64, runner: ubuntu-latest }
-          - { name: aarch64, platform: arm64, runner: ubuntu-24.04-arm }   # native arm64, free for public repos
+          - { name: aarch64, platform: arm64, runner: ubuntu-24.04-arm }
     runs-on: ${{ matrix.arch.runner }}
     defaults:
       run:
@@ -41,23 +52,28 @@ jobs:
       - name: Install apko (native ${{ matrix.arch.platform }})
         working-directory: ${{ github.workspace }}
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # authenticate the API call to dodge the 60/hr anon rate-limit (403)
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           APKO_VER=""
           for i in 1 2 3 4 5; do
             APKO_VER="$(gh api repos/chainguard-dev/apko/releases/latest --jq .tag_name 2>/dev/null || true)"
             [ -n "$APKO_VER" ] && break
-            echo "apko version lookup attempt $i failed; retrying..." >&2; sleep 5
+            echo "apko lookup attempt $i failed; retrying..." >&2; sleep 5
           done
-          [ -n "$APKO_VER" ] || { echo "could not resolve latest apko version"; exit 1; }
-          echo "apko ${APKO_VER}"
+          [ -n "$APKO_VER" ] || { echo "could not resolve latest apko"; exit 1; }
           curl -fsSL "https://github.com/chainguard-dev/apko/releases/download/${APKO_VER}/apko_${APKO_VER#v}_linux_${{ matrix.arch.platform }}.tar.gz" \
             | sudo tar xz --strip-components=1 -C /usr/local/bin
           apko version | head -1
 
+      - name: Render apko config for ${{ matrix.ver }} (build.conf -> __PKG__)
+        run: |
+          set -euo pipefail
+          source build.conf
+          sed -e "$(render '${{ matrix.ver }}')" apko.yaml > apko.rendered.yaml
+
       - name: Assemble single-arch image for the scan gate
-        run: apko build apko.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}
+        run: apko build apko.rendered.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}
 
       - name: Scan, the hard 0-CVE gate (before publish)
         uses: aquasecurity/trivy-action@master
@@ -73,7 +89,8 @@ jobs:
         run: |
           docker load < image.tar
           docker tag "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}-${{ matrix.arch.platform }}" bun-smoke:local
-          bash test.sh bun-smoke:local "1"
+          major="${{ matrix.ver }}"; major="${major%%.*}"
+          bash test.sh bun-smoke:local "${major}"
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -82,12 +99,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish the single-arch image
-        run: apko publish apko.yaml "${GHCR_IMAGE}:${IMAGE_TAG}-${{ matrix.arch.platform }}" --arch ${{ matrix.arch.name }}
+      - name: Publish the single-arch image (tag = full X.Y.Z)
+        run: apko publish apko.rendered.yaml "${GHCR_IMAGE}:${{ matrix.ver }}-${{ matrix.arch.platform }}" --arch ${{ matrix.arch.name }}
 
   merge:
-    needs: build
+    needs: [prep, build]
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ver: ${{ fromJson(needs.prep.outputs.vers) }}
     steps:
       - uses: actions/checkout@v5
       - uses: sigstore/cosign-installer@v3
@@ -99,14 +120,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Assemble the multi-arch index
+      - name: Assemble the multi-arch index (tag = full X.Y.Z)
         id: merge
         run: |
-          docker buildx imagetools create -t "${GHCR_IMAGE}:${IMAGE_TAG}" \
-            "${GHCR_IMAGE}:${IMAGE_TAG}-amd64" "${GHCR_IMAGE}:${IMAGE_TAG}-arm64"
-          digest="$(docker buildx imagetools inspect "${GHCR_IMAGE}:${IMAGE_TAG}" --format '{{.Manifest.Digest}}')"
+          docker buildx imagetools create -t "${GHCR_IMAGE}:${{ matrix.ver }}" \
+            "${GHCR_IMAGE}:${{ matrix.ver }}-amd64" "${GHCR_IMAGE}:${{ matrix.ver }}-arm64"
+          digest="$(docker buildx imagetools inspect "${GHCR_IMAGE}:${{ matrix.ver }}" --format '{{.Manifest.Digest}}')"
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
-          echo "published ${GHCR_IMAGE}:${IMAGE_TAG}@${digest}"
+          echo "published ${GHCR_IMAGE}:${{ matrix.ver }}@${digest}"
 
       - name: Sign the multi-arch index (cosign keyless)
         run: cosign sign --yes "${GHCR_IMAGE}@${{ steps.merge.outputs.digest }}"
