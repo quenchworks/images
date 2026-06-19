@@ -1,18 +1,16 @@
 name: build-aspnet
 
-# LANGUAGE-RUNTIMES track. Hardened .NET SDK base images, assembled straight
-# from Wolfi's versioned `dotnet-N-sdk` packages with apko -- NO melange/
-# from-source step, since Wolfi already packages the .NET SDK. A MATRIX fans out
-# over the latest 3 stable major bands; each one runs a NATIVE per-arch apko
-# build (no QEMU), the hard 0-CVE Trivy gate, then a per-version merge job that
-# assembles + signs + attests the multi-arch index.
+# LANGUAGE-RUNTIMES track. Hardened ASP.NET Core runtime images, assembled from
+# Wolfi's versioned `aspnet-N-runtime` packages with apko -- NO melange.
 #
-# IMAGE-ONLY: .NET SDK is a base/runtime image with no Helm chart, so there is
-# NO charts-repo dispatch.
+# build.conf is the SINGLE SOURCE OF TRUTH. The prep job reads VERSIONS (the
+# major lines: 8/9/10) and, for each, resolves the FULL X.Y.Z from the Wolfi
+# package version (wolfi_pkg -> APKINDEX), e.g. aspnet-8-runtime = 8.0.122.
+# apko installs by line (aspnet-<line>-runtime via render __VER__); the PUBLISHED
+# TAG is the full X.Y.Z. Native per-arch builds (amd64 + arm64, no QEMU), hard
+# 0-CVE gate, per-version merge + sign + attest. Manual trigger only.
 #
-# TEMPLATE: to add another major (or another runtime), copy a matrix entry and
-# change `ver`; apps/aspnet/apko.yaml carries the `__VER__` placeholder that CI
-# substitutes per entry. No :latest tag is ever published.
+# IMAGE-ONLY: no Helm chart, no charts-repo dispatch. No :latest tag.
 on:
   workflow_dispatch:
 permissions:
@@ -22,17 +20,39 @@ permissions:
   attestations: write    # SLSA build provenance + SBOM attestation
 
 env:
+  APP: aspnet
   GHCR_IMAGE: ghcr.io/quenchworks/images/aspnet
 
 jobs:
+  # Resolve {line, full X.Y.Z} for the latest 3 lines from build.conf + APKINDEX.
+  prep:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.v.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: v
+        name: Resolve full versions from build.conf + Wolfi APKINDEX
+        run: |
+          set -euo pipefail
+          source "apps/${APP}/build.conf"
+          curl -fsSL https://packages.wolfi.dev/os/x86_64/APKINDEX.tar.gz | tar -xzO APKINDEX > /tmp/APKINDEX
+          out="[]"
+          for line in "${VERSIONS[@]: -3}"; do
+            pkg="$(wolfi_pkg "$line")"
+            full="$(awk -v p="$pkg" 'BEGIN{RS="\n\n"}{ if($0 ~ "\nP:"p"\n" || $0 ~ "^P:"p"\n"){ match($0,/\nV:[^\n]+/); v=substr($0,RSTART+3,RLENGTH-3); sub(/-r[0-9]+$/,"",v); print v; exit } }' /tmp/APKINDEX)"
+            [ -n "$full" ] || { echo "could not resolve $pkg in Wolfi APKINDEX"; exit 1; }
+            out="$(echo "$out" | jq -c --arg l "$line" --arg v "$full" '. + [{line:$l, ver:$v}]')"
+          done
+          echo "resolved: $out"
+          echo "matrix=$out" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: prep
     strategy:
       fail-fast: false
       matrix:
-        # latest 3 stable Wolfi-packaged .NET majors x both native arches.
-        # 8 = LTS, 9 = STS, 10 = LTS. GitHub's `include` does NOT cross-product
-        # two free axes here, so we use two plain axes (3 majors x 2 arches = 6).
-        ver: ["8", "9", "10"]
+        item: ${{ fromJson(needs.prep.outputs.matrix) }}
         arch:
           - { name: x86_64,  platform: amd64, runner: ubuntu-latest }
           - { name: aarch64, platform: arm64, runner: ubuntu-24.04-arm }   # native arm64, free for public repos
@@ -51,8 +71,11 @@ jobs:
             | sudo tar xz --strip-components=1 -C /usr/local/bin
           apko version | head -1
 
-      - name: Render apko config for .NET ${{ matrix.ver }}
-        run: sed "s/__VER__/${{ matrix.ver }}/g" apko.yaml > apko.rendered.yaml
+      - name: Render apko config for .NET ${{ matrix.item.line }} (-> tag ${{ matrix.item.ver }})
+        run: |
+          set -euo pipefail
+          source build.conf
+          sed -e "$(render '${{ matrix.item.line }}')" apko.yaml > apko.rendered.yaml
 
       - name: Assemble single-arch image for the scan gate
         run: apko build apko.rendered.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}
@@ -70,9 +93,8 @@ jobs:
       - name: Smoke test the single-arch image
         run: |
           docker load < image.tar
-          # apko load tags the image as <ref>-<arch>; the scan ref ended in the platform.
           docker tag "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}-${{ matrix.arch.platform }}" aspnet-smoke:local
-          bash test.sh aspnet-smoke:local "${{ matrix.ver }}"
+          bash test.sh aspnet-smoke:local "${{ matrix.item.line }}"
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -81,16 +103,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish the single-arch image
-        run: apko publish apko.rendered.yaml "${GHCR_IMAGE}:${{ matrix.ver }}-${{ matrix.arch.platform }}" --arch ${{ matrix.arch.name }}
+      - name: Publish the single-arch image (tag = full X.Y.Z)
+        run: apko publish apko.rendered.yaml "${GHCR_IMAGE}:${{ matrix.item.ver }}-${{ matrix.arch.platform }}" --arch ${{ matrix.arch.name }}
 
   merge:
-    needs: build
+    needs: [prep, build]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        ver: ["8", "9", "10"]
+        item: ${{ fromJson(needs.prep.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v5
       - uses: sigstore/cosign-installer@v3
@@ -102,14 +124,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Assemble the multi-arch index
+      - name: Assemble the multi-arch index (tag = full X.Y.Z)
         id: merge
         run: |
-          docker buildx imagetools create -t "${GHCR_IMAGE}:${{ matrix.ver }}" \
-            "${GHCR_IMAGE}:${{ matrix.ver }}-amd64" "${GHCR_IMAGE}:${{ matrix.ver }}-arm64"
-          digest="$(docker buildx imagetools inspect "${GHCR_IMAGE}:${{ matrix.ver }}" --format '{{.Manifest.Digest}}')"
+          docker buildx imagetools create -t "${GHCR_IMAGE}:${{ matrix.item.ver }}" \
+            "${GHCR_IMAGE}:${{ matrix.item.ver }}-amd64" "${GHCR_IMAGE}:${{ matrix.item.ver }}-arm64"
+          digest="$(docker buildx imagetools inspect "${GHCR_IMAGE}:${{ matrix.item.ver }}" --format '{{.Manifest.Digest}}')"
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
-          echo "published ${GHCR_IMAGE}:${{ matrix.ver }}@${digest}"
+          echo "published ${GHCR_IMAGE}:${{ matrix.item.ver }}@${digest}"
 
       - name: Sign the multi-arch index (cosign keyless)
         run: cosign sign --yes "${GHCR_IMAGE}@${{ steps.merge.outputs.digest }}"
@@ -137,4 +159,4 @@ jobs:
           subject-digest: ${{ steps.merge.outputs.digest }}
           push-to-registry: true
 
-      # IMAGE-ONLY: no charts-repo dispatch. .NET SDK is a base/runtime image.
+      # IMAGE-ONLY: no charts-repo dispatch. ASP.NET runtime is a base image.
