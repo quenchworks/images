@@ -16,7 +16,7 @@ package:
     - license: Apache-2.0
   dependencies:
     runtime:
-      - openjdk-17-jre     # Cassandra 5.0 runs on JDK 17 (the scanned CVE surface)
+      - __JREPKG__         # JRE per cassandra line (4.0/4.1 -> openjdk-11, 5.0 -> openjdk-17)
       - bash               # the cassandra bin/*.sh launchers are bash
       - busybox
 
@@ -34,7 +34,7 @@ pipeline:
   - uses: fetch
     with:
       uri: https://downloads.apache.org/cassandra/${{package.version}}/apache-cassandra-${{package.version}}-bin.tar.gz
-      expected-sha512: "06b7af18c8f41dc13dbfdae186d565a5f91e71ea413c3c5373aec8a4e5074c6dee5632a0e5e98c21665f08f7291d7ca384f61a323c02610c6bca51e074b5a0c4"
+      expected-sha512: "__SHA512__"
       strip-components: 1
   - runs: |
       # install the distribution under /opt/cassandra. There are no Windows .bat

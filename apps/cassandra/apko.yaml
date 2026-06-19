@@ -12,7 +12,7 @@ contents:
   packages:
     - wolfi-baselayout
     - ca-certificates-bundle
-    - openjdk-17-jre
+    - __JREPKG__
     - bash
     - busybox
     - quench-cassandra@local
@@ -33,7 +33,7 @@ entrypoint:
 environment:
   # openjdk-17-jre installs under /usr/lib/jvm with no /usr/bin/java symlink, so the
   # cassandra launchers need JAVA_HOME (cassandra.in.sh runs $JAVA_HOME/bin/java).
-  JAVA_HOME: /usr/lib/jvm/java-17-openjdk
+  JAVA_HOME: /usr/lib/jvm/__JHOME__
   CASSANDRA_CONF: /conf
   CASSANDRA_DATA: /var/lib/cassandra
   CASSANDRA_LOGDIR: /var/log/cassandra
@@ -41,7 +41,7 @@ environment:
   # keep the smoke/default footprint modest; override in the chart.
   MAX_HEAP_SIZE: "512M"
   HEAP_NEWSIZE: "128M"
-  PATH: /usr/lib/jvm/java-17-openjdk/bin:/usr/bin:/opt/cassandra/bin
+  PATH: /usr/lib/jvm/__JHOME__/bin:/usr/bin:/opt/cassandra/bin
 
 work-dir: /var/lib/cassandra
 
