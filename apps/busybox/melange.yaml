@@ -56,6 +56,12 @@ pipeline:
       disable MODPROBE
       disable DEPMOD
       disable MODINFO
+      # SHA1/SHA256 HW-accel is x86-only (SHA-NI). busybox 1.37.0 references the
+      # x86 symbol unconditionally and fails to compile on aarch64
+      # ('sha1_process_block64_shaNI' undeclared). It's only a perf optimization,
+      # so disable it for a portable, multi-arch-clean build across all versions.
+      disable SHA1_HWACCEL
+      disable SHA256_HWACCEL
       # The applets disabled above have no other symbols depending on them, so the
       # edited .config is internally consistent; busybox's Kconfig has no
       # `olddefconfig` target, so we build directly from it. Any unknown symbol would
