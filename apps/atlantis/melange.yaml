@@ -65,7 +65,7 @@ pipeline:
   - uses: fetch
     with:
       uri: https://github.com/runatlantis/atlantis/archive/refs/tags/v${{package.version}}.tar.gz
-      expected-sha256: ba871944e95a3b366f877d16e061e72e11ba02b898f131d22d3620aabee87fd0
+      expected-sha256: __SHA256__
       strip-components: 0
   - runs: |
       cd atlantis-${{package.version}}
@@ -93,11 +93,11 @@ pipeline:
   #    reports the clean release (matches upstream scripts/build.sh LD_FLAGS).
   - uses: fetch
     with:
-      uri: https://github.com/opentofu/opentofu/archive/refs/tags/v1.12.2.tar.gz
-      expected-sha256: f1e13ed2c1552ea7828156a10588a544d8b6b0d2c25f801a07fdf666734604fd
+      uri: https://github.com/opentofu/opentofu/archive/refs/tags/v__TOFUVER__.tar.gz
+      expected-sha256: __TOFUSHA__
       strip-components: 0
   - runs: |
-      cd opentofu-1.12.2
+      cd opentofu-__TOFUVER__
       export CGO_ENABLED=0
       export GOTOOLCHAIN=local
       export GOFLAGS=-mod=mod
