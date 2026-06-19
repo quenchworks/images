@@ -43,8 +43,8 @@ pipeline:
   - runs: |
       VER="${{package.version}}"
       case "$(uname -m)" in
-        x86_64)  charch=amd64; sha=6656a468f8161b966b2af1bc2e12e058b5944966869e3224b5ecccea504af98f96f05f96d16bcb6af2d0cfba313a510a19bf2e6e7adb864fe413fbf2b5a6426c ;;
-        aarch64) charch=arm64; sha=69f8733468c8cd70f610e42eb509196ed24f0ccab7f3e68b6a2499c8bc7d3aa25fb436b0185d7adaaa4eaf0c11d170356d80fa1268c613c838a9749e42fc2ad0 ;;
+        x86_64)  charch=amd64; sha=__SHA_AMD__ ;;
+        aarch64) charch=arm64; sha=__SHA_ARM__ ;;
         *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
       esac
 
@@ -52,7 +52,7 @@ pipeline:
       #    packages.clickhouse.com — that CDN returns 403 to GitHub Actions runner IPs
       #    (works from residential IPs, which is why a local build passes but CI fails).
       #    The GitHub release tarballs are byte-identical (same published artifacts).
-      binurl="https://github.com/ClickHouse/ClickHouse/releases/download/v${VER}-lts/clickhouse-common-static-${VER}-${charch}.tgz"
+      binurl="https://github.com/ClickHouse/ClickHouse/releases/download/v${VER}-__CHANNEL__/clickhouse-common-static-${VER}-${charch}.tgz"
       curl -fsSL -o ch-common.tgz "$binurl"
       echo "${sha}  ch-common.tgz" | sha512sum -c -
       tar -xzf ch-common.tgz
@@ -68,8 +68,8 @@ pipeline:
 
       # 2) the default server config (arch-independent — amd64 tgz is fine for both),
       #    shipped read-only under /opt; the entrypoint seeds a writable copy from it.
-      SRVSHA=c71156af5dba80d6b5fec9fbdf7ede35c505a9a3293325747068235e2cfa90ca8d119b64a87f24feba3b72f15385a428f680bdbf169da7f110408ef9d3478d54
-      curl -fsSL -o ch-server.tgz "https://github.com/ClickHouse/ClickHouse/releases/download/v${VER}-lts/clickhouse-server-${VER}-amd64.tgz"
+      SRVSHA=__SHA_SRV__
+      curl -fsSL -o ch-server.tgz "https://github.com/ClickHouse/ClickHouse/releases/download/v${VER}-__CHANNEL__/clickhouse-server-${VER}-amd64.tgz"
       echo "${SRVSHA}  ch-server.tgz" | sha512sum -c -
       tar -xzf ch-server.tgz
       dflt="${{targets.destdir}}/opt/clickhouse/config-defaults"
