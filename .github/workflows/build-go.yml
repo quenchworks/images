@@ -1,0 +1,168 @@
+name: build-go
+
+# LANGUAGE-RUNTIMES track. Hardened Go toolchain (SDK) images, assembled
+# straight from Wolfi's versioned `go-1.X` packages with apko -- NO melange/
+# from-source step, since Wolfi already packages the Go toolchain.
+#
+# build.conf is the SINGLE SOURCE OF TRUTH: the `prep` job reads
+# apps/go/build.conf and emits the LATEST 3 STABLE versions (the last 3 of
+# VERSIONS); the build matrix fans those out x both native arches (amd64 on
+# ubuntu-latest, arm64 on ubuntu-24.04-arm -- native, NO QEMU). Each runs the
+# hard 0-CVE Trivy gate, then a per-version merge job assembles + signs +
+# attests the multi-arch index. Rendering uses build.conf's render() (__VER__).
+#
+# IMAGE-ONLY: Go is an SDK/base image with no Helm chart, so NO charts dispatch.
+# Manual trigger only (workflow_dispatch). No :latest tag is ever published.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write        # push to GHCR
+  id-token: write        # cosign keyless + attestation signing
+  attestations: write    # SLSA build provenance + SBOM attestation
+
+env:
+  APP: go
+  GHCR_IMAGE: ghcr.io/quenchworks/images/go
+
+jobs:
+  # Read build.conf -> JSON array of the latest 3 stable versions.
+  prep:
+    runs-on: ubuntu-latest
+    outputs:
+      vers: ${{ steps.v.outputs.vers }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: v
+        name: Latest 3 stable versions from build.conf
+        run: |
+          set -euo pipefail
+          source "apps/${APP}/build.conf"
+          latest3=("${VERSIONS[@]: -3}")
+          json="$(printf '%s\n' "${latest3[@]}" | jq -R . | jq -cs .)"
+          echo "building: ${latest3[*]}"
+          echo "vers=${json}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prep
+    strategy:
+      fail-fast: false
+      matrix:
+        ver: ${{ fromJson(needs.prep.outputs.vers) }}
+        arch:
+          - { name: x86_64,  platform: amd64, runner: ubuntu-latest }
+          - { name: aarch64, platform: arm64, runner: ubuntu-24.04-arm }   # native arm64, free for public repos
+    runs-on: ${{ matrix.arch.runner }}
+    defaults:
+      run:
+        working-directory: apps/go
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install apko (native ${{ matrix.arch.platform }})
+        working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # authenticate the API call to dodge the 60/hr anon rate-limit (403)
+        run: |
+          set -euo pipefail
+          APKO_VER=""
+          for i in 1 2 3 4 5; do
+            APKO_VER="$(gh api repos/chainguard-dev/apko/releases/latest --jq .tag_name 2>/dev/null || true)"
+            [ -n "$APKO_VER" ] && break
+            echo "apko version lookup attempt $i failed; retrying..." >&2; sleep 5
+          done
+          [ -n "$APKO_VER" ] || { echo "could not resolve latest apko version"; exit 1; }
+          echo "apko ${APKO_VER}"
+          curl -fsSL "https://github.com/chainguard-dev/apko/releases/download/${APKO_VER}/apko_${APKO_VER#v}_linux_${{ matrix.arch.platform }}.tar.gz" \
+            | sudo tar xz --strip-components=1 -C /usr/local/bin
+          apko version | head -1
+
+      - name: Render apko config for Go ${{ matrix.ver }} (build.conf render)
+        run: |
+          set -euo pipefail
+          source build.conf
+          sed -e "$(render '${{ matrix.ver }}')" apko.yaml > apko.rendered.yaml
+
+      - name: Assemble single-arch image for the scan gate
+        run: apko build apko.rendered.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}
+
+      - name: Scan, the hard 0-CVE gate (before publish)
+        uses: aquasecurity/trivy-action@master
+        with:
+          input: apps/go/image.tar
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH,MEDIUM,LOW
+          scanners: vuln
+
+      - name: Smoke test the single-arch image
+        run: |
+          docker load < image.tar
+          docker tag "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}-${{ matrix.arch.platform }}" go-smoke:local
+          bash test.sh go-smoke:local "${{ matrix.ver }}"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish the single-arch image
+        run: apko publish apko.rendered.yaml "${GHCR_IMAGE}:${{ matrix.ver }}-${{ matrix.arch.platform }}" --arch ${{ matrix.arch.name }}
+
+  merge:
+    needs: [prep, build]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ver: ${{ fromJson(needs.prep.outputs.vers) }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Assemble the multi-arch index
+        id: merge
+        run: |
+          docker buildx imagetools create -t "${GHCR_IMAGE}:${{ matrix.ver }}" \
+            "${GHCR_IMAGE}:${{ matrix.ver }}-amd64" "${GHCR_IMAGE}:${{ matrix.ver }}-arm64"
+          digest="$(docker buildx imagetools inspect "${GHCR_IMAGE}:${{ matrix.ver }}" --format '{{.Manifest.Digest}}')"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          echo "published ${GHCR_IMAGE}:${{ matrix.ver }}@${digest}"
+
+      - name: Sign the multi-arch index (cosign keyless)
+        run: cosign sign --yes "${GHCR_IMAGE}@${{ steps.merge.outputs.digest }}"
+
+      - name: Generate SBOM (SPDX) for the signed index
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.GHCR_IMAGE }}@${{ steps.merge.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: false
+
+      - name: Attest the SBOM (keyless, pushed to GHCR)
+        uses: actions/attest-sbom@v2
+        with:
+          subject-name: ${{ env.GHCR_IMAGE }}
+          subject-digest: ${{ steps.merge.outputs.digest }}
+          sbom-path: sbom.spdx.json
+          push-to-registry: true
+
+      - name: Attest build provenance (SLSA, pushed to GHCR)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.GHCR_IMAGE }}
+          subject-digest: ${{ steps.merge.outputs.digest }}
+          push-to-registry: true
+
+      # IMAGE-ONLY: no charts-repo dispatch. Go is an SDK/base image.
