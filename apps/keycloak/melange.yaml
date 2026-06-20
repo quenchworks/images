@@ -38,7 +38,7 @@ pipeline:
   - uses: fetch
     with:
       uri: https://github.com/keycloak/keycloak/releases/download/${{package.version}}/keycloak-${{package.version}}.tar.gz
-      expected-sha512: "b6b10efccbffeea9d7e976d9c0c9ba35b7fe2a6d3eaa0e14075897bac7b533c36ec1fb6c21c670cb11c3334e43f9b4de5f2d98c5d321582255da0adadc9aca93"
+      expected-sha512: "__SHA512__"
       strip-components: 1
   - runs: |
       # Run the augmentation (`kc.sh build`) at IMAGE BUILD time so runtime is optimized
@@ -49,11 +49,13 @@ pipeline:
       export JAVA_HOME=/usr/lib/jvm/java-21-openjdk
       export PATH="$JAVA_HOME/bin:$PATH"
       # the dist's bin/kc.sh resolves kc.home.dir from its own location; run it in place
+      # --cache is a BUILD option in Keycloak 26.5+ but RUNTIME-only in 26.4.x
+      # (kc.sh build rejects it). ispn is the default in every version, so build.conf
+      # passes "--cache=ispn" for 26.5/26.6 and an empty __CACHE_ARG__ for 26.4.
       ./bin/kc.sh build \
         --health-enabled=true \
         --metrics-enabled=true \
-        --db=postgres \
-        --cache=ispn
+        --db=postgres __CACHE_ARG__
 
       dest="${{targets.destdir}}/opt/keycloak"
       install -d "$dest"
