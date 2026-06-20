@@ -55,8 +55,14 @@ jobs:
             | sudo tar xz --strip-components=1 -C /usr/local/bin
           apko version | head -1
 
-      - name: Render apko config for Maven ${{ matrix.tag }} (JDK ${{ matrix.jdkver }})
-        run: sed -e "s/__MVNVER__/${{ matrix.mvnver }}/g" -e "s/__JDKVER__/${{ matrix.jdkver }}/g" apko.yaml > apko.rendered.yaml
+      - name: Render apko config for Maven ${{ matrix.tag }} (JDK ${{ matrix.jdkver }}) (build.conf render)
+        run: |
+          set -euo pipefail
+          source build.conf
+          # build.conf render() substitutes __VER__ (the Maven line) and __JDKVER__ (21),
+          # matching apps/maven/apko.yaml. (The old inline sed used __MVNVER__, which does
+          # not exist in apko.yaml, leaving maven-__VER__ unsubstituted.)
+          sed -e "$(render '${{ matrix.tag }}')" apko.yaml > apko.rendered.yaml
 
       - name: Assemble single-arch image for the scan gate
         run: apko build apko.rendered.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}
