@@ -61,8 +61,8 @@ pipeline:
   - runs: mkdir -p trivy scanner
   - uses: fetch
     with:
-      uri: https://github.com/aquasecurity/trivy/archive/refs/tags/v0.70.0.tar.gz
-      expected-sha256: ff9ac06468aab89802388f16d1d179f4680db714afbf6a8132a417d288aa008e
+      uri: https://github.com/aquasecurity/trivy/archive/refs/tags/v__TRIVY__.tar.gz
+      expected-sha256: __TRIVY_SHA__
       directory: trivy
 
   # ---- 2) Build the scanner adapter (goharbor/harbor-scanner-trivy @ v0.36.0) ----
@@ -72,8 +72,8 @@ pipeline:
   # `scanner-trivy` logs its real version at startup.
   - uses: fetch
     with:
-      uri: https://github.com/goharbor/harbor-scanner-trivy/archive/refs/tags/v0.36.0.tar.gz
-      expected-sha256: 774b79f4dd98d38cfc5125b9aa03223d3d57d10c77a01da74913846ccc35ceac
+      uri: https://github.com/goharbor/harbor-scanner-trivy/archive/refs/tags/v__SCANNER__.tar.gz
+      expected-sha256: __SCANNER_SHA__
       directory: scanner
 
   - runs: |
@@ -105,7 +105,7 @@ pipeline:
         go get github.com/in-toto/in-toto-golang@v0.11.0
         go mod tidy
         GOEXPERIMENT=jsonv2 go build -trimpath \
-          -ldflags="-s -w -X=github.com/aquasecurity/trivy/pkg/version/app.ver=v0.70.0" \
+          -ldflags="-s -w -X=github.com/aquasecurity/trivy/pkg/version/app.ver=v__TRIVY__" \
           -o "${{targets.destdir}}/usr/bin/trivy" ./cmd/trivy
       )
 
@@ -120,7 +120,7 @@ pipeline:
         go get github.com/redis/go-redis/v9@v9.7.3
         go mod tidy
         go build -trimpath \
-          -ldflags="-s -w -X main.version=v0.36.0 -X main.commit=v0.36.0 -X main.date=unknown" \
+          -ldflags="-s -w -X main.version=v__SCANNER__ -X main.commit=v__SCANNER__ -X main.date=unknown" \
           -o "${{targets.destdir}}/usr/bin/scanner-trivy" ./cmd/scanner-trivy
       )
 
