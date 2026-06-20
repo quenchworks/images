@@ -42,7 +42,7 @@ environment:
       # Pin Rust 1.72: the vendored flux v0.196.1 crate predates lints that newer
       # rustc (1.87+) promotes to hard errors (e.g. mismatched_lifetime_syntaxes),
       # which break `cargo build` on rust-1.89. 1.72 compiles the crate cleanly.
-      - rust-1.72
+      - rust-__RUST__
       - clang
       - pkgconf
       - glibc-dev
@@ -51,14 +51,14 @@ pipeline:
   - uses: fetch
     with:
       uri: https://github.com/influxdata/influxdb/archive/refs/tags/v${{package.version}}.tar.gz
-      expected-sha256: 1c0d21ccc42baf61501a0e43d0853322176e200140e20f12c11297d2619e1275
+      expected-sha256: __SRC_SHA__
       strip-components: 1
 
   - name: Fetch and verify the prebuilt UI assets + swagger (server still built from source)
     runs: |
       set -eu
-      UI_RELEASE="OSS-v${{package.version}}"
-      UI_SHA="682f8660c6b160a918f4631a791c76da1437c62de47d6a5a4cb0bd6a3a8e6800"
+      UI_RELEASE="__UI_REL__"
+      UI_SHA="__UI_SHA__"
       OPENAPI_SHA="8b5f1bbb2cd388eb454dc9da19e3d2c4061cdf5f"
       SWAGGER_SHA="47f91c7d44de1ce56c02390fde14d13ca82060b3e74d018de8c1e4b86b27e264"
 
