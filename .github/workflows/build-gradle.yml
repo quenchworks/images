@@ -34,7 +34,7 @@ jobs:
         run: |
           set -euo pipefail
           source "apps/${APP}/build.conf"
-          latest3=("${VERSIONS[@]: -3}")
+          n=${#VERSIONS[@]}; start=$(( n > 3 ? n - 3 : 0 )); latest3=("${VERSIONS[@]:start}")
           echo "building: ${latest3[*]}"
           echo "vers=$(printf '%s\n' "${latest3[@]}" | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
 
