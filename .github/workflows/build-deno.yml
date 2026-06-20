@@ -1,6 +1,6 @@
 name: build-deno
 
-# LANGUAGE-RUNTIMES track. Hardened Bun image from Wolfi's prebuilt `deno`
+# LANGUAGE-RUNTIMES track. Hardened Deno image from Wolfi's prebuilt `deno`
 # package with apko -- NO melange. build.conf is the SINGLE SOURCE OF TRUTH:
 # VERSIONS holds the full X.Y.Z (used as-is as the tag); Wolfi ships a single
 # floating `deno` package so PKG maps the version to `deno` and apko.yaml's
@@ -20,7 +20,7 @@ env:
 
 jobs:
   prep:
-    runs-on: udenotu-latest
+    runs-on: ubuntu-latest
     outputs:
       vers: ${{ steps.v.outputs.vers }}
     steps:
@@ -41,8 +41,8 @@ jobs:
       matrix:
         ver: ${{ fromJson(needs.prep.outputs.vers) }}
         arch:
-          - { name: x86_64,  platform: amd64, runner: udenotu-latest }
-          - { name: aarch64, platform: arm64, runner: udenotu-24.04-arm }
+          - { name: x86_64,  platform: amd64, runner: ubuntu-latest }
+          - { name: aarch64, platform: arm64, runner: ubuntu-24.04-arm }
     runs-on: ${{ matrix.arch.runner }}
     defaults:
       run:
@@ -105,7 +105,7 @@ jobs:
 
   merge:
     needs: [prep, build]
-    runs-on: udenotu-latest
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -156,4 +156,4 @@ jobs:
           subject-digest: ${{ steps.merge.outputs.digest }}
           push-to-registry: true
 
-      # IMAGE-ONLY: no charts-repo dispatch. Bun is a base image.
+      # IMAGE-ONLY: no charts-repo dispatch. Deno is a base image.
