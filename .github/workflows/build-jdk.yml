@@ -23,18 +23,33 @@ permissions:
   attestations: write    # SLSA build provenance + SBOM attestation
 
 env:
+  APP: jdk
   GHCR_IMAGE: ghcr.io/quenchworks/images/jdk
 
 jobs:
+  prep:
+    runs-on: ubuntu-latest
+    outputs:
+      vers: ${{ steps.v.outputs.vers }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: v
+        run: |
+          set -euo pipefail
+          source "apps/${APP}/build.conf"
+          n=${#VERSIONS[@]}; start=$(( n > 3 ? n - 3 : 0 ))   # last up-to-3 (negative slice breaks for n<3)
+          latest3=("${VERSIONS[@]:start}")
+          echo "building: ${latest3[*]}"
+          echo "vers=$(printf '%s\n' "${latest3[@]}" | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: prep
     strategy:
       fail-fast: false
       matrix:
-        # latest 3 LTS Wolfi-packaged OpenJDK lines x both native arches.
-        # 17, 21, 25 are the current Long-Term-Support releases. GitHub's
-        # `include` does NOT cross-product two free axes here, so we use two
-        # plain axes (3 LTS x 2 arches = 6 jobs).
-        ver: ["17", "21", "25"]
+        # latest 3 LTS Wolfi-packaged OpenJDK lines x both native arches,
+        # driven by apps/jdk/build.conf VERSIONS (the single source of truth).
+        ver: ${{ fromJson(needs.prep.outputs.vers) }}
         arch:
           - { name: x86_64,  platform: amd64, runner: ubuntu-latest }
           - { name: aarch64, platform: arm64, runner: ubuntu-24.04-arm }   # native arm64, free for public repos
@@ -53,8 +68,11 @@ jobs:
             | sudo tar xz --strip-components=1 -C /usr/local/bin
           apko version | head -1
 
-      - name: Render apko config for OpenJDK ${{ matrix.ver }}
-        run: sed "s/__VER__/${{ matrix.ver }}/g" apko.yaml > apko.rendered.yaml
+      - name: Render apko config for OpenJDK ${{ matrix.ver }} (build.conf render)
+        run: |
+          set -euo pipefail
+          source build.conf
+          sed -e "$(render '${{ matrix.ver }}')" apko.yaml > apko.rendered.yaml
 
       - name: Assemble single-arch image for the scan gate
         run: apko build apko.rendered.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}
@@ -87,12 +105,12 @@ jobs:
         run: apko publish apko.rendered.yaml "${GHCR_IMAGE}:${{ matrix.ver }}-${{ matrix.arch.platform }}" --arch ${{ matrix.arch.name }}
 
   merge:
-    needs: build
+    needs: [prep, build]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        ver: ["17", "21", "25"]
+        ver: ${{ fromJson(needs.prep.outputs.vers) }}
     steps:
       - uses: actions/checkout@v5
       - uses: sigstore/cosign-installer@v3
