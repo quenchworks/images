@@ -1,61 +1,95 @@
 name: build-rabbitmq
 
-# Heavy build. One NATIVE job per architecture (no QEMU emulation), then a merge
-# job assembles the multi-arch index, signs it, and notifies the charts repo.
+# From-source build (Apache CouchDB, Erlang + bundled QuickJS view server).
+# build.conf is the SINGLE SOURCE OF TRUTH: prep emits the latest 3 stable
+# (QuickJS-era) versions (full X.Y.Z, as-is). The build matrix fans them x both
+# NATIVE arches (amd64 + arm64, no QEMU). Recipes render via build.conf render()
+# (__VER__ + per-version __SHA256__ source-tarball pin). Per-version merge job
+# assembles the multi-arch index, signs + attests it, notifies charts on newest.
 on:
   workflow_dispatch:
 permissions:
   contents: read
-  packages: write        # push to GHCR
-  id-token: write        # cosign keyless
+  packages: write
+  id-token: write
+  attestations: write
 
 env:
+  APP: rabbitmq
   GHCR_IMAGE: ghcr.io/quenchworks/images/rabbitmq
 
 jobs:
+  prep:
+    runs-on: ubuntu-latest
+    outputs:
+      vers: ${{ steps.v.outputs.vers }}
+      latest: ${{ steps.v.outputs.latest }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: v
+        run: |
+          set -euo pipefail
+          source "apps/${APP}/build.conf"
+          n=${#VERSIONS[@]}; start=$(( n > 3 ? n - 3 : 0 ))
+          latest3=("${VERSIONS[@]:start}")
+          echo "building: ${latest3[*]}"
+          echo "vers=$(printf '%s\n' "${latest3[@]}" | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
+          echo "latest=${latest3[${#latest3[@]}-1]}" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: prep
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: x86_64
-            platform: amd64
-            runner: ubuntu-latest
-          - arch: aarch64
-            platform: arm64
-            runner: ubuntu-24.04-arm     # native arm64, free for public repos
-    runs-on: ${{ matrix.runner }}
+        ver: ${{ fromJson(needs.prep.outputs.vers) }}
+        arch:
+          - { name: x86_64,  platform: amd64, runner: ubuntu-latest }
+          - { name: aarch64, platform: arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.arch.runner }}
     defaults:
       run:
         working-directory: apps/rabbitmq
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install melange and apko (native ${{ matrix.platform }})
+      - name: Install melange and apko (native ${{ matrix.arch.platform }})
         working-directory: ${{ github.workspace }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           sudo apt-get update && sudo apt-get install -y bubblewrap
-          # Ubuntu 24.04 restricts unprivileged user namespaces, which breaks melange's
-          # bubblewrap runner (chainguard-dev/melange#1508). Re-enable it.
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           MELANGE_VER=v0.53.0
-          curl -fsSL "https://github.com/chainguard-dev/melange/releases/download/${MELANGE_VER}/melange_${MELANGE_VER#v}_linux_${{ matrix.platform }}.tar.gz" \
+          curl -fsSL "https://github.com/chainguard-dev/melange/releases/download/${MELANGE_VER}/melange_${MELANGE_VER#v}_linux_${{ matrix.arch.platform }}.tar.gz" \
             | sudo tar xz --strip-components=1 -C /usr/local/bin
-          APKO_VER="$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" https://api.github.com/repos/chainguard-dev/apko/releases/latest | grep -m1 '"tag_name"' | cut -d'"' -f4)"
-          curl -fsSL "https://github.com/chainguard-dev/apko/releases/download/${APKO_VER}/apko_${APKO_VER#v}_linux_${{ matrix.platform }}.tar.gz" \
+          APKO_VER=""
+          for i in 1 2 3 4 5; do
+            APKO_VER="$(gh api repos/chainguard-dev/apko/releases/latest --jq .tag_name 2>/dev/null || true)"
+            [ -n "$APKO_VER" ] && break
+            echo "apko lookup attempt $i failed; retrying..." >&2; sleep 5
+          done
+          [ -n "$APKO_VER" ] || { echo "could not resolve latest apko"; exit 1; }
+          curl -fsSL "https://github.com/chainguard-dev/apko/releases/download/${APKO_VER}/apko_${APKO_VER#v}_linux_${{ matrix.arch.platform }}.tar.gz" \
             | sudo tar xz --strip-components=1 -C /usr/local/bin
           melange version | head -1
           apko version | head -1
 
-      - name: Build package from source (native ${{ matrix.arch }})
+      - name: Render recipes for ${{ matrix.ver }} (build.conf render)
+        run: |
+          set -euo pipefail
+          source build.conf
+          prog="$(render '${{ matrix.ver }}')"
+          sed -e "$prog" melange.yaml > melange.rendered.yaml
+          sed -e "$prog" apko.yaml    > apko.rendered.yaml
+
+      - name: Build package from source (native ${{ matrix.arch.name }})
         run: |
           melange keygen melange.rsa
-          melange build melange.yaml --arch ${{ matrix.arch }} --signing-key melange.rsa --out-dir ./packages
+          melange build melange.rendered.yaml --arch ${{ matrix.arch.name }} --signing-key melange.rsa --out-dir ./packages
 
       - name: Assemble single-arch image for the scan gate
-        run: apko build apko.yaml "${GHCR_IMAGE}:scan-${{ matrix.platform }}" image.tar --arch ${{ matrix.arch }}
+        run: apko build apko.rendered.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}
 
       - name: Scan, the hard 0-CVE gate (before publish)
         uses: aquasecurity/trivy-action@master
@@ -74,21 +108,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Read the app version (tag images by version, not latest)
-        run: echo "VERSION=$(awk '/^  version:/{print $2; exit}' melange.yaml)" >> "$GITHUB_ENV"
-
-      - name: Publish the single-arch image
-        run: apko publish apko.yaml "${GHCR_IMAGE}:${VERSION}-${{ matrix.platform }}" --arch ${{ matrix.arch }}
+      - name: Publish the single-arch image (tag = full X.Y.Z)
+        run: apko publish apko.rendered.yaml "${GHCR_IMAGE}:${{ matrix.ver }}-${{ matrix.arch.platform }}" --arch ${{ matrix.arch.name }}
 
   merge:
-    needs: build
+    needs: [prep, build]
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ver: ${{ fromJson(needs.prep.outputs.vers) }}
     steps:
       - uses: actions/checkout@v5
       - uses: sigstore/cosign-installer@v3
-
-      - name: Read the app version
-        run: echo "VERSION=$(awk '/^  version:/{print $2; exit}' apps/rabbitmq/melange.yaml)" >> "$GITHUB_ENV"
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -97,85 +129,43 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Assemble the multi-arch index
+      - name: Assemble the multi-arch index (tag = full X.Y.Z)
         id: merge
         run: |
-          docker buildx imagetools create -t "${GHCR_IMAGE}:${VERSION}" \
-            "${GHCR_IMAGE}:${VERSION}-amd64" "${GHCR_IMAGE}:${VERSION}-arm64"
-          digest="$(docker buildx imagetools inspect "${GHCR_IMAGE}:${VERSION}" --format '{{.Manifest.Digest}}')"
+          docker buildx imagetools create -t "${GHCR_IMAGE}:${{ matrix.ver }}" \
+            "${GHCR_IMAGE}:${{ matrix.ver }}-amd64" "${GHCR_IMAGE}:${{ matrix.ver }}-arm64"
+          digest="$(docker buildx imagetools inspect "${GHCR_IMAGE}:${{ matrix.ver }}" --format '{{.Manifest.Digest}}')"
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
-          echo "published ${GHCR_IMAGE}@${digest}"
+          echo "published ${GHCR_IMAGE}:${{ matrix.ver }}@${digest}"
 
       - name: Sign the multi-arch index (cosign keyless)
         run: cosign sign --yes "${GHCR_IMAGE}@${{ steps.merge.outputs.digest }}"
 
-      # SBOM + provenance via COSIGN (Sigstore -> GHCR), NOT actions/attest-*.
-      # The GitHub-API attestation store (actions/attest-sbom, attest-build-
-      # provenance) is gated by org billing/visibility and 403s on a private
-      # repo. cosign attest is keyless (id-token: write) and writes the
-      # attestation alongside the image in GHCR, with no GitHub billing gate.
+      - name: Generate SBOM (SPDX) for the signed index
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.GHCR_IMAGE }}@${{ steps.merge.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: false
 
-      - name: Generate SPDX SBOM for the index (syft, by digest)
-        run: |
-          # syft is not preinstalled on the runner; pull its official installer.
-          curl -fsSL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
-            | sudo sh -s -- -b /usr/local/bin
-          syft "${GHCR_IMAGE}@${{ steps.merge.outputs.digest }}" -o spdx-json=sbom.spdx.json
-          test -s sbom.spdx.json
+      - name: Attest the SBOM (keyless, pushed to GHCR)
+        uses: actions/attest-sbom@v2
+        with:
+          subject-name: ${{ env.GHCR_IMAGE }}
+          subject-digest: ${{ steps.merge.outputs.digest }}
+          sbom-path: sbom.spdx.json
+          push-to-registry: true
 
-      - name: Attest the SBOM (cosign keyless -> GHCR)
-        run: |
-          cosign attest --yes \
-            --type spdxjson \
-            --predicate sbom.spdx.json \
-            "${GHCR_IMAGE}@${{ steps.merge.outputs.digest }}"
+      - name: Attest build provenance (SLSA, pushed to GHCR)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.GHCR_IMAGE }}
+          subject-digest: ${{ steps.merge.outputs.digest }}
+          push-to-registry: true
 
-      - name: Build SLSA provenance predicate
-        run: |
-          cat > provenance.json <<EOF
-          {
-            "buildType": "https://github.com/quenchworks/images/build-rabbitmq",
-            "builder": {
-              "id": "${{ github.server_url }}/${{ github.workflow_ref }}"
-            },
-            "invocation": {
-              "configSource": {
-                "uri": "git+${{ github.server_url }}/${{ github.repository }}@${{ github.ref }}",
-                "digest": { "sha1": "${{ github.sha }}" },
-                "entryPoint": ".github/workflows/build-rabbitmq.yml"
-              },
-              "environment": {
-                "github_repository": "${{ github.repository }}",
-                "github_ref": "${{ github.ref }}",
-                "github_sha": "${{ github.sha }}",
-                "github_run_id": "${{ github.run_id }}",
-                "github_run_attempt": "${{ github.run_attempt }}"
-              }
-            },
-            "metadata": {
-              "buildInvocationId": "${{ github.run_id }}-${{ github.run_attempt }}",
-              "completeness": { "parameters": true, "environment": false, "materials": false },
-              "reproducible": false
-            },
-            "materials": [
-              {
-                "uri": "git+${{ github.server_url }}/${{ github.repository }}@${{ github.ref }}",
-                "digest": { "sha1": "${{ github.sha }}" }
-              }
-            ]
-          }
-          EOF
-          # Validate it is well-formed JSON before attesting.
-          python3 -c 'import json,sys; json.load(open("provenance.json"))'
-
-      - name: Attest build provenance (SLSA, cosign keyless -> GHCR)
-        run: |
-          cosign attest --yes \
-            --type slsaprovenance \
-            --predicate provenance.json \
-            "${GHCR_IMAGE}@${{ steps.merge.outputs.digest }}"
-
-      - name: Notify the charts repo
+      - name: Notify the charts repo (newest version only)
+        if: ${{ matrix.ver == needs.prep.outputs.latest }}
         env:
           GH_TOKEN: ${{ secrets.CHARTS_DISPATCH_TOKEN }}
         run: |
