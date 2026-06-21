@@ -73,7 +73,8 @@ pipeline:
       # build the static binary. ocb's manifest sets output_path ./_build and
       # build_tags grpcnotrace; we match upstream's goreleaser ldflags (-s -w)
       # and -trimpath. ocb invokes `go build` internally.
-      builder --config=manifest.yaml \
+      # Select the EXACT official contrib manifest vendored for this release.
+      builder --config=manifest-${{package.version}}.yaml \
         --ldflags="-s -w" \
         --skip-strict-versioning
 
