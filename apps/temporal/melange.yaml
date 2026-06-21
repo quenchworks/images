@@ -51,15 +51,15 @@ environment:
       - busybox
       - ca-certificates-bundle
       - git
-      # go.mod requires go >= 1.25.x; use the current go-1.25 toolchain.
-      - go-1.25
+      # go.mod requires go >= 1.25.x; use go-1.26 (temporal 1.31+ needs go >= 1.26.4).
+      - go-1.26
 
 pipeline:
   # Build from the git tag source tarball. Pinned to the tag; verified by sha256.
   - uses: fetch
     with:
       uri: https://github.com/temporalio/temporal/archive/refs/tags/v${{package.version}}.tar.gz
-      expected-sha256: 98fdd3fcfa1eec770df121af846a8d25af5fe1d77fa89b3f95bddf0246c3d7c3
+      expected-sha256: __SHA256__
   - runs: |
       export CGO_ENABLED=0
       export GOTOOLCHAIN=local
