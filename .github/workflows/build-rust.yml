@@ -1,19 +1,19 @@
 name: build-rust
 
-# LANGUAGE-RUNTIMES track. Hardened Rust toolchain (cargo + rustc) images,
-# assembled straight from Wolfi's versioned `rust-1.X` packages with apko -- NO
-# melange/from-source step, since Wolfi already packages the Rust toolchain
-# (the rust-1.X package PROVIDES cargo + rustc). A MATRIX fans out over the
-# latest 3 stable minors; each one runs a NATIVE per-arch apko build (no QEMU),
-# the hard 0-CVE Trivy gate, then a per-version merge job that assembles + signs
-# + attests the multi-arch index.
+# LANGUAGE-RUNTIMES track. Hardened OpenJDK (JDK) base images, assembled
+# straight from Wolfi's versioned `openrust-N-default-rust` packages with apko --
+# NO melange/from-source step, since Wolfi already packages OpenJDK. A MATRIX
+# fans out over the latest 3 LTS lines; each one runs a NATIVE per-arch apko
+# build (no QEMU), the hard 0-CVE Trivy gate, then a per-version merge job that
+# assembles + signs + attests the multi-arch index.
 #
-# IMAGE-ONLY: Rust is an SDK/base image with no Helm chart, so there is NO
-# charts-repo dispatch.
+# IMAGE-ONLY: the JDK is a base/runtime image with no Helm chart, so there is
+# NO charts-repo dispatch.
 #
-# TEMPLATE: to add another minor, copy a matrix entry and change `rustver`;
-# apps/rust/apko.yaml carries the `__RUSTVER__` placeholder that CI substitutes
-# per entry. No :latest tag is ever published.
+# TEMPLATE: to add another LTS (or another runtime), copy a matrix entry and
+# change `ver`; apps/rust/apko.yaml carries the `__VER__` placeholder that CI
+# substitutes per entry (it also feeds JAVA_HOME). No :latest tag is ever
+# published.
 on:
   workflow_dispatch:
 permissions:
@@ -23,15 +23,33 @@ permissions:
   attestations: write    # SLSA build provenance + SBOM attestation
 
 env:
+  APP: rust
   GHCR_IMAGE: ghcr.io/quenchworks/images/rust
 
 jobs:
+  prep:
+    runs-on: ubuntu-latest
+    outputs:
+      vers: ${{ steps.v.outputs.vers }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: v
+        run: |
+          set -euo pipefail
+          source "apps/${APP}/build.conf"
+          n=${#VERSIONS[@]}; start=$(( n > 3 ? n - 3 : 0 ))   # last up-to-3 (negative slice breaks for n<3)
+          latest3=("${VERSIONS[@]:start}")
+          echo "building: ${latest3[*]}"
+          echo "vers=$(printf '%s\n' "${latest3[@]}" | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: prep
     strategy:
       fail-fast: false
       matrix:
-        # latest 3 stable Wolfi-packaged minors x both native arches.
-        rustver: ["1.94", "1.95", "1.96"]
+        # latest 3 LTS Wolfi-packaged OpenJDK lines x both native arches,
+        # driven by apps/rust/build.conf VERSIONS (the single source of truth).
+        ver: ${{ fromJson(needs.prep.outputs.vers) }}
         arch:
           - { name: x86_64,  platform: amd64, runner: ubuntu-latest }
           - { name: aarch64, platform: arm64, runner: ubuntu-24.04-arm }   # native arm64, free for public repos
@@ -44,27 +62,17 @@ jobs:
 
       - name: Install apko (native ${{ matrix.arch.platform }})
         working-directory: ${{ github.workspace }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # authenticate the API call to dodge the 60/hr anon rate-limit (403)
         run: |
-          set -euo pipefail
-          # Resolve the latest apko tag via the authenticated GitHub API, with a
-          # few retries -- the anonymous endpoint intermittently 403s on shared
-          # runners, which previously left APKO_VER empty and 404'd the download.
-          APKO_VER=""
-          for i in 1 2 3 4 5; do
-            APKO_VER="$(gh api repos/chainguard-dev/apko/releases/latest --jq .tag_name 2>/dev/null || true)"
-            [ -n "$APKO_VER" ] && break
-            echo "apko version lookup attempt $i failed; retrying..." >&2; sleep 5
-          done
-          [ -n "$APKO_VER" ] || { echo "could not resolve latest apko version"; exit 1; }
-          echo "apko ${APKO_VER}"
+          APKO_VER="$(curl -fsSL https://api.github.com/repos/chainguard-dev/apko/releases/latest | grep -m1 '"tag_name"' | cut -d'"' -f4)"
           curl -fsSL "https://github.com/chainguard-dev/apko/releases/download/${APKO_VER}/apko_${APKO_VER#v}_linux_${{ matrix.arch.platform }}.tar.gz" \
             | sudo tar xz --strip-components=1 -C /usr/local/bin
           apko version | head -1
 
-      - name: Render apko config for Rust ${{ matrix.rustver }}
-        run: sed "s/__RUSTVER__/${{ matrix.rustver }}/g" apko.yaml > apko.rendered.yaml
+      - name: Render apko config for OpenJDK ${{ matrix.ver }} (build.conf render)
+        run: |
+          set -euo pipefail
+          source build.conf
+          sed -e "$(render '${{ matrix.ver }}')" apko.yaml > apko.rendered.yaml
 
       - name: Assemble single-arch image for the scan gate
         run: apko build apko.rendered.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}
@@ -82,8 +90,9 @@ jobs:
       - name: Smoke test the single-arch image
         run: |
           docker load < image.tar
+          # apko load tags the image as <ref>-<arch>; the scan ref ended in the platform.
           docker tag "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}-${{ matrix.arch.platform }}" rust-smoke:local
-          bash test.sh rust-smoke:local "${{ matrix.rustver }}"
+          bash test.sh rust-smoke:local "${{ matrix.ver }}"
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -93,15 +102,15 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish the single-arch image
-        run: apko publish apko.rendered.yaml "${GHCR_IMAGE}:${{ matrix.rustver }}-${{ matrix.arch.platform }}" --arch ${{ matrix.arch.name }}
+        run: apko publish apko.rendered.yaml "${GHCR_IMAGE}:${{ matrix.ver }}-${{ matrix.arch.platform }}" --arch ${{ matrix.arch.name }}
 
   merge:
-    needs: build
+    needs: [prep, build]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        rustver: ["1.94", "1.95", "1.96"]
+        ver: ${{ fromJson(needs.prep.outputs.vers) }}
     steps:
       - uses: actions/checkout@v5
       - uses: sigstore/cosign-installer@v3
@@ -116,11 +125,11 @@ jobs:
       - name: Assemble the multi-arch index
         id: merge
         run: |
-          docker buildx imagetools create -t "${GHCR_IMAGE}:${{ matrix.rustver }}" \
-            "${GHCR_IMAGE}:${{ matrix.rustver }}-amd64" "${GHCR_IMAGE}:${{ matrix.rustver }}-arm64"
-          digest="$(docker buildx imagetools inspect "${GHCR_IMAGE}:${{ matrix.rustver }}" --format '{{.Manifest.Digest}}')"
+          docker buildx imagetools create -t "${GHCR_IMAGE}:${{ matrix.ver }}" \
+            "${GHCR_IMAGE}:${{ matrix.ver }}-amd64" "${GHCR_IMAGE}:${{ matrix.ver }}-arm64"
+          digest="$(docker buildx imagetools inspect "${GHCR_IMAGE}:${{ matrix.ver }}" --format '{{.Manifest.Digest}}')"
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
-          echo "published ${GHCR_IMAGE}:${{ matrix.rustver }}@${digest}"
+          echo "published ${GHCR_IMAGE}:${{ matrix.ver }}@${digest}"
 
       - name: Sign the multi-arch index (cosign keyless)
         run: cosign sign --yes "${GHCR_IMAGE}@${{ steps.merge.outputs.digest }}"
@@ -148,4 +157,4 @@ jobs:
           subject-digest: ${{ steps.merge.outputs.digest }}
           push-to-registry: true
 
-      # IMAGE-ONLY: no charts-repo dispatch. Rust is an SDK/base image.
+      # IMAGE-ONLY: no charts-repo dispatch. The JDK is a base/runtime image.
