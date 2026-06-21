@@ -21,7 +21,7 @@ GHCR        ?= ghcr.io/$(OWNER)/images
 # arm64 (aarch64) is paused: building it via qemu emulation is slow and flaky
 # (e.g. Erlang/rebar get_cwd failures). Until a native arm64 builder exists,
 # default to amd64 only. Re-enable per-invocation: ARCHES=x86_64,aarch64 make …
-ARCHES      ?= x86_64
+ARCHES      ?= x86_64,aarch64
 PUSH        ?= 1
 APP         ?=
 VERSION     ?=
