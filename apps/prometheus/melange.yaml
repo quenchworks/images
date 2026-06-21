@@ -55,7 +55,7 @@ pipeline:
       tag: v${{package.version}}
       # The dereferenced commit the v3.12.0 annotated tag points at (the tag object
       # itself hashes to 08f9ec4...; git-checkout verifies the commit, not the tag).
-      expected-commit: 9f27dffc1f93ca23287972f632025879f2d1c658
+      expected-commit: __COMMIT__
 
   - name: Build the web UI from source (Node), reproducing `make assets`
     runs: |
@@ -68,13 +68,21 @@ pipeline:
       # npm's allowScripts guard otherwise blocks, which would break `vite build`.
       ( cd web/ui && npm ci --foreground-scripts )
       # ui-build: build the promql modules + the Mantine UI into web/ui/static/**.
-      # Use --mantine-ui (not --all): the Mantine SPA is the DEFAULT served UI
-      # (web.go serves /static/mantine-ui; the legacy CRA react-app is only reached
-      # behind --enable-feature=old-ui). react-app is not even an npm workspace here,
-      # so its react-scripts aren't installed -- building only the default UI is both
-      # correct and avoids the dead legacy bundle. The script ships without an execute
-      # bit in the git archive; invoke via bash.
-      ( cd web/ui && bash ./build_ui.sh --mantine-ui )
+      # The Mantine SPA is the DEFAULT served UI (web.go serves /static/mantine-ui;
+      # the legacy CRA react-app is only reached behind --enable-feature=old-ui and
+      # is not an npm workspace, so --all would fail trying to build it).
+      # build_ui.sh's --mantine-ui flag was added in 3.11; on older lines (3.10) the
+      # flag is silently ignored and nothing is built (-> empty static -> empty
+      # go:embed -> build fails). Detect the flag and otherwise replicate exactly
+      # what --mantine-ui does (buildModule + buildMantineUI).
+      ( cd web/ui
+        if grep -q -- '--mantine-ui)' build_ui.sh; then
+          bash ./build_ui.sh --mantine-ui
+        else
+          for m in lezer-promql codemirror-promql; do npm run build -w "@prometheus-io/${m}"; done
+          npm run build -w @prometheus-io/mantine-ui
+          mkdir -p static && rm -rf static/mantine-ui && mv mantine-ui/dist static/mantine-ui
+        fi )
 
   - name: Compress the assets and generate the go:embed manifest (web/ui/embed.go)
     runs: |
