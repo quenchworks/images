@@ -1,20 +1,19 @@
 name: build-pnpm
 
-# Hardened pnpm package-manager images, assembled straight from Wolfi's
-# versioned pnpm packages with apko -- NO melange/from-source step, since Wolfi
-# already packages pnpm. A MATRIX fans out over the supported major lines; each
-# one runs a NATIVE per-arch apko build (no QEMU), the hard 0-CVE Trivy gate,
-# then a per-version merge job that assembles + signs + attests the multi-arch
-# index.
+# LANGUAGE-RUNTIMES track. Hardened OpenJDK (JDK) base images, assembled
+# straight from Wolfi's versioned `openpnpm-N-default-pnpm` packages with apko --
+# NO melange/from-source step, since Wolfi already packages OpenJDK. A MATRIX
+# fans out over the latest 3 LTS lines; each one runs a NATIVE per-arch apko
+# build (no QEMU), the hard 0-CVE Trivy gate, then a per-version merge job that
+# assembles + signs + attests the multi-arch index.
 #
-# IMAGE-ONLY: pnpm is a build/package-tool image with no Helm chart, so there is
+# IMAGE-ONLY: the JDK is a base/runtime image with no Helm chart, so there is
 # NO charts-repo dispatch.
 #
-# TEMPLATE: Wolfi packages the 10.x line as `pnpm` (self-named, pinned here via
-# the fuzzy `pnpm=~10` constraint) and the 11.x line as `pnpm-11`. The matrix
-# carries both the tool-version TAG and the apko PACKAGE spec; apps/pnpm/apko.yaml
-# carries the `__PNPMPKG__` placeholder that CI substitutes per entry. No :latest
-# tag is ever published.
+# TEMPLATE: to add another LTS (or another runtime), copy a matrix entry and
+# change `ver`; apps/pnpm/apko.yaml carries the `__VER__` placeholder that CI
+# substitutes per entry (it also feeds JAVA_HOME). No :latest tag is ever
+# published.
 on:
   workflow_dispatch:
 permissions:
@@ -24,22 +23,36 @@ permissions:
   attestations: write    # SLSA build provenance + SBOM attestation
 
 env:
+  APP: pnpm
   GHCR_IMAGE: ghcr.io/quenchworks/images/pnpm
 
 jobs:
+  prep:
+    runs-on: ubuntu-latest
+    outputs:
+      vers: ${{ steps.v.outputs.vers }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: v
+        run: |
+          set -euo pipefail
+          source "apps/${APP}/build.conf"
+          n=${#VERSIONS[@]}; start=$(( n > 3 ? n - 3 : 0 ))   # last up-to-3 (negative slice breaks for n<3)
+          latest3=("${VERSIONS[@]:start}")
+          echo "building: ${latest3[*]}"
+          echo "vers=$(printf '%s\n' "${latest3[@]}" | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: prep
     strategy:
       fail-fast: false
       matrix:
-        # tag = pnpm major line (real axis, crossed with arch); the `include`
-        # block attaches the matching Wolfi package spec `pkg` to each tag.
-        tag: ["10", "11"]
+        # latest 3 LTS Wolfi-packaged OpenJDK lines x both native arches,
+        # driven by apps/pnpm/build.conf VERSIONS (the single source of truth).
+        ver: ${{ fromJson(needs.prep.outputs.vers) }}
         arch:
           - { name: x86_64,  platform: amd64, runner: ubuntu-latest }
           - { name: aarch64, platform: arm64, runner: ubuntu-24.04-arm }   # native arm64, free for public repos
-        include:
-          - { tag: "10", pkg: "pnpm=~10" }
-          - { tag: "11", pkg: "pnpm-11" }
     runs-on: ${{ matrix.arch.runner }}
     defaults:
       run:
@@ -49,19 +62,17 @@ jobs:
 
       - name: Install apko (native ${{ matrix.arch.platform }})
         working-directory: ${{ github.workspace }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Authenticate the API call: the anonymous GitHub API rate limit is
-          # easily exhausted when many matrix jobs resolve the latest apko tag at
-          # the same time, which surfaced as transient 403/404s on this step.
-          APKO_VER="$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" https://api.github.com/repos/chainguard-dev/apko/releases/latest | grep -m1 '"tag_name"' | cut -d'"' -f4)"
+          APKO_VER="$(curl -fsSL https://api.github.com/repos/chainguard-dev/apko/releases/latest | grep -m1 '"tag_name"' | cut -d'"' -f4)"
           curl -fsSL "https://github.com/chainguard-dev/apko/releases/download/${APKO_VER}/apko_${APKO_VER#v}_linux_${{ matrix.arch.platform }}.tar.gz" \
             | sudo tar xz --strip-components=1 -C /usr/local/bin
           apko version | head -1
 
-      - name: Render apko config for pnpm ${{ matrix.tag }}
-        run: sed "s/__PNPMPKG__/${{ matrix.pkg }}/g" apko.yaml > apko.rendered.yaml
+      - name: Render apko config for OpenJDK ${{ matrix.ver }} (build.conf render)
+        run: |
+          set -euo pipefail
+          source build.conf
+          sed -e "$(render '${{ matrix.ver }}')" apko.yaml > apko.rendered.yaml
 
       - name: Assemble single-arch image for the scan gate
         run: apko build apko.rendered.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}
@@ -79,8 +90,9 @@ jobs:
       - name: Smoke test the single-arch image
         run: |
           docker load < image.tar
+          # apko load tags the image as <ref>-<arch>; the scan ref ended in the platform.
           docker tag "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}-${{ matrix.arch.platform }}" pnpm-smoke:local
-          bash test.sh pnpm-smoke:local "${{ matrix.tag }}"
+          bash test.sh pnpm-smoke:local "${{ matrix.ver }}"
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -90,15 +102,15 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish the single-arch image
-        run: apko publish apko.rendered.yaml "${GHCR_IMAGE}:${{ matrix.tag }}-${{ matrix.arch.platform }}" --arch ${{ matrix.arch.name }}
+        run: apko publish apko.rendered.yaml "${GHCR_IMAGE}:${{ matrix.ver }}-${{ matrix.arch.platform }}" --arch ${{ matrix.arch.name }}
 
   merge:
-    needs: build
+    needs: [prep, build]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        tag: ["10", "11"]
+        ver: ${{ fromJson(needs.prep.outputs.vers) }}
     steps:
       - uses: actions/checkout@v5
       - uses: sigstore/cosign-installer@v3
@@ -113,11 +125,11 @@ jobs:
       - name: Assemble the multi-arch index
         id: merge
         run: |
-          docker buildx imagetools create -t "${GHCR_IMAGE}:${{ matrix.tag }}" \
-            "${GHCR_IMAGE}:${{ matrix.tag }}-amd64" "${GHCR_IMAGE}:${{ matrix.tag }}-arm64"
-          digest="$(docker buildx imagetools inspect "${GHCR_IMAGE}:${{ matrix.tag }}" --format '{{.Manifest.Digest}}')"
+          docker buildx imagetools create -t "${GHCR_IMAGE}:${{ matrix.ver }}" \
+            "${GHCR_IMAGE}:${{ matrix.ver }}-amd64" "${GHCR_IMAGE}:${{ matrix.ver }}-arm64"
+          digest="$(docker buildx imagetools inspect "${GHCR_IMAGE}:${{ matrix.ver }}" --format '{{.Manifest.Digest}}')"
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
-          echo "published ${GHCR_IMAGE}:${{ matrix.tag }}@${digest}"
+          echo "published ${GHCR_IMAGE}:${{ matrix.ver }}@${digest}"
 
       - name: Sign the multi-arch index (cosign keyless)
         run: cosign sign --yes "${GHCR_IMAGE}@${{ steps.merge.outputs.digest }}"
@@ -145,4 +157,4 @@ jobs:
           subject-digest: ${{ steps.merge.outputs.digest }}
           push-to-registry: true
 
-      # IMAGE-ONLY: no charts-repo dispatch. pnpm is a build/package-tool image.
+      # IMAGE-ONLY: no charts-repo dispatch. The JDK is a base/runtime image.
