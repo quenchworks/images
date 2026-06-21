@@ -1,552 +1,833 @@
 catalog:
+
   - name: redis
+    category: Cache
+    summary: In-memory key-value store used as a cache, message broker, and ephemeral datastore. Shipped under AGPL (not permissive); Valkey is the BSD-licensed open alternative.
     source: https://download.redis.io/releases/redis-8.8.0.tar.gz
+    upstream: https://github.com/redis/redis
     license: AGPL-3.0-only
     tier: critical
     status: pilot
 
   - name: redis-exporter
+    category: Metrics/Exporter
+    summary: Prometheus exporter that scrapes Redis and Valkey runtime stats and exposes them as metrics for dashboards and alerts.
     source: https://github.com/oliver006/redis_exporter
+    upstream: https://github.com/oliver006/redis_exporter
     license: MIT
     tier: critical
     status: pilot
 
   - name: valkey
+    category: Cache
+    summary: BSD-licensed in-memory key-value store, the truly-open community fork of Redis 7.2. QuenchWorks' default cache and the recommended Redis drop-in replacement.
     source: https://github.com/valkey-io/valkey
+    upstream: https://github.com/valkey-io/valkey
     license: BSD-3-Clause
     tier: critical
     status: built
 
   - name: postgresql
+    category: Relational
+    summary: Advanced open-source relational database (v18.x) with strong SQL, ACID transactions, JSON, and a rich extension ecosystem. The catalog's default SQL engine.
     source: https://ftp.postgresql.org/pub/source/v18.4/postgresql-18.4.tar.bz2
+    upstream: https://github.com/postgres/postgres
     license: PostgreSQL
     tier: critical
     status: built
 
   - name: postgresql-15
+    category: Relational
+    summary: PostgreSQL 15.x build for the Coolify wave, which pins PG 15 (the default postgresql image tracks 18.x). Same hardened build with bundled contrib extensions.
     source: https://ftp.postgresql.org/pub/source/v15.18/postgresql-15.18.tar.bz2
+    upstream: https://ftp.postgresql.org/pub/source/v15.18/postgresql-15.18.tar.bz2
     license: PostgreSQL
     tier: critical
     status: built
 
   - name: postgres-exporter
+    category: Metrics/Exporter
+    summary: Prometheus exporter that collects PostgreSQL activity, replication, and performance stats and exposes them as metrics for monitoring.
     source: https://github.com/prometheus-community/postgres_exporter
+    upstream: https://github.com/prometheus-community/postgres_exporter
     license: Apache-2.0
     tier: critical
     status: built
 
   - name: pgbouncer
+    category: Relational
+    summary: Lightweight connection pooler for PostgreSQL that fronts thousands of client connections with a small backend pool, cutting per-connection overhead.
     source: https://github.com/pgbouncer/pgbouncer
+    upstream: https://github.com/pgbouncer/pgbouncer
     license: ISC
     tier: standard
     status: done
 
   - name: etcd
+    category: Coordination
+    summary: Distributed, strongly consistent key-value store using Raft consensus. The backing store for Kubernetes and a building block for service coordination and config.
     source: https://github.com/etcd-io/etcd
+    upstream: https://github.com/etcd-io/etcd
     license: Apache-2.0
     tier: critical
     status: built
 
   - name: mariadb
+    category: Relational
+    summary: Community-developed relational database and drop-in MySQL successor, GPL-licensed and fully open. Default MySQL-compatible engine for the catalog.
     source: https://archive.mariadb.org/mariadb-11.8.8/source/mariadb-11.8.8.tar.gz
+    upstream: https://github.com/MariaDB/server
     license: GPL-2.0-only
     tier: critical
     status: built
 
   - name: mysql
+    category: Relational
+    summary: Widely used open-source relational database for general-purpose OLTP workloads, with broad framework and tooling support.
     source: https://dev.mysql.com/get/Downloads/MySQL-9.7/mysql-9.7.0.tar.gz
+    upstream: https://github.com/mysql/mysql-server
     license: GPL-2.0-only
     tier: critical
     status: built
 
   - name: rabbitmq
+    category: Messaging
+    summary: Reliable message broker speaking AMQP plus MQTT and STOMP, with flexible routing, queues, and acknowledgements for decoupling services.
     source: https://github.com/rabbitmq/rabbitmq-server
+    upstream: https://github.com/rabbitmq/rabbitmq-server
     license: MPL-2.0
     tier: critical
     status: built
 
   - name: kafka
+    category: Messaging
+    summary: Distributed event-streaming platform for high-throughput, durable, replayable publish-subscribe pipelines and stream processing.
     source: https://archive.apache.org/dist/kafka/4.3.0/kafka_2.13-4.3.0.tgz
+    upstream: https://github.com/apache/kafka
     license: Apache-2.0
     tier: critical
     status: built
 
   - name: nats
+    category: Messaging
+    summary: Lightweight, high-performance messaging system for cloud-native pub/sub and request-reply, with optional JetStream persistence and streaming.
     source: https://github.com/nats-io/nats-server
+    upstream: https://github.com/nats-io/nats-server
     license: Apache-2.0
     tier: standard
     status: built
 
   - name: memcached
+    category: Cache
+    summary: Simple, high-performance distributed in-memory cache for storing small objects and database query results to reduce backend load.
     source: https://www.memcached.org/files/memcached-1.6.42.tar.gz
+    upstream: https://github.com/memcached/memcached
     license: BSD-3-Clause
     tier: standard
     status: built
 
   - name: ferretdb
+    category: Document
+    summary: MongoDB-compatible document database that translates the MongoDB wire protocol onto PostgreSQL via the DocumentDB extension. The clean-license substitute for MongoDB.
     source: https://github.com/FerretDB/FerretDB
+    upstream: https://github.com/FerretDB/FerretDB
     license: Apache-2.0
     tier: standard
     status: built
 
   - name: postgres-documentdb
+    category: Document
+    summary: PostgreSQL 17 plus the open DocumentDB extension, providing BSON document storage and queries. The storage backend that powers FerretDB v2.
     source: https://github.com/FerretDB/documentdb
+    upstream: https://github.com/FerretDB/documentdb
     license: MIT
     tier: standard
     status: built
 
   - name: documentdb
+    category: Document
+    summary: Self-contained MongoDB-compatible server bundling PostgreSQL, the DocumentDB extension, and a wire gateway. Linux Foundation project, truly open under MIT.
     source: https://github.com/documentdb/documentdb
+    upstream: https://github.com/documentdb/documentdb
     license: MIT
     tier: standard
     status: done
 
   - name: mongodb
+    category: Document
+    summary: Document (NoSQL) database for JSON-like data. SSPL is not OSI-approved / source-available, not open source; prefer the clean alternative FerretDB or DocumentDB.
     source: https://github.com/mongodb/mongo
+    upstream: https://github.com/mongodb/mongo
     license: SSPL-1.0
     tier: standard
     status: done
+    cleanAlternative: FerretDB + DocumentDB — MongoDB-wire-compatible and truly open (Apache-2.0 / PostgreSQL).
 
   - name: zookeeper
+    category: Coordination
+    summary: Centralized coordination service for distributed systems, providing configuration, naming, leader election, and synchronization primitives.
     source: https://archive.apache.org/dist/zookeeper/zookeeper-3.9.5/apache-zookeeper-3.9.5-bin.tar.gz
+    upstream: https://github.com/apache/zookeeper
     license: Apache-2.0
     tier: standard
     status: built
 
   - name: opensearch
+    category: Search
+    summary: Search and analytics suite with a Kibana-style dashboards UI. The Apache-2.0 community fork of Elasticsearch and the recommended open alternative.
     source: https://github.com/opensearch-project/OpenSearch
+    upstream: https://github.com/opensearch-project/OpenSearch
     license: Apache-2.0
     tier: standard
     status: built
 
   - name: cassandra
+    category: Wide-column
+    summary: Distributed wide-column NoSQL store built for linear horizontal scale and high availability with no single point of failure, tuned for heavy writes.
     source: https://downloads.apache.org/cassandra/5.0.8/apache-cassandra-5.0.8-bin.tar.gz
+    upstream: https://github.com/apache/cassandra
     license: Apache-2.0
     tier: standard
     status: done
 
   - name: influxdb
+    category: Time series
+    summary: Time-series database purpose-built for ingesting and querying metrics, events, and IoT/sensor data at high write rates.
     source: https://github.com/influxdata/influxdb
+    upstream: https://github.com/influxdata/influxdb
     license: MIT
     tier: standard
     status: done
 
   - name: couchdb
+    category: Document
+    summary: Document database with an HTTP/JSON API and multi-master replication, designed for offline-first sync across nodes and devices.
     source: https://github.com/apache/couchdb
+    upstream: https://github.com/apache/couchdb
     license: Apache-2.0
     tier: standard
     status: done
 
   - name: clickhouse
+    category: Analytical
+    summary: Column-oriented OLAP database for real-time analytical queries over very large datasets, with high ingest rates and fast aggregations.
     source: https://github.com/ClickHouse/ClickHouse
+    upstream: https://github.com/ClickHouse/ClickHouse
     license: Apache-2.0
     tier: standard
     status: done
 
   - name: victoriametrics
+    category: Time series
+    summary: Fast, cost-efficient time-series database that speaks PromQL and Prometheus remote_write. Drop-in long-term storage or full replacement for Prometheus.
     source: https://github.com/VictoriaMetrics/VictoriaMetrics
+    upstream: https://github.com/VictoriaMetrics/VictoriaMetrics
     license: Apache-2.0
     tier: low
     status: done
 
   - name: prometheus
+    category: Observability
+    summary: Metrics collection, storage, and alerting system that scrapes targets and runs PromQL queries. The de-facto cloud-native monitoring TSDB.
     source: https://github.com/prometheus/prometheus
+    upstream: https://github.com/prometheus/prometheus
     license: Apache-2.0
     tier: standard
     status: done
 
   - name: grafana
+    category: Observability
+    summary: Dashboards and visualization for metrics, logs, and traces across many data sources. OSS edition, licensed AGPL.
     source: https://github.com/grafana/grafana
+    upstream: https://github.com/grafana/grafana
     license: AGPL-3.0-only
     tier: standard
     status: done
 
   - name: loki
+    category: Observability
+    summary: Horizontally scalable log aggregation system from Grafana that indexes only labels, not full log text. Like Prometheus, but for logs. Licensed AGPL.
     source: https://github.com/grafana/loki
+    upstream: https://github.com/grafana/loki
     license: AGPL-3.0-only
     tier: standard
     status: done
 
   - name: nginx
+    category: Gateway
+    summary: High-performance web server, reverse proxy, and load balancer for serving static content and fronting application backends.
     source: https://github.com/nginx/nginx
+    upstream: https://github.com/nginx/nginx
     license: BSD-2-Clause
     tier: critical
     status: done
 
   - name: solr
+    category: Search
+    summary: Enterprise search platform built on Apache Lucene, offering full-text search, faceting, and indexing over large document collections.
     source: https://github.com/apache/solr
+    upstream: https://github.com/apache/solr
     license: Apache-2.0
     tier: low
     status: done
 
   - name: keycloak
+    category: Identity
+    summary: Open-source identity and access management server providing SSO, user federation, and OAuth2/OIDC and SAML for apps and APIs.
     source: https://github.com/keycloak/keycloak
+    upstream: https://github.com/keycloak/keycloak
     license: Apache-2.0
     tier: standard
     status: done
 
   - name: pulsar
+    category: Messaging
+    summary: Cloud-native distributed messaging and streaming platform with multi-tenancy, geo-replication, and tiered storage that separates compute from storage.
     source: https://github.com/apache/pulsar
+    upstream: https://github.com/apache/pulsar
     license: Apache-2.0
     tier: low
     status: done
 
   - name: neo4j
+    category: Graph
+    summary: Graph database for highly connected data, queried with Cypher for traversals and relationship-heavy workloads. Community edition is GPLv3.
     source: https://github.com/neo4j/neo4j
+    upstream: https://github.com/neo4j/neo4j
     license: GPL-3.0-only
     tier: low
     status: done
 
   - name: scylladb
+    category: Wide-column
+    summary: High-throughput, low-latency wide-column store, API-compatible with Apache Cassandra and DynamoDB. This 6.x build is the final OSS line under AGPL.
     source: https://github.com/scylladb/scylladb
+    upstream: https://github.com/scylladb/scylladb
     license: AGPL-3.0-only
     tier: low
     status: done
 
   - name: cockroachdb
+    category: Relational
+    summary: Distributed SQL database with PostgreSQL wire compatibility and automatic horizontal scaling and survivability. BUSL is source-available, not OSI-approved; no clean in-catalog substitute yet, evaluate PostgreSQL for single-region SQL.
     source: https://github.com/cockroachdb/cockroach
+    upstream: https://github.com/cockroachdb/cockroach
     license: BUSL-1.1
     tier: low
     status: done
+    cleanAlternative: No in-catalog clean substitute yet — evaluate PostgreSQL for single-region SQL.
 
   - name: dragonfly
+    category: Cache
+    summary: Multi-threaded, Redis- and Memcached-compatible in-memory datastore built to scale vertically on one node. BUSL is source-available, not open source; prefer Valkey (BSD-3-Clause).
     source: https://github.com/dragonflydb/dragonfly
+    upstream: https://github.com/dragonflydb/dragonfly
     license: BUSL-1.1
     tier: low
     status: done
+    cleanAlternative: Valkey (BSD-3-Clause) — the truly-open Redis-compatible cache.
 
   - name: elasticsearch
+    category: Search
+    summary: Distributed search and analytics engine. Shipped under SSPL/Elastic License, which are not OSI-approved; OpenSearch (Apache-2.0) is the open drop-in fork.
     source: https://github.com/elastic/elasticsearch
+    upstream: https://github.com/elastic/elasticsearch
     license: SSPL-1.0
     tier: low
     status: done
+    cleanAlternative: OpenSearch (Apache-2.0) — the open drop-in fork of Elasticsearch.
 
   - name: seaweedfs
+    category: Object storage
+    summary: Fast distributed storage for blobs, objects, and files (S3 API) built on Facebook's Haystack design, with O(1) disk seeks for billions of small files. Default object store after MinIO restricted its community edition.
     source: https://github.com/seaweedfs/seaweedfs
+    upstream: https://github.com/seaweedfs/seaweedfs
     license: Apache-2.0
     tier: standard
     status: done
 
   - name: garage
+    category: Object storage
+    summary: Lightweight, S3-compatible object store for small, self-hosted, geo-distributed deployments that stays available across node failures. Licensed AGPL; runs well on modest hardware.
     source: https://github.com/deuxfleurs-org/garage
+    upstream: https://github.com/deuxfleurs-org/garage
     license: AGPL-3.0-only
     tier: standard
     status: done
 
   - name: rustfs
+    category: Object storage
+    summary: S3-compatible, high-performance object store written in Rust with a zero-master architecture, positioned as an Apache-2.0 MinIO alternative. Beta/preview.
     source: https://github.com/rustfs/rustfs
+    upstream: https://github.com/rustfs/rustfs
     license: Apache-2.0
     tier: low
     status: done
 
   - name: qdrant
+    category: Vector
+    summary: Vector database and similarity-search engine for AI embeddings, powering semantic search, recommendations, and RAG with filtered nearest-neighbor queries.
     source: https://github.com/qdrant/qdrant
+    upstream: https://github.com/qdrant/qdrant
     license: Apache-2.0
     tier: standard
     status: done
 
   - name: busybox
+    category: Base image
+    summary: Hardened minimal base/toolbox image bundling common Unix utilities in one binary. Image only, no chart.
     source: https://busybox.net
+    upstream: https://busybox.net
     license: GPL-2.0-only
     tier: low
     status: done
 
   - name: python
+    category: Language runtime
+    summary: Hardened CPython interpreter with pip, a 0-CVE signed nonroot base image to FROM for Python apps. Ships the latest 3 stable minors (no :latest).
     source: https://www.python.org
+    upstream: https://www.python.org
     license: PSF-2.0
     tier: standard
     status: done
 
   - name: openbao
+    category: Secrets
+    summary: Open-source secrets and encryption management for tokens, keys, and certificates, with dynamic secrets and leasing. The Linux Foundation MPL-2.0 community fork of HashiCorp Vault.
     source: https://github.com/openbao/openbao
+    upstream: https://github.com/openbao/openbao
     license: MPL-2.0
     tier: standard
     status: done
 
   - name: traefik
+    category: Gateway
+    summary: Cloud-native reverse proxy and load balancer with automatic service discovery, dynamic config, and built-in Let's Encrypt TLS.
     source: https://github.com/traefik/traefik
+    upstream: https://github.com/traefik/traefik
     license: MIT
     tier: standard
     status: done
 
   - name: haproxy
+    category: Gateway
+    summary: High-performance TCP and HTTP load balancer and reverse proxy known for reliability and fine-grained traffic control at scale.
     source: https://github.com/haproxy/haproxy
+    upstream: https://github.com/haproxy/haproxy
     license: GPL-2.0-or-later
     tier: standard
     status: done
 
   - name: caddy
+    category: Gateway
+    summary: Web server and reverse proxy with fully automatic HTTPS via Let's Encrypt and a simple Caddyfile config.
     source: https://github.com/caddyserver/caddy
+    upstream: https://github.com/caddyserver/caddy
     license: Apache-2.0
     tier: standard
     status: done
 
   - name: otel-collector
+    category: Observability
+    summary: OpenTelemetry Collector that receives, processes, and exports traces, metrics, and logs, a vendor-neutral pipeline for telemetry routing.
     source: https://github.com/open-telemetry/opentelemetry-collector
+    upstream: https://github.com/open-telemetry/opentelemetry-collector
     license: Apache-2.0
     tier: standard
     status: done
 
   - name: fluent-bit
+    category: Observability
+    summary: Lightweight, fast log and metrics processor and forwarder for collecting, filtering, and shipping telemetry to many backends.
     source: https://github.com/fluent/fluent-bit
+    upstream: https://github.com/fluent/fluent-bit
     license: Apache-2.0
     tier: standard
     status: done
 
   - name: alertmanager
+    category: Observability
+    summary: Companion to Prometheus that routes, groups, deduplicates, and silences alerts and dispatches them to email, Slack, PagerDuty, and more.
     source: https://github.com/prometheus/alertmanager
+    upstream: https://github.com/prometheus/alertmanager
     license: Apache-2.0
     tier: standard
     status: done
 
   - name: node-exporter
+    category: Metrics/Exporter
+    summary: Prometheus exporter for host-level hardware and OS metrics (CPU, memory, disk, network) on Linux machines.
     source: https://github.com/prometheus/node_exporter
+    upstream: https://github.com/prometheus/node_exporter
     license: Apache-2.0
     tier: standard
     status: done
 
   - name: blackbox-exporter
+    category: Metrics/Exporter
+    summary: Prometheus exporter that probes endpoints externally over HTTP, HTTPS, TCP, DNS, and ICMP for black-box uptime and latency monitoring.
     source: https://github.com/prometheus/blackbox_exporter
+    upstream: https://github.com/prometheus/blackbox_exporter
     license: Apache-2.0
     tier: standard
     status: done
 
   - name: temporal
+    category: Workflow
+    summary: Durable workflow orchestration engine that persists execution state so long-running, multi-step processes survive crashes and resume exactly where they left off.
     source: https://github.com/temporalio/temporal
+    upstream: https://github.com/temporalio/temporal
     license: MIT
     tier: standard
     status: done
 
   - name: temporal-cli
+    category: Workflow
+    summary: Command-line client and built-in dev server for Temporal, used to start workflows, inspect history, and run a local cluster.
     source: https://github.com/temporalio/cli
+    upstream: https://github.com/temporalio/cli
     license: MIT
     tier: standard
     status: done
 
   - name: harbor-portal
+    category: Registry
+    summary: Web UI for the Harbor container registry, serving the management dashboard for projects, repositories, and scan results.
     source: https://github.com/goharbor/harbor
+    upstream: https://github.com/goharbor/harbor
     license: Apache-2.0
     tier: standard
     status: done
 
   - name: harbor-registry
+    category: Registry
+    summary: OCI registry storage backend (Docker distribution) that stores and serves image layers and manifests for Harbor.
     source: https://github.com/goharbor/distribution
+    upstream: https://github.com/goharbor/distribution
     license: Apache-2.0
     tier: standard
     status: done
 
   - name: harbor-core
+    category: Registry
+    summary: Core API server and control plane of the Harbor container registry, handling auth, projects, policies, and orchestration.
     source: https://github.com/goharbor/harbor
+    upstream: https://github.com/goharbor/harbor
     license: Apache-2.0
     tier: standard
     status: done
 
   - name: harbor-jobservice
+    category: Registry
+    summary: Harbor's asynchronous job runner that executes replication, garbage collection, and image-scan tasks in the background.
     source: https://github.com/goharbor/harbor
+    upstream: https://github.com/goharbor/harbor
     license: Apache-2.0
     tier: standard
     status: done
 
   - name: harbor-registryctl
+    category: Registry
+    summary: Harbor registry controller that manages garbage collection and registry storage lifecycle operations alongside the registry backend.
     source: https://github.com/goharbor/harbor
+    upstream: https://github.com/goharbor/harbor
     license: Apache-2.0
     tier: standard
     status: done
 
   - name: harbor-exporter
+    category: Registry
+    summary: Prometheus exporter that exposes Harbor registry health and usage metrics for monitoring.
     source: https://github.com/goharbor/harbor
+    upstream: https://github.com/goharbor/harbor
     license: Apache-2.0
     tier: standard
     status: done
 
   - name: harbor-trivy-adapter
+    category: Registry
+    summary: Harbor vulnerability-scan adapter backed by Trivy, scanning pushed images for CVEs and reporting results into Harbor.
     source: https://github.com/goharbor/harbor-scanner-trivy
+    upstream: https://github.com/goharbor/harbor-scanner-trivy
     license: Apache-2.0
     tier: standard
     status: done
 
   - name: tempo
+    category: Observability
+    summary: Distributed tracing backend from Grafana that ingests OpenTelemetry, Jaeger, and Zipkin spans and stores them cheaply in object storage. Licensed AGPL.
     source: https://github.com/grafana/tempo
+    upstream: https://github.com/grafana/tempo
     license: AGPL-3.0-only
     tier: standard
     status: done
 
   - name: vector
+    category: Observability
+    summary: High-performance observability pipeline that collects, transforms, and routes logs, metrics, and traces between sources and sinks.
     source: https://github.com/vectordotdev/vector
-    tier: standard
+    upstream: https://github.com/vectordotdev/vector
     license: MPL-2.0
+    tier: standard
     status: done
 
   - name: atlantis
+    category: GitOps
+    summary: Terraform pull-request automation that runs plan on PRs and apply from PR comments, enforcing reviewed, Git-driven infrastructure changes with state locking.
     source: https://github.com/runatlantis/atlantis
+    upstream: https://github.com/runatlantis/atlantis
     license: Apache-2.0
     tier: standard
     status: done
 
   - name: gitea
+    category: Git
+    summary: Lightweight self-hosted Git service with repositories, issues, pull requests, and built-in CI/CD (Actions). A low-footprint GitHub alternative.
     source: https://github.com/go-gitea/gitea
+    upstream: https://github.com/go-gitea/gitea
     license: MIT
     tier: standard
     status: done
 
   - name: coolify-realtime
+    category: PaaS
+    summary: Realtime server component of Coolify, providing the websocket connections and terminal/log gateway for the dashboard. Licensed AGPL.
     source: https://github.com/coollabsio/coolify
+    upstream: https://github.com/coollabsio/coolify
     license: AGPL-3.0-or-later
     tier: standard
     status: pilot
 
   - name: coolify-helper
+    category: PaaS
+    summary: Coolify helper image carrying the build and deploy toolchain (buildpacks, git, ssh) that runs on target hosts to execute deployments.
     source: https://github.com/coollabsio/coolify
+    upstream: https://github.com/coollabsio/coolify
     license: Apache-2.0 AND AGPL-3.0-or-later
     tier: standard
     status: pilot
 
   - name: coolify-app
+    category: PaaS
+    summary: Control-plane application for Coolify, an open-source self-hostable PaaS alternative to Heroku, Vercel, and Netlify for deploying apps, databases, and services on your own servers.
     source: https://github.com/coollabsio/coolify
+    upstream: https://github.com/coollabsio/coolify
     license: Apache-2.0
     tier: standard
     status: pilot
 
   - name: meilisearch
+    category: Search
+    summary: Fast, typo-tolerant full-text search engine with an instant-search API, easy to embed for site and in-app search with relevant results out of the box.
     source: https://github.com/meilisearch/meilisearch
+    upstream: https://github.com/meilisearch/meilisearch
     license: MIT
     tier: standard
     status: done
 
   - name: dotnet
+    category: Language runtime
+    summary: Hardened .NET SDK for building and running .NET apps. Use as a build base; ships the latest 3 stable lines including LTS (8/9/10).
     source: https://github.com/dotnet/runtime
+    upstream: https://github.com/dotnet/runtime
     license: MIT
     tier: standard
     status: done
 
   - name: jdk
+    category: Language runtime
+    summary: Hardened OpenJDK with the javac compiler, a build-stage base image to FROM for Java apps. LTS lines 17/21/25.
     source: https://openjdk.org
+    upstream: https://openjdk.org
     license: GPL-2.0-with-classpath-exception
     tier: standard
     status: done
 
   - name: node
+    category: Language runtime
+    summary: Hardened Node.js runtime with npm, a 0-CVE signed nonroot base image for JavaScript apps. Active LTS lines (20/22/24).
     source: https://github.com/nodejs/node
+    upstream: https://github.com/nodejs/node
     license: MIT
     tier: standard
     status: done
 
   - name: ruby
+    category: Language runtime
+    summary: Hardened Ruby interpreter with Bundler, a base image to FROM for Ruby apps. Latest 3 stable lines (3.2/3.3/3.4).
     source: https://github.com/ruby/ruby
+    upstream: https://github.com/ruby/ruby
     license: Ruby
     tier: standard
     status: done
 
   - name: php
+    category: Language runtime
+    summary: Hardened PHP CLI with common extensions, a base image to FROM for PHP apps. Latest 3 stable lines (8.3/8.4/8.5).
     source: https://github.com/php/php-src
+    upstream: https://github.com/php/php-src
     license: PHP-3.01
     tier: standard
     status: done
 
   - name: go
+    category: Language runtime
+    summary: Hardened Go toolchain for compiling binaries in a build stage; pair the output with the static base for the runtime. Latest 3 stable lines (1.24/1.25/1.26).
     source: https://github.com/golang/go
+    upstream: https://github.com/golang/go
     license: BSD-3-Clause
     tier: standard
     status: done
 
   - name: rust
+    category: Language runtime
+    summary: Hardened Rust toolchain (cargo plus rustc) for build stages; ship the compiled binary on the static base. Latest 3 stable lines (1.94/1.95/1.96).
     source: https://github.com/rust-lang/rust
+    upstream: https://github.com/rust-lang/rust
     license: MIT OR Apache-2.0
     tier: standard
     status: done
 
   - name: static
+    category: Runtime base
+    summary: Tiny static base for self-contained binaries from Go or Rust. Nonroot, no shell, no package manager. The only image tagged :latest.
     source: https://github.com/wolfi-dev
+    upstream: https://github.com/wolfi-dev
     license: MIT
     tier: standard
     status: done
 
   - name: jre
+    category: Runtime base
+    summary: Hardened Java runtime (JRE) for running a built jar, no compiler. Pair with the jdk, maven, or gradle build image. LTS lines 17/21/25.
     source: https://openjdk.org
+    upstream: https://openjdk.org
     license: GPL-2.0-with-classpath-exception
     tier: standard
     status: done
 
   - name: dotnet-runtime
+    category: Runtime base
+    summary: Hardened .NET runtime for console and worker apps, no SDK. Build on the dotnet image, then run here. Lines 8/9/10.
     source: https://github.com/dotnet/runtime
+    upstream: https://github.com/dotnet/runtime
     license: MIT
     tier: standard
     status: done
 
   - name: aspnet
+    category: Runtime base
+    summary: Hardened ASP.NET Core runtime for web apps and APIs, no SDK. Build on the dotnet image, then run here. Lines 8/9/10.
     source: https://github.com/dotnet/runtime
+    upstream: https://github.com/dotnet/runtime
     license: MIT
     tier: standard
     status: done
 
   - name: bun
+    category: Language runtime
+    summary: Hardened Bun runtime and toolkit (runtime, bundler, package manager) for JavaScript and TypeScript. Latest stable (1).
     source: https://github.com/oven-sh/bun
+    upstream: https://github.com/oven-sh/bun
     license: MIT
     tier: standard
     status: done
 
   - name: deno
+    category: Language runtime
+    summary: Hardened Deno runtime for JavaScript and TypeScript, secure by default with explicit permissions and built-in tooling. Latest stable (2).
     source: https://github.com/denoland/deno
+    upstream: https://github.com/denoland/deno
     license: MIT
     tier: standard
     status: done
 
   - name: erlang
+    category: Language runtime
+    summary: Hardened Erlang/OTP runtime on the BEAM VM, built for highly concurrent, fault-tolerant systems. Latest stable lines (27/28/29).
     source: https://www.erlang.org
+    upstream: https://www.erlang.org
     license: Apache-2.0
     tier: standard
     status: done
 
   - name: elixir
+    category: Language runtime
+    summary: Hardened Elixir runtime on the BEAM VM, built on Erlang/OTP, for concurrent, fault-tolerant apps (e.g. Phoenix). Latest stable (1.18).
     source: https://elixir-lang.org
+    upstream: https://elixir-lang.org
     license: Apache-2.0
     tier: standard
     status: done
 
   - name: perl
+    category: Language runtime
+    summary: Hardened Perl interpreter for scripts, text processing, and tooling. A base image to FROM for Perl workloads. Latest stable (5).
     source: https://www.perl.org
+    upstream: https://www.perl.org
     license: Artistic-1.0-Perl OR GPL-1.0-or-later
     tier: standard
     status: done
 
   - name: pnpm
+    category: Build tool
+    summary: Node base image with pnpm preinstalled via corepack, used as the build stage for pnpm projects. Lines 10/11.
     source: https://pnpm.io
+    upstream: https://pnpm.io
     license: MIT
     tier: standard
     status: done
 
   - name: yarn
+    category: Build tool
+    summary: Node base image with Yarn preinstalled, used as the build stage for Yarn projects. Lines 1 (classic) and 4 (berry).
     source: https://yarnpkg.com
+    upstream: https://yarnpkg.com
     license: BSD-2-Clause
     tier: standard
     status: done
 
   - name: composer
+    category: Build tool
+    summary: PHP base image with the Composer dependency manager, used as the build stage for PHP projects. Line 2.
     source: https://getcomposer.org
+    upstream: https://getcomposer.org
     license: MIT
     tier: standard
     status: done
 
   - name: maven
+    category: Build tool
+    summary: JDK base image with Apache Maven, used as the build stage for Maven projects; run the resulting jar on jre. Line 3.9.
     source: https://maven.apache.org
+    upstream: https://maven.apache.org
     license: Apache-2.0
     tier: standard
     status: done
 
   - name: gradle
+    category: Build tool
+    summary: JDK base image with Gradle, used as the build stage for Gradle projects; run the resulting jar on jre. Line 9.
     source: https://gradle.org
+    upstream: https://gradle.org
     license: Apache-2.0
     tier: standard
     status: done
 
   - name: uv
+    category: Build tool
+    summary: Python base image with uv, a fast Rust-based installer and resolver, used as the build stage for Python projects. Line 0.11.
     source: https://github.com/astral-sh/uv
+    upstream: https://github.com/astral-sh/uv
     license: MIT OR Apache-2.0
     tier: standard
     status: done
 
   - name: poetry
+    category: Build tool
+    summary: Python base image with Poetry for dependency management and packaging, used as the build stage for Python projects. Line 2.
     source: https://python-poetry.org
+    upstream: https://python-poetry.org
     license: MIT
     tier: standard
     status: done

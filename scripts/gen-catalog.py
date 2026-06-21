@@ -91,51 +91,57 @@ def gh(path: str) -> list:
 
 def is_version_tag(tag: str) -> bool:
     """A real release tag, not a registry artifact (cosign sig, scan, arch leg)."""
-    return not (
-        tag == "latest"
-        or tag.startswith("sha256-")
-        or tag.startswith("scan-")
-        or tag.endswith(("-amd64", "-arm64"))
+    return (
+        bool(tag) and tag[0].isdigit()       # real versions start with a digit
+        and not tag.startswith("sha256-")
+        and not tag.startswith("scan-")
+        and not tag.endswith(("-amd64", "-arm64"))
     )
 
 
+# Editorial fields carried straight through from catalog.yaml into the lock, so
+# the lock is the single complete dataset the website reshapes (no second source).
+EDITORIAL_FIELDS = ("category", "summary", "source", "upstream", "license", "tier", "status", "cleanAlternative")
+
+
+def versions_of(pkg: str, repo: str, with_meta: bool) -> list:
+    """Published version tags for one package (newest first). Empty if unpublished."""
+    try:
+        raw = gh(f"/orgs/{ORG}/packages/container/{pkg.replace('/', '%2F')}/versions?per_page=100")
+    except subprocess.CalledProcessError:
+        return []  # planned app, no GHCR package yet
+    versions = []
+    for v in raw:
+        for tag in v.get("metadata", {}).get("container", {}).get("tags", []):
+            if is_version_tag(tag):
+                row = {"version": tag, "digest": v["name"], "published": v["created_at"]}
+                if with_meta:
+                    im = image_meta(repo, v["name"])
+                    row["size"] = im.get("size")
+                    row["layers"] = im.get("layers")
+                versions.append(row)
+    versions.sort(key=lambda x: x["published"], reverse=True)
+    return versions
+
+
 def collect(with_meta: bool = False) -> dict:
-    meta = {
-        r["name"]: r
-        for r in yaml.safe_load(CURATED.read_text())["catalog"]
-    }
-    pkgs = [
-        p["name"] for p in gh(f"/orgs/{ORG}/packages?package_type=container&per_page=100")
-        if p["name"].startswith("images/")
-    ]
+    # Iterate catalog.yaml (the editorial source of truth) so EVERY app lands in
+    # the lock -- including planned ones with no published versions yet.
+    rows = yaml.safe_load(CURATED.read_text())["catalog"]
     apps = {}
-    for pkg in sorted(pkgs):
-        app = pkg.split("/", 1)[1]
-        repo = f"ghcr.io/{ORG}/{pkg}"
-        versions = []
-        for v in gh(f"/orgs/{ORG}/packages/container/{pkg.replace('/', '%2F')}/versions?per_page=100"):
-            for tag in v.get("metadata", {}).get("container", {}).get("tags", []):
-                if is_version_tag(tag):
-                    row = {"version": tag, "digest": v["name"], "published": v["created_at"]}
-                    if with_meta:
-                        im = image_meta(repo, v["name"])
-                        row["size"] = im.get("size")
-                        row["layers"] = im.get("layers")
-                    versions.append(row)
-        if not versions:
-            continue
-        versions.sort(key=lambda x: x["published"], reverse=True)
-        # Real arches from the newest image's manifest when --meta; else the invariant.
-        arches = image_meta(repo, versions[0]["digest"]).get("arches", ARCHES) if with_meta else ARCHES
-        m = meta.get(app, {})
-        apps[app] = {
-            "image": repo,
-            "source": m.get("source"),
-            "license": m.get("license"),
-            "tier": m.get("tier"),
-            "arches": arches,
-            "versions": versions,
-        }
+    for r in rows:
+        slug = r["name"]
+        repo = f"ghcr.io/{ORG}/images/{slug}"
+        versions = versions_of(f"images/{slug}", repo, with_meta)
+        arches = (image_meta(repo, versions[0]["digest"]).get("arches", ARCHES)
+                  if with_meta and versions else ARCHES)
+        app = {"image": repo}
+        for k in EDITORIAL_FIELDS:
+            if r.get(k) is not None:
+                app[k] = r[k]
+        app["arches"] = arches
+        app["versions"] = versions
+        apps[slug] = app
     return {"registry": f"ghcr.io/{ORG}/images", "apps": apps}
 
 

@@ -2,409 +2,485 @@
 # Published state of the GHCR catalog (run the script to refresh).
 registry: ghcr.io/quenchworks/images
 apps:
-  alertmanager:
-    image: ghcr.io/quenchworks/images/alertmanager
-    source: https://github.com/prometheus/alertmanager
-    license: Apache-2.0
-    tier: standard
+  redis:
+    image: ghcr.io/quenchworks/images/redis
+    category: Cache
+    summary: In-memory key-value store used as a cache, message broker, and ephemeral datastore. Shipped
+      under AGPL (not permissive); Valkey is the BSD-licensed open alternative.
+    source: https://download.redis.io/releases/redis-8.8.0.tar.gz
+    upstream: https://github.com/redis/redis
+    license: AGPL-3.0-only
+    tier: critical
+    status: pilot
     arches:
     - amd64
     - arm64
     versions:
-    - version: 0.33.0
-      digest: sha256:862b251add3271174a224ebdad736056162ebfe4eb55318a013aa89c50304f33
-      published: '2026-06-19T19:11:04Z'
-      size: 24.2 MB
+    - version: 8.6.4
+      digest: sha256:4f8b5fc963b2a0e11c67f5b2464c32339103a318683a7d3d7f026bf49f7b92da
+      published: '2026-06-21T08:47:35Z'
+      size: 15.5 MB
       layers: 1
-    - version: 0.32.2
-      digest: sha256:3d3fae53a03358cfabf8996791bff5f29102bc97255bb7880aa78f5644cf39e1
-      published: '2026-06-19T19:10:58Z'
-      size: 22.4 MB
+    - version: 8.4.4
+      digest: sha256:f4b065a96d3b60a51faaaacf7f1cd9aeeba1170f456e1ec3d652d3b4937c9114
+      published: '2026-06-21T08:47:29Z'
+      size: 15.2 MB
       layers: 1
-    - version: 0.31.1
-      digest: sha256:1b0817b0099775ee6238cd2509021b6045635122d74ad1900434df9f98df1d66
-      published: '2026-06-19T19:10:54Z'
-      size: 24.7 MB
+    - version: 8.8.0
+      digest: sha256:f027d0109a0bdd1779bfac85a10744336f4af80518e9bc2c290984e206b3bf14
+      published: '2026-06-21T08:47:23Z'
+      size: 14.8 MB
       layers: 1
-  aspnet:
-    image: ghcr.io/quenchworks/images/aspnet
-    source: https://github.com/dotnet/runtime
+  redis-exporter:
+    image: ghcr.io/quenchworks/images/redis-exporter
+    category: Metrics/Exporter
+    summary: Prometheus exporter that scrapes Redis and Valkey runtime stats and exposes them as metrics
+      for dashboards and alerts.
+    source: https://github.com/oliver006/redis_exporter
+    upstream: https://github.com/oliver006/redis_exporter
     license: MIT
-    tier: standard
+    tier: critical
+    status: pilot
     arches:
     - amd64
     - arm64
     versions:
-    - version: 9.0.112
-      digest: sha256:a2ba5511007c870c39a5994b36bafaf13c7e1a96f8d689dd9f0b3246449b4ac1
-      published: '2026-06-19T11:49:08Z'
-      size: 71.0 MB
+    - version: 1.86.0
+      digest: sha256:528112544150b31f0a170290cf171b6e779f21ecfd6ec74647aa18b6d581d6d7
+      published: '2026-06-21T11:15:03Z'
+      size: 4.6 MB
       layers: 1
-    - version: '9'
-      digest: sha256:a2ba5511007c870c39a5994b36bafaf13c7e1a96f8d689dd9f0b3246449b4ac1
-      published: '2026-06-19T11:49:08Z'
-      size: 71.0 MB
+    - version: 1.84.0
+      digest: sha256:feff0696bf7d8840d17152676b5109084587e94ca4cac6603f688a9cc9e54b70
+      published: '2026-06-21T11:14:59Z'
+      size: 4.6 MB
       layers: 1
-    - version: 10.0.100
-      digest: sha256:93b283b0d2aad5bf2b5c4c8f04e12a57fa18b36902d3130e0c4b8ef261d1890a
-      published: '2026-06-18T09:25:48Z'
-      size: 72.3 MB
+    - version: 1.85.0
+      digest: sha256:0661636890eebdc30ce04705678d543c71f1f484fd4aad360efcec10f5849062
+      published: '2026-06-21T11:14:57Z'
+      size: 4.6 MB
       layers: 1
-    - version: '10'
-      digest: sha256:93b283b0d2aad5bf2b5c4c8f04e12a57fa18b36902d3130e0c4b8ef261d1890a
-      published: '2026-06-18T09:25:48Z'
-      size: 72.3 MB
+  valkey:
+    image: ghcr.io/quenchworks/images/valkey
+    category: Cache
+    summary: BSD-licensed in-memory key-value store, the truly-open community fork of Redis 7.2. QuenchWorks'
+      default cache and the recommended Redis drop-in replacement.
+    source: https://github.com/valkey-io/valkey
+    upstream: https://github.com/valkey-io/valkey
+    license: BSD-3-Clause
+    tier: critical
+    status: built
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 9.1.0
+      digest: sha256:4482926665b4e9fbe73b6ab15e403e1f4d9285112aca313ce4994095346c6565
+      published: '2026-06-21T10:12:55Z'
+      size: 14.9 MB
       layers: 1
-    - version: 8.0.122
-      digest: sha256:7dfe7bace54f95ece1a1c8ffff2f0505893c0deb128ed6f0b8cdca4cbf3b62e5
-      published: '2026-06-18T09:17:48Z'
-      size: 68.0 MB
+    - version: 8.1.8
+      digest: sha256:fdf8c80aceeee23c1db30cddbbf16d387728b59462def25f1250055c220287ad
+      published: '2026-06-21T10:12:54Z'
+      size: 13.4 MB
       layers: 1
-    - version: '8'
-      digest: sha256:7dfe7bace54f95ece1a1c8ffff2f0505893c0deb128ed6f0b8cdca4cbf3b62e5
-      published: '2026-06-18T09:17:48Z'
-      size: 68.0 MB
+    - version: 9.0.4
+      digest: sha256:2eb2d3d1859e5d141dc98b67b01d95401b45e6900c87fb573629ebe99696c1e5
+      published: '2026-06-21T10:12:48Z'
+      size: 14.1 MB
       layers: 1
-  atlantis:
-    image: ghcr.io/quenchworks/images/atlantis
-    source: https://github.com/runatlantis/atlantis
+  postgresql:
+    image: ghcr.io/quenchworks/images/postgresql
+    category: Relational
+    summary: Advanced open-source relational database (v18.x) with strong SQL, ACID transactions, JSON,
+      and a rich extension ecosystem. The catalog's default SQL engine.
+    source: https://ftp.postgresql.org/pub/source/v18.4/postgresql-18.4.tar.bz2
+    upstream: https://github.com/postgres/postgres
+    license: PostgreSQL
+    tier: critical
+    status: built
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: '16.14'
+      digest: sha256:e43a69fb1b43de40ef5a1009cd3846b5936ccb42347ad46bed6b3756fe7c4bc3
+      published: '2026-06-21T04:35:25Z'
+      size: 52.9 MB
+      layers: 1
+    - version: '17.10'
+      digest: sha256:106dc24db23c250465b8a7dcb68cd3b938b85f4d1b64662e241aee747e85981b
+      published: '2026-06-21T04:35:22Z'
+      size: 53.6 MB
+      layers: 1
+    - version: '18.4'
+      digest: sha256:b492e8f2aa8528a0af8bc1aa835522ab222aa8e0a0a6c135b2d5fdc3e9467bd4
+      published: '2026-06-21T04:35:21Z'
+      size: 54.0 MB
+      layers: 1
+  postgresql-15:
+    image: ghcr.io/quenchworks/images/postgresql-15
+    category: Relational
+    summary: PostgreSQL 15.x build for the Coolify wave, which pins PG 15 (the default postgresql image
+      tracks 18.x). Same hardened build with bundled contrib extensions.
+    source: https://ftp.postgresql.org/pub/source/v15.18/postgresql-15.18.tar.bz2
+    upstream: https://ftp.postgresql.org/pub/source/v15.18/postgresql-15.18.tar.bz2
+    license: PostgreSQL
+    tier: critical
+    status: built
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: '15.18'
+      digest: sha256:5529b416dfbafc531bb7b11fe243c180396cf9372a4966d0c82fcda84433b05e
+      published: '2026-06-21T04:42:54Z'
+      size: 52.6 MB
+      layers: 1
+    - version: '15.16'
+      digest: sha256:41916f098149da270959f006507ae9babdb3d734835d9cc9abd59775630bebd4
+      published: '2026-06-21T04:42:52Z'
+      size: 52.6 MB
+      layers: 1
+    - version: '15.17'
+      digest: sha256:cd604fcab011897b2f54274a4fa5a6ee98cdda6b3caaff2ceccfb5eac591a594
+      published: '2026-06-21T04:42:52Z'
+      size: 52.7 MB
+      layers: 1
+  postgres-exporter:
+    image: ghcr.io/quenchworks/images/postgres-exporter
+    category: Metrics/Exporter
+    summary: Prometheus exporter that collects PostgreSQL activity, replication, and performance stats
+      and exposes them as metrics for monitoring.
+    source: https://github.com/prometheus-community/postgres_exporter
+    upstream: https://github.com/prometheus-community/postgres_exporter
     license: Apache-2.0
-    tier: standard
+    tier: critical
+    status: built
     arches:
     - amd64
     - arm64
     versions:
-    - version: 0.43.0
-      digest: sha256:8c1dd6a421ad366807bee7f9167a9df7b0db16b85d71f4eeec37f7ae71a0bfdf
-      published: '2026-06-19T20:25:02Z'
-      size: 72.6 MB
+    - version: 0.17.1
+      digest: sha256:e1183f6aecb69bdd31e2efda376e2880c2557a3fe34ec655883fc3c4cce31a00
+      published: '2026-06-21T04:26:15Z'
+      size: 5.5 MB
       layers: 1
-    - version: 0.42.0
-      digest: sha256:7046c1fc076de73c7003724c7b1348b29f0f8a9859e0e7bbb61b90d366c91ee1
-      published: '2026-06-19T20:24:55Z'
-      size: 72.6 MB
+    - version: 0.18.1
+      digest: sha256:ea5bd998b95a360399f3c8ce30771dd28b2aeba699ae3338c58f6566acdd78ce
+      published: '2026-06-21T04:26:11Z'
+      size: 5.5 MB
       layers: 1
-    - version: 0.44.0
-      digest: sha256:73c6abdc7cdb6764f956d5810292776318651887521fdc07c11c84c2bf7f67c5
-      published: '2026-06-19T20:24:55Z'
-      size: 73.2 MB
+    - version: 0.19.1
+      digest: sha256:325e496a0fa4b15b33ba2537f3fc5b2b90dc08992b124aa412a03ba1d8e6f389
+      published: '2026-06-21T04:26:10Z'
+      size: 5.7 MB
       layers: 1
-  blackbox-exporter:
-    image: ghcr.io/quenchworks/images/blackbox-exporter
-    source: https://github.com/prometheus/blackbox_exporter
+  pgbouncer:
+    image: ghcr.io/quenchworks/images/pgbouncer
+    category: Relational
+    summary: Lightweight connection pooler for PostgreSQL that fronts thousands of client connections
+      with a small backend pool, cutting per-connection overhead.
+    source: https://github.com/pgbouncer/pgbouncer
+    upstream: https://github.com/pgbouncer/pgbouncer
+    license: ISC
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 1.23.1
+      digest: sha256:7ff4cb2cd1d8129b0803ef29ad3ac6189bb9d47900ea1e1aeb16590e2d68b2e9
+      published: '2026-06-21T03:38:22Z'
+      size: 7.6 MB
+      layers: 1
+    - version: 1.25.2
+      digest: sha256:a34244ca0957a98b1bb6596d4839e371af12abeaf3850da12f87cfbee83414ad
+      published: '2026-06-21T03:38:21Z'
+      size: 7.6 MB
+      layers: 1
+    - version: 1.24.1
+      digest: sha256:70edccb5889f18632cbd501ae8ea4e6a1dcd45834cf4f53a39f8d1e4a3ac63f1
+      published: '2026-06-21T03:38:16Z'
+      size: 7.6 MB
+      layers: 1
+  etcd:
+    image: ghcr.io/quenchworks/images/etcd
+    category: Coordination
+    summary: Distributed, strongly consistent key-value store using Raft consensus. The backing store
+      for Kubernetes and a building block for service coordination and config.
+    source: https://github.com/etcd-io/etcd
+    upstream: https://github.com/etcd-io/etcd
     license: Apache-2.0
-    tier: standard
+    tier: critical
+    status: built
     arches:
     - amd64
     - arm64
     versions:
-    - version: 0.28.0
-      digest: sha256:3021046854322338685fca0ed4e937b44699bec5a0c1a2be06d206e909b6427b
-      published: '2026-06-19T20:34:04Z'
-      size: 8.8 MB
+    - version: 3.6.12
+      digest: sha256:0a9df4f40d9f49ec6470ab20729cd91bb7389863c2f2e356c9412263da7f05e0
+      published: '2026-06-20T03:42:10Z'
+      size: 22.6 MB
       layers: 1
-    - version: 0.27.0
-      digest: sha256:aa7560ca4ceb19e08aa69599878c4492db9320c4f3b36cdb029bed3a15f7c73d
-      published: '2026-06-19T20:34:02Z'
-      size: 8.1 MB
+    - version: 3.5.31
+      digest: sha256:46704073bf6ac1358097f9305f4108622324298d03f824b7cbf0fa359132dc80
+      published: '2026-06-20T03:42:08Z'
+      size: 23.2 MB
       layers: 1
-    - version: 0.26.0
-      digest: sha256:817b41b2d39bd453443ec3d36d5723495a4b8c3733d87cff7ce496c3a542bb8e
-      published: '2026-06-19T20:34:02Z'
-      size: 6.9 MB
-      layers: 1
-  bun:
-    image: ghcr.io/quenchworks/images/bun
-    source: https://github.com/oven-sh/bun
-    license: MIT
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 1.3.11
-      digest: sha256:803c3b98eb3d7acaf5280f3d341ad14c8ed180a388de80cb9817e4ce3357d8c4
-      published: '2026-06-21T11:00:30Z'
-      size: 41.4 MB
-      layers: 1
-    - version: 1.3.13
-      digest: sha256:b138e62d75ceb821002fc3ee371d1508ddbf3cc6059f28bf41928fad5c1bb82e
-      published: '2026-06-21T11:00:30Z'
-      size: 42.3 MB
-      layers: 1
-    - version: 1.3.1
-      digest: sha256:6327a8d3834045abd8ddbba39c06de307b1bd01ea24ccf88f7ac291bbba40869
-      published: '2026-06-18T09:45:25Z'
-      size: 38.1 MB
-      layers: 1
-    - version: '1'
-      digest: sha256:6327a8d3834045abd8ddbba39c06de307b1bd01ea24ccf88f7ac291bbba40869
-      published: '2026-06-18T09:45:25Z'
-      size: 38.1 MB
-      layers: 1
-    - version: 1.3.14
-      digest: sha256:42e37906ac9b2d42d56f196e2264cd31adc85813904537a0e2d20a67a860a8a9
-      published: '2026-06-15T21:35:52Z'
-      size: 38.1 MB
-      layers: 1
-  busybox:
-    image: ghcr.io/quenchworks/images/busybox
-    source: https://busybox.net
+  mariadb:
+    image: ghcr.io/quenchworks/images/mariadb
+    category: Relational
+    summary: Community-developed relational database and drop-in MySQL successor, GPL-licensed and fully
+      open. Default MySQL-compatible engine for the catalog.
+    source: https://archive.mariadb.org/mariadb-11.8.8/source/mariadb-11.8.8.tar.gz
+    upstream: https://github.com/MariaDB/server
     license: GPL-2.0-only
-    tier: low
+    tier: critical
+    status: built
     arches:
     - amd64
     - arm64
     versions:
-    - version: 1.36.1
-      digest: sha256:e406f907d10a224772e24962efe79cdb7938fb954e1b86132f75ee7eeb9e6bc4
-      published: '2026-06-19T21:07:28Z'
-      size: 4.1 MB
+    - version: 12.3.2
+      digest: sha256:abf1c0823dcc7f2c1b77252defaa0202a386907d131e3ea62feb0bb07304a0f5
+      published: '2026-06-20T22:12:11Z'
+      size: 103.8 MB
       layers: 1
-    - version: 1.38.0
-      digest: sha256:1167af509d97dceef9b7d1b0ecc0c655a1eb2d5562e0ae6a60ff1147feb0e7c8
-      published: '2026-06-19T21:07:20Z'
-      size: 4.1 MB
+    - version: 11.8.8
+      digest: sha256:003d3d2ce2b64d1dd1e1bdc84e3b8d409bf3962f60dacc02ccad253f18de9465
+      published: '2026-06-20T22:12:11Z'
+      size: 102.0 MB
       layers: 1
-    - version: 1.37.0
-      digest: sha256:c086d4d5b51f3aecfe91599bcd708f06dd86ddf0b0c9ff5994e406a6d71212a4
-      published: '2026-06-19T21:07:19Z'
-      size: 4.1 MB
+    - version: 11.4.12
+      digest: sha256:e5e47160f68d2b8063c509f2bfbea61ce025a7055abbee9f092a80b39c5a0b19
+      published: '2026-06-20T22:12:11Z'
+      size: 100.2 MB
       layers: 1
-  caddy:
-    image: ghcr.io/quenchworks/images/caddy
-    source: https://github.com/caddyserver/caddy
+  mysql:
+    image: ghcr.io/quenchworks/images/mysql
+    category: Relational
+    summary: Widely used open-source relational database for general-purpose OLTP workloads, with broad
+      framework and tooling support.
+    source: https://dev.mysql.com/get/Downloads/MySQL-9.7/mysql-9.7.0.tar.gz
+    upstream: https://github.com/mysql/mysql-server
+    license: GPL-2.0-only
+    tier: critical
+    status: built
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 9.7.1
+      digest: sha256:e345a54ed4d42b030515ec9e5b6bf359e3d303f4fbc7deea83800e28e5cc1cee
+      published: '2026-06-21T03:19:43Z'
+      size: 156.8 MB
+      layers: 1
+    - version: 8.4.10
+      digest: sha256:ea46ade00b1d481079959957e633214e15bd849aec130421550c4bf18a10c120
+      published: '2026-06-21T03:19:39Z'
+      size: 149.4 MB
+      layers: 1
+    - version: 8.0.46
+      digest: sha256:1cb9315734cfea02245ed8958ad0f92e7bae7e1ff0ec61300b28d94e01b86feb
+      published: '2026-06-21T03:19:38Z'
+      size: 156.2 MB
+      layers: 1
+    - version: 9.7.0
+      digest: sha256:d6e83b6cf28e49de425bba3c131293472b31809a1ba06bde54966de72e036236
+      published: '2026-06-17T15:10:13Z'
+      size: 156.8 MB
+      layers: 1
+  rabbitmq:
+    image: ghcr.io/quenchworks/images/rabbitmq
+    category: Messaging
+    summary: Reliable message broker speaking AMQP plus MQTT and STOMP, with flexible routing, queues,
+      and acknowledgements for decoupling services.
+    source: https://github.com/rabbitmq/rabbitmq-server
+    upstream: https://github.com/rabbitmq/rabbitmq-server
+    license: MPL-2.0
+    tier: critical
+    status: built
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 4.2.8
+      digest: sha256:34e7d16e9e1c7cc1aef9f677ea7a297622d9f4742e22260a279fd90d7c51be09
+      published: '2026-06-21T08:49:26Z'
+      size: 128.7 MB
+      layers: 1
+    - version: 4.3.2
+      digest: sha256:e45523daf0c56371f92417cfc1533a191e9e380b27850ff212953d0a16a3b600
+      published: '2026-06-21T08:49:22Z'
+      size: 128.6 MB
+      layers: 1
+    - version: 4.1.8
+      digest: sha256:639afbc052c7c97ed03c20440d981046510a882c37966a6c329bfe23b90da30e
+      published: '2026-06-21T08:49:19Z'
+      size: 128.6 MB
+      layers: 1
+    - version: 4.3.1
+      digest: sha256:0c1999f50b5b6804716e546cad3f12b88f07079d527d775907aec4be57145fc8
+      published: '2026-06-17T17:31:48Z'
+      size: 128.5 MB
+      layers: 1
+  kafka:
+    image: ghcr.io/quenchworks/images/kafka
+    category: Messaging
+    summary: Distributed event-streaming platform for high-throughput, durable, replayable publish-subscribe
+      pipelines and stream processing.
+    source: https://archive.apache.org/dist/kafka/4.3.0/kafka_2.13-4.3.0.tgz
+    upstream: https://github.com/apache/kafka
     license: Apache-2.0
-    tier: standard
+    tier: critical
+    status: built
     arches:
     - amd64
     - arm64
     versions:
-    - version: 2.9.1
-      digest: sha256:6e9ba91d4df5ba8f5dd458aadc42b1c3e95032da61d7508af817edc6f8d0513a
-      published: '2026-06-19T21:22:43Z'
-      size: 20.0 MB
-      layers: 1
-    - version: 2.11.4
-      digest: sha256:b967922800f850ead7ad4c4c115ac2e5cb0fcc142ca0d263221cf9f876c1ca6a
-      published: '2026-06-19T21:22:36Z'
-      size: 22.7 MB
-      layers: 1
-    - version: 2.10.2
-      digest: sha256:0e001a7922eeddb57a92f57c548252999f37508566f9c96574b732f5ebd486dc
-      published: '2026-06-19T21:22:34Z'
-      size: 21.4 MB
-      layers: 1
-  cassandra:
-    image: ghcr.io/quenchworks/images/cassandra
-    source: https://downloads.apache.org/cassandra/5.0.8/apache-cassandra-5.0.8-bin.tar.gz
-    license: Apache-2.0
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 5.0.8
-      digest: sha256:8baf8c0ca8362cc04e11a0c968602c75af08263c521b577143f566f09aa20a21
-      published: '2026-06-20T13:43:35Z'
-      size: 139.9 MB
-      layers: 1
-    - version: 4.1.11
-      digest: sha256:f5b14cd2762786c93576df89c308e26c1de45f437dd28973e290f0bc124cc460
-      published: '2026-06-20T12:47:06Z'
-      size: 116.0 MB
-      layers: 1
-    - version: 4.0.20
-      digest: sha256:7a59363c549d27fe3a22c5c4e67599302ecd62293fd82d6beed5ecf4b74425b7
-      published: '2026-06-20T12:08:47Z'
-      size: 113.7 MB
-      layers: 1
-  clickhouse:
-    image: ghcr.io/quenchworks/images/clickhouse
-    source: https://github.com/ClickHouse/ClickHouse
-    license: Apache-2.0
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 26.5.2.39
-      digest: sha256:f117d87f80380b10e284c16b5fabfac3e9f723a00bea80b6357a032e4e7af464
-      published: '2026-06-20T17:28:45Z'
-      size: 225.4 MB
-      layers: 1
-    - version: 26.4.4.38
-      digest: sha256:03e6b32593fd7afbf0c92d843c27115b77d71e2238aed58a90a7c0d6cd9c2cf3
-      published: '2026-06-20T16:11:37Z'
-      size: 221.5 MB
-      layers: 1
-    - version: 26.3.13.31
-      digest: sha256:4ba112785adcd677df70b725f776f316ec50ef0b274228cb5c91a6aea1bb2942
-      published: '2026-06-20T14:50:21Z'
-      size: 229.1 MB
-      layers: 1
-  cockroachdb:
-    image: ghcr.io/quenchworks/images/cockroachdb
-    source: https://github.com/cockroachdb/cockroach
-    license: BUSL-1.1
-    tier: low
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 26.2.2
-      digest: sha256:16e0d6332c20a8747cc8f0bb208a2302c9e4bcefda766c4dbf56dfd637f50250
-      published: '2026-06-20T19:01:02Z'
-      size: 147.5 MB
-      layers: 1
-    - version: 26.1.5
-      digest: sha256:a4b4b624ea128d34c5560ba4fa03a6109d3f580295066ac95cd03abe7e0d9004
-      published: '2026-06-20T18:32:36Z'
-      size: 143.8 MB
-      layers: 1
-    - version: 25.4.11
-      digest: sha256:0859c6f3d310143394cff072b2c0fbf1cf54c2cf4ccf85f7b181dd2b25e999f6
-      published: '2026-06-20T18:04:56Z'
-      size: 144.1 MB
-      layers: 1
-  composer:
-    image: ghcr.io/quenchworks/images/composer
-    source: https://getcomposer.org
-    license: MIT
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 2.10.1
-      digest: sha256:e3e837964f8e3a021436e6d5fa734aa491343ca60870ce3aafc7481b2ba071ea
-      published: '2026-06-21T11:00:28Z'
-      size: 28.5 MB
-      layers: 1
-    - version: 2.9.8
-      digest: sha256:91b80e77e250cae71d9e17f47552c49db24d3adb50e41cdbe4b59adcd079a1cf
-      published: '2026-06-21T11:00:16Z'
-      size: 28.5 MB
-      layers: 1
-    - version: 2.10.0
-      digest: sha256:76ed03852d4a0492fc636c32cb7c04f28a334d7ed6f7852b2f3eb61a0e19c858
-      published: '2026-06-21T10:59:50Z'
-      size: 28.6 MB
-      layers: 1
-    - version: '2'
-      digest: sha256:bcff2c32d0e88dbce2fa1696ddbbb817db2e7e5fa3220a0a63fea8da9b8ffb6b
-      published: '2026-06-19T15:20:49Z'
-      size: 28.3 MB
-      layers: 1
-  coolify-app:
-    image: ghcr.io/quenchworks/images/coolify-app
-    source: https://github.com/coollabsio/coolify
-    license: Apache-2.0
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 4.1.1
-      digest: sha256:334bd7efe44f68a7712efedf726fa5f353da7cb76276ecca5620a4db16a80334
-      published: '2026-06-21T11:20:09Z'
-      size: 118.8 MB
-      layers: 1
     - version: 4.1.2
-      digest: sha256:39f5a5b4f21d0931cc4f70b8960927e85876abffc9b99e206a008dbd8e4ba036
-      published: '2026-06-21T11:20:06Z'
-      size: 118.9 MB
+      digest: sha256:f19d59532f223a37a23f4b47a2ebced74f872bd5687de2fcc8bc793205d0c527
+      published: '2026-06-20T18:03:12Z'
+      size: 201.8 MB
       layers: 1
-    - version: 4.1.0
-      digest: sha256:eeaf4cab259dcd7622aeee1ab017c4f091467868696eca814225cb0cbc6ce032
-      published: '2026-06-21T11:20:05Z'
-      size: 118.3 MB
+    - version: 4.3.0
+      digest: sha256:4c2844b3e7d1eca4987848ce42d141efadce10d41889a1ef23e12b25cbc858bf
+      published: '2026-06-20T18:03:11Z'
+      size: 204.1 MB
       layers: 1
-  coolify-helper:
-    image: ghcr.io/quenchworks/images/coolify-helper
-    source: https://github.com/coollabsio/coolify
-    license: Apache-2.0 AND AGPL-3.0-or-later
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 1.0.14
-      digest: sha256:fd897b2dd0e103ac3b1edb56f34145c8f844ed17b045771516441b49995d9eaa
-      published: '2026-06-20T00:50:20Z'
-      size: 157.2 MB
+    - version: 4.2.1
+      digest: sha256:ca1b96642ee2508027c57c863b32296fd951e5c9df763fcd202a72202d618fb8
+      published: '2026-06-20T18:03:06Z'
+      size: 203.7 MB
       layers: 1
-  coolify-realtime:
-    image: ghcr.io/quenchworks/images/coolify-realtime
-    source: https://github.com/coollabsio/coolify
-    license: AGPL-3.0-or-later
-    tier: standard
-    arches:
-    - amd64
-    versions:
-    - version: 1.0.16
-      digest: sha256:a8b07376a2b5ad79f649d660cfcfac408219f6ebc48f745f376717878be982a3
-      published: '2026-06-18T12:11:37Z'
-      size: 100.9 MB
-      layers: 1
-  couchdb:
-    image: ghcr.io/quenchworks/images/couchdb
-    source: https://github.com/apache/couchdb
+  nats:
+    image: ghcr.io/quenchworks/images/nats
+    category: Messaging
+    summary: Lightweight, high-performance messaging system for cloud-native pub/sub and request-reply,
+      with optional JetStream persistence and streaming.
+    source: https://github.com/nats-io/nats-server
+    upstream: https://github.com/nats-io/nats-server
     license: Apache-2.0
     tier: standard
+    status: built
     arches:
     - amd64
     - arm64
     versions:
-    - version: 3.5.2
-      digest: sha256:73147a4b2d1dcd42144b73db5d230433b4b61ea95743b025bb8fd052ab6b9c6a
-      published: '2026-06-20T01:17:59Z'
-      size: 127.1 MB
+    - version: 2.12.11
+      digest: sha256:38d0dad0ff8e82cd1a7e83154189e9135bc296baaee8eb9c05621529dbeffd5b
+      published: '2026-06-20T23:59:45Z'
+      size: 6.5 MB
       layers: 1
-    - version: 3.5.1
-      digest: sha256:8c5b523207fe380f77a137cf9573b4a3aa13bd83ea7fb0fc76ea8a95953dcede
-      published: '2026-06-20T01:17:56Z'
-      size: 127.1 MB
+    - version: 2.14.2
+      digest: sha256:8a00be1e1a2e05093a4ea5c68afa1361e535d83d8185fb737026d870275129b3
+      published: '2026-06-20T23:59:40Z'
+      size: 6.6 MB
       layers: 1
-    - version: 3.4.3
-      digest: sha256:0b2d1faf34eac7268e6ec9c403bec66db2dbf7533c68ee810c4b730b80e43b4e
-      published: '2026-06-20T01:17:51Z'
-      size: 123.6 MB
+    - version: 2.11.17
+      digest: sha256:3f9f3c3708efc219f79a0699fdf926909b2a8e5db814d6a47cc91bf259f21fcc
+      published: '2026-06-20T23:59:38Z'
+      size: 6.4 MB
       layers: 1
-  deno:
-    image: ghcr.io/quenchworks/images/deno
-    source: https://github.com/denoland/deno
+  memcached:
+    image: ghcr.io/quenchworks/images/memcached
+    category: Cache
+    summary: Simple, high-performance distributed in-memory cache for storing small objects and database
+      query results to reduce backend load.
+    source: https://www.memcached.org/files/memcached-1.6.42.tar.gz
+    upstream: https://github.com/memcached/memcached
+    license: BSD-3-Clause
+    tier: standard
+    status: built
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 1.6.42
+      digest: sha256:263b6453bf4ac9bff09fb2296e2ba2ae45fab231b8bef35594bc0a5de2fab6a8
+      published: '2026-06-20T22:54:24Z'
+      size: 7.2 MB
+      layers: 1
+    - version: 1.6.41
+      digest: sha256:eba26dd197ec483b3df310972cb14970a01f3f8ca61c2eb13860bda110451ae7
+      published: '2026-06-20T22:54:24Z'
+      size: 7.2 MB
+      layers: 1
+    - version: 1.6.40
+      digest: sha256:60ff724774313c7b8fe2d1664ccbf558deb888460162dc04975fa7038405ed7f
+      published: '2026-06-20T22:54:17Z'
+      size: 7.2 MB
+      layers: 1
+  ferretdb:
+    image: ghcr.io/quenchworks/images/ferretdb
+    category: Document
+    summary: MongoDB-compatible document database that translates the MongoDB wire protocol onto PostgreSQL
+      via the DocumentDB extension. The clean-license substitute for MongoDB.
+    source: https://github.com/FerretDB/FerretDB
+    upstream: https://github.com/FerretDB/FerretDB
+    license: Apache-2.0
+    tier: standard
+    status: built
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 2.5.0
+      digest: sha256:33a6ad1566e85021301d8e501842ba4756a25e4fbd039e1fef12397b56b78868
+      published: '2026-06-20T11:40:46Z'
+      size: 10.1 MB
+      layers: 1
+    - version: 2.4.0
+      digest: sha256:7e4a5399c2615835ebf58404f0dba8d5762de3c8802ad44eaa35afa020ca199e
+      published: '2026-06-20T11:40:45Z'
+      size: 10.2 MB
+      layers: 1
+    - version: 2.7.0
+      digest: sha256:9aee41e900c918471a7cc2305c70c9b44391473bdf658092bf6d27bbebddf609
+      published: '2026-06-20T11:40:44Z'
+      size: 9.9 MB
+      layers: 1
+  postgres-documentdb:
+    image: ghcr.io/quenchworks/images/postgres-documentdb
+    category: Document
+    summary: PostgreSQL 17 plus the open DocumentDB extension, providing BSON document storage and queries.
+      The storage backend that powers FerretDB v2.
+    source: https://github.com/FerretDB/documentdb
+    upstream: https://github.com/FerretDB/documentdb
     license: MIT
     tier: standard
+    status: built
     arches:
     - amd64
     - arm64
     versions:
-    - version: 2.8.0
-      digest: sha256:dec2bdcfe613a8922a0032a4eb152525b1e806cfe8adecba46d798bb7ea7386b
-      published: '2026-06-21T11:01:06Z'
-      size: 55.2 MB
+    - version: 0.105.0
+      digest: sha256:3f138f6892fce87eaf932c558f335729252635a6e3beefe91c2e804372faec08
+      published: '2026-06-21T04:28:34Z'
+      size: 133.8 MB
       layers: 1
-    - version: 2.8.1
-      digest: sha256:028fd38c4ac6d152d30d9a852f890704ea164f377a8962af75b99944d412ae10
-      published: '2026-06-21T11:01:02Z'
-      size: 55.3 MB
+    - version: 0.107.0
+      digest: sha256:1c0d8aed825471ed0a6c1f689d478fc4dea904702f9eead106bb067dd9a94f73
+      published: '2026-06-21T04:28:33Z'
+      size: 133.9 MB
       layers: 1
-    - version: '2'
-      digest: sha256:329e12b6b1f04b6fca23840691f5ba5ef32725e14106a1afbf67b8c456c491a0
-      published: '2026-06-18T10:18:07Z'
-      size: 54.9 MB
-      layers: 1
-    - version: 2.8.2
-      digest: sha256:a04e1085af3e29f9995818673afc757da09ca46929a8eb1bd3e45887330a5fb4
-      published: '2026-06-15T21:15:57Z'
-      size: 54.9 MB
+    - version: 0.106.0
+      digest: sha256:81715336d267bac26e6c334d325aacc08d5eff126940c01be944e281c0197694
+      published: '2026-06-21T04:28:27Z'
+      size: 133.8 MB
       layers: 1
   documentdb:
     image: ghcr.io/quenchworks/images/documentdb
+    category: Document
+    summary: Self-contained MongoDB-compatible server bundling PostgreSQL, the DocumentDB extension, and
+      a wire gateway. Linux Foundation project, truly open under MIT.
     source: https://github.com/documentdb/documentdb
+    upstream: https://github.com/documentdb/documentdb
     license: MIT
     tier: standard
+    status: done
     arches:
     - amd64
     - arm64
@@ -424,11 +500,1550 @@ apps:
       published: '2026-06-20T02:23:24Z'
       size: 138.5 MB
       layers: 1
-  dotnet:
-    image: ghcr.io/quenchworks/images/dotnet
-    source: https://github.com/dotnet/runtime
+  mongodb:
+    image: ghcr.io/quenchworks/images/mongodb
+    category: Document
+    summary: Document (NoSQL) database for JSON-like data. SSPL is not OSI-approved / source-available,
+      not open source; prefer the clean alternative FerretDB or DocumentDB.
+    source: https://github.com/mongodb/mongo
+    upstream: https://github.com/mongodb/mongo
+    license: SSPL-1.0
+    tier: standard
+    status: done
+    cleanAlternative: "FerretDB + DocumentDB \u2014 MongoDB-wire-compatible and truly open (Apache-2.0\
+      \ / PostgreSQL)."
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 7.0.37
+      digest: sha256:8d4b6335dcf60aa70d6e8f924c61c4aa626413539612d41514dfba2a191dcbee
+      published: '2026-06-20T23:00:24Z'
+      size: 163.2 MB
+      layers: 1
+    - version: 8.0.26
+      digest: sha256:04f1aa4d1229531ec267e8ca59253500079d04e79933755f725ad7ae65bc2e83
+      published: '2026-06-20T23:00:24Z'
+      size: 171.9 MB
+      layers: 1
+    - version: 6.0.29
+      digest: sha256:e95de7c0f42b50706e5da4b298db29d7dd7393718958cdb60b4dd4df57cc287f
+      published: '2026-06-20T23:00:16Z'
+      size: 154.5 MB
+      layers: 1
+  zookeeper:
+    image: ghcr.io/quenchworks/images/zookeeper
+    category: Coordination
+    summary: Centralized coordination service for distributed systems, providing configuration, naming,
+      leader election, and synchronization primitives.
+    source: https://archive.apache.org/dist/zookeeper/zookeeper-3.9.5/apache-zookeeper-3.9.5-bin.tar.gz
+    upstream: https://github.com/apache/zookeeper
+    license: Apache-2.0
+    tier: standard
+    status: built
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 3.9.4
+      digest: sha256:bbf17bc17bdd180d12af76996a2397351185d6b264af66f348f329df47053d9d
+      published: '2026-06-21T11:16:03Z'
+      size: 93.9 MB
+      layers: 1
+    - version: 3.9.5
+      digest: sha256:90c3160265c79bf6894549062508c4457e48a7bf2c70154c282e507211c0db39
+      published: '2026-06-21T11:16:01Z'
+      size: 95.4 MB
+      layers: 1
+    - version: 3.9.3
+      digest: sha256:55f430b6fae34e8633d5b278ce8616de4e0c5391d76ad816041ee90fa60b916c
+      published: '2026-06-21T11:15:59Z'
+      size: 93.5 MB
+      layers: 1
+  opensearch:
+    image: ghcr.io/quenchworks/images/opensearch
+    category: Search
+    summary: Search and analytics suite with a Kibana-style dashboards UI. The Apache-2.0 community fork
+      of Elasticsearch and the recommended open alternative.
+    source: https://github.com/opensearch-project/OpenSearch
+    upstream: https://github.com/opensearch-project/OpenSearch
+    license: Apache-2.0
+    tier: standard
+    status: built
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 3.6.0
+      digest: sha256:2845d290d84e11ef2149b55076936e0d160e9f180943506b4df4d34c03bf5403
+      published: '2026-06-21T03:09:52Z'
+      size: 1010.0 MB
+      layers: 1
+    - version: 3.7.0
+      digest: sha256:26da476f72430d894ed8d18f150d61bbb2eb9f214e5ce91c9c54482b8b88eaa9
+      published: '2026-06-21T03:09:47Z'
+      size: 1.0 GB
+      layers: 1
+    - version: 3.5.0
+      digest: sha256:270e035b3f9957c53b0a3ced59e87d0d1d38f2d0e7bd4a013cd68d1fe8fede51
+      published: '2026-06-21T03:09:47Z'
+      size: 1.1 GB
+      layers: 1
+  cassandra:
+    image: ghcr.io/quenchworks/images/cassandra
+    category: Wide-column
+    summary: Distributed wide-column NoSQL store built for linear horizontal scale and high availability
+      with no single point of failure, tuned for heavy writes.
+    source: https://downloads.apache.org/cassandra/5.0.8/apache-cassandra-5.0.8-bin.tar.gz
+    upstream: https://github.com/apache/cassandra
+    license: Apache-2.0
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 5.0.8
+      digest: sha256:8baf8c0ca8362cc04e11a0c968602c75af08263c521b577143f566f09aa20a21
+      published: '2026-06-20T13:43:35Z'
+      size: 139.9 MB
+      layers: 1
+    - version: 4.1.11
+      digest: sha256:f5b14cd2762786c93576df89c308e26c1de45f437dd28973e290f0bc124cc460
+      published: '2026-06-20T12:47:06Z'
+      size: 116.0 MB
+      layers: 1
+    - version: 4.0.20
+      digest: sha256:7a59363c549d27fe3a22c5c4e67599302ecd62293fd82d6beed5ecf4b74425b7
+      published: '2026-06-20T12:08:47Z'
+      size: 113.7 MB
+      layers: 1
+  influxdb:
+    image: ghcr.io/quenchworks/images/influxdb
+    category: Time series
+    summary: Time-series database purpose-built for ingesting and querying metrics, events, and IoT/sensor
+      data at high write rates.
+    source: https://github.com/influxdata/influxdb
+    upstream: https://github.com/influxdata/influxdb
     license: MIT
     tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 2.7.12
+      digest: sha256:c339e68be5c72198593805017868618c330de38b277b47c79697cedd4a95e6f4
+      published: '2026-06-20T16:56:52Z'
+      size: 50.1 MB
+      layers: 1
+    - version: 2.9.1
+      digest: sha256:30213d15b3c3efe8836f626750855e7a44ed4a5151ecb2c9c702bd5b035ba657
+      published: '2026-06-20T16:56:47Z'
+      size: 56.1 MB
+      layers: 1
+    - version: 2.9.0
+      digest: sha256:968da6565c1fac9982e5e601aa1c50b4d43112bfab868809ced0f4e124a4e82d
+      published: '2026-06-20T16:56:46Z'
+      size: 56.1 MB
+      layers: 1
+  couchdb:
+    image: ghcr.io/quenchworks/images/couchdb
+    category: Document
+    summary: Document database with an HTTP/JSON API and multi-master replication, designed for offline-first
+      sync across nodes and devices.
+    source: https://github.com/apache/couchdb
+    upstream: https://github.com/apache/couchdb
+    license: Apache-2.0
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 3.5.2
+      digest: sha256:73147a4b2d1dcd42144b73db5d230433b4b61ea95743b025bb8fd052ab6b9c6a
+      published: '2026-06-20T01:17:59Z'
+      size: 127.1 MB
+      layers: 1
+    - version: 3.5.1
+      digest: sha256:8c5b523207fe380f77a137cf9573b4a3aa13bd83ea7fb0fc76ea8a95953dcede
+      published: '2026-06-20T01:17:56Z'
+      size: 127.1 MB
+      layers: 1
+    - version: 3.4.3
+      digest: sha256:0b2d1faf34eac7268e6ec9c403bec66db2dbf7533c68ee810c4b730b80e43b4e
+      published: '2026-06-20T01:17:51Z'
+      size: 123.6 MB
+      layers: 1
+  clickhouse:
+    image: ghcr.io/quenchworks/images/clickhouse
+    category: Analytical
+    summary: Column-oriented OLAP database for real-time analytical queries over very large datasets,
+      with high ingest rates and fast aggregations.
+    source: https://github.com/ClickHouse/ClickHouse
+    upstream: https://github.com/ClickHouse/ClickHouse
+    license: Apache-2.0
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 26.5.2.39
+      digest: sha256:f117d87f80380b10e284c16b5fabfac3e9f723a00bea80b6357a032e4e7af464
+      published: '2026-06-20T17:28:45Z'
+      size: 225.4 MB
+      layers: 1
+    - version: 26.4.4.38
+      digest: sha256:03e6b32593fd7afbf0c92d843c27115b77d71e2238aed58a90a7c0d6cd9c2cf3
+      published: '2026-06-20T16:11:37Z'
+      size: 221.5 MB
+      layers: 1
+    - version: 26.3.13.31
+      digest: sha256:4ba112785adcd677df70b725f776f316ec50ef0b274228cb5c91a6aea1bb2942
+      published: '2026-06-20T14:50:21Z'
+      size: 229.1 MB
+      layers: 1
+  victoriametrics:
+    image: ghcr.io/quenchworks/images/victoriametrics
+    category: Time series
+    summary: Fast, cost-efficient time-series database that speaks PromQL and Prometheus remote_write.
+      Drop-in long-term storage or full replacement for Prometheus.
+    source: https://github.com/VictoriaMetrics/VictoriaMetrics
+    upstream: https://github.com/VictoriaMetrics/VictoriaMetrics
+    license: Apache-2.0
+    tier: low
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 1.143.0
+      digest: sha256:aa9c6869f61bb9a11e1b8237eafb38a71d6f1f5596a180811456d4f8498b8a0c
+      published: '2026-06-21T11:15:44Z'
+      size: 10.8 MB
+      layers: 1
+    - version: 1.144.0
+      digest: sha256:2159c6314325e52bdbb2577634c7346d14095185c42e9682a9e0e9e8a170862e
+      published: '2026-06-21T11:15:42Z'
+      size: 10.8 MB
+      layers: 1
+    - version: 1.145.0
+      digest: sha256:7fab85e512dd34a3dab5c760f1bbae1acfc01d85053cdbf26d7599985ee75820
+      published: '2026-06-21T11:15:37Z'
+      size: 10.8 MB
+      layers: 1
+  prometheus:
+    image: ghcr.io/quenchworks/images/prometheus
+    category: Observability
+    summary: Metrics collection, storage, and alerting system that scrapes targets and runs PromQL queries.
+      The de-facto cloud-native monitoring TSDB.
+    source: https://github.com/prometheus/prometheus
+    upstream: https://github.com/prometheus/prometheus
+    license: Apache-2.0
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 3.11.3
+      digest: sha256:b690d6ac6de3e8da05f4aa1093c499ebcea98d60c8ccafd28a8e33fcfb9301a9
+      published: '2026-06-21T06:47:55Z'
+      size: 81.2 MB
+      layers: 1
+    - version: 3.10.0
+      digest: sha256:039dad93c5b3b54c954e1b70145274406398551b5e2f75712019d35c331eb09b
+      published: '2026-06-21T06:47:52Z'
+      size: 76.2 MB
+      layers: 1
+    - version: 3.12.0
+      digest: sha256:bd56fabf8b76c87b6b698c967bea1ac909a5148c66c9cdd85a5f84febd6dc8d8
+      published: '2026-06-21T06:47:49Z'
+      size: 82.5 MB
+      layers: 1
+  grafana:
+    image: ghcr.io/quenchworks/images/grafana
+    category: Observability
+    summary: Dashboards and visualization for metrics, logs, and traces across many data sources. OSS
+      edition, licensed AGPL.
+    source: https://github.com/grafana/grafana
+    upstream: https://github.com/grafana/grafana
+    license: AGPL-3.0-only
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 12.4.4
+      digest: sha256:cc2115b3c7d530053a456084d8e1226759536aa1bbc3bdc9b4deb7862db852df
+      published: '2026-06-20T13:14:51Z'
+      size: 280.9 MB
+      layers: 1
+    - version: 13.0.2
+      digest: sha256:422b52219a03f5f70b1eac89060964027567df3ae504e5f43f533c9ef4dc51b5
+      published: '2026-06-20T13:14:50Z'
+      size: 328.3 MB
+      layers: 1
+    - version: 12.3.7
+      digest: sha256:d9675acff603a7f881755c671715686269dcd2e0d3bc49a306e7ca6eeb04e98b
+      published: '2026-06-20T13:14:44Z'
+      size: 276.3 MB
+      layers: 1
+  loki:
+    image: ghcr.io/quenchworks/images/loki
+    category: Observability
+    summary: Horizontally scalable log aggregation system from Grafana that indexes only labels, not full
+      log text. Like Prometheus, but for logs. Licensed AGPL.
+    source: https://github.com/grafana/loki
+    upstream: https://github.com/grafana/loki
+    license: AGPL-3.0-only
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 3.5.12
+      digest: sha256:2369e5dccff4f02e04c687b7788d15595bfc3ed9ef23e8dd44e2ff6aa6a95954
+      published: '2026-06-20T21:37:28Z'
+      size: 70.7 MB
+      layers: 1
+    - version: 3.7.2
+      digest: sha256:3409d6b1fa72af5034327920ae24a20d2d6693f90de3a098c5683f228115191d
+      published: '2026-06-20T21:37:25Z'
+      size: 87.9 MB
+      layers: 1
+    - version: 3.6.11
+      digest: sha256:6c5df96c86c08f7aa490c248ea9d016d2a69b2631b0294a029b6e8b804735410
+      published: '2026-06-20T21:37:22Z'
+      size: 79.4 MB
+      layers: 1
+  nginx:
+    image: ghcr.io/quenchworks/images/nginx
+    category: Gateway
+    summary: High-performance web server, reverse proxy, and load balancer for serving static content
+      and fronting application backends.
+    source: https://github.com/nginx/nginx
+    upstream: https://github.com/nginx/nginx
+    license: BSD-2-Clause
+    tier: critical
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 1.28.3
+      digest: sha256:363acf0b27df308aa26fb0935e75f305a718530a99f6f0750eca9926dff983f3
+      published: '2026-06-21T02:28:10Z'
+      size: 11.4 MB
+      layers: 1
+    - version: 1.26.3
+      digest: sha256:80996c7ffdd8e47a6dffe35aaa554bf90ec6d5cb92f101f77ae24c871ed232ae
+      published: '2026-06-21T02:28:07Z'
+      size: 11.3 MB
+      layers: 1
+    - version: 1.30.3
+      digest: sha256:d469478d8a59d908965b81bc91e6fe8821573db90058555f826b6c66b13f68fa
+      published: '2026-06-21T02:28:04Z'
+      size: 11.5 MB
+      layers: 1
+    - version: 1.30.2
+      digest: sha256:f676eca73cea40a415b257c63451eaf2d324bbfd2e66ee4c57f0798b9e74cd67
+      published: '2026-06-17T17:38:40Z'
+      size: 11.5 MB
+      layers: 1
+  solr:
+    image: ghcr.io/quenchworks/images/solr
+    category: Search
+    summary: Enterprise search platform built on Apache Lucene, offering full-text search, faceting, and
+      indexing over large document collections.
+    source: https://github.com/apache/solr
+    upstream: https://github.com/apache/solr
+    license: Apache-2.0
+    tier: low
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 10.0.0
+      digest: sha256:e658f8f2dc85487037e23034d7938976b207b809dffe9b1774f1861a631f5037
+      published: '2026-06-21T09:23:10Z'
+      size: 346.5 MB
+      layers: 1
+    - version: 9.10.1
+      digest: sha256:96c9b012e754fe3f880eae80d7a112ecbbe63714e66b274c6fd0760d69f24dc2
+      published: '2026-06-21T09:23:07Z'
+      size: 376.2 MB
+      layers: 1
+    - version: 9.9.0
+      digest: sha256:fef024ee1229f8be38b86d1e6d0c214eb603414264845d549ef7db54b073ace9
+      published: '2026-06-21T09:23:04Z'
+      size: 376.0 MB
+      layers: 1
+  keycloak:
+    image: ghcr.io/quenchworks/images/keycloak
+    category: Identity
+    summary: Open-source identity and access management server providing SSO, user federation, and OAuth2/OIDC
+      and SAML for apps and APIs.
+    source: https://github.com/keycloak/keycloak
+    upstream: https://github.com/keycloak/keycloak
+    license: Apache-2.0
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 26.4.7
+      digest: sha256:a35ed83756e24d6c4d70ce2e80d601990494c113e92722e3a241197b54247c48
+      published: '2026-06-20T20:09:36Z'
+      size: 231.1 MB
+      layers: 1
+    - version: 26.6.3
+      digest: sha256:5e700e70b7ce773ab14cdb3705591290b33c3dc8fa528741aec10c26eabcb64b
+      published: '2026-06-20T20:09:35Z'
+      size: 244.7 MB
+      layers: 1
+    - version: 26.5.7
+      digest: sha256:d4a18baa5993294fa29203d5e35ee3f09a6e9e3ebc3f421197adf88bc3516abf
+      published: '2026-06-20T20:09:29Z'
+      size: 235.2 MB
+      layers: 1
+  pulsar:
+    image: ghcr.io/quenchworks/images/pulsar
+    category: Messaging
+    summary: Cloud-native distributed messaging and streaming platform with multi-tenancy, geo-replication,
+      and tiered storage that separates compute from storage.
+    source: https://github.com/apache/pulsar
+    upstream: https://github.com/apache/pulsar
+    license: Apache-2.0
+    tier: low
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 4.1.3
+      digest: sha256:59e8d27e48fef85b16eeed7378ffbd8a98a494ca3af5917c5adb7f20043af65b
+      published: '2026-06-21T06:48:43Z'
+      size: 317.2 MB
+      layers: 1
+    - version: 4.0.11
+      digest: sha256:7c1d2103e18a28a2454c75c58ad2fd23d044582daa65871487dc3b15e60eef1b
+      published: '2026-06-21T06:48:43Z'
+      size: 319.9 MB
+      layers: 1
+    - version: 4.2.2
+      digest: sha256:97f24d151a556b86d61c7e64d54987961d5b48b53cae8f56125926169880269b
+      published: '2026-06-21T06:48:38Z'
+      size: 323.5 MB
+      layers: 1
+  neo4j:
+    image: ghcr.io/quenchworks/images/neo4j
+    category: Graph
+    summary: Graph database for highly connected data, queried with Cypher for traversals and relationship-heavy
+      workloads. Community edition is GPLv3.
+    source: https://github.com/neo4j/neo4j
+    upstream: https://github.com/neo4j/neo4j
+    license: GPL-3.0-only
+    tier: low
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 2026.05.0
+      digest: sha256:56432af42ac27904ff65374e976fcbd61a017362748fadace20eb8e1c8c50676
+      published: '2026-06-21T00:07:07Z'
+      size: 245.6 MB
+      layers: 1
+    - version: 2026.03.1
+      digest: sha256:2e1872538c59f44cf19d6bdfbd1a521ae1f5bc0a50f896c188dcaeb282915c32
+      published: '2026-06-21T00:07:02Z'
+      size: 250.0 MB
+      layers: 1
+    - version: 2026.04.0
+      digest: sha256:b1166998d5c0a3968c85fe7d5ead99d3f08d8a7b3ecdf7433244deebe9cf19db
+      published: '2026-06-21T00:07:01Z'
+      size: 242.9 MB
+      layers: 1
+  scylladb:
+    image: ghcr.io/quenchworks/images/scylladb
+    category: Wide-column
+    summary: High-throughput, low-latency wide-column store, API-compatible with Apache Cassandra and
+      DynamoDB. This 6.x build is the final OSS line under AGPL.
+    source: https://github.com/scylladb/scylladb
+    upstream: https://github.com/scylladb/scylladb
+    license: AGPL-3.0-only
+    tier: low
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 2026.1.3
+      digest: sha256:f1d60b2ccc06c0180258b336ef1e1b7e86b5af5ddbc05ce6665e4f5c104eb09a
+      published: '2026-06-21T09:00:35Z'
+      size: 98.8 MB
+      layers: 1
+    - version: 2026.1.5
+      digest: sha256:fe93c40ebdaee55d1994fb93253dbd9e272f8223c3c3f6bc440ccbd0c3021cb1
+      published: '2026-06-21T09:00:35Z'
+      size: 97.6 MB
+      layers: 1
+    - version: 2026.1.4
+      digest: sha256:a28e34ec1f403bcef5d652fd5071043db5352f3d9d30df20f9c84a44b0833eb7
+      published: '2026-06-21T09:00:31Z'
+      size: 99.0 MB
+      layers: 1
+  cockroachdb:
+    image: ghcr.io/quenchworks/images/cockroachdb
+    category: Relational
+    summary: Distributed SQL database with PostgreSQL wire compatibility and automatic horizontal scaling
+      and survivability. BUSL is source-available, not OSI-approved; no clean in-catalog substitute yet,
+      evaluate PostgreSQL for single-region SQL.
+    source: https://github.com/cockroachdb/cockroach
+    upstream: https://github.com/cockroachdb/cockroach
+    license: BUSL-1.1
+    tier: low
+    status: done
+    cleanAlternative: "No in-catalog clean substitute yet \u2014 evaluate PostgreSQL for single-region\
+      \ SQL."
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 26.2.2
+      digest: sha256:16e0d6332c20a8747cc8f0bb208a2302c9e4bcefda766c4dbf56dfd637f50250
+      published: '2026-06-20T19:01:02Z'
+      size: 147.5 MB
+      layers: 1
+    - version: 26.1.5
+      digest: sha256:a4b4b624ea128d34c5560ba4fa03a6109d3f580295066ac95cd03abe7e0d9004
+      published: '2026-06-20T18:32:36Z'
+      size: 143.8 MB
+      layers: 1
+    - version: 25.4.11
+      digest: sha256:0859c6f3d310143394cff072b2c0fbf1cf54c2cf4ccf85f7b181dd2b25e999f6
+      published: '2026-06-20T18:04:56Z'
+      size: 144.1 MB
+      layers: 1
+  dragonfly:
+    image: ghcr.io/quenchworks/images/dragonfly
+    category: Cache
+    summary: Multi-threaded, Redis- and Memcached-compatible in-memory datastore built to scale vertically
+      on one node. BUSL is source-available, not open source; prefer Valkey (BSD-3-Clause).
+    source: https://github.com/dragonflydb/dragonfly
+    upstream: https://github.com/dragonflydb/dragonfly
+    license: BUSL-1.1
+    tier: low
+    status: done
+    cleanAlternative: "Valkey (BSD-3-Clause) \u2014 the truly-open Redis-compatible cache."
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 1.37.2
+      digest: sha256:e1466449e922d12013021db5f09703ec6a467d01d1b06d0adcff1c42700d0205
+      published: '2026-06-20T02:58:56Z'
+      size: 23.6 MB
+      layers: 1
+    - version: 1.39.0
+      digest: sha256:da4468c83f74bb8271aeaac5a6f26b84a4617fa0717935dadb32151d1d73f15b
+      published: '2026-06-20T02:58:48Z'
+      size: 25.1 MB
+      layers: 1
+    - version: 1.38.1
+      digest: sha256:4eb18f3a623599aa6c884226758a2d0126663e7a075c3fcfbf86e96d268c72f7
+      published: '2026-06-20T02:58:45Z'
+      size: 24.5 MB
+      layers: 1
+  elasticsearch:
+    image: ghcr.io/quenchworks/images/elasticsearch
+    category: Search
+    summary: Distributed search and analytics engine. Shipped under SSPL/Elastic License, which are not
+      OSI-approved; OpenSearch (Apache-2.0) is the open drop-in fork.
+    source: https://github.com/elastic/elasticsearch
+    upstream: https://github.com/elastic/elasticsearch
+    license: SSPL-1.0
+    tier: low
+    status: done
+    cleanAlternative: "OpenSearch (Apache-2.0) \u2014 the open drop-in fork of Elasticsearch."
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 9.4.2
+      digest: sha256:d5e8e9974ee0282ef4313f8f133e5102db5e62d83bac0ecf7a30681c023bf865
+      published: '2026-06-21T06:48:28Z'
+      size: 734.6 MB
+      layers: 1
+    - version: 9.3.5
+      digest: sha256:950419e8a1962187d95568c092abb5e2308a4896ae1000b35e2ec8226d200526
+      published: '2026-06-21T06:41:39Z'
+      size: 593.6 MB
+      layers: 1
+    - version: 9.2.8
+      digest: sha256:c83e35a63bd8236897b44b1bb03b3af7036fe514be633cfd7f9e9bec8fec0a5e
+      published: '2026-06-21T06:31:39Z'
+      size: 614.5 MB
+      layers: 1
+  seaweedfs:
+    image: ghcr.io/quenchworks/images/seaweedfs
+    category: Object storage
+    summary: Fast distributed storage for blobs, objects, and files (S3 API) built on Facebook's Haystack
+      design, with O(1) disk seeks for billions of small files. Default object store after MinIO restricted
+      its community edition.
+    source: https://github.com/seaweedfs/seaweedfs
+    upstream: https://github.com/seaweedfs/seaweedfs
+    license: Apache-2.0
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: '4.33'
+      digest: sha256:694ee683072bd3a87275b0a1c2d0250fabfbf09c25712ffdd91246cca00fc47b
+      published: '2026-06-21T09:12:28Z'
+      size: 47.9 MB
+      layers: 1
+    - version: '4.32'
+      digest: sha256:1ad6b7ff783de0b543f67211ed224ebeac84e505681c2e361434089f9ebcb8b2
+      published: '2026-06-21T09:12:28Z'
+      size: 47.7 MB
+      layers: 1
+    - version: '4.34'
+      digest: sha256:4c62d9945bee98881f7914e278c8ba4ab6bb89257f487d450d2d360323b93bba
+      published: '2026-06-21T09:12:24Z'
+      size: 47.9 MB
+      layers: 1
+  garage:
+    image: ghcr.io/quenchworks/images/garage
+    category: Object storage
+    summary: Lightweight, S3-compatible object store for small, self-hosted, geo-distributed deployments
+      that stays available across node failures. Licensed AGPL; runs well on modest hardware.
+    source: https://github.com/deuxfleurs-org/garage
+    upstream: https://github.com/deuxfleurs-org/garage
+    license: AGPL-3.0-only
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 2.3.0
+      digest: sha256:baa5da5815b1c413d7e92f55560e1648782ecede979268d02c794aeaa259e881
+      published: '2026-06-21T10:44:42Z'
+      size: 29.7 MB
+      layers: 1
+    - version: 2.2.0
+      digest: sha256:c0cd1679c905fbb54ab510e8acfed9893113846d8155df3b42076c8ae895dc96
+      published: '2026-06-21T10:42:58Z'
+      size: 23.3 MB
+      layers: 1
+    - version: 2.1.0
+      digest: sha256:e12dee52dad906f7640c741aece9236ded640f230436a0c5f675a6a16259541e
+      published: '2026-06-21T10:41:06Z'
+      size: 16.1 MB
+      layers: 1
+    - version: 1.3.1
+      digest: sha256:2c245a8a3ef188bd8784c6282b8db4d898a37ed1d3455154ae5acfb41608b04f
+      published: '2026-06-17T08:46:18Z'
+      size: 14.7 MB
+      layers: 1
+  rustfs:
+    image: ghcr.io/quenchworks/images/rustfs
+    category: Object storage
+    summary: S3-compatible, high-performance object store written in Rust with a zero-master architecture,
+      positioned as an Apache-2.0 MinIO alternative. Beta/preview.
+    source: https://github.com/rustfs/rustfs
+    upstream: https://github.com/rustfs/rustfs
+    license: Apache-2.0
+    tier: low
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 1.0.0_beta7
+      digest: sha256:a8000ceda889dba9aa308aaa0df5718496763d7d91ab3c88892dbbb6c2a4a5c9
+      published: '2026-06-21T08:51:57Z'
+      size: 104.7 MB
+      layers: 1
+    - version: 1.0.0_beta6
+      digest: sha256:52a9931822b520e14a1944a6baa9d8e810937d6b252d9b9bf997b5b0f04e5454
+      published: '2026-06-21T08:51:54Z'
+      size: 103.7 MB
+      layers: 1
+    - version: 1.0.0_beta8
+      digest: sha256:c6a50fbeb88df03009b42f33168201d03b5688ebab9a355039432599f7fa6885
+      published: '2026-06-21T08:51:54Z'
+      size: 109.0 MB
+      layers: 1
+  qdrant:
+    image: ghcr.io/quenchworks/images/qdrant
+    category: Vector
+    summary: Vector database and similarity-search engine for AI embeddings, powering semantic search,
+      recommendations, and RAG with filtered nearest-neighbor queries.
+    source: https://github.com/qdrant/qdrant
+    upstream: https://github.com/qdrant/qdrant
+    license: Apache-2.0
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 1.18.2
+      digest: sha256:671516f1ca3558ddae21ee9d0bdabd2674d1b98c01a61c310040e32a83f37787
+      published: '2026-06-21T09:03:42Z'
+      size: 43.6 MB
+      layers: 1
+    - version: 1.17.1
+      digest: sha256:9d69474fa283a8aa4e8dbf68b427ef7bab0d21fd29ca676d31f14e0e2248fbb6
+      published: '2026-06-21T09:03:41Z'
+      size: 43.4 MB
+      layers: 1
+    - version: 1.16.3
+      digest: sha256:9400ddca43ef48886c5c842177bc69256efdcd4f0f5113be740ebaf79424a98f
+      published: '2026-06-21T09:03:41Z'
+      size: 41.0 MB
+      layers: 1
+  busybox:
+    image: ghcr.io/quenchworks/images/busybox
+    category: Base image
+    summary: Hardened minimal base/toolbox image bundling common Unix utilities in one binary. Image only,
+      no chart.
+    source: https://busybox.net
+    upstream: https://busybox.net
+    license: GPL-2.0-only
+    tier: low
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 1.36.1
+      digest: sha256:e406f907d10a224772e24962efe79cdb7938fb954e1b86132f75ee7eeb9e6bc4
+      published: '2026-06-19T21:07:28Z'
+      size: 4.1 MB
+      layers: 1
+    - version: 1.38.0
+      digest: sha256:1167af509d97dceef9b7d1b0ecc0c655a1eb2d5562e0ae6a60ff1147feb0e7c8
+      published: '2026-06-19T21:07:20Z'
+      size: 4.1 MB
+      layers: 1
+    - version: 1.37.0
+      digest: sha256:c086d4d5b51f3aecfe91599bcd708f06dd86ddf0b0c9ff5994e406a6d71212a4
+      published: '2026-06-19T21:07:19Z'
+      size: 4.1 MB
+      layers: 1
+  python:
+    image: ghcr.io/quenchworks/images/python
+    category: Language runtime
+    summary: Hardened CPython interpreter with pip, a 0-CVE signed nonroot base image to FROM for Python
+      apps. Ships the latest 3 stable minors (no :latest).
+    source: https://www.python.org
+    upstream: https://www.python.org
+    license: PSF-2.0
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 3.12.13
+      digest: sha256:dc8b9f1102d8908cd31505d7911e4bdade29d9bb123491c1fcc7fa6db0aefc28
+      published: '2026-06-21T06:47:03Z'
+      size: 29.7 MB
+      layers: 1
+    - version: '3.12'
+      digest: sha256:dc8b9f1102d8908cd31505d7911e4bdade29d9bb123491c1fcc7fa6db0aefc28
+      published: '2026-06-21T06:47:03Z'
+      size: 29.7 MB
+      layers: 1
+    - version: 3.14.6
+      digest: sha256:6f3f61123c5ea9088a26b363cc95446c257887c44d0bb8e8429e305020c160f5
+      published: '2026-06-21T06:46:57Z'
+      size: 31.1 MB
+      layers: 1
+    - version: '3.14'
+      digest: sha256:6f3f61123c5ea9088a26b363cc95446c257887c44d0bb8e8429e305020c160f5
+      published: '2026-06-21T06:46:57Z'
+      size: 31.1 MB
+      layers: 1
+    - version: 3.13.14
+      digest: sha256:13f1b8a5e1da69ed3f5384070602683c330d0d74bc57fd747848f3d54e32a0ad
+      published: '2026-06-21T06:46:56Z'
+      size: 29.5 MB
+      layers: 1
+    - version: '3.13'
+      digest: sha256:13f1b8a5e1da69ed3f5384070602683c330d0d74bc57fd747848f3d54e32a0ad
+      published: '2026-06-21T06:46:56Z'
+      size: 29.5 MB
+      layers: 1
+  openbao:
+    image: ghcr.io/quenchworks/images/openbao
+    category: Secrets
+    summary: Open-source secrets and encryption management for tokens, keys, and certificates, with dynamic
+      secrets and leasing. The Linux Foundation MPL-2.0 community fork of HashiCorp Vault.
+    source: https://github.com/openbao/openbao
+    upstream: https://github.com/openbao/openbao
+    license: MPL-2.0
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 2.5.5
+      digest: sha256:96d169a900ff4526f556ba72f323018b61db52253e9ac164a9437a7e349c820e
+      published: '2026-06-21T03:02:21Z'
+      size: 41.5 MB
+      layers: 1
+    - version: 2.4.4
+      digest: sha256:3b2209b28cdd78f7477826db3bda79a8cf5815b71507f639bd9abe0d8b1387ca
+      published: '2026-06-21T03:02:21Z'
+      size: 40.6 MB
+      layers: 1
+    - version: 2.3.2
+      digest: sha256:65a1094c0ebd23cb2183cabac0ed47763bdc783c48268255843c8a51c812c8d7
+      published: '2026-06-21T03:02:19Z'
+      size: 40.0 MB
+      layers: 1
+    - version: 2.5.4
+      digest: sha256:891ead55e81de29fb5d38a718c59a87f4269e00a7d461b263e403e4c3b5f53e5
+      published: '2026-06-17T21:40:37Z'
+      size: 41.6 MB
+      layers: 1
+  traefik:
+    image: ghcr.io/quenchworks/images/traefik
+    category: Gateway
+    summary: Cloud-native reverse proxy and load balancer with automatic service discovery, dynamic config,
+      and built-in Let's Encrypt TLS.
+    source: https://github.com/traefik/traefik
+    upstream: https://github.com/traefik/traefik
+    license: MIT
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 3.7.5
+      digest: sha256:dbd9d950047f4979999d4591e27255d828f97b52d7797bae4f494c6d9f7e7622
+      published: '2026-06-21T10:10:01Z'
+      size: 53.1 MB
+      layers: 1
+    - version: 3.6.21
+      digest: sha256:e83e211d4249d174039dbb4e5daf24fc92605a1da0a76412d8f8b43374aadaae
+      published: '2026-06-21T10:09:57Z'
+      size: 53.4 MB
+      layers: 1
+    - version: 3.5.6
+      digest: sha256:50fb58ae9deebae64c5e2a778541cd70586842fc4ab1789b3fb0af9db29b062e
+      published: '2026-06-21T10:09:56Z'
+      size: 51.0 MB
+      layers: 1
+  haproxy:
+    image: ghcr.io/quenchworks/images/haproxy
+    category: Gateway
+    summary: High-performance TCP and HTTP load balancer and reverse proxy known for reliability and fine-grained
+      traffic control at scale.
+    source: https://github.com/haproxy/haproxy
+    upstream: https://github.com/haproxy/haproxy
+    license: GPL-2.0-or-later
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 3.4.0
+      digest: sha256:0a97b05265db9ebf564c1e894877237bec30f4adef8f55e38e4432b949ede11e
+      published: '2026-06-20T13:26:24Z'
+      size: 23.0 MB
+      layers: 1
+    - version: 3.2.19
+      digest: sha256:8ae7b1300d400a373ec5264e1ba48e651d6a051b040ba47e0dd18dc56b3161cb
+      published: '2026-06-20T13:26:24Z'
+      size: 20.3 MB
+      layers: 1
+    - version: 3.3.10
+      digest: sha256:8b852029b5798158c48b115032a4fcb632732a88c32a9b908c165ec1c69217c5
+      published: '2026-06-20T13:26:18Z'
+      size: 22.1 MB
+      layers: 1
+  caddy:
+    image: ghcr.io/quenchworks/images/caddy
+    category: Gateway
+    summary: Web server and reverse proxy with fully automatic HTTPS via Let's Encrypt and a simple Caddyfile
+      config.
+    source: https://github.com/caddyserver/caddy
+    upstream: https://github.com/caddyserver/caddy
+    license: Apache-2.0
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 2.9.1
+      digest: sha256:6e9ba91d4df5ba8f5dd458aadc42b1c3e95032da61d7508af817edc6f8d0513a
+      published: '2026-06-19T21:22:43Z'
+      size: 20.0 MB
+      layers: 1
+    - version: 2.11.4
+      digest: sha256:b967922800f850ead7ad4c4c115ac2e5cb0fcc142ca0d263221cf9f876c1ca6a
+      published: '2026-06-19T21:22:36Z'
+      size: 22.7 MB
+      layers: 1
+    - version: 2.10.2
+      digest: sha256:0e001a7922eeddb57a92f57c548252999f37508566f9c96574b732f5ebd486dc
+      published: '2026-06-19T21:22:34Z'
+      size: 21.4 MB
+      layers: 1
+  otel-collector:
+    image: ghcr.io/quenchworks/images/otel-collector
+    category: Observability
+    summary: OpenTelemetry Collector that receives, processes, and exports traces, metrics, and logs,
+      a vendor-neutral pipeline for telemetry routing.
+    source: https://github.com/open-telemetry/opentelemetry-collector
+    upstream: https://github.com/open-telemetry/opentelemetry-collector
+    license: Apache-2.0
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 0.152.1
+      digest: sha256:c797c5f5872f87c12b66d8a3ba8148c9efa5aab208a1f9caa27a97a3a28986ad
+      published: '2026-06-21T03:44:01Z'
+      size: 102.6 MB
+      layers: 1
+    - version: 0.153.0
+      digest: sha256:adde9dd58d6582f057c632b5f15d00ca1ca8c7ab1c31479b7f9677371c4fccbe
+      published: '2026-06-21T03:43:54Z'
+      size: 103.2 MB
+      layers: 1
+    - version: 0.154.0
+      digest: sha256:ed19a525ab80c31f8997e417fbc669fca4bed5c8748264d5f24a99d5d1dcec83
+      published: '2026-06-21T03:43:54Z'
+      size: 104.5 MB
+      layers: 1
+  fluent-bit:
+    image: ghcr.io/quenchworks/images/fluent-bit
+    category: Observability
+    summary: Lightweight, fast log and metrics processor and forwarder for collecting, filtering, and
+      shipping telemetry to many backends.
+    source: https://github.com/fluent/fluent-bit
+    upstream: https://github.com/fluent/fluent-bit
+    license: Apache-2.0
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 4.2.5
+      digest: sha256:ad43d4772fada2f6088a2401eec94ccb2164525816905e7f04377d4b1d3a304a
+      published: '2026-06-20T12:23:23Z'
+      size: 33.1 MB
+      layers: 1
+    - version: 4.1.2
+      digest: sha256:3a0b6d3ea0b81aa7cb984e56ebb37aed16b30b8b66d71701b1dddf077255dbd0
+      published: '2026-06-20T12:23:23Z'
+      size: 32.8 MB
+      layers: 1
+    - version: 5.0.7
+      digest: sha256:6f8f931acdeb6c0b4b8c373e94314ca8f8e2f5144f708f51c27e4d09089f2b1b
+      published: '2026-06-20T12:23:23Z'
+      size: 34.2 MB
+      layers: 1
+  alertmanager:
+    image: ghcr.io/quenchworks/images/alertmanager
+    category: Observability
+    summary: Companion to Prometheus that routes, groups, deduplicates, and silences alerts and dispatches
+      them to email, Slack, PagerDuty, and more.
+    source: https://github.com/prometheus/alertmanager
+    upstream: https://github.com/prometheus/alertmanager
+    license: Apache-2.0
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 0.33.0
+      digest: sha256:862b251add3271174a224ebdad736056162ebfe4eb55318a013aa89c50304f33
+      published: '2026-06-19T19:11:04Z'
+      size: 24.2 MB
+      layers: 1
+    - version: 0.32.2
+      digest: sha256:3d3fae53a03358cfabf8996791bff5f29102bc97255bb7880aa78f5644cf39e1
+      published: '2026-06-19T19:10:58Z'
+      size: 22.4 MB
+      layers: 1
+    - version: 0.31.1
+      digest: sha256:1b0817b0099775ee6238cd2509021b6045635122d74ad1900434df9f98df1d66
+      published: '2026-06-19T19:10:54Z'
+      size: 24.7 MB
+      layers: 1
+  node-exporter:
+    image: ghcr.io/quenchworks/images/node-exporter
+    category: Metrics/Exporter
+    summary: Prometheus exporter for host-level hardware and OS metrics (CPU, memory, disk, network) on
+      Linux machines.
+    source: https://github.com/prometheus/node_exporter
+    upstream: https://github.com/prometheus/node_exporter
+    license: Apache-2.0
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 1.11.1
+      digest: sha256:4c3735371055cea29cf1ed3250a2b2a7cb4a4ddcdd26ae378619ceddb2966a16
+      published: '2026-06-21T02:36:00Z'
+      size: 6.5 MB
+      layers: 1
+    - version: 1.10.2
+      digest: sha256:df1713c0ba5a9587346516a560d63772913aca9341ecb17ed43d3e8d5c012624
+      published: '2026-06-21T02:35:54Z'
+      size: 6.4 MB
+      layers: 1
+    - version: 1.9.1
+      digest: sha256:591739946b6d09ca52a9c709d65e902d8d8414f7cd76722f0cd8ddd4ec0042d2
+      published: '2026-06-21T02:35:51Z'
+      size: 6.4 MB
+      layers: 1
+  blackbox-exporter:
+    image: ghcr.io/quenchworks/images/blackbox-exporter
+    category: Metrics/Exporter
+    summary: Prometheus exporter that probes endpoints externally over HTTP, HTTPS, TCP, DNS, and ICMP
+      for black-box uptime and latency monitoring.
+    source: https://github.com/prometheus/blackbox_exporter
+    upstream: https://github.com/prometheus/blackbox_exporter
+    license: Apache-2.0
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 0.28.0
+      digest: sha256:3021046854322338685fca0ed4e937b44699bec5a0c1a2be06d206e909b6427b
+      published: '2026-06-19T20:34:04Z'
+      size: 8.8 MB
+      layers: 1
+    - version: 0.27.0
+      digest: sha256:aa7560ca4ceb19e08aa69599878c4492db9320c4f3b36cdb029bed3a15f7c73d
+      published: '2026-06-19T20:34:02Z'
+      size: 8.1 MB
+      layers: 1
+    - version: 0.26.0
+      digest: sha256:817b41b2d39bd453443ec3d36d5723495a4b8c3733d87cff7ce496c3a542bb8e
+      published: '2026-06-19T20:34:02Z'
+      size: 6.9 MB
+      layers: 1
+  temporal:
+    image: ghcr.io/quenchworks/images/temporal
+    category: Workflow
+    summary: Durable workflow orchestration engine that persists execution state so long-running, multi-step
+      processes survive crashes and resume exactly where they left off.
+    source: https://github.com/temporalio/temporal
+    upstream: https://github.com/temporalio/temporal
+    license: MIT
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 1.31.1
+      digest: sha256:88ca3754589640a473df7ee73ed9f944010c9aefb1105b757c36a0025dfc1f65
+      published: '2026-06-21T09:48:50Z'
+      size: 61.5 MB
+      layers: 1
+    - version: 1.29.7
+      digest: sha256:bcdb9d291757b81bc72f00b504c342c75665b5c260fa41109b713fa75bf063a0
+      published: '2026-06-21T09:48:44Z'
+      size: 49.9 MB
+      layers: 1
+    - version: 1.30.5
+      digest: sha256:3a95f4eec2a007384c6db907f7af8a1a32672e3211f144970f4215d2147761da
+      published: '2026-06-21T09:48:43Z'
+      size: 51.1 MB
+      layers: 1
+  temporal-cli:
+    image: ghcr.io/quenchworks/images/temporal-cli
+    category: Workflow
+    summary: Command-line client and built-in dev server for Temporal, used to start workflows, inspect
+      history, and run a local cluster.
+    source: https://github.com/temporalio/cli
+    upstream: https://github.com/temporalio/cli
+    license: MIT
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 1.7.2
+      digest: sha256:582b2101a9a93804ee5848b2c005814966a6f105511d2aa0a6201c0e157276cc
+      published: '2026-06-21T09:58:01Z'
+      size: 114.2 MB
+      layers: 1
+    - version: 1.6.2
+      digest: sha256:11f545b0b4bc51f017c9219518d12c70287819a178d0d1051d2b465dc89248ae
+      published: '2026-06-21T09:57:59Z'
+      size: 75.0 MB
+      layers: 1
+    - version: 1.5.1
+      digest: sha256:c9c70301fa6efe4fd57c5dc71db8e88e88332236a541770b815754786c382728
+      published: '2026-06-21T09:57:58Z'
+      size: 50.8 MB
+      layers: 1
+  harbor-portal:
+    image: ghcr.io/quenchworks/images/harbor-portal
+    category: Registry
+    summary: Web UI for the Harbor container registry, serving the management dashboard for projects,
+      repositories, and scan results.
+    source: https://github.com/goharbor/harbor
+    upstream: https://github.com/goharbor/harbor
+    license: Apache-2.0
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 2.13.5
+      digest: sha256:c56a5ca599000da0bbb3414a50e4045363f5666e8e79037abac0bc8eacf2334a
+      published: '2026-06-20T15:30:49Z'
+      size: 13.7 MB
+      layers: 1
+    - version: 2.15.1
+      digest: sha256:7fe602638c3f0c870ec9b9d1cf92324042910035156828a62d27ac49885b8bf4
+      published: '2026-06-20T15:30:48Z'
+      size: 13.7 MB
+      layers: 1
+    - version: 2.14.4
+      digest: sha256:f36cba4aca0664b36cdbc11fbd19ce4253f59c109419e7941e48b49a58f93d0e
+      published: '2026-06-20T15:30:47Z'
+      size: 13.7 MB
+      layers: 1
+  harbor-registry:
+    image: ghcr.io/quenchworks/images/harbor-registry
+    category: Registry
+    summary: OCI registry storage backend (Docker distribution) that stores and serves image layers and
+      manifests for Harbor.
+    source: https://github.com/goharbor/distribution
+    upstream: https://github.com/goharbor/distribution
+    license: Apache-2.0
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 2.13.5
+      digest: sha256:450cada0314be3b00d25240537a4cfa4b8ee19cc28df0f14c4f18c3d1b57887e
+      published: '2026-06-20T15:28:17Z'
+      size: 12.6 MB
+      layers: 1
+    - version: 2.14.4
+      digest: sha256:e967649be4314898a2dc6c5d3f4ed5cd57ad02164176022e99abdd7a76ecbfd2
+      published: '2026-06-20T15:28:17Z'
+      size: 12.6 MB
+      layers: 1
+    - version: 2.15.1
+      digest: sha256:5d027d2fe8378689f6490a0bdd957ba8d9c4603b123428f6f137a48d3ecf8c7b
+      published: '2026-06-20T15:28:12Z'
+      size: 12.6 MB
+      layers: 1
+    - version: 2.8.3
+      digest: sha256:0c356dfa1171b7c0d599987696020ddb64f7186618ad8a431fc5b67e08867286
+      published: '2026-06-20T14:08:01Z'
+      size: 12.6 MB
+      layers: 1
+  harbor-core:
+    image: ghcr.io/quenchworks/images/harbor-core
+    category: Registry
+    summary: Core API server and control plane of the Harbor container registry, handling auth, projects,
+      policies, and orchestration.
+    source: https://github.com/goharbor/harbor
+    upstream: https://github.com/goharbor/harbor
+    license: Apache-2.0
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 2.13.5
+      digest: sha256:1a66a23618cbd01d22b76de321cfa1632f37b910b4cb6a28b47aa03ddb751ef4
+      published: '2026-06-20T15:27:43Z'
+      size: 25.8 MB
+      layers: 1
+    - version: 2.14.4
+      digest: sha256:315627ce5f03d2202c4d628bcdcea68fa03a10ff3a312adc9696b0bedc9ab288
+      published: '2026-06-20T15:27:31Z'
+      size: 26.1 MB
+      layers: 1
+    - version: 2.15.1
+      digest: sha256:b4f22b18b5d48d21466ef3475ff19af5aa40183dd4c4a44dc6a558e17553d50c
+      published: '2026-06-20T15:27:11Z'
+      size: 26.9 MB
+      layers: 1
+  harbor-jobservice:
+    image: ghcr.io/quenchworks/images/harbor-jobservice
+    category: Registry
+    summary: Harbor's asynchronous job runner that executes replication, garbage collection, and image-scan
+      tasks in the background.
+    source: https://github.com/goharbor/harbor
+    upstream: https://github.com/goharbor/harbor
+    license: Apache-2.0
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 2.15.1
+      digest: sha256:55300a27787176f60a0e9e892cfbe43856566abb46d8613e59e5e85753d8a353
+      published: '2026-06-20T15:27:25Z'
+      size: 18.4 MB
+      layers: 1
+    - version: 2.13.5
+      digest: sha256:d16f2e41a1063b9ec046080e353fcbeb7597ab1941a6af2d7485bf1b630ce4e4
+      published: '2026-06-20T15:27:19Z'
+      size: 17.4 MB
+      layers: 1
+    - version: 2.14.4
+      digest: sha256:ea1c4d132169664bdaba6830c1250f6f8d50a6051ce991dc29cdf4775fd591dc
+      published: '2026-06-20T15:26:45Z'
+      size: 17.5 MB
+      layers: 1
+  harbor-registryctl:
+    image: ghcr.io/quenchworks/images/harbor-registryctl
+    category: Registry
+    summary: Harbor registry controller that manages garbage collection and registry storage lifecycle
+      operations alongside the registry backend.
+    source: https://github.com/goharbor/harbor
+    upstream: https://github.com/goharbor/harbor
+    license: Apache-2.0
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 2.14.4
+      digest: sha256:922d19d39d91d315eaf7d1f8c0dda87f9a1f01541f634c7007741ab5092eca5e
+      published: '2026-06-20T15:28:26Z'
+      size: 12.8 MB
+      layers: 1
+    - version: 2.13.5
+      digest: sha256:8b2dcdddc23cd07e2f14958a5a597d755fa204a88f391bed41cf00f705155c80
+      published: '2026-06-20T15:28:25Z'
+      size: 12.8 MB
+      layers: 1
+    - version: 2.15.1
+      digest: sha256:6984e3e26bc3478ac6fd2c83726e70ccfe9c68bc1f318062c4de15216399555d
+      published: '2026-06-20T15:28:23Z'
+      size: 13.0 MB
+      layers: 1
+  harbor-exporter:
+    image: ghcr.io/quenchworks/images/harbor-exporter
+    category: Registry
+    summary: Prometheus exporter that exposes Harbor registry health and usage metrics for monitoring.
+    source: https://github.com/goharbor/harbor
+    upstream: https://github.com/goharbor/harbor
+    license: Apache-2.0
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 2.14.4
+      digest: sha256:ff53a51f9ab808cdafc83763db3dce7c7abb8f8f95a0cb5421043d3adbb4f287
+      published: '2026-06-20T15:27:03Z'
+      size: 13.8 MB
+      layers: 1
+    - version: 2.15.1
+      digest: sha256:42034a1c1f9289628f93c8a8e9c307bc9a65a7a7b0a17fd49665977d47e7ff4b
+      published: '2026-06-20T15:25:37Z'
+      size: 14.7 MB
+      layers: 1
+    - version: 2.13.5
+      digest: sha256:b685564a4974a453162d0245c028bc36813b03b39cc852c1382719570c4bd660
+      published: '2026-06-20T15:25:32Z'
+      size: 13.7 MB
+      layers: 1
+  harbor-trivy-adapter:
+    image: ghcr.io/quenchworks/images/harbor-trivy-adapter
+    category: Registry
+    summary: Harbor vulnerability-scan adapter backed by Trivy, scanning pushed images for CVEs and reporting
+      results into Harbor.
+    source: https://github.com/goharbor/harbor-scanner-trivy
+    upstream: https://github.com/goharbor/harbor-scanner-trivy
+    license: Apache-2.0
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 2.15.1
+      digest: sha256:627a8e1a373ec1ce471b9ce21a58386d61eee87adde5f1e74f8e3eb536c3fb06
+      published: '2026-06-20T15:34:11Z'
+      size: 75.3 MB
+      layers: 1
+    - version: 2.13.5
+      digest: sha256:1cd5ea6d359478bd4f80659efbae74096e8ef3d7fe80cc1c450d2a4af21618d5
+      published: '2026-06-20T15:34:10Z'
+      size: 75.9 MB
+      layers: 1
+    - version: 2.14.4
+      digest: sha256:0db10ffa85cab8d2ef290f85057d86e8a7fc8b5c24f8601b9bd57f8c6c96db73
+      published: '2026-06-20T15:34:02Z'
+      size: 75.3 MB
+      layers: 1
+    - version: 0.36.0
+      digest: sha256:3d3d6d86a03d8f26c7adb3c57f9898650c6073ed10316feff13cd73c1cec21c7
+      published: '2026-06-20T14:11:50Z'
+      size: 75.3 MB
+      layers: 1
+  tempo:
+    image: ghcr.io/quenchworks/images/tempo
+    category: Observability
+    summary: Distributed tracing backend from Grafana that ingests OpenTelemetry, Jaeger, and Zipkin spans
+      and stores them cheaply in object storage. Licensed AGPL.
+    source: https://github.com/grafana/tempo
+    upstream: https://github.com/grafana/tempo
+    license: AGPL-3.0-only
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 2.10.7
+      digest: sha256:993ad7996f09b73a5232bf8a05a8491af309640ef0ea9704bcadbe5b762dda5e
+      published: '2026-06-21T09:58:21Z'
+      size: 38.0 MB
+      layers: 1
+    - version: 3.0.2
+      digest: sha256:2da185a3d2d088a20a975e8bb8a1c1e6522213bda5975380ea0bc01b4779b775
+      published: '2026-06-21T09:58:20Z'
+      size: 39.5 MB
+      layers: 1
+    - version: 2.9.2
+      digest: sha256:0d9428955f4c69b09ca0663e06943ec0efca81aca555fa9b5b30f430ba52bea0
+      published: '2026-06-21T09:58:19Z'
+      size: 36.9 MB
+      layers: 1
+  vector:
+    image: ghcr.io/quenchworks/images/vector
+    category: Observability
+    summary: High-performance observability pipeline that collects, transforms, and routes logs, metrics,
+      and traces between sources and sinks.
+    source: https://github.com/vectordotdev/vector
+    upstream: https://github.com/vectordotdev/vector
+    license: MPL-2.0
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 0.54.0
+      digest: sha256:4d67202d12a453b1347b271982b54dde292563235b6bc3500f2cf23579ba2df2
+      published: '2026-06-21T11:28:49Z'
+      size: 51.0 MB
+      layers: 1
+    - version: 0.56.0
+      digest: sha256:efa18f5eb0c49a552760980fe89fc07eba4e9398adf9fd3f88d44460f6b761c0
+      published: '2026-06-21T11:28:49Z'
+      size: 32.5 MB
+      layers: 1
+    - version: 0.55.0
+      digest: sha256:9cced60f12aaaaa9cd0a17bdbcece7afb9159bbfd455504637fe4b7f7da66d3b
+      published: '2026-06-21T11:28:44Z'
+      size: 48.2 MB
+      layers: 1
+  atlantis:
+    image: ghcr.io/quenchworks/images/atlantis
+    category: GitOps
+    summary: Terraform pull-request automation that runs plan on PRs and apply from PR comments, enforcing
+      reviewed, Git-driven infrastructure changes with state locking.
+    source: https://github.com/runatlantis/atlantis
+    upstream: https://github.com/runatlantis/atlantis
+    license: Apache-2.0
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 0.43.0
+      digest: sha256:8c1dd6a421ad366807bee7f9167a9df7b0db16b85d71f4eeec37f7ae71a0bfdf
+      published: '2026-06-19T20:25:02Z'
+      size: 72.6 MB
+      layers: 1
+    - version: 0.42.0
+      digest: sha256:7046c1fc076de73c7003724c7b1348b29f0f8a9859e0e7bbb61b90d366c91ee1
+      published: '2026-06-19T20:24:55Z'
+      size: 72.6 MB
+      layers: 1
+    - version: 0.44.0
+      digest: sha256:73c6abdc7cdb6764f956d5810292776318651887521fdc07c11c84c2bf7f67c5
+      published: '2026-06-19T20:24:55Z'
+      size: 73.2 MB
+      layers: 1
+  gitea:
+    image: ghcr.io/quenchworks/images/gitea
+    category: Git
+    summary: Lightweight self-hosted Git service with repositories, issues, pull requests, and built-in
+      CI/CD (Actions). A low-footprint GitHub alternative.
+    source: https://github.com/go-gitea/gitea
+    upstream: https://github.com/go-gitea/gitea
+    license: MIT
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 1.25.5
+      digest: sha256:f149738ba5483a9576c17661374c0ce5816995d613ed3002bfc5125cef3b5a65
+      published: '2026-06-20T12:53:11Z'
+      size: 66.9 MB
+      layers: 1
+    - version: 1.24.7
+      digest: sha256:5efc731e14cce6da38b0f870475d1c9d93ead3d27f8ae15b45c16022461c268d
+      published: '2026-06-20T12:53:04Z'
+      size: 67.0 MB
+      layers: 1
+    - version: 1.26.2
+      digest: sha256:7e16982dfc7b7fe62478f8e0fad6b747b182921de80aaf2e8bb3156d7a5dbb53
+      published: '2026-06-20T12:53:03Z'
+      size: 66.7 MB
+      layers: 1
+  coolify-realtime:
+    image: ghcr.io/quenchworks/images/coolify-realtime
+    category: PaaS
+    summary: Realtime server component of Coolify, providing the websocket connections and terminal/log
+      gateway for the dashboard. Licensed AGPL.
+    source: https://github.com/coollabsio/coolify
+    upstream: https://github.com/coollabsio/coolify
+    license: AGPL-3.0-or-later
+    tier: standard
+    status: pilot
+    arches:
+    - amd64
+    versions:
+    - version: 1.0.16
+      digest: sha256:a8b07376a2b5ad79f649d660cfcfac408219f6ebc48f745f376717878be982a3
+      published: '2026-06-18T12:11:37Z'
+      size: 100.9 MB
+      layers: 1
+  coolify-helper:
+    image: ghcr.io/quenchworks/images/coolify-helper
+    category: PaaS
+    summary: Coolify helper image carrying the build and deploy toolchain (buildpacks, git, ssh) that
+      runs on target hosts to execute deployments.
+    source: https://github.com/coollabsio/coolify
+    upstream: https://github.com/coollabsio/coolify
+    license: Apache-2.0 AND AGPL-3.0-or-later
+    tier: standard
+    status: pilot
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 1.0.14
+      digest: sha256:fd897b2dd0e103ac3b1edb56f34145c8f844ed17b045771516441b49995d9eaa
+      published: '2026-06-20T00:50:20Z'
+      size: 157.2 MB
+      layers: 1
+  coolify-app:
+    image: ghcr.io/quenchworks/images/coolify-app
+    category: PaaS
+    summary: Control-plane application for Coolify, an open-source self-hostable PaaS alternative to Heroku,
+      Vercel, and Netlify for deploying apps, databases, and services on your own servers.
+    source: https://github.com/coollabsio/coolify
+    upstream: https://github.com/coollabsio/coolify
+    license: Apache-2.0
+    tier: standard
+    status: pilot
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 4.1.1
+      digest: sha256:334bd7efe44f68a7712efedf726fa5f353da7cb76276ecca5620a4db16a80334
+      published: '2026-06-21T11:20:09Z'
+      size: 118.8 MB
+      layers: 1
+    - version: 4.1.2
+      digest: sha256:39f5a5b4f21d0931cc4f70b8960927e85876abffc9b99e206a008dbd8e4ba036
+      published: '2026-06-21T11:20:06Z'
+      size: 118.9 MB
+      layers: 1
+    - version: 4.1.0
+      digest: sha256:eeaf4cab259dcd7622aeee1ab017c4f091467868696eca814225cb0cbc6ce032
+      published: '2026-06-21T11:20:05Z'
+      size: 118.3 MB
+      layers: 1
+  meilisearch:
+    image: ghcr.io/quenchworks/images/meilisearch
+    category: Search
+    summary: Fast, typo-tolerant full-text search engine with an instant-search API, easy to embed for
+      site and in-app search with relevant results out of the box.
+    source: https://github.com/meilisearch/meilisearch
+    upstream: https://github.com/meilisearch/meilisearch
+    license: MIT
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 1.45.2
+      digest: sha256:c35d7b5a2efedb04c7d7d8c1bc77898b9441206eee0bfb260fafd69c41b341a4
+      published: '2026-06-20T23:06:45Z'
+      size: 100.2 MB
+      layers: 1
+    - version: 1.46.1
+      digest: sha256:0c406babf69c13f502561a90872538e7c569a6e6c5994d926eb18e208c18135a
+      published: '2026-06-20T23:06:45Z'
+      size: 100.2 MB
+      layers: 1
+    - version: 1.47.0
+      digest: sha256:9a8e011d94164c72b1e88d52c8adf773ed8aa719ffc4fe7c39fe40b91ae2981c
+      published: '2026-06-20T23:06:39Z'
+      size: 99.3 MB
+      layers: 1
+  dotnet:
+    image: ghcr.io/quenchworks/images/dotnet
+    category: Language runtime
+    summary: Hardened .NET SDK for building and running .NET apps. Use as a build base; ships the latest
+      3 stable lines including LTS (8/9/10).
+    source: https://github.com/dotnet/runtime
+    upstream: https://github.com/dotnet/runtime
+    license: MIT
+    tier: standard
+    status: done
     arches:
     - amd64
     - arm64
@@ -463,604 +2078,16 @@ apps:
       published: '2026-06-16T08:56:00Z'
       size: 272.0 MB
       layers: 1
-  dotnet-runtime:
-    image: ghcr.io/quenchworks/images/dotnet-runtime
-    source: https://github.com/dotnet/runtime
-    license: MIT
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 9.0.112
-      digest: sha256:f8c2331c619da9b504f3a38f0a3d584c589f6be140b9f3ab84c9e64ae721086c
-      published: '2026-06-20T02:36:26Z'
-      size: 60.1 MB
-      layers: 1
-    - version: '10'
-      digest: sha256:461cc81b06b0832b511b3540ec5ca7b3fa5cac45f9c6c4b265762fd58e074623
-      published: '2026-06-18T11:13:09Z'
-      size: 61.0 MB
-      layers: 1
-    - version: '9'
-      digest: sha256:a4fcc307d04e5714b25b8090a08971768b0e0d081996ce5c65b75f5b99f0144d
-      published: '2026-06-18T11:12:05Z'
-      size: 60.1 MB
-      layers: 1
-    - version: '8'
-      digest: sha256:a5676a6a43a8b510fd1d21c51a4fdcbb9c7b8bff73c09e2f31be644e255fcaeb
-      published: '2026-06-18T11:10:47Z'
-      size: 56.9 MB
-      layers: 1
-    - version: 10.0.100
-      digest: sha256:1fa179c2f50050990e0b39682b1f01eded01456b54583d5346668f8d6d528671
-      published: '2026-06-15T21:35:29Z'
-      size: 61.0 MB
-      layers: 1
-    - version: 8.0.122
-      digest: sha256:4d70df949768fb201b7793996c4697f352c428488fb0a1fec67ca01df7270b97
-      published: '2026-06-15T21:33:51Z'
-      size: 56.9 MB
-      layers: 1
-  dragonfly:
-    image: ghcr.io/quenchworks/images/dragonfly
-    source: https://github.com/dragonflydb/dragonfly
-    license: BUSL-1.1
-    tier: low
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 1.37.2
-      digest: sha256:e1466449e922d12013021db5f09703ec6a467d01d1b06d0adcff1c42700d0205
-      published: '2026-06-20T02:58:56Z'
-      size: 23.6 MB
-      layers: 1
-    - version: 1.39.0
-      digest: sha256:da4468c83f74bb8271aeaac5a6f26b84a4617fa0717935dadb32151d1d73f15b
-      published: '2026-06-20T02:58:48Z'
-      size: 25.1 MB
-      layers: 1
-    - version: 1.38.1
-      digest: sha256:4eb18f3a623599aa6c884226758a2d0126663e7a075c3fcfbf86e96d268c72f7
-      published: '2026-06-20T02:58:45Z'
-      size: 24.5 MB
-      layers: 1
-  elasticsearch:
-    image: ghcr.io/quenchworks/images/elasticsearch
-    source: https://github.com/elastic/elasticsearch
-    license: SSPL-1.0
-    tier: low
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 9.4.2
-      digest: sha256:d5e8e9974ee0282ef4313f8f133e5102db5e62d83bac0ecf7a30681c023bf865
-      published: '2026-06-21T06:48:28Z'
-      size: 734.6 MB
-      layers: 1
-    - version: 9.3.5
-      digest: sha256:950419e8a1962187d95568c092abb5e2308a4896ae1000b35e2ec8226d200526
-      published: '2026-06-21T06:41:39Z'
-      size: 593.6 MB
-      layers: 1
-    - version: 9.2.8
-      digest: sha256:c83e35a63bd8236897b44b1bb03b3af7036fe514be633cfd7f9e9bec8fec0a5e
-      published: '2026-06-21T06:31:39Z'
-      size: 614.5 MB
-      layers: 1
-  elixir:
-    image: ghcr.io/quenchworks/images/elixir
-    source: https://elixir-lang.org
-    license: Apache-2.0
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 1.19.5
-      digest: sha256:ce6f2ed4181e98e39ae793f560863cd1f967f4c01f058f8c325252cf1848e45a
-      published: '2026-06-21T06:58:48Z'
-      size: 68.8 MB
-      layers: 1
-    - version: 1.18.4
-      digest: sha256:28bec4895ebe82fde66ec8623aa910fd06668109d5eb00d0486b868fbfad4f3c
-      published: '2026-06-21T06:57:09Z'
-      size: 60.6 MB
-      layers: 1
-    - version: 1.17.3
-      digest: sha256:87c957fb48c35cc90b88389dc00c443e5bd76d9ad4a8d97b4669c9d6ff56c949
-      published: '2026-06-21T06:54:17Z'
-      size: 61.0 MB
-      layers: 1
-    - version: '1.18'
-      digest: sha256:9f96725c5881cfa038e82df942d307525d66fe442491a8e12c04f1934fb9a87f
-      published: '2026-06-17T08:46:34Z'
-      size: 60.6 MB
-      layers: 1
-  erlang:
-    image: ghcr.io/quenchworks/images/erlang
-    source: https://www.erlang.org
-    license: Apache-2.0
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 29.0.2
-      digest: sha256:e457ea245a49a1de2d25cde0d2eb310ad76a895807c1ec3b35f93d69c84b4924
-      published: '2026-06-21T07:04:13Z'
-      size: 63.1 MB
-      layers: 1
-    - version: 28.5.0.2
-      digest: sha256:36d699cde988bee2497f7de0db263803d9232133d8c02c24bcc8ac570bc71d63
-      published: '2026-06-21T07:02:48Z'
-      size: 62.1 MB
-      layers: 1
-    - version: 27.3.4.13
-      digest: sha256:fe36e635fb974ee34f43c908dad6734e44cf1f60f077961577467f478e7d9944
-      published: '2026-06-21T07:01:02Z'
-      size: 60.9 MB
-      layers: 1
-    - version: '29'
-      digest: sha256:9bc78d372b70c3e1b7941adbbbd0b2b52d48714e8096a2de5c1aa4b1df975b68
-      published: '2026-06-17T08:50:02Z'
-      size: 63.1 MB
-      layers: 1
-    - version: '27'
-      digest: sha256:535a6127076bb57e009e3af8e4bf01ae780c1b877ecd73070bc8d189e2c88bdb
-      published: '2026-06-17T08:50:02Z'
-      size: 61.0 MB
-      layers: 1
-    - version: '28'
-      digest: sha256:8d23c3f8191a4ee5f8bbee610c2460614c22a2ba39fd82e573a4bfbfc4e987c3
-      published: '2026-06-17T08:49:44Z'
-      size: 62.2 MB
-      layers: 1
-  etcd:
-    image: ghcr.io/quenchworks/images/etcd
-    source: https://github.com/etcd-io/etcd
-    license: Apache-2.0
-    tier: critical
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 3.6.12
-      digest: sha256:0a9df4f40d9f49ec6470ab20729cd91bb7389863c2f2e356c9412263da7f05e0
-      published: '2026-06-20T03:42:10Z'
-      size: 22.6 MB
-      layers: 1
-    - version: 3.5.31
-      digest: sha256:46704073bf6ac1358097f9305f4108622324298d03f824b7cbf0fa359132dc80
-      published: '2026-06-20T03:42:08Z'
-      size: 23.2 MB
-      layers: 1
-  ferretdb:
-    image: ghcr.io/quenchworks/images/ferretdb
-    source: https://github.com/FerretDB/FerretDB
-    license: Apache-2.0
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 2.5.0
-      digest: sha256:33a6ad1566e85021301d8e501842ba4756a25e4fbd039e1fef12397b56b78868
-      published: '2026-06-20T11:40:46Z'
-      size: 10.1 MB
-      layers: 1
-    - version: 2.4.0
-      digest: sha256:7e4a5399c2615835ebf58404f0dba8d5762de3c8802ad44eaa35afa020ca199e
-      published: '2026-06-20T11:40:45Z'
-      size: 10.2 MB
-      layers: 1
-    - version: 2.7.0
-      digest: sha256:9aee41e900c918471a7cc2305c70c9b44391473bdf658092bf6d27bbebddf609
-      published: '2026-06-20T11:40:44Z'
-      size: 9.9 MB
-      layers: 1
-  fluent-bit:
-    image: ghcr.io/quenchworks/images/fluent-bit
-    source: https://github.com/fluent/fluent-bit
-    license: Apache-2.0
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 4.2.5
-      digest: sha256:ad43d4772fada2f6088a2401eec94ccb2164525816905e7f04377d4b1d3a304a
-      published: '2026-06-20T12:23:23Z'
-      size: 33.1 MB
-      layers: 1
-    - version: 4.1.2
-      digest: sha256:3a0b6d3ea0b81aa7cb984e56ebb37aed16b30b8b66d71701b1dddf077255dbd0
-      published: '2026-06-20T12:23:23Z'
-      size: 32.8 MB
-      layers: 1
-    - version: 5.0.7
-      digest: sha256:6f8f931acdeb6c0b4b8c373e94314ca8f8e2f5144f708f51c27e4d09089f2b1b
-      published: '2026-06-20T12:23:23Z'
-      size: 34.2 MB
-      layers: 1
-  garage:
-    image: ghcr.io/quenchworks/images/garage
-    source: https://github.com/deuxfleurs-org/garage
-    license: AGPL-3.0-only
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 2.3.0
-      digest: sha256:baa5da5815b1c413d7e92f55560e1648782ecede979268d02c794aeaa259e881
-      published: '2026-06-21T10:44:42Z'
-      size: 29.7 MB
-      layers: 1
-    - version: 2.2.0
-      digest: sha256:c0cd1679c905fbb54ab510e8acfed9893113846d8155df3b42076c8ae895dc96
-      published: '2026-06-21T10:42:58Z'
-      size: 23.3 MB
-      layers: 1
-    - version: 2.1.0
-      digest: sha256:e12dee52dad906f7640c741aece9236ded640f230436a0c5f675a6a16259541e
-      published: '2026-06-21T10:41:06Z'
-      size: 16.1 MB
-      layers: 1
-    - version: 1.3.1
-      digest: sha256:2c245a8a3ef188bd8784c6282b8db4d898a37ed1d3455154ae5acfb41608b04f
-      published: '2026-06-17T08:46:18Z'
-      size: 14.7 MB
-      layers: 1
-  gitea:
-    image: ghcr.io/quenchworks/images/gitea
-    source: https://github.com/go-gitea/gitea
-    license: MIT
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 1.25.5
-      digest: sha256:f149738ba5483a9576c17661374c0ce5816995d613ed3002bfc5125cef3b5a65
-      published: '2026-06-20T12:53:11Z'
-      size: 66.9 MB
-      layers: 1
-    - version: 1.24.7
-      digest: sha256:5efc731e14cce6da38b0f870475d1c9d93ead3d27f8ae15b45c16022461c268d
-      published: '2026-06-20T12:53:04Z'
-      size: 67.0 MB
-      layers: 1
-    - version: 1.26.2
-      digest: sha256:7e16982dfc7b7fe62478f8e0fad6b747b182921de80aaf2e8bb3156d7a5dbb53
-      published: '2026-06-20T12:53:03Z'
-      size: 66.7 MB
-      layers: 1
-  go:
-    image: ghcr.io/quenchworks/images/go
-    source: https://github.com/golang/go
-    license: BSD-3-Clause
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 1.25.0
-      digest: sha256:28842c30d887b6fa546b467a8a36a5ffc52331c9ab13e51c9f6f47c3a977e63d
-      published: '2026-06-19T19:39:39Z'
-      size: 239.5 MB
-      layers: 1
-    - version: 1.24.4
-      digest: sha256:2fd545c792a9e51d17f9c978857501d71adf01562d7788e45644ea0294a44d3c
-      published: '2026-06-19T19:39:38Z'
-      size: 261.0 MB
-      layers: 1
-    - version: '1.24'
-      digest: sha256:0f8d9231ba35555347a5aaaa5a96ad2344cc332b9869f13067254afdeefca848
-      published: '2026-06-19T18:28:57Z'
-      size: 261.0 MB
-      layers: 1
-    - version: '1.25'
-      digest: sha256:2d4a3fca1273ba5436416246a473a6c327bd14f4b631f29181ebec29a07e3481
-      published: '2026-06-19T18:28:56Z'
-      size: 239.5 MB
-      layers: 1
-    - version: 1.26.0
-      digest: sha256:908a9ee6b4b0f9db200c675cbd61661819f4f147ba86a2826c71be45c096365e
-      published: '2026-06-17T08:48:15Z'
-      size: 59.1 MB
-      layers: 1
-    - version: '1.26'
-      digest: sha256:908a9ee6b4b0f9db200c675cbd61661819f4f147ba86a2826c71be45c096365e
-      published: '2026-06-17T08:48:15Z'
-      size: 59.1 MB
-      layers: 1
-  gradle:
-    image: ghcr.io/quenchworks/images/gradle
-    source: https://gradle.org
-    license: Apache-2.0
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 9.6.0
-      digest: sha256:aab54a388a0e5e3a2fa37e61d2a9a4af8f5f0d6254ebcfdf0e731dc2d83cf8e6
-      published: '2026-06-21T11:00:42Z'
-      size: 238.9 MB
-      layers: 1
-    - version: 9.5.1
-      digest: sha256:2bd0d5dc81983505ee9e4f247f775882516d1ae2a990dbb68058cf8de7776b26
-      published: '2026-06-21T11:00:36Z'
-      size: 238.7 MB
-      layers: 1
-    - version: 9.4.1
-      digest: sha256:26831922bda3700c213f28ae85ca4bad2bf018bfdee72e3cb61b96c0453024df
-      published: '2026-06-21T11:00:33Z'
-      size: 236.2 MB
-      layers: 1
-    - version: '9'
-      digest: sha256:c6fec709276946e36a7c5cf3d7187256b30e4f55ee329c0dd8cf73082a34e2a3
-      published: '2026-06-16T08:58:34Z'
-      size: 238.6 MB
-      layers: 1
-  grafana:
-    image: ghcr.io/quenchworks/images/grafana
-    source: https://github.com/grafana/grafana
-    license: AGPL-3.0-only
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 12.4.4
-      digest: sha256:cc2115b3c7d530053a456084d8e1226759536aa1bbc3bdc9b4deb7862db852df
-      published: '2026-06-20T13:14:51Z'
-      size: 280.9 MB
-      layers: 1
-    - version: 13.0.2
-      digest: sha256:422b52219a03f5f70b1eac89060964027567df3ae504e5f43f533c9ef4dc51b5
-      published: '2026-06-20T13:14:50Z'
-      size: 328.3 MB
-      layers: 1
-    - version: 12.3.7
-      digest: sha256:d9675acff603a7f881755c671715686269dcd2e0d3bc49a306e7ca6eeb04e98b
-      published: '2026-06-20T13:14:44Z'
-      size: 276.3 MB
-      layers: 1
-  haproxy:
-    image: ghcr.io/quenchworks/images/haproxy
-    source: https://github.com/haproxy/haproxy
-    license: GPL-2.0-or-later
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 3.4.0
-      digest: sha256:0a97b05265db9ebf564c1e894877237bec30f4adef8f55e38e4432b949ede11e
-      published: '2026-06-20T13:26:24Z'
-      size: 23.0 MB
-      layers: 1
-    - version: 3.2.19
-      digest: sha256:8ae7b1300d400a373ec5264e1ba48e651d6a051b040ba47e0dd18dc56b3161cb
-      published: '2026-06-20T13:26:24Z'
-      size: 20.3 MB
-      layers: 1
-    - version: 3.3.10
-      digest: sha256:8b852029b5798158c48b115032a4fcb632732a88c32a9b908c165ec1c69217c5
-      published: '2026-06-20T13:26:18Z'
-      size: 22.1 MB
-      layers: 1
-  harbor-core:
-    image: ghcr.io/quenchworks/images/harbor-core
-    source: https://github.com/goharbor/harbor
-    license: Apache-2.0
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 2.13.5
-      digest: sha256:1a66a23618cbd01d22b76de321cfa1632f37b910b4cb6a28b47aa03ddb751ef4
-      published: '2026-06-20T15:27:43Z'
-      size: 25.8 MB
-      layers: 1
-    - version: 2.14.4
-      digest: sha256:315627ce5f03d2202c4d628bcdcea68fa03a10ff3a312adc9696b0bedc9ab288
-      published: '2026-06-20T15:27:31Z'
-      size: 26.1 MB
-      layers: 1
-    - version: 2.15.1
-      digest: sha256:b4f22b18b5d48d21466ef3475ff19af5aa40183dd4c4a44dc6a558e17553d50c
-      published: '2026-06-20T15:27:11Z'
-      size: 26.9 MB
-      layers: 1
-  harbor-exporter:
-    image: ghcr.io/quenchworks/images/harbor-exporter
-    source: https://github.com/goharbor/harbor
-    license: Apache-2.0
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 2.14.4
-      digest: sha256:ff53a51f9ab808cdafc83763db3dce7c7abb8f8f95a0cb5421043d3adbb4f287
-      published: '2026-06-20T15:27:03Z'
-      size: 13.8 MB
-      layers: 1
-    - version: 2.15.1
-      digest: sha256:42034a1c1f9289628f93c8a8e9c307bc9a65a7a7b0a17fd49665977d47e7ff4b
-      published: '2026-06-20T15:25:37Z'
-      size: 14.7 MB
-      layers: 1
-    - version: 2.13.5
-      digest: sha256:b685564a4974a453162d0245c028bc36813b03b39cc852c1382719570c4bd660
-      published: '2026-06-20T15:25:32Z'
-      size: 13.7 MB
-      layers: 1
-  harbor-jobservice:
-    image: ghcr.io/quenchworks/images/harbor-jobservice
-    source: https://github.com/goharbor/harbor
-    license: Apache-2.0
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 2.15.1
-      digest: sha256:55300a27787176f60a0e9e892cfbe43856566abb46d8613e59e5e85753d8a353
-      published: '2026-06-20T15:27:25Z'
-      size: 18.4 MB
-      layers: 1
-    - version: 2.13.5
-      digest: sha256:d16f2e41a1063b9ec046080e353fcbeb7597ab1941a6af2d7485bf1b630ce4e4
-      published: '2026-06-20T15:27:19Z'
-      size: 17.4 MB
-      layers: 1
-    - version: 2.14.4
-      digest: sha256:ea1c4d132169664bdaba6830c1250f6f8d50a6051ce991dc29cdf4775fd591dc
-      published: '2026-06-20T15:26:45Z'
-      size: 17.5 MB
-      layers: 1
-  harbor-portal:
-    image: ghcr.io/quenchworks/images/harbor-portal
-    source: https://github.com/goharbor/harbor
-    license: Apache-2.0
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 2.13.5
-      digest: sha256:c56a5ca599000da0bbb3414a50e4045363f5666e8e79037abac0bc8eacf2334a
-      published: '2026-06-20T15:30:49Z'
-      size: 13.7 MB
-      layers: 1
-    - version: 2.15.1
-      digest: sha256:7fe602638c3f0c870ec9b9d1cf92324042910035156828a62d27ac49885b8bf4
-      published: '2026-06-20T15:30:48Z'
-      size: 13.7 MB
-      layers: 1
-    - version: 2.14.4
-      digest: sha256:f36cba4aca0664b36cdbc11fbd19ce4253f59c109419e7941e48b49a58f93d0e
-      published: '2026-06-20T15:30:47Z'
-      size: 13.7 MB
-      layers: 1
-  harbor-registry:
-    image: ghcr.io/quenchworks/images/harbor-registry
-    source: https://github.com/goharbor/distribution
-    license: Apache-2.0
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 2.13.5
-      digest: sha256:450cada0314be3b00d25240537a4cfa4b8ee19cc28df0f14c4f18c3d1b57887e
-      published: '2026-06-20T15:28:17Z'
-      size: 12.6 MB
-      layers: 1
-    - version: 2.14.4
-      digest: sha256:e967649be4314898a2dc6c5d3f4ed5cd57ad02164176022e99abdd7a76ecbfd2
-      published: '2026-06-20T15:28:17Z'
-      size: 12.6 MB
-      layers: 1
-    - version: 2.15.1
-      digest: sha256:5d027d2fe8378689f6490a0bdd957ba8d9c4603b123428f6f137a48d3ecf8c7b
-      published: '2026-06-20T15:28:12Z'
-      size: 12.6 MB
-      layers: 1
-    - version: 2.8.3
-      digest: sha256:0c356dfa1171b7c0d599987696020ddb64f7186618ad8a431fc5b67e08867286
-      published: '2026-06-20T14:08:01Z'
-      size: 12.6 MB
-      layers: 1
-  harbor-registryctl:
-    image: ghcr.io/quenchworks/images/harbor-registryctl
-    source: https://github.com/goharbor/harbor
-    license: Apache-2.0
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 2.14.4
-      digest: sha256:922d19d39d91d315eaf7d1f8c0dda87f9a1f01541f634c7007741ab5092eca5e
-      published: '2026-06-20T15:28:26Z'
-      size: 12.8 MB
-      layers: 1
-    - version: 2.13.5
-      digest: sha256:8b2dcdddc23cd07e2f14958a5a597d755fa204a88f391bed41cf00f705155c80
-      published: '2026-06-20T15:28:25Z'
-      size: 12.8 MB
-      layers: 1
-    - version: 2.15.1
-      digest: sha256:6984e3e26bc3478ac6fd2c83726e70ccfe9c68bc1f318062c4de15216399555d
-      published: '2026-06-20T15:28:23Z'
-      size: 13.0 MB
-      layers: 1
-  harbor-trivy-adapter:
-    image: ghcr.io/quenchworks/images/harbor-trivy-adapter
-    source: https://github.com/goharbor/harbor-scanner-trivy
-    license: Apache-2.0
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 2.15.1
-      digest: sha256:627a8e1a373ec1ce471b9ce21a58386d61eee87adde5f1e74f8e3eb536c3fb06
-      published: '2026-06-20T15:34:11Z'
-      size: 75.3 MB
-      layers: 1
-    - version: 2.13.5
-      digest: sha256:1cd5ea6d359478bd4f80659efbae74096e8ef3d7fe80cc1c450d2a4af21618d5
-      published: '2026-06-20T15:34:10Z'
-      size: 75.9 MB
-      layers: 1
-    - version: 2.14.4
-      digest: sha256:0db10ffa85cab8d2ef290f85057d86e8a7fc8b5c24f8601b9bd57f8c6c96db73
-      published: '2026-06-20T15:34:02Z'
-      size: 75.3 MB
-      layers: 1
-    - version: 0.36.0
-      digest: sha256:3d3d6d86a03d8f26c7adb3c57f9898650c6073ed10316feff13cd73c1cec21c7
-      published: '2026-06-20T14:11:50Z'
-      size: 75.3 MB
-      layers: 1
-  influxdb:
-    image: ghcr.io/quenchworks/images/influxdb
-    source: https://github.com/influxdata/influxdb
-    license: MIT
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 2.7.12
-      digest: sha256:c339e68be5c72198593805017868618c330de38b277b47c79697cedd4a95e6f4
-      published: '2026-06-20T16:56:52Z'
-      size: 50.1 MB
-      layers: 1
-    - version: 2.9.1
-      digest: sha256:30213d15b3c3efe8836f626750855e7a44ed4a5151ecb2c9c702bd5b035ba657
-      published: '2026-06-20T16:56:47Z'
-      size: 56.1 MB
-      layers: 1
-    - version: 2.9.0
-      digest: sha256:968da6565c1fac9982e5e601aa1c50b4d43112bfab868809ced0f4e124a4e82d
-      published: '2026-06-20T16:56:46Z'
-      size: 56.1 MB
-      layers: 1
   jdk:
     image: ghcr.io/quenchworks/images/jdk
+    category: Language runtime
+    summary: Hardened OpenJDK with the javac compiler, a build-stage base image to FROM for Java apps.
+      LTS lines 17/21/25.
     source: https://openjdk.org
+    upstream: https://openjdk.org
     license: GPL-2.0-with-classpath-exception
     tier: standard
+    status: done
     arches:
     - amd64
     - arm64
@@ -1095,353 +2122,16 @@ apps:
       published: '2026-06-20T17:55:01Z'
       size: 100.5 MB
       layers: 1
-  jre:
-    image: ghcr.io/quenchworks/images/jre
-    source: https://openjdk.org
-    license: GPL-2.0-with-classpath-exception
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 21.0.11
-      digest: sha256:08b82f7ea4db9821e16d4ba1e492c1eea1cec8b94714469ceadef97c779bc029
-      published: '2026-06-21T10:37:44Z'
-      size: 74.5 MB
-      layers: 1
-    - version: 17.0.19
-      digest: sha256:78f0d2cf6a8ec4d41e5e0ba2302c2bf751ebc1554416598dd5dd5ff0078f5230
-      published: '2026-06-21T10:37:42Z'
-      size: 68.3 MB
-      layers: 1
-    - version: 25.0.3
-      digest: sha256:052f5179d82ef36c19d0dcf648deb5de00d22a10670ea4d82e53ec161aea26a3
-      published: '2026-06-21T10:37:41Z'
-      size: 83.1 MB
-      layers: 1
-    - version: '21'
-      digest: sha256:0240dc6d067be2e1f96b244d1d2a41de4fbed9d20d092815be6a4ef4367d6cde
-      published: '2026-06-20T17:58:56Z'
-      size: 74.5 MB
-      layers: 1
-    - version: '17'
-      digest: sha256:451957fbaafb7e10c7a7fa167286a25a03a63cc35ea0e75d37b4b573f3b07d3b
-      published: '2026-06-20T17:58:55Z'
-      size: 68.3 MB
-      layers: 1
-    - version: '25'
-      digest: sha256:0ff6ee4e10e0ca8d1d66c7c663f0df70710cffd818551ba746016875e15d6fec
-      published: '2026-06-20T17:58:51Z'
-      size: 83.1 MB
-      layers: 1
-  kafka:
-    image: ghcr.io/quenchworks/images/kafka
-    source: https://archive.apache.org/dist/kafka/4.3.0/kafka_2.13-4.3.0.tgz
-    license: Apache-2.0
-    tier: critical
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 4.1.2
-      digest: sha256:f19d59532f223a37a23f4b47a2ebced74f872bd5687de2fcc8bc793205d0c527
-      published: '2026-06-20T18:03:12Z'
-      size: 201.8 MB
-      layers: 1
-    - version: 4.3.0
-      digest: sha256:4c2844b3e7d1eca4987848ce42d141efadce10d41889a1ef23e12b25cbc858bf
-      published: '2026-06-20T18:03:11Z'
-      size: 204.1 MB
-      layers: 1
-    - version: 4.2.1
-      digest: sha256:ca1b96642ee2508027c57c863b32296fd951e5c9df763fcd202a72202d618fb8
-      published: '2026-06-20T18:03:06Z'
-      size: 203.7 MB
-      layers: 1
-  keycloak:
-    image: ghcr.io/quenchworks/images/keycloak
-    source: https://github.com/keycloak/keycloak
-    license: Apache-2.0
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 26.4.7
-      digest: sha256:a35ed83756e24d6c4d70ce2e80d601990494c113e92722e3a241197b54247c48
-      published: '2026-06-20T20:09:36Z'
-      size: 231.1 MB
-      layers: 1
-    - version: 26.6.3
-      digest: sha256:5e700e70b7ce773ab14cdb3705591290b33c3dc8fa528741aec10c26eabcb64b
-      published: '2026-06-20T20:09:35Z'
-      size: 244.7 MB
-      layers: 1
-    - version: 26.5.7
-      digest: sha256:d4a18baa5993294fa29203d5e35ee3f09a6e9e3ebc3f421197adf88bc3516abf
-      published: '2026-06-20T20:09:29Z'
-      size: 235.2 MB
-      layers: 1
-  loki:
-    image: ghcr.io/quenchworks/images/loki
-    source: https://github.com/grafana/loki
-    license: AGPL-3.0-only
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 3.5.12
-      digest: sha256:2369e5dccff4f02e04c687b7788d15595bfc3ed9ef23e8dd44e2ff6aa6a95954
-      published: '2026-06-20T21:37:28Z'
-      size: 70.7 MB
-      layers: 1
-    - version: 3.7.2
-      digest: sha256:3409d6b1fa72af5034327920ae24a20d2d6693f90de3a098c5683f228115191d
-      published: '2026-06-20T21:37:25Z'
-      size: 87.9 MB
-      layers: 1
-    - version: 3.6.11
-      digest: sha256:6c5df96c86c08f7aa490c248ea9d016d2a69b2631b0294a029b6e8b804735410
-      published: '2026-06-20T21:37:22Z'
-      size: 79.4 MB
-      layers: 1
-  mariadb:
-    image: ghcr.io/quenchworks/images/mariadb
-    source: https://archive.mariadb.org/mariadb-11.8.8/source/mariadb-11.8.8.tar.gz
-    license: GPL-2.0-only
-    tier: critical
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 12.3.2
-      digest: sha256:abf1c0823dcc7f2c1b77252defaa0202a386907d131e3ea62feb0bb07304a0f5
-      published: '2026-06-20T22:12:11Z'
-      size: 103.8 MB
-      layers: 1
-    - version: 11.8.8
-      digest: sha256:003d3d2ce2b64d1dd1e1bdc84e3b8d409bf3962f60dacc02ccad253f18de9465
-      published: '2026-06-20T22:12:11Z'
-      size: 102.0 MB
-      layers: 1
-    - version: 11.4.12
-      digest: sha256:e5e47160f68d2b8063c509f2bfbea61ce025a7055abbee9f092a80b39c5a0b19
-      published: '2026-06-20T22:12:11Z'
-      size: 100.2 MB
-      layers: 1
-  maven:
-    image: ghcr.io/quenchworks/images/maven
-    source: https://maven.apache.org
-    license: Apache-2.0
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 3.9.16
-      digest: sha256:4ee0bf9e260d99cd2261f78d210cc6849a8e37f3113724c7d55b00cf137d3c66
-      published: '2026-06-21T11:01:36Z'
-      size: 110.1 MB
-      layers: 1
-    - version: 3.9.15
-      digest: sha256:2a2ccea1af41df4fb355b263e2df41ca1e2a09eb8fd46bc07fd38c5e76ada230
-      published: '2026-06-21T11:01:34Z'
-      size: 110.1 MB
-      layers: 1
-    - version: 3.9.14
-      digest: sha256:26c2ada27dba31982bec8222e94e3132e89f36ed12af66126d7149712664db25
-      published: '2026-06-21T11:01:32Z'
-      size: 110.0 MB
-      layers: 1
-    - version: '3.9'
-      digest: sha256:fed1836a9a36c25b85ca45ca5391f6742441467e35f0c47c692bb711d4da08d7
-      published: '2026-06-20T21:58:39Z'
-      size: 110.1 MB
-      layers: 1
-  meilisearch:
-    image: ghcr.io/quenchworks/images/meilisearch
-    source: https://github.com/meilisearch/meilisearch
-    license: MIT
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 1.45.2
-      digest: sha256:c35d7b5a2efedb04c7d7d8c1bc77898b9441206eee0bfb260fafd69c41b341a4
-      published: '2026-06-20T23:06:45Z'
-      size: 100.2 MB
-      layers: 1
-    - version: 1.46.1
-      digest: sha256:0c406babf69c13f502561a90872538e7c569a6e6c5994d926eb18e208c18135a
-      published: '2026-06-20T23:06:45Z'
-      size: 100.2 MB
-      layers: 1
-    - version: 1.47.0
-      digest: sha256:9a8e011d94164c72b1e88d52c8adf773ed8aa719ffc4fe7c39fe40b91ae2981c
-      published: '2026-06-20T23:06:39Z'
-      size: 99.3 MB
-      layers: 1
-  memcached:
-    image: ghcr.io/quenchworks/images/memcached
-    source: https://www.memcached.org/files/memcached-1.6.42.tar.gz
-    license: BSD-3-Clause
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 1.6.42
-      digest: sha256:263b6453bf4ac9bff09fb2296e2ba2ae45fab231b8bef35594bc0a5de2fab6a8
-      published: '2026-06-20T22:54:24Z'
-      size: 7.2 MB
-      layers: 1
-    - version: 1.6.41
-      digest: sha256:eba26dd197ec483b3df310972cb14970a01f3f8ca61c2eb13860bda110451ae7
-      published: '2026-06-20T22:54:24Z'
-      size: 7.2 MB
-      layers: 1
-    - version: 1.6.40
-      digest: sha256:60ff724774313c7b8fe2d1664ccbf558deb888460162dc04975fa7038405ed7f
-      published: '2026-06-20T22:54:17Z'
-      size: 7.2 MB
-      layers: 1
-  mongodb:
-    image: ghcr.io/quenchworks/images/mongodb
-    source: https://github.com/mongodb/mongo
-    license: SSPL-1.0
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 7.0.37
-      digest: sha256:8d4b6335dcf60aa70d6e8f924c61c4aa626413539612d41514dfba2a191dcbee
-      published: '2026-06-20T23:00:24Z'
-      size: 163.2 MB
-      layers: 1
-    - version: 8.0.26
-      digest: sha256:04f1aa4d1229531ec267e8ca59253500079d04e79933755f725ad7ae65bc2e83
-      published: '2026-06-20T23:00:24Z'
-      size: 171.9 MB
-      layers: 1
-    - version: 6.0.29
-      digest: sha256:e95de7c0f42b50706e5da4b298db29d7dd7393718958cdb60b4dd4df57cc287f
-      published: '2026-06-20T23:00:16Z'
-      size: 154.5 MB
-      layers: 1
-  mysql:
-    image: ghcr.io/quenchworks/images/mysql
-    source: https://dev.mysql.com/get/Downloads/MySQL-9.7/mysql-9.7.0.tar.gz
-    license: GPL-2.0-only
-    tier: critical
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 9.7.1
-      digest: sha256:e345a54ed4d42b030515ec9e5b6bf359e3d303f4fbc7deea83800e28e5cc1cee
-      published: '2026-06-21T03:19:43Z'
-      size: 156.8 MB
-      layers: 1
-    - version: 8.4.10
-      digest: sha256:ea46ade00b1d481079959957e633214e15bd849aec130421550c4bf18a10c120
-      published: '2026-06-21T03:19:39Z'
-      size: 149.4 MB
-      layers: 1
-    - version: 8.0.46
-      digest: sha256:1cb9315734cfea02245ed8958ad0f92e7bae7e1ff0ec61300b28d94e01b86feb
-      published: '2026-06-21T03:19:38Z'
-      size: 156.2 MB
-      layers: 1
-    - version: 9.7.0
-      digest: sha256:d6e83b6cf28e49de425bba3c131293472b31809a1ba06bde54966de72e036236
-      published: '2026-06-17T15:10:13Z'
-      size: 156.8 MB
-      layers: 1
-  nats:
-    image: ghcr.io/quenchworks/images/nats
-    source: https://github.com/nats-io/nats-server
-    license: Apache-2.0
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 2.12.11
-      digest: sha256:38d0dad0ff8e82cd1a7e83154189e9135bc296baaee8eb9c05621529dbeffd5b
-      published: '2026-06-20T23:59:45Z'
-      size: 6.5 MB
-      layers: 1
-    - version: 2.14.2
-      digest: sha256:8a00be1e1a2e05093a4ea5c68afa1361e535d83d8185fb737026d870275129b3
-      published: '2026-06-20T23:59:40Z'
-      size: 6.6 MB
-      layers: 1
-    - version: 2.11.17
-      digest: sha256:3f9f3c3708efc219f79a0699fdf926909b2a8e5db814d6a47cc91bf259f21fcc
-      published: '2026-06-20T23:59:38Z'
-      size: 6.4 MB
-      layers: 1
-  neo4j:
-    image: ghcr.io/quenchworks/images/neo4j
-    source: https://github.com/neo4j/neo4j
-    license: GPL-3.0-only
-    tier: low
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 2026.05.0
-      digest: sha256:56432af42ac27904ff65374e976fcbd61a017362748fadace20eb8e1c8c50676
-      published: '2026-06-21T00:07:07Z'
-      size: 245.6 MB
-      layers: 1
-    - version: 2026.03.1
-      digest: sha256:2e1872538c59f44cf19d6bdfbd1a521ae1f5bc0a50f896c188dcaeb282915c32
-      published: '2026-06-21T00:07:02Z'
-      size: 250.0 MB
-      layers: 1
-    - version: 2026.04.0
-      digest: sha256:b1166998d5c0a3968c85fe7d5ead99d3f08d8a7b3ecdf7433244deebe9cf19db
-      published: '2026-06-21T00:07:01Z'
-      size: 242.9 MB
-      layers: 1
-  nginx:
-    image: ghcr.io/quenchworks/images/nginx
-    source: https://github.com/nginx/nginx
-    license: BSD-2-Clause
-    tier: critical
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 1.28.3
-      digest: sha256:363acf0b27df308aa26fb0935e75f305a718530a99f6f0750eca9926dff983f3
-      published: '2026-06-21T02:28:10Z'
-      size: 11.4 MB
-      layers: 1
-    - version: 1.26.3
-      digest: sha256:80996c7ffdd8e47a6dffe35aaa554bf90ec6d5cb92f101f77ae24c871ed232ae
-      published: '2026-06-21T02:28:07Z'
-      size: 11.3 MB
-      layers: 1
-    - version: 1.30.3
-      digest: sha256:d469478d8a59d908965b81bc91e6fe8821573db90058555f826b6c66b13f68fa
-      published: '2026-06-21T02:28:04Z'
-      size: 11.5 MB
-      layers: 1
-    - version: 1.30.2
-      digest: sha256:f676eca73cea40a415b257c63451eaf2d324bbfd2e66ee4c57f0798b9e74cd67
-      published: '2026-06-17T17:38:40Z'
-      size: 11.5 MB
-      layers: 1
   node:
     image: ghcr.io/quenchworks/images/node
+    category: Language runtime
+    summary: Hardened Node.js runtime with npm, a 0-CVE signed nonroot base image for JavaScript apps.
+      Active LTS lines (20/22/24).
     source: https://github.com/nodejs/node
+    upstream: https://github.com/nodejs/node
     license: MIT
     tier: standard
+    status: done
     arches:
     - amd64
     - arm64
@@ -1501,511 +2191,16 @@ apps:
       published: '2026-06-15T21:19:56Z'
       size: 47.2 MB
       layers: 1
-  node-exporter:
-    image: ghcr.io/quenchworks/images/node-exporter
-    source: https://github.com/prometheus/node_exporter
-    license: Apache-2.0
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 1.11.1
-      digest: sha256:4c3735371055cea29cf1ed3250a2b2a7cb4a4ddcdd26ae378619ceddb2966a16
-      published: '2026-06-21T02:36:00Z'
-      size: 6.5 MB
-      layers: 1
-    - version: 1.10.2
-      digest: sha256:df1713c0ba5a9587346516a560d63772913aca9341ecb17ed43d3e8d5c012624
-      published: '2026-06-21T02:35:54Z'
-      size: 6.4 MB
-      layers: 1
-    - version: 1.9.1
-      digest: sha256:591739946b6d09ca52a9c709d65e902d8d8414f7cd76722f0cd8ddd4ec0042d2
-      published: '2026-06-21T02:35:51Z'
-      size: 6.4 MB
-      layers: 1
-  openbao:
-    image: ghcr.io/quenchworks/images/openbao
-    source: https://github.com/openbao/openbao
-    license: MPL-2.0
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 2.5.5
-      digest: sha256:96d169a900ff4526f556ba72f323018b61db52253e9ac164a9437a7e349c820e
-      published: '2026-06-21T03:02:21Z'
-      size: 41.5 MB
-      layers: 1
-    - version: 2.4.4
-      digest: sha256:3b2209b28cdd78f7477826db3bda79a8cf5815b71507f639bd9abe0d8b1387ca
-      published: '2026-06-21T03:02:21Z'
-      size: 40.6 MB
-      layers: 1
-    - version: 2.3.2
-      digest: sha256:65a1094c0ebd23cb2183cabac0ed47763bdc783c48268255843c8a51c812c8d7
-      published: '2026-06-21T03:02:19Z'
-      size: 40.0 MB
-      layers: 1
-    - version: 2.5.4
-      digest: sha256:891ead55e81de29fb5d38a718c59a87f4269e00a7d461b263e403e4c3b5f53e5
-      published: '2026-06-17T21:40:37Z'
-      size: 41.6 MB
-      layers: 1
-  opensearch:
-    image: ghcr.io/quenchworks/images/opensearch
-    source: https://github.com/opensearch-project/OpenSearch
-    license: Apache-2.0
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 3.6.0
-      digest: sha256:2845d290d84e11ef2149b55076936e0d160e9f180943506b4df4d34c03bf5403
-      published: '2026-06-21T03:09:52Z'
-      size: 1010.0 MB
-      layers: 1
-    - version: 3.7.0
-      digest: sha256:26da476f72430d894ed8d18f150d61bbb2eb9f214e5ce91c9c54482b8b88eaa9
-      published: '2026-06-21T03:09:47Z'
-      size: 1.0 GB
-      layers: 1
-    - version: 3.5.0
-      digest: sha256:270e035b3f9957c53b0a3ced59e87d0d1d38f2d0e7bd4a013cd68d1fe8fede51
-      published: '2026-06-21T03:09:47Z'
-      size: 1.1 GB
-      layers: 1
-  otel-collector:
-    image: ghcr.io/quenchworks/images/otel-collector
-    source: https://github.com/open-telemetry/opentelemetry-collector
-    license: Apache-2.0
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 0.152.1
-      digest: sha256:c797c5f5872f87c12b66d8a3ba8148c9efa5aab208a1f9caa27a97a3a28986ad
-      published: '2026-06-21T03:44:01Z'
-      size: 102.6 MB
-      layers: 1
-    - version: 0.153.0
-      digest: sha256:adde9dd58d6582f057c632b5f15d00ca1ca8c7ab1c31479b7f9677371c4fccbe
-      published: '2026-06-21T03:43:54Z'
-      size: 103.2 MB
-      layers: 1
-    - version: 0.154.0
-      digest: sha256:ed19a525ab80c31f8997e417fbc669fca4bed5c8748264d5f24a99d5d1dcec83
-      published: '2026-06-21T03:43:54Z'
-      size: 104.5 MB
-      layers: 1
-  perl:
-    image: ghcr.io/quenchworks/images/perl
-    source: https://www.perl.org
-    license: Artistic-1.0-Perl OR GPL-1.0-or-later
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 5.42.2
-      digest: sha256:e943752741e4b5c5ac09bbce7565fd5f230fba2cca7f825f6d7fecc542bb09d0
-      published: '2026-06-15T21:34:25Z'
-      size: 14.1 MB
-      layers: 1
-    - version: '5'
-      digest: sha256:e943752741e4b5c5ac09bbce7565fd5f230fba2cca7f825f6d7fecc542bb09d0
-      published: '2026-06-15T21:34:25Z'
-      size: 14.1 MB
-      layers: 1
-  pgbouncer:
-    image: ghcr.io/quenchworks/images/pgbouncer
-    source: https://github.com/pgbouncer/pgbouncer
-    license: ISC
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 1.23.1
-      digest: sha256:7ff4cb2cd1d8129b0803ef29ad3ac6189bb9d47900ea1e1aeb16590e2d68b2e9
-      published: '2026-06-21T03:38:22Z'
-      size: 7.6 MB
-      layers: 1
-    - version: 1.25.2
-      digest: sha256:a34244ca0957a98b1bb6596d4839e371af12abeaf3850da12f87cfbee83414ad
-      published: '2026-06-21T03:38:21Z'
-      size: 7.6 MB
-      layers: 1
-    - version: 1.24.1
-      digest: sha256:70edccb5889f18632cbd501ae8ea4e6a1dcd45834cf4f53a39f8d1e4a3ac63f1
-      published: '2026-06-21T03:38:16Z'
-      size: 7.6 MB
-      layers: 1
-  php:
-    image: ghcr.io/quenchworks/images/php
-    source: https://github.com/php/php-src
-    license: PHP-3.01
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: '8.4'
-      digest: sha256:e7cab7ed8ad45fc8b9effa5c90cba9ee57302f898cdb0143d31c3e48ccf4942d
-      published: '2026-06-21T03:40:43Z'
-      size: 46.9 MB
-      layers: 1
-    - version: '8.3'
-      digest: sha256:79298cb40742746cf9b8a6ca5c93372c093909a0b617a1aacdb53eaa310cbe07
-      published: '2026-06-21T03:40:41Z'
-      size: 46.0 MB
-      layers: 1
-    - version: '8.5'
-      digest: sha256:081ba7612a17ade9cd27cdc8c80530ed5eff8485ebe29c4a25032d3a3ba36a48
-      published: '2026-06-21T03:40:37Z'
-      size: 47.9 MB
-      layers: 1
-  pnpm:
-    image: ghcr.io/quenchworks/images/pnpm
-    source: https://pnpm.io
-    license: MIT
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: '10'
-      digest: sha256:53d6c622d4728e62c4fc28be90b5310281ca7d53e3f261fa2baf17c9035c9782
-      published: '2026-06-21T03:41:40Z'
-      size: 57.2 MB
-      layers: 1
-    - version: '11'
-      digest: sha256:8b35598e04b046ddd3a8d808b2a6ee4f4f1985cfd0eab310f8ed83d89230fb35
-      published: '2026-06-21T03:41:39Z'
-      size: 63.7 MB
-      layers: 1
-  poetry:
-    image: ghcr.io/quenchworks/images/poetry
-    source: https://python-poetry.org
-    license: MIT
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 2.3.4
-      digest: sha256:da087b101c91a61a41fea740d0be32fc0c074cff31a9855f16f9da13f04a083d
-      published: '2026-06-21T11:00:59Z'
-      size: 47.7 MB
-      layers: 1
-    - version: 2.4.1
-      digest: sha256:49448060cd6fb3417d72fd3292a6bd8824709f40fb42ca842b22cf5cab6a1c6f
-      published: '2026-06-21T11:00:52Z'
-      size: 47.7 MB
-      layers: 1
-    - version: 2.4.0
-      digest: sha256:7c69db37683c72b549f43a8ff8b3ad70c69632fed452c5ed50b18a3b8fd1b7b8
-      published: '2026-06-21T11:00:52Z'
-      size: 47.7 MB
-      layers: 1
-    - version: '2'
-      digest: sha256:a827f167698f1827ba69cd4d8661cbfbd1ff1bb2e1342ed60b54c8e71cef573e
-      published: '2026-06-21T03:44:24Z'
-      size: 47.7 MB
-      layers: 1
-  postgres-documentdb:
-    image: ghcr.io/quenchworks/images/postgres-documentdb
-    source: https://github.com/FerretDB/documentdb
-    license: MIT
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 0.105.0
-      digest: sha256:3f138f6892fce87eaf932c558f335729252635a6e3beefe91c2e804372faec08
-      published: '2026-06-21T04:28:34Z'
-      size: 133.8 MB
-      layers: 1
-    - version: 0.107.0
-      digest: sha256:1c0d8aed825471ed0a6c1f689d478fc4dea904702f9eead106bb067dd9a94f73
-      published: '2026-06-21T04:28:33Z'
-      size: 133.9 MB
-      layers: 1
-    - version: 0.106.0
-      digest: sha256:81715336d267bac26e6c334d325aacc08d5eff126940c01be944e281c0197694
-      published: '2026-06-21T04:28:27Z'
-      size: 133.8 MB
-      layers: 1
-  postgres-exporter:
-    image: ghcr.io/quenchworks/images/postgres-exporter
-    source: https://github.com/prometheus-community/postgres_exporter
-    license: Apache-2.0
-    tier: critical
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 0.17.1
-      digest: sha256:e1183f6aecb69bdd31e2efda376e2880c2557a3fe34ec655883fc3c4cce31a00
-      published: '2026-06-21T04:26:15Z'
-      size: 5.5 MB
-      layers: 1
-    - version: 0.18.1
-      digest: sha256:ea5bd998b95a360399f3c8ce30771dd28b2aeba699ae3338c58f6566acdd78ce
-      published: '2026-06-21T04:26:11Z'
-      size: 5.5 MB
-      layers: 1
-    - version: 0.19.1
-      digest: sha256:325e496a0fa4b15b33ba2537f3fc5b2b90dc08992b124aa412a03ba1d8e6f389
-      published: '2026-06-21T04:26:10Z'
-      size: 5.7 MB
-      layers: 1
-  postgresql:
-    image: ghcr.io/quenchworks/images/postgresql
-    source: https://ftp.postgresql.org/pub/source/v18.4/postgresql-18.4.tar.bz2
-    license: PostgreSQL
-    tier: critical
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: '16.14'
-      digest: sha256:e43a69fb1b43de40ef5a1009cd3846b5936ccb42347ad46bed6b3756fe7c4bc3
-      published: '2026-06-21T04:35:25Z'
-      size: 52.9 MB
-      layers: 1
-    - version: '17.10'
-      digest: sha256:106dc24db23c250465b8a7dcb68cd3b938b85f4d1b64662e241aee747e85981b
-      published: '2026-06-21T04:35:22Z'
-      size: 53.6 MB
-      layers: 1
-    - version: '18.4'
-      digest: sha256:b492e8f2aa8528a0af8bc1aa835522ab222aa8e0a0a6c135b2d5fdc3e9467bd4
-      published: '2026-06-21T04:35:21Z'
-      size: 54.0 MB
-      layers: 1
-  postgresql-15:
-    image: ghcr.io/quenchworks/images/postgresql-15
-    source: https://ftp.postgresql.org/pub/source/v15.18/postgresql-15.18.tar.bz2
-    license: PostgreSQL
-    tier: critical
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: '15.18'
-      digest: sha256:5529b416dfbafc531bb7b11fe243c180396cf9372a4966d0c82fcda84433b05e
-      published: '2026-06-21T04:42:54Z'
-      size: 52.6 MB
-      layers: 1
-    - version: '15.16'
-      digest: sha256:41916f098149da270959f006507ae9babdb3d734835d9cc9abd59775630bebd4
-      published: '2026-06-21T04:42:52Z'
-      size: 52.6 MB
-      layers: 1
-    - version: '15.17'
-      digest: sha256:cd604fcab011897b2f54274a4fa5a6ee98cdda6b3caaff2ceccfb5eac591a594
-      published: '2026-06-21T04:42:52Z'
-      size: 52.7 MB
-      layers: 1
-  prometheus:
-    image: ghcr.io/quenchworks/images/prometheus
-    source: https://github.com/prometheus/prometheus
-    license: Apache-2.0
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 3.11.3
-      digest: sha256:b690d6ac6de3e8da05f4aa1093c499ebcea98d60c8ccafd28a8e33fcfb9301a9
-      published: '2026-06-21T06:47:55Z'
-      size: 81.2 MB
-      layers: 1
-    - version: 3.10.0
-      digest: sha256:039dad93c5b3b54c954e1b70145274406398551b5e2f75712019d35c331eb09b
-      published: '2026-06-21T06:47:52Z'
-      size: 76.2 MB
-      layers: 1
-    - version: 3.12.0
-      digest: sha256:bd56fabf8b76c87b6b698c967bea1ac909a5148c66c9cdd85a5f84febd6dc8d8
-      published: '2026-06-21T06:47:49Z'
-      size: 82.5 MB
-      layers: 1
-  pulsar:
-    image: ghcr.io/quenchworks/images/pulsar
-    source: https://github.com/apache/pulsar
-    license: Apache-2.0
-    tier: low
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 4.1.3
-      digest: sha256:59e8d27e48fef85b16eeed7378ffbd8a98a494ca3af5917c5adb7f20043af65b
-      published: '2026-06-21T06:48:43Z'
-      size: 317.2 MB
-      layers: 1
-    - version: 4.0.11
-      digest: sha256:7c1d2103e18a28a2454c75c58ad2fd23d044582daa65871487dc3b15e60eef1b
-      published: '2026-06-21T06:48:43Z'
-      size: 319.9 MB
-      layers: 1
-    - version: 4.2.2
-      digest: sha256:97f24d151a556b86d61c7e64d54987961d5b48b53cae8f56125926169880269b
-      published: '2026-06-21T06:48:38Z'
-      size: 323.5 MB
-      layers: 1
-  python:
-    image: ghcr.io/quenchworks/images/python
-    source: https://www.python.org
-    license: PSF-2.0
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 3.12.13
-      digest: sha256:dc8b9f1102d8908cd31505d7911e4bdade29d9bb123491c1fcc7fa6db0aefc28
-      published: '2026-06-21T06:47:03Z'
-      size: 29.7 MB
-      layers: 1
-    - version: '3.12'
-      digest: sha256:dc8b9f1102d8908cd31505d7911e4bdade29d9bb123491c1fcc7fa6db0aefc28
-      published: '2026-06-21T06:47:03Z'
-      size: 29.7 MB
-      layers: 1
-    - version: 3.14.6
-      digest: sha256:6f3f61123c5ea9088a26b363cc95446c257887c44d0bb8e8429e305020c160f5
-      published: '2026-06-21T06:46:57Z'
-      size: 31.1 MB
-      layers: 1
-    - version: '3.14'
-      digest: sha256:6f3f61123c5ea9088a26b363cc95446c257887c44d0bb8e8429e305020c160f5
-      published: '2026-06-21T06:46:57Z'
-      size: 31.1 MB
-      layers: 1
-    - version: 3.13.14
-      digest: sha256:13f1b8a5e1da69ed3f5384070602683c330d0d74bc57fd747848f3d54e32a0ad
-      published: '2026-06-21T06:46:56Z'
-      size: 29.5 MB
-      layers: 1
-    - version: '3.13'
-      digest: sha256:13f1b8a5e1da69ed3f5384070602683c330d0d74bc57fd747848f3d54e32a0ad
-      published: '2026-06-21T06:46:56Z'
-      size: 29.5 MB
-      layers: 1
-  qdrant:
-    image: ghcr.io/quenchworks/images/qdrant
-    source: https://github.com/qdrant/qdrant
-    license: Apache-2.0
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 1.18.2
-      digest: sha256:671516f1ca3558ddae21ee9d0bdabd2674d1b98c01a61c310040e32a83f37787
-      published: '2026-06-21T09:03:42Z'
-      size: 43.6 MB
-      layers: 1
-    - version: 1.17.1
-      digest: sha256:9d69474fa283a8aa4e8dbf68b427ef7bab0d21fd29ca676d31f14e0e2248fbb6
-      published: '2026-06-21T09:03:41Z'
-      size: 43.4 MB
-      layers: 1
-    - version: 1.16.3
-      digest: sha256:9400ddca43ef48886c5c842177bc69256efdcd4f0f5113be740ebaf79424a98f
-      published: '2026-06-21T09:03:41Z'
-      size: 41.0 MB
-      layers: 1
-  rabbitmq:
-    image: ghcr.io/quenchworks/images/rabbitmq
-    source: https://github.com/rabbitmq/rabbitmq-server
-    license: MPL-2.0
-    tier: critical
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 4.2.8
-      digest: sha256:34e7d16e9e1c7cc1aef9f677ea7a297622d9f4742e22260a279fd90d7c51be09
-      published: '2026-06-21T08:49:26Z'
-      size: 128.7 MB
-      layers: 1
-    - version: 4.3.2
-      digest: sha256:e45523daf0c56371f92417cfc1533a191e9e380b27850ff212953d0a16a3b600
-      published: '2026-06-21T08:49:22Z'
-      size: 128.6 MB
-      layers: 1
-    - version: 4.1.8
-      digest: sha256:639afbc052c7c97ed03c20440d981046510a882c37966a6c329bfe23b90da30e
-      published: '2026-06-21T08:49:19Z'
-      size: 128.6 MB
-      layers: 1
-    - version: 4.3.1
-      digest: sha256:0c1999f50b5b6804716e546cad3f12b88f07079d527d775907aec4be57145fc8
-      published: '2026-06-17T17:31:48Z'
-      size: 128.5 MB
-      layers: 1
-  redis:
-    image: ghcr.io/quenchworks/images/redis
-    source: https://download.redis.io/releases/redis-8.8.0.tar.gz
-    license: AGPL-3.0-only
-    tier: critical
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 8.6.4
-      digest: sha256:4f8b5fc963b2a0e11c67f5b2464c32339103a318683a7d3d7f026bf49f7b92da
-      published: '2026-06-21T08:47:35Z'
-      size: 15.5 MB
-      layers: 1
-    - version: 8.4.4
-      digest: sha256:f4b065a96d3b60a51faaaacf7f1cd9aeeba1170f456e1ec3d652d3b4937c9114
-      published: '2026-06-21T08:47:29Z'
-      size: 15.2 MB
-      layers: 1
-    - version: 8.8.0
-      digest: sha256:f027d0109a0bdd1779bfac85a10744336f4af80518e9bc2c290984e206b3bf14
-      published: '2026-06-21T08:47:23Z'
-      size: 14.8 MB
-      layers: 1
-  redis-exporter:
-    image: ghcr.io/quenchworks/images/redis-exporter
-    source: https://github.com/oliver006/redis_exporter
-    license: MIT
-    tier: critical
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 1.86.0
-      digest: sha256:528112544150b31f0a170290cf171b6e779f21ecfd6ec74647aa18b6d581d6d7
-      published: '2026-06-21T11:15:03Z'
-      size: 4.6 MB
-      layers: 1
-    - version: 1.84.0
-      digest: sha256:feff0696bf7d8840d17152676b5109084587e94ca4cac6603f688a9cc9e54b70
-      published: '2026-06-21T11:14:59Z'
-      size: 4.6 MB
-      layers: 1
-    - version: 1.85.0
-      digest: sha256:0661636890eebdc30ce04705678d543c71f1f484fd4aad360efcec10f5849062
-      published: '2026-06-21T11:14:57Z'
-      size: 4.6 MB
-      layers: 1
   ruby:
     image: ghcr.io/quenchworks/images/ruby
+    category: Language runtime
+    summary: Hardened Ruby interpreter with Bundler, a base image to FROM for Ruby apps. Latest 3 stable
+      lines (3.2/3.3/3.4).
     source: https://github.com/ruby/ruby
+    upstream: https://github.com/ruby/ruby
     license: Ruby
     tier: standard
+    status: done
     arches:
     - amd64
     - arm64
@@ -2040,11 +2235,89 @@ apps:
       published: '2026-06-21T08:38:18Z'
       size: 45.9 MB
       layers: 1
+  php:
+    image: ghcr.io/quenchworks/images/php
+    category: Language runtime
+    summary: Hardened PHP CLI with common extensions, a base image to FROM for PHP apps. Latest 3 stable
+      lines (8.3/8.4/8.5).
+    source: https://github.com/php/php-src
+    upstream: https://github.com/php/php-src
+    license: PHP-3.01
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: '8.4'
+      digest: sha256:e7cab7ed8ad45fc8b9effa5c90cba9ee57302f898cdb0143d31c3e48ccf4942d
+      published: '2026-06-21T03:40:43Z'
+      size: 46.9 MB
+      layers: 1
+    - version: '8.3'
+      digest: sha256:79298cb40742746cf9b8a6ca5c93372c093909a0b617a1aacdb53eaa310cbe07
+      published: '2026-06-21T03:40:41Z'
+      size: 46.0 MB
+      layers: 1
+    - version: '8.5'
+      digest: sha256:081ba7612a17ade9cd27cdc8c80530ed5eff8485ebe29c4a25032d3a3ba36a48
+      published: '2026-06-21T03:40:37Z'
+      size: 47.9 MB
+      layers: 1
+  go:
+    image: ghcr.io/quenchworks/images/go
+    category: Language runtime
+    summary: Hardened Go toolchain for compiling binaries in a build stage; pair the output with the static
+      base for the runtime. Latest 3 stable lines (1.24/1.25/1.26).
+    source: https://github.com/golang/go
+    upstream: https://github.com/golang/go
+    license: BSD-3-Clause
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 1.25.0
+      digest: sha256:28842c30d887b6fa546b467a8a36a5ffc52331c9ab13e51c9f6f47c3a977e63d
+      published: '2026-06-19T19:39:39Z'
+      size: 239.5 MB
+      layers: 1
+    - version: 1.24.4
+      digest: sha256:2fd545c792a9e51d17f9c978857501d71adf01562d7788e45644ea0294a44d3c
+      published: '2026-06-19T19:39:38Z'
+      size: 261.0 MB
+      layers: 1
+    - version: '1.24'
+      digest: sha256:0f8d9231ba35555347a5aaaa5a96ad2344cc332b9869f13067254afdeefca848
+      published: '2026-06-19T18:28:57Z'
+      size: 261.0 MB
+      layers: 1
+    - version: '1.25'
+      digest: sha256:2d4a3fca1273ba5436416246a473a6c327bd14f4b631f29181ebec29a07e3481
+      published: '2026-06-19T18:28:56Z'
+      size: 239.5 MB
+      layers: 1
+    - version: 1.26.0
+      digest: sha256:908a9ee6b4b0f9db200c675cbd61661819f4f147ba86a2826c71be45c096365e
+      published: '2026-06-17T08:48:15Z'
+      size: 59.1 MB
+      layers: 1
+    - version: '1.26'
+      digest: sha256:908a9ee6b4b0f9db200c675cbd61661819f4f147ba86a2826c71be45c096365e
+      published: '2026-06-17T08:48:15Z'
+      size: 59.1 MB
+      layers: 1
   rust:
     image: ghcr.io/quenchworks/images/rust
+    category: Language runtime
+    summary: Hardened Rust toolchain (cargo plus rustc) for build stages; ship the compiled binary on
+      the static base. Latest 3 stable lines (1.94/1.95/1.96).
     source: https://github.com/rust-lang/rust
+    upstream: https://github.com/rust-lang/rust
     license: MIT OR Apache-2.0
     tier: standard
+    status: done
     arches:
     - amd64
     - arm64
@@ -2079,107 +2352,16 @@ apps:
       published: '2026-06-21T08:35:54Z'
       size: 364.5 MB
       layers: 1
-  rustfs:
-    image: ghcr.io/quenchworks/images/rustfs
-    source: https://github.com/rustfs/rustfs
-    license: Apache-2.0
-    tier: low
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 1.0.0_beta7
-      digest: sha256:a8000ceda889dba9aa308aaa0df5718496763d7d91ab3c88892dbbb6c2a4a5c9
-      published: '2026-06-21T08:51:57Z'
-      size: 104.7 MB
-      layers: 1
-    - version: 1.0.0_beta6
-      digest: sha256:52a9931822b520e14a1944a6baa9d8e810937d6b252d9b9bf997b5b0f04e5454
-      published: '2026-06-21T08:51:54Z'
-      size: 103.7 MB
-      layers: 1
-    - version: 1.0.0_beta8
-      digest: sha256:c6a50fbeb88df03009b42f33168201d03b5688ebab9a355039432599f7fa6885
-      published: '2026-06-21T08:51:54Z'
-      size: 109.0 MB
-      layers: 1
-  scylladb:
-    image: ghcr.io/quenchworks/images/scylladb
-    source: https://github.com/scylladb/scylladb
-    license: AGPL-3.0-only
-    tier: low
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 2026.1.3
-      digest: sha256:f1d60b2ccc06c0180258b336ef1e1b7e86b5af5ddbc05ce6665e4f5c104eb09a
-      published: '2026-06-21T09:00:35Z'
-      size: 98.8 MB
-      layers: 1
-    - version: 2026.1.5
-      digest: sha256:fe93c40ebdaee55d1994fb93253dbd9e272f8223c3c3f6bc440ccbd0c3021cb1
-      published: '2026-06-21T09:00:35Z'
-      size: 97.6 MB
-      layers: 1
-    - version: 2026.1.4
-      digest: sha256:a28e34ec1f403bcef5d652fd5071043db5352f3d9d30df20f9c84a44b0833eb7
-      published: '2026-06-21T09:00:31Z'
-      size: 99.0 MB
-      layers: 1
-  seaweedfs:
-    image: ghcr.io/quenchworks/images/seaweedfs
-    source: https://github.com/seaweedfs/seaweedfs
-    license: Apache-2.0
-    tier: standard
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: '4.33'
-      digest: sha256:694ee683072bd3a87275b0a1c2d0250fabfbf09c25712ffdd91246cca00fc47b
-      published: '2026-06-21T09:12:28Z'
-      size: 47.9 MB
-      layers: 1
-    - version: '4.32'
-      digest: sha256:1ad6b7ff783de0b543f67211ed224ebeac84e505681c2e361434089f9ebcb8b2
-      published: '2026-06-21T09:12:28Z'
-      size: 47.7 MB
-      layers: 1
-    - version: '4.34'
-      digest: sha256:4c62d9945bee98881f7914e278c8ba4ab6bb89257f487d450d2d360323b93bba
-      published: '2026-06-21T09:12:24Z'
-      size: 47.9 MB
-      layers: 1
-  solr:
-    image: ghcr.io/quenchworks/images/solr
-    source: https://github.com/apache/solr
-    license: Apache-2.0
-    tier: low
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 10.0.0
-      digest: sha256:e658f8f2dc85487037e23034d7938976b207b809dffe9b1774f1861a631f5037
-      published: '2026-06-21T09:23:10Z'
-      size: 346.5 MB
-      layers: 1
-    - version: 9.10.1
-      digest: sha256:96c9b012e754fe3f880eae80d7a112ecbbe63714e66b274c6fd0760d69f24dc2
-      published: '2026-06-21T09:23:07Z'
-      size: 376.2 MB
-      layers: 1
-    - version: 9.9.0
-      digest: sha256:fef024ee1229f8be38b86d1e6d0c214eb603414264845d549ef7db54b073ace9
-      published: '2026-06-21T09:23:04Z'
-      size: 376.0 MB
-      layers: 1
   static:
     image: ghcr.io/quenchworks/images/static
+    category: Runtime base
+    summary: Tiny static base for self-contained binaries from Go or Rust. Nonroot, no shell, no package
+      manager. The only image tagged :latest.
     source: https://github.com/wolfi-dev
+    upstream: https://github.com/wolfi-dev
     license: MIT
     tier: standard
+    status: done
     arches:
     - amd64
     - arm64
@@ -2199,208 +2381,347 @@ apps:
       published: '2026-06-15T21:03:58Z'
       size: 617.2 KB
       layers: 1
-  tempo:
-    image: ghcr.io/quenchworks/images/tempo
-    source: https://github.com/grafana/tempo
-    license: AGPL-3.0-only
+  jre:
+    image: ghcr.io/quenchworks/images/jre
+    category: Runtime base
+    summary: Hardened Java runtime (JRE) for running a built jar, no compiler. Pair with the jdk, maven,
+      or gradle build image. LTS lines 17/21/25.
+    source: https://openjdk.org
+    upstream: https://openjdk.org
+    license: GPL-2.0-with-classpath-exception
     tier: standard
+    status: done
     arches:
     - amd64
     - arm64
     versions:
-    - version: 2.10.7
-      digest: sha256:993ad7996f09b73a5232bf8a05a8491af309640ef0ea9704bcadbe5b762dda5e
-      published: '2026-06-21T09:58:21Z'
-      size: 38.0 MB
+    - version: 21.0.11
+      digest: sha256:08b82f7ea4db9821e16d4ba1e492c1eea1cec8b94714469ceadef97c779bc029
+      published: '2026-06-21T10:37:44Z'
+      size: 74.5 MB
       layers: 1
-    - version: 3.0.2
-      digest: sha256:2da185a3d2d088a20a975e8bb8a1c1e6522213bda5975380ea0bc01b4779b775
-      published: '2026-06-21T09:58:20Z'
-      size: 39.5 MB
+    - version: 17.0.19
+      digest: sha256:78f0d2cf6a8ec4d41e5e0ba2302c2bf751ebc1554416598dd5dd5ff0078f5230
+      published: '2026-06-21T10:37:42Z'
+      size: 68.3 MB
       layers: 1
-    - version: 2.9.2
-      digest: sha256:0d9428955f4c69b09ca0663e06943ec0efca81aca555fa9b5b30f430ba52bea0
-      published: '2026-06-21T09:58:19Z'
-      size: 36.9 MB
+    - version: 25.0.3
+      digest: sha256:052f5179d82ef36c19d0dcf648deb5de00d22a10670ea4d82e53ec161aea26a3
+      published: '2026-06-21T10:37:41Z'
+      size: null
+      layers: null
+    - version: '21'
+      digest: sha256:0240dc6d067be2e1f96b244d1d2a41de4fbed9d20d092815be6a4ef4367d6cde
+      published: '2026-06-20T17:58:56Z'
+      size: 74.5 MB
       layers: 1
-  temporal:
-    image: ghcr.io/quenchworks/images/temporal
-    source: https://github.com/temporalio/temporal
+    - version: '17'
+      digest: sha256:451957fbaafb7e10c7a7fa167286a25a03a63cc35ea0e75d37b4b573f3b07d3b
+      published: '2026-06-20T17:58:55Z'
+      size: 68.3 MB
+      layers: 1
+    - version: '25'
+      digest: sha256:0ff6ee4e10e0ca8d1d66c7c663f0df70710cffd818551ba746016875e15d6fec
+      published: '2026-06-20T17:58:51Z'
+      size: 83.1 MB
+      layers: 1
+  dotnet-runtime:
+    image: ghcr.io/quenchworks/images/dotnet-runtime
+    category: Runtime base
+    summary: Hardened .NET runtime for console and worker apps, no SDK. Build on the dotnet image, then
+      run here. Lines 8/9/10.
+    source: https://github.com/dotnet/runtime
+    upstream: https://github.com/dotnet/runtime
     license: MIT
     tier: standard
+    status: done
     arches:
     - amd64
     - arm64
     versions:
-    - version: 1.31.1
-      digest: sha256:88ca3754589640a473df7ee73ed9f944010c9aefb1105b757c36a0025dfc1f65
-      published: '2026-06-21T09:48:50Z'
-      size: 61.5 MB
+    - version: 9.0.112
+      digest: sha256:f8c2331c619da9b504f3a38f0a3d584c589f6be140b9f3ab84c9e64ae721086c
+      published: '2026-06-20T02:36:26Z'
+      size: 60.1 MB
       layers: 1
-    - version: 1.29.7
-      digest: sha256:bcdb9d291757b81bc72f00b504c342c75665b5c260fa41109b713fa75bf063a0
-      published: '2026-06-21T09:48:44Z'
-      size: 49.9 MB
+    - version: '10'
+      digest: sha256:461cc81b06b0832b511b3540ec5ca7b3fa5cac45f9c6c4b265762fd58e074623
+      published: '2026-06-18T11:13:09Z'
+      size: 61.0 MB
       layers: 1
-    - version: 1.30.5
-      digest: sha256:3a95f4eec2a007384c6db907f7af8a1a32672e3211f144970f4215d2147761da
-      published: '2026-06-21T09:48:43Z'
-      size: 51.1 MB
+    - version: '9'
+      digest: sha256:a4fcc307d04e5714b25b8090a08971768b0e0d081996ce5c65b75f5b99f0144d
+      published: '2026-06-18T11:12:05Z'
+      size: 60.1 MB
       layers: 1
-  temporal-cli:
-    image: ghcr.io/quenchworks/images/temporal-cli
-    source: https://github.com/temporalio/cli
+    - version: '8'
+      digest: sha256:a5676a6a43a8b510fd1d21c51a4fdcbb9c7b8bff73c09e2f31be644e255fcaeb
+      published: '2026-06-18T11:10:47Z'
+      size: 56.9 MB
+      layers: 1
+    - version: 10.0.100
+      digest: sha256:1fa179c2f50050990e0b39682b1f01eded01456b54583d5346668f8d6d528671
+      published: '2026-06-15T21:35:29Z'
+      size: 61.0 MB
+      layers: 1
+    - version: 8.0.122
+      digest: sha256:4d70df949768fb201b7793996c4697f352c428488fb0a1fec67ca01df7270b97
+      published: '2026-06-15T21:33:51Z'
+      size: 56.9 MB
+      layers: 1
+  aspnet:
+    image: ghcr.io/quenchworks/images/aspnet
+    category: Runtime base
+    summary: Hardened ASP.NET Core runtime for web apps and APIs, no SDK. Build on the dotnet image, then
+      run here. Lines 8/9/10.
+    source: https://github.com/dotnet/runtime
+    upstream: https://github.com/dotnet/runtime
     license: MIT
     tier: standard
+    status: done
     arches:
     - amd64
     - arm64
     versions:
-    - version: 1.7.2
-      digest: sha256:582b2101a9a93804ee5848b2c005814966a6f105511d2aa0a6201c0e157276cc
-      published: '2026-06-21T09:58:01Z'
-      size: 114.2 MB
+    - version: 9.0.112
+      digest: sha256:a2ba5511007c870c39a5994b36bafaf13c7e1a96f8d689dd9f0b3246449b4ac1
+      published: '2026-06-19T11:49:08Z'
+      size: 71.0 MB
       layers: 1
-    - version: 1.6.2
-      digest: sha256:11f545b0b4bc51f017c9219518d12c70287819a178d0d1051d2b465dc89248ae
-      published: '2026-06-21T09:57:59Z'
-      size: 75.0 MB
+    - version: '9'
+      digest: sha256:a2ba5511007c870c39a5994b36bafaf13c7e1a96f8d689dd9f0b3246449b4ac1
+      published: '2026-06-19T11:49:08Z'
+      size: 71.0 MB
       layers: 1
-    - version: 1.5.1
-      digest: sha256:c9c70301fa6efe4fd57c5dc71db8e88e88332236a541770b815754786c382728
-      published: '2026-06-21T09:57:58Z'
-      size: 50.8 MB
+    - version: 10.0.100
+      digest: sha256:93b283b0d2aad5bf2b5c4c8f04e12a57fa18b36902d3130e0c4b8ef261d1890a
+      published: '2026-06-18T09:25:48Z'
+      size: 72.3 MB
       layers: 1
-  traefik:
-    image: ghcr.io/quenchworks/images/traefik
-    source: https://github.com/traefik/traefik
+    - version: '10'
+      digest: sha256:93b283b0d2aad5bf2b5c4c8f04e12a57fa18b36902d3130e0c4b8ef261d1890a
+      published: '2026-06-18T09:25:48Z'
+      size: 72.3 MB
+      layers: 1
+    - version: 8.0.122
+      digest: sha256:7dfe7bace54f95ece1a1c8ffff2f0505893c0deb128ed6f0b8cdca4cbf3b62e5
+      published: '2026-06-18T09:17:48Z'
+      size: 68.0 MB
+      layers: 1
+    - version: '8'
+      digest: sha256:7dfe7bace54f95ece1a1c8ffff2f0505893c0deb128ed6f0b8cdca4cbf3b62e5
+      published: '2026-06-18T09:17:48Z'
+      size: 68.0 MB
+      layers: 1
+  bun:
+    image: ghcr.io/quenchworks/images/bun
+    category: Language runtime
+    summary: Hardened Bun runtime and toolkit (runtime, bundler, package manager) for JavaScript and TypeScript.
+      Latest stable (1).
+    source: https://github.com/oven-sh/bun
+    upstream: https://github.com/oven-sh/bun
     license: MIT
     tier: standard
+    status: done
     arches:
     - amd64
     - arm64
     versions:
-    - version: 3.7.5
-      digest: sha256:dbd9d950047f4979999d4591e27255d828f97b52d7797bae4f494c6d9f7e7622
-      published: '2026-06-21T10:10:01Z'
-      size: 53.1 MB
+    - version: 1.3.11
+      digest: sha256:803c3b98eb3d7acaf5280f3d341ad14c8ed180a388de80cb9817e4ce3357d8c4
+      published: '2026-06-21T11:00:30Z'
+      size: 41.4 MB
       layers: 1
-    - version: 3.6.21
-      digest: sha256:e83e211d4249d174039dbb4e5daf24fc92605a1da0a76412d8f8b43374aadaae
-      published: '2026-06-21T10:09:57Z'
-      size: 53.4 MB
+    - version: 1.3.13
+      digest: sha256:b138e62d75ceb821002fc3ee371d1508ddbf3cc6059f28bf41928fad5c1bb82e
+      published: '2026-06-21T11:00:30Z'
+      size: 42.3 MB
       layers: 1
-    - version: 3.5.6
-      digest: sha256:50fb58ae9deebae64c5e2a778541cd70586842fc4ab1789b3fb0af9db29b062e
-      published: '2026-06-21T10:09:56Z'
-      size: 51.0 MB
+    - version: 1.3.1
+      digest: sha256:6327a8d3834045abd8ddbba39c06de307b1bd01ea24ccf88f7ac291bbba40869
+      published: '2026-06-18T09:45:25Z'
+      size: 38.1 MB
       layers: 1
-  uv:
-    image: ghcr.io/quenchworks/images/uv
-    source: https://github.com/astral-sh/uv
-    license: MIT OR Apache-2.0
+    - version: '1'
+      digest: sha256:6327a8d3834045abd8ddbba39c06de307b1bd01ea24ccf88f7ac291bbba40869
+      published: '2026-06-18T09:45:25Z'
+      size: 38.1 MB
+      layers: 1
+    - version: 1.3.14
+      digest: sha256:42e37906ac9b2d42d56f196e2264cd31adc85813904537a0e2d20a67a860a8a9
+      published: '2026-06-15T21:35:52Z'
+      size: 38.1 MB
+      layers: 1
+  deno:
+    image: ghcr.io/quenchworks/images/deno
+    category: Language runtime
+    summary: Hardened Deno runtime for JavaScript and TypeScript, secure by default with explicit permissions
+      and built-in tooling. Latest stable (2).
+    source: https://github.com/denoland/deno
+    upstream: https://github.com/denoland/deno
+    license: MIT
     tier: standard
+    status: done
     arches:
     - amd64
     - arm64
     versions:
-    - version: 0.11.21
-      digest: sha256:79b5d9393ef6cb587fab833a53f83a34aa0a6502f0602d757addb3421bef08ae
-      published: '2026-06-21T11:01:12Z'
-      size: 54.2 MB
+    - version: 2.8.0
+      digest: sha256:dec2bdcfe613a8922a0032a4eb152525b1e806cfe8adecba46d798bb7ea7386b
+      published: '2026-06-21T11:01:06Z'
+      size: 55.2 MB
       layers: 1
-    - version: 0.11.22
-      digest: sha256:902de03f35452e3886e168021ba8587e089c6a3f8792de8145edab08b9cf5e84
-      published: '2026-06-21T11:01:09Z'
-      size: 54.4 MB
+    - version: 2.8.1
+      digest: sha256:028fd38c4ac6d152d30d9a852f890704ea164f377a8962af75b99944d412ae10
+      published: '2026-06-21T11:01:02Z'
+      size: 55.3 MB
       layers: 1
-    - version: 0.11.23
-      digest: sha256:7cdc8296da0a13e3f3b00f8a03288c74a80506427af0027d80f5300602959efd
-      published: '2026-06-21T10:08:07Z'
-      size: 54.4 MB
+    - version: '2'
+      digest: sha256:329e12b6b1f04b6fca23840691f5ba5ef32725e14106a1afbf67b8c456c491a0
+      published: '2026-06-18T10:18:07Z'
+      size: 54.9 MB
       layers: 1
-    - version: '0.11'
-      digest: sha256:9f0ae7a5fa23fc560767c23452fb881726cdd0a58c08c3147a78da0ce064acf3
-      published: '2026-06-17T08:45:47Z'
-      size: 54.2 MB
+    - version: 2.8.2
+      digest: sha256:a04e1085af3e29f9995818673afc757da09ca46929a8eb1bd3e45887330a5fb4
+      published: '2026-06-15T21:15:57Z'
+      size: 54.9 MB
       layers: 1
-  valkey:
-    image: ghcr.io/quenchworks/images/valkey
-    source: https://github.com/valkey-io/valkey
-    license: BSD-3-Clause
-    tier: critical
+  erlang:
+    image: ghcr.io/quenchworks/images/erlang
+    category: Language runtime
+    summary: Hardened Erlang/OTP runtime on the BEAM VM, built for highly concurrent, fault-tolerant systems.
+      Latest stable lines (27/28/29).
+    source: https://www.erlang.org
+    upstream: https://www.erlang.org
+    license: Apache-2.0
+    tier: standard
+    status: done
     arches:
     - amd64
     - arm64
     versions:
-    - version: 9.1.0
-      digest: sha256:4482926665b4e9fbe73b6ab15e403e1f4d9285112aca313ce4994095346c6565
-      published: '2026-06-21T10:12:55Z'
-      size: 14.9 MB
+    - version: 29.0.2
+      digest: sha256:e457ea245a49a1de2d25cde0d2eb310ad76a895807c1ec3b35f93d69c84b4924
+      published: '2026-06-21T07:04:13Z'
+      size: 63.1 MB
       layers: 1
-    - version: 8.1.8
-      digest: sha256:fdf8c80aceeee23c1db30cddbbf16d387728b59462def25f1250055c220287ad
-      published: '2026-06-21T10:12:54Z'
-      size: 13.4 MB
+    - version: 28.5.0.2
+      digest: sha256:36d699cde988bee2497f7de0db263803d9232133d8c02c24bcc8ac570bc71d63
+      published: '2026-06-21T07:02:48Z'
+      size: 62.1 MB
       layers: 1
-    - version: 9.0.4
-      digest: sha256:2eb2d3d1859e5d141dc98b67b01d95401b45e6900c87fb573629ebe99696c1e5
-      published: '2026-06-21T10:12:48Z'
+    - version: 27.3.4.13
+      digest: sha256:fe36e635fb974ee34f43c908dad6734e44cf1f60f077961577467f478e7d9944
+      published: '2026-06-21T07:01:02Z'
+      size: 60.9 MB
+      layers: 1
+    - version: '29'
+      digest: sha256:9bc78d372b70c3e1b7941adbbbd0b2b52d48714e8096a2de5c1aa4b1df975b68
+      published: '2026-06-17T08:50:02Z'
+      size: 63.1 MB
+      layers: 1
+    - version: '27'
+      digest: sha256:535a6127076bb57e009e3af8e4bf01ae780c1b877ecd73070bc8d189e2c88bdb
+      published: '2026-06-17T08:50:02Z'
+      size: 61.0 MB
+      layers: 1
+    - version: '28'
+      digest: sha256:8d23c3f8191a4ee5f8bbee610c2460614c22a2ba39fd82e573a4bfbfc4e987c3
+      published: '2026-06-17T08:49:44Z'
+      size: 62.2 MB
+      layers: 1
+  elixir:
+    image: ghcr.io/quenchworks/images/elixir
+    category: Language runtime
+    summary: Hardened Elixir runtime on the BEAM VM, built on Erlang/OTP, for concurrent, fault-tolerant
+      apps (e.g. Phoenix). Latest stable (1.18).
+    source: https://elixir-lang.org
+    upstream: https://elixir-lang.org
+    license: Apache-2.0
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 1.19.5
+      digest: sha256:ce6f2ed4181e98e39ae793f560863cd1f967f4c01f058f8c325252cf1848e45a
+      published: '2026-06-21T06:58:48Z'
+      size: 68.8 MB
+      layers: 1
+    - version: 1.18.4
+      digest: sha256:28bec4895ebe82fde66ec8623aa910fd06668109d5eb00d0486b868fbfad4f3c
+      published: '2026-06-21T06:57:09Z'
+      size: 60.6 MB
+      layers: 1
+    - version: 1.17.3
+      digest: sha256:87c957fb48c35cc90b88389dc00c443e5bd76d9ad4a8d97b4669c9d6ff56c949
+      published: '2026-06-21T06:54:17Z'
+      size: 61.0 MB
+      layers: 1
+    - version: '1.18'
+      digest: sha256:9f96725c5881cfa038e82df942d307525d66fe442491a8e12c04f1934fb9a87f
+      published: '2026-06-17T08:46:34Z'
+      size: 60.6 MB
+      layers: 1
+  perl:
+    image: ghcr.io/quenchworks/images/perl
+    category: Language runtime
+    summary: Hardened Perl interpreter for scripts, text processing, and tooling. A base image to FROM
+      for Perl workloads. Latest stable (5).
+    source: https://www.perl.org
+    upstream: https://www.perl.org
+    license: Artistic-1.0-Perl OR GPL-1.0-or-later
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 5.42.2
+      digest: sha256:e943752741e4b5c5ac09bbce7565fd5f230fba2cca7f825f6d7fecc542bb09d0
+      published: '2026-06-15T21:34:25Z'
       size: 14.1 MB
       layers: 1
-  vector:
-    image: ghcr.io/quenchworks/images/vector
-    source: https://github.com/vectordotdev/vector
-    license: MPL-2.0
+    - version: '5'
+      digest: sha256:e943752741e4b5c5ac09bbce7565fd5f230fba2cca7f825f6d7fecc542bb09d0
+      published: '2026-06-15T21:34:25Z'
+      size: 14.1 MB
+      layers: 1
+  pnpm:
+    image: ghcr.io/quenchworks/images/pnpm
+    category: Build tool
+    summary: Node base image with pnpm preinstalled via corepack, used as the build stage for pnpm projects.
+      Lines 10/11.
+    source: https://pnpm.io
+    upstream: https://pnpm.io
+    license: MIT
     tier: standard
+    status: done
     arches:
     - amd64
     - arm64
     versions:
-    - version: 0.54.0
-      digest: sha256:4d67202d12a453b1347b271982b54dde292563235b6bc3500f2cf23579ba2df2
-      published: '2026-06-21T11:28:49Z'
-      size: 51.0 MB
+    - version: '10'
+      digest: sha256:53d6c622d4728e62c4fc28be90b5310281ca7d53e3f261fa2baf17c9035c9782
+      published: '2026-06-21T03:41:40Z'
+      size: 57.2 MB
       layers: 1
-    - version: 0.56.0
-      digest: sha256:efa18f5eb0c49a552760980fe89fc07eba4e9398adf9fd3f88d44460f6b761c0
-      published: '2026-06-21T11:28:49Z'
-      size: 32.5 MB
-      layers: 1
-    - version: 0.55.0
-      digest: sha256:9cced60f12aaaaa9cd0a17bdbcece7afb9159bbfd455504637fe4b7f7da66d3b
-      published: '2026-06-21T11:28:44Z'
-      size: 48.2 MB
-      layers: 1
-  victoriametrics:
-    image: ghcr.io/quenchworks/images/victoriametrics
-    source: https://github.com/VictoriaMetrics/VictoriaMetrics
-    license: Apache-2.0
-    tier: low
-    arches:
-    - amd64
-    - arm64
-    versions:
-    - version: 1.143.0
-      digest: sha256:aa9c6869f61bb9a11e1b8237eafb38a71d6f1f5596a180811456d4f8498b8a0c
-      published: '2026-06-21T11:15:44Z'
-      size: 10.8 MB
-      layers: 1
-    - version: 1.144.0
-      digest: sha256:2159c6314325e52bdbb2577634c7346d14095185c42e9682a9e0e9e8a170862e
-      published: '2026-06-21T11:15:42Z'
-      size: 10.8 MB
-      layers: 1
-    - version: 1.145.0
-      digest: sha256:7fab85e512dd34a3dab5c760f1bbae1acfc01d85053cdbf26d7599985ee75820
-      published: '2026-06-21T11:15:37Z'
-      size: 10.8 MB
+    - version: '11'
+      digest: sha256:8b35598e04b046ddd3a8d808b2a6ee4f4f1985cfd0eab310f8ed83d89230fb35
+      published: '2026-06-21T03:41:39Z'
+      size: 63.7 MB
       layers: 1
   yarn:
     image: ghcr.io/quenchworks/images/yarn
+    category: Build tool
+    summary: Node base image with Yarn preinstalled, used as the build stage for Yarn projects. Lines
+      1 (classic) and 4 (berry).
     source: https://yarnpkg.com
+    upstream: https://yarnpkg.com
     license: BSD-2-Clause
     tier: standard
+    status: done
     arches:
     - amd64
     - arm64
@@ -2425,27 +2746,173 @@ apps:
       published: '2026-06-15T21:23:39Z'
       size: 57.1 MB
       layers: 1
-  zookeeper:
-    image: ghcr.io/quenchworks/images/zookeeper
-    source: https://archive.apache.org/dist/zookeeper/zookeeper-3.9.5/apache-zookeeper-3.9.5-bin.tar.gz
-    license: Apache-2.0
+  composer:
+    image: ghcr.io/quenchworks/images/composer
+    category: Build tool
+    summary: PHP base image with the Composer dependency manager, used as the build stage for PHP projects.
+      Line 2.
+    source: https://getcomposer.org
+    upstream: https://getcomposer.org
+    license: MIT
     tier: standard
+    status: done
     arches:
     - amd64
     - arm64
     versions:
-    - version: 3.9.4
-      digest: sha256:bbf17bc17bdd180d12af76996a2397351185d6b264af66f348f329df47053d9d
-      published: '2026-06-21T11:16:03Z'
-      size: 93.9 MB
+    - version: 2.10.1
+      digest: sha256:e3e837964f8e3a021436e6d5fa734aa491343ca60870ce3aafc7481b2ba071ea
+      published: '2026-06-21T11:00:28Z'
+      size: 28.5 MB
       layers: 1
-    - version: 3.9.5
-      digest: sha256:90c3160265c79bf6894549062508c4457e48a7bf2c70154c282e507211c0db39
-      published: '2026-06-21T11:16:01Z'
-      size: 95.4 MB
+    - version: 2.9.8
+      digest: sha256:91b80e77e250cae71d9e17f47552c49db24d3adb50e41cdbe4b59adcd079a1cf
+      published: '2026-06-21T11:00:16Z'
+      size: 28.5 MB
       layers: 1
-    - version: 3.9.3
-      digest: sha256:55f430b6fae34e8633d5b278ce8616de4e0c5391d76ad816041ee90fa60b916c
-      published: '2026-06-21T11:15:59Z'
-      size: 93.5 MB
+    - version: 2.10.0
+      digest: sha256:76ed03852d4a0492fc636c32cb7c04f28a334d7ed6f7852b2f3eb61a0e19c858
+      published: '2026-06-21T10:59:50Z'
+      size: 28.6 MB
+      layers: 1
+    - version: '2'
+      digest: sha256:bcff2c32d0e88dbce2fa1696ddbbb817db2e7e5fa3220a0a63fea8da9b8ffb6b
+      published: '2026-06-19T15:20:49Z'
+      size: 28.3 MB
+      layers: 1
+  maven:
+    image: ghcr.io/quenchworks/images/maven
+    category: Build tool
+    summary: JDK base image with Apache Maven, used as the build stage for Maven projects; run the resulting
+      jar on jre. Line 3.9.
+    source: https://maven.apache.org
+    upstream: https://maven.apache.org
+    license: Apache-2.0
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 3.9.16
+      digest: sha256:4ee0bf9e260d99cd2261f78d210cc6849a8e37f3113724c7d55b00cf137d3c66
+      published: '2026-06-21T11:01:36Z'
+      size: 110.1 MB
+      layers: 1
+    - version: 3.9.15
+      digest: sha256:2a2ccea1af41df4fb355b263e2df41ca1e2a09eb8fd46bc07fd38c5e76ada230
+      published: '2026-06-21T11:01:34Z'
+      size: 110.1 MB
+      layers: 1
+    - version: 3.9.14
+      digest: sha256:26c2ada27dba31982bec8222e94e3132e89f36ed12af66126d7149712664db25
+      published: '2026-06-21T11:01:32Z'
+      size: 110.0 MB
+      layers: 1
+    - version: '3.9'
+      digest: sha256:fed1836a9a36c25b85ca45ca5391f6742441467e35f0c47c692bb711d4da08d7
+      published: '2026-06-20T21:58:39Z'
+      size: 110.1 MB
+      layers: 1
+  gradle:
+    image: ghcr.io/quenchworks/images/gradle
+    category: Build tool
+    summary: JDK base image with Gradle, used as the build stage for Gradle projects; run the resulting
+      jar on jre. Line 9.
+    source: https://gradle.org
+    upstream: https://gradle.org
+    license: Apache-2.0
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 9.6.0
+      digest: sha256:aab54a388a0e5e3a2fa37e61d2a9a4af8f5f0d6254ebcfdf0e731dc2d83cf8e6
+      published: '2026-06-21T11:00:42Z'
+      size: 238.9 MB
+      layers: 1
+    - version: 9.5.1
+      digest: sha256:2bd0d5dc81983505ee9e4f247f775882516d1ae2a990dbb68058cf8de7776b26
+      published: '2026-06-21T11:00:36Z'
+      size: 238.7 MB
+      layers: 1
+    - version: 9.4.1
+      digest: sha256:26831922bda3700c213f28ae85ca4bad2bf018bfdee72e3cb61b96c0453024df
+      published: '2026-06-21T11:00:33Z'
+      size: 236.2 MB
+      layers: 1
+    - version: '9'
+      digest: sha256:c6fec709276946e36a7c5cf3d7187256b30e4f55ee329c0dd8cf73082a34e2a3
+      published: '2026-06-16T08:58:34Z'
+      size: 238.6 MB
+      layers: 1
+  uv:
+    image: ghcr.io/quenchworks/images/uv
+    category: Build tool
+    summary: Python base image with uv, a fast Rust-based installer and resolver, used as the build stage
+      for Python projects. Line 0.11.
+    source: https://github.com/astral-sh/uv
+    upstream: https://github.com/astral-sh/uv
+    license: MIT OR Apache-2.0
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 0.11.21
+      digest: sha256:79b5d9393ef6cb587fab833a53f83a34aa0a6502f0602d757addb3421bef08ae
+      published: '2026-06-21T11:01:12Z'
+      size: 54.2 MB
+      layers: 1
+    - version: 0.11.22
+      digest: sha256:902de03f35452e3886e168021ba8587e089c6a3f8792de8145edab08b9cf5e84
+      published: '2026-06-21T11:01:09Z'
+      size: 54.4 MB
+      layers: 1
+    - version: 0.11.23
+      digest: sha256:7cdc8296da0a13e3f3b00f8a03288c74a80506427af0027d80f5300602959efd
+      published: '2026-06-21T10:08:07Z'
+      size: 54.4 MB
+      layers: 1
+    - version: '0.11'
+      digest: sha256:9f0ae7a5fa23fc560767c23452fb881726cdd0a58c08c3147a78da0ce064acf3
+      published: '2026-06-17T08:45:47Z'
+      size: 54.2 MB
+      layers: 1
+  poetry:
+    image: ghcr.io/quenchworks/images/poetry
+    category: Build tool
+    summary: Python base image with Poetry for dependency management and packaging, used as the build
+      stage for Python projects. Line 2.
+    source: https://python-poetry.org
+    upstream: https://python-poetry.org
+    license: MIT
+    tier: standard
+    status: done
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 2.3.4
+      digest: sha256:da087b101c91a61a41fea740d0be32fc0c074cff31a9855f16f9da13f04a083d
+      published: '2026-06-21T11:00:59Z'
+      size: 47.7 MB
+      layers: 1
+    - version: 2.4.1
+      digest: sha256:49448060cd6fb3417d72fd3292a6bd8824709f40fb42ca842b22cf5cab6a1c6f
+      published: '2026-06-21T11:00:52Z'
+      size: 47.7 MB
+      layers: 1
+    - version: 2.4.0
+      digest: sha256:7c69db37683c72b549f43a8ff8b3ad70c69632fed452c5ed50b18a3b8fd1b7b8
+      published: '2026-06-21T11:00:52Z'
+      size: 47.7 MB
+      layers: 1
+    - version: '2'
+      digest: sha256:a827f167698f1827ba69cd4d8661cbfbd1ff1bb2e1342ed60b54c8e71cef573e
+      published: '2026-06-21T03:44:24Z'
+      size: 47.7 MB
       layers: 1
