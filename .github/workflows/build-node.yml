@@ -37,10 +37,11 @@ jobs:
         run: |
           set -euo pipefail
           source "apps/${APP}/build.conf"
-          n=${#VERSIONS[@]}; start=$(( n > 3 ? n - 3 : 0 ))   # last up-to-3 (negative slice breaks for n<3)
-          latest3=("${VERSIONS[@]:start}")
-          echo "building: ${latest3[*]}"
-          echo "vers=$(printf '%s\n' "${latest3[@]}" | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
+          # node intentionally publishes ALL maintained lines in build.conf (20/22/24/26),
+          # not just the latest 3 -- build every entry in VERSIONS.
+          all=("${VERSIONS[@]}")
+          echo "building: ${all[*]}"
+          echo "vers=$(printf '%s\n' "${all[@]}" | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
 
   build:
     needs: prep
