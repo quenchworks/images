@@ -33,6 +33,7 @@ environment:
       - linux-headers
       - pkgconf
       - curl-dev           # MySQL 9.x requires system libcurl (WITH_CURL=system)
+      - curl               # the curl CLI: used to pre-fetch Boost into ./boost/
       # MySQL 9.x bundles abseil 20250814, which does not compile under GCC 16; use
       # Wolfi's system protobuf + abseil (WITH_PROTOBUF=system) instead.
       - protobuf-dev
@@ -42,11 +43,21 @@ environment:
 pipeline:
   - uses: fetch
     with:
-      uri: https://dev.mysql.com/get/Downloads/MySQL-9.7/mysql-${{package.version}}.tar.gz
-      expected-sha256: "74b574babc56b0ecb632abd359d213c6794ecf442ae44928bfc581fb3d62306d"
+      uri: https://dev.mysql.com/get/Downloads/MySQL-__MINOR__/mysql-${{package.version}}.tar.gz
+      expected-sha256: "__SHA256__"
   - runs: |
+      # Pre-fetch Boost into ./boost/ so cmake's DOWNLOAD_BOOST step finds the
+      # tarball there and skips its own download. archives.boost.io is slow for
+      # old releases and cmake's downloader has a hard 600s no-retry timeout that
+      # flakes on boost_1_77_0; a retrying curl is far more reliable.
+      mkdir -p boost
+      bn="boost_$(echo __BOOST_VER__ | tr . _)"
+      curl -fsSL --retry 8 --retry-delay 15 --retry-all-errors --connect-timeout 30 -m 2400 \
+        -o "boost/${bn}.tar.bz2" "https://archives.boost.io/release/__BOOST_VER__/source/${bn}.tar.bz2"
+      echo "__BOOST_SHA__  boost/${bn}.tar.bz2" | sha256sum -c -
+
       # Lean server: InnoDB stays; the X protocol, router, and tests are off to cut
-      # build time and image size. CMake downloads the matching Boost into ./boost.
+      # build time and image size. CMake uses the pre-fetched Boost in ./boost.
       cmake -B build -G "Unix Makefiles" \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX=/usr \
