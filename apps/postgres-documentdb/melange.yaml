@@ -125,8 +125,13 @@ pipeline:
       # utils/, which hard-depends on ../raster/rt_pg/rtpostgis_upgrade.sql and fails
       # to generate it when raster is disabled. with_llvm=no: PG17 enables JIT but
       # clang is absent in the build env.
+      # Build serially (no -j): the extensions/postgis Makefile has an upgrade-SQL
+      # target that references the raster tree (../../raster/rt_pg/*.sql). Under a
+      # parallel build that target races and intermittently fails ("Unable to locate
+      # target new version number in rtpostgis.sql") even though raster is disabled
+      # and the libs/extension we need build fine. Serial make orders it deterministically.
       for d in liblwgeom libpgcommon postgis extensions; do
-        make -C "$d" with_llvm=no -j"$(nproc)"
+        make -C "$d" with_llvm=no
       done
       make -C postgis with_llvm=no install DESTDIR="${{targets.destdir}}"
       make -C extensions with_llvm=no install DESTDIR="${{targets.destdir}}"
@@ -136,8 +141,8 @@ pipeline:
   - uses: git-checkout
     with:
       repository: https://github.com/FerretDB/documentdb
-      tag: v0.107.0-ferretdb-2.7.0
-      expected-commit: e63835403de6ee285cea32410a765f26f1572727
+      tag: __SRCTAG__
+      expected-commit: __COMMIT__
       destination: documentdb
   - runs: |
       # The tree compiles with a standalone -Werror in Makefile.cflags (included by
