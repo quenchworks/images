@@ -92,7 +92,7 @@ jobs:
           docker load < image.tar
           # apko load tags the image as <ref>-<arch>; the scan ref ended in the platform.
           docker tag "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}-${{ matrix.arch.platform }}" jdk-smoke:local
-          bash test.sh jdk-smoke:local "${{ matrix.ver }}"
+          m="${{ matrix.ver }}"; bash test.sh jdk-smoke:local "${m%%.*}"
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
