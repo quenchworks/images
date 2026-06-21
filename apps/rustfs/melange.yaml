@@ -36,7 +36,7 @@ package:
 vars:
   # The real upstream release tag (RustFS has no stable tag yet; this is the latest
   # published pre-release, the only artifacts they ship). Used to build the asset URL.
-  upstream-tag: 1.0.0-beta.8
+  upstream-tag: __UPSTREAM__
 
 environment:
   contents:
@@ -60,8 +60,8 @@ pipeline:
   - runs: |
       VER="${{vars.upstream-tag}}"
       case "$(uname -m)" in
-        x86_64)  asset="rustfs-linux-x86_64-musl-v${VER}.zip";  sha=8175fc82f23ec4ae42bc285c321f87f3fe1763d201c01537cb8e80acfa72aeaf ;;
-        aarch64) asset="rustfs-linux-aarch64-musl-v${VER}.zip"; sha=7003f45070ec634f85c21e3c46dcff4d25de22dd3af3f3a4a1ddbd1cea89502b ;;
+        x86_64)  asset="rustfs-linux-x86_64-musl-v${VER}.zip";  sha=__SHA_AMD__ ;;
+        aarch64) asset="rustfs-linux-aarch64-musl-v${VER}.zip"; sha=__SHA_ARM__ ;;
         *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
       esac
 
