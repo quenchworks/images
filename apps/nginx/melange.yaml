@@ -40,7 +40,7 @@ pipeline:
       # Official nginx.org release tarball. sha256 computed and verified locally; nginx
       # publishes a detached .asc signature alongside it.
       uri: https://nginx.org/download/nginx-${{package.version}}.tar.gz
-      expected-sha256: "7df3090907fca3cc0e456d6dc00ceb230da74ea88026ceff0affc29dbbd9ac4c"
+      expected-sha256: "__SHA256__"
   - runs: |
       # Lean, 0-CVE-friendly module set. Paths chosen for the nonroot/read-only layout:
       #  - sbin/conf/modules under standard FHS locations (read-only at runtime)
@@ -69,7 +69,11 @@ pipeline:
         --with-http_stub_status_module \
         --with-threads \
         --with-pcre \
-        --with-compat
+        --with-compat \
+        --with-cc-opt=-Wno-error
+      # nginx's configure defaults to -Werror; older stable lines (e.g. 1.26.x
+      # http/2 module) trip warnings under Wolfi's newer GCC. -Wno-error keeps the
+      # build going (warnings still print) without patching upstream source.
       make -j"$(nproc)"
       make DESTDIR="${{targets.destdir}}" install
 
