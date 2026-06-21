@@ -1,44 +1,55 @@
 name: build-node
 
-# Hardened Node.js base/runtime images, assembled straight from Wolfi's
-# versioned `nodejs-NN` packages with apko -- NO melange/from-source step, since
-# Wolfi already packages Node. A MATRIX fans out over the stable major lines;
-# each one runs a NATIVE per-arch apko build (no QEMU), the hard 0-CVE
-# Trivy gate, then a per-version merge job that assembles + signs + attests the
-# multi-arch index.
+# LANGUAGE-RUNTIMES track. Hardened OpenJDK (JDK) base images, assembled
+# straight from Wolfi's versioned `opennode-N-default-node` packages with apko --
+# NO melange/from-source step, since Wolfi already packages OpenJDK. A MATRIX
+# fans out over the latest 3 LTS lines; each one runs a NATIVE per-arch apko
+# build (no QEMU), the hard 0-CVE Trivy gate, then a per-version merge job that
+# assembles + signs + attests the multi-arch index.
 #
-# IMAGE-ONLY: Node is a base/runtime image with no Helm chart, so there is NO
-# charts-repo dispatch.
+# IMAGE-ONLY: the JDK is a base/runtime image with no Helm chart, so there is
+# NO charts-repo dispatch.
 #
-# TEMPLATE: to add another major (or another runtime), copy a matrix entry with
-# the major (used to pick the Wolfi `nodejs-<major>` package) and the specific
-# version that becomes the PUBLISHED TAG. apps/node/apko.yaml carries the
-# `__NODEVER__` (major, the package) and `__NODEFULL__` (specific version, the
-# version annotation) placeholders that CI substitutes per entry. No :latest tag
-# is ever published.
+# TEMPLATE: to add another LTS (or another runtime), copy a matrix entry and
+# change `ver`; apps/node/apko.yaml carries the `__VER__` placeholder that CI
+# substitutes per entry (it also feeds JAVA_HOME). No :latest tag is ever
+# published.
 on:
   workflow_dispatch:
 permissions:
   contents: read
-  packages: write        # push images + cosign attestations to GHCR
-  id-token: write        # cosign keyless signing + attestation (Sigstore OIDC)
+  packages: write        # push to GHCR
+  id-token: write        # cosign keyless + attestation signing
+  attestations: write    # SLSA build provenance + SBOM attestation
 
 env:
+  APP: node
   GHCR_IMAGE: ghcr.io/quenchworks/images/node
 
 jobs:
+  prep:
+    runs-on: ubuntu-latest
+    outputs:
+      vers: ${{ steps.v.outputs.vers }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: v
+        run: |
+          set -euo pipefail
+          source "apps/${APP}/build.conf"
+          n=${#VERSIONS[@]}; start=$(( n > 3 ? n - 3 : 0 ))   # last up-to-3 (negative slice breaks for n<3)
+          latest3=("${VERSIONS[@]:start}")
+          echo "building: ${latest3[*]}"
+          echo "vers=$(printf '%s\n' "${latest3[@]}" | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: prep
     strategy:
       fail-fast: false
       matrix:
-        # Wolfi packages Node by MAJOR (`nodejs-<major>`), so `major` drives the
-        # apko package install while `ver` is the SPECIFIC version published as
-        # the image TAG. Both axes are crossed with arch.
-        node:
-          - { major: "20", ver: "20.20.2" }
-          - { major: "22", ver: "22.22.3" }
-          - { major: "24", ver: "24.16.0" }
-          - { major: "26", ver: "26.3.0" }
+        # latest 3 LTS Wolfi-packaged OpenJDK lines x both native arches,
+        # driven by apps/node/build.conf VERSIONS (the single source of truth).
+        ver: ${{ fromJson(needs.prep.outputs.vers) }}
         arch:
           - { name: x86_64,  platform: amd64, runner: ubuntu-latest }
           - { name: aarch64, platform: arm64, runner: ubuntu-24.04-arm }   # native arm64, free for public repos
@@ -51,22 +62,17 @@ jobs:
 
       - name: Install apko (native ${{ matrix.arch.platform }})
         working-directory: ${{ github.workspace }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Authenticate the API call: the anonymous GitHub API rate limit is
-          # easily exhausted when many matrix jobs resolve the latest apko tag at
-          # the same time, which surfaced as transient 403/404s on this step.
-          APKO_VER="$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" https://api.github.com/repos/chainguard-dev/apko/releases/latest | grep -m1 '"tag_name"' | cut -d'"' -f4)"
+          APKO_VER="$(curl -fsSL https://api.github.com/repos/chainguard-dev/apko/releases/latest | grep -m1 '"tag_name"' | cut -d'"' -f4)"
           curl -fsSL "https://github.com/chainguard-dev/apko/releases/download/${APKO_VER}/apko_${APKO_VER#v}_linux_${{ matrix.arch.platform }}.tar.gz" \
             | sudo tar xz --strip-components=1 -C /usr/local/bin
           apko version | head -1
 
-      - name: Render apko config for Node.js ${{ matrix.node.ver }} (pkg nodejs-${{ matrix.node.major }})
+      - name: Render apko config for OpenJDK ${{ matrix.ver }} (build.conf render)
         run: |
-          sed -e "s/__NODEVER__/${{ matrix.node.major }}/g" \
-              -e "s/__NODEFULL__/${{ matrix.node.ver }}/g" \
-              apko.yaml > apko.rendered.yaml
+          set -euo pipefail
+          source build.conf
+          sed -e "$(render '${{ matrix.ver }}')" apko.yaml > apko.rendered.yaml
 
       - name: Assemble single-arch image for the scan gate
         run: apko build apko.rendered.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}
@@ -86,7 +92,7 @@ jobs:
           docker load < image.tar
           # apko load tags the image as <ref>-<arch>; the scan ref ended in the platform.
           docker tag "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}-${{ matrix.arch.platform }}" node-smoke:local
-          bash test.sh node-smoke:local "${{ matrix.node.ver }}"
+          bash test.sh node-smoke:local "${{ matrix.ver }}"
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -96,15 +102,15 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish the single-arch image
-        run: apko publish apko.rendered.yaml "${GHCR_IMAGE}:${{ matrix.node.ver }}-${{ matrix.arch.platform }}" --arch ${{ matrix.arch.name }}
+        run: apko publish apko.rendered.yaml "${GHCR_IMAGE}:${{ matrix.ver }}-${{ matrix.arch.platform }}" --arch ${{ matrix.arch.name }}
 
   merge:
-    needs: build
+    needs: [prep, build]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        ver: ["20.20.2", "22.22.3", "24.16.0", "26.3.0"]
+        ver: ${{ fromJson(needs.prep.outputs.vers) }}
     steps:
       - uses: actions/checkout@v5
       - uses: sigstore/cosign-installer@v3
@@ -128,70 +134,27 @@ jobs:
       - name: Sign the multi-arch index (cosign keyless)
         run: cosign sign --yes "${GHCR_IMAGE}@${{ steps.merge.outputs.digest }}"
 
-      # SBOM + provenance via COSIGN (Sigstore -> GHCR), NOT actions/attest-*.
-      # The GitHub-API attestation store (actions/attest-sbom, attest-build-
-      # provenance) is gated by org billing/visibility and 403s on a private
-      # repo. cosign attest is keyless (id-token: write) and writes the
-      # attestation alongside the image in GHCR, with no GitHub billing gate.
+      - name: Generate SBOM (SPDX) for the signed index
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.GHCR_IMAGE }}@${{ steps.merge.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: false
 
-      - name: Generate SPDX SBOM for the index (syft, by digest)
-        run: |
-          # syft is not preinstalled on the runner; pull its official installer.
-          curl -fsSL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
-            | sudo sh -s -- -b /usr/local/bin
-          syft "${GHCR_IMAGE}@${{ steps.merge.outputs.digest }}" -o spdx-json=sbom.spdx.json
-          test -s sbom.spdx.json
+      - name: Attest the SBOM (keyless, pushed to GHCR)
+        uses: actions/attest-sbom@v2
+        with:
+          subject-name: ${{ env.GHCR_IMAGE }}
+          subject-digest: ${{ steps.merge.outputs.digest }}
+          sbom-path: sbom.spdx.json
+          push-to-registry: true
 
-      - name: Attest the SBOM (cosign keyless -> GHCR)
-        run: |
-          cosign attest --yes \
-            --type spdxjson \
-            --predicate sbom.spdx.json \
-            "${GHCR_IMAGE}@${{ steps.merge.outputs.digest }}"
+      - name: Attest build provenance (SLSA, pushed to GHCR)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.GHCR_IMAGE }}
+          subject-digest: ${{ steps.merge.outputs.digest }}
+          push-to-registry: true
 
-      - name: Build SLSA provenance predicate
-        run: |
-          cat > provenance.json <<EOF
-          {
-            "buildType": "https://github.com/quenchworks/images/build-node",
-            "builder": {
-              "id": "${{ github.server_url }}/${{ github.workflow_ref }}"
-            },
-            "invocation": {
-              "configSource": {
-                "uri": "git+${{ github.server_url }}/${{ github.repository }}@${{ github.ref }}",
-                "digest": { "sha1": "${{ github.sha }}" },
-                "entryPoint": ".github/workflows/build-node.yml"
-              },
-              "environment": {
-                "github_repository": "${{ github.repository }}",
-                "github_ref": "${{ github.ref }}",
-                "github_sha": "${{ github.sha }}",
-                "github_run_id": "${{ github.run_id }}",
-                "github_run_attempt": "${{ github.run_attempt }}"
-              }
-            },
-            "metadata": {
-              "buildInvocationId": "${{ github.run_id }}-${{ github.run_attempt }}",
-              "completeness": { "parameters": true, "environment": false, "materials": false },
-              "reproducible": false
-            },
-            "materials": [
-              {
-                "uri": "git+${{ github.server_url }}/${{ github.repository }}@${{ github.ref }}",
-                "digest": { "sha1": "${{ github.sha }}" }
-              }
-            ]
-          }
-          EOF
-          # Validate it is well-formed JSON before attesting.
-          python3 -c 'import json,sys; json.load(open("provenance.json"))'
-
-      - name: Attest build provenance (SLSA, cosign keyless -> GHCR)
-        run: |
-          cosign attest --yes \
-            --type slsaprovenance \
-            --predicate provenance.json \
-            "${GHCR_IMAGE}@${{ steps.merge.outputs.digest }}"
-
-      # IMAGE-ONLY: no charts-repo dispatch. Node is a base/runtime image.
+      # IMAGE-ONLY: no charts-repo dispatch. The JDK is a base/runtime image.
