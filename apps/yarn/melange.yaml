@@ -1,0 +1,48 @@
+# quench-yarn: package the official upstream Yarn CLI single-file bundle (Classic
+# 1.x ships one yarn-X.js; Berry ships packages/yarnpkg-cli/bin/yarn.js). The
+# bundle is a self-contained Node program, so the package is just the vendored
+# .js plus a /usr/bin/yarn launcher that execs it through Node. CI renders
+# __VER__/__URL__/__SHA256__ from apps/yarn/build.conf per release.
+package:
+  name: quench-yarn
+  version: __VER__
+  epoch: 0
+  description: "Yarn package manager (vendored upstream single-file CLI bundle)"
+  copyright:
+    - license: BSD-2-Clause
+  dependencies:
+    runtime:
+      - nodejs-22
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: __URL__
+      expected-sha256: __SHA256__
+      extract: false
+  - name: Install the yarn bundle and the node launcher
+    runs: |
+      set -eu
+      install -d "${{targets.destdir}}/usr/share/yarn" "${{targets.destdir}}/usr/bin"
+      f="$(find . -maxdepth 3 -name '*.js' -size +100k | head -1)"
+      test -n "$f"
+      install -m0644 "$f" "${{targets.destdir}}/usr/share/yarn/yarn.js"
+      cat > "${{targets.destdir}}/usr/bin/yarn" <<'WRAP'
+      #!/bin/sh
+      exec node /usr/share/yarn/yarn.js "$@"
+      WRAP
+      chmod 0755 "${{targets.destdir}}/usr/bin/yarn"
+
+test:
+  pipeline:
+    - runs: /usr/bin/yarn --version

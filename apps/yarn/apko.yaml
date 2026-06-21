@@ -1,33 +1,30 @@
-# Assembles a hardened Yarn package-manager image directly from Wolfi's own
-# versioned yarn packages layered onto a pinned Node.js runtime. No Dockerfile,
-# NO melange build -- apko pulls the `__YARNPKG__` package plus `nodejs-22`
-# straight from the Wolfi `os` repository, so each Yarn line is a pure
-# package-assembly.
+# Assembles a hardened Yarn package-manager image: the vendored upstream Yarn
+# CLI bundle (built by apps/yarn/melange.yaml as `quench-yarn@local`) layered
+# onto a pinned Node.js runtime. No Dockerfile. melange fetches the official
+# single-file bundle per release (Classic 1.x and Berry 3.x/4.x); apko then
+# assembles it with nodejs-22 from the Wolfi `os` repo.
 #
 # IMAGE-ONLY -- no Helm chart. This is a BUILD/PACKAGE-TOOL image: the 0-CVE,
 # signed, nonroot, multi-arch answer to the community `yarn`/`node` CI images.
 # Developers `FROM` it in CI or run `yarn` directly.
 #
-# TEMPLATE NOTE: `__YARNPKG__` is a build-time placeholder. CI substitutes the
-# Wolfi package per matrix entry with `sed` before apko runs. The Classic 1.x
-# line (`yarn`) is the line built for now; Berry (4.x, `yarn-berry`) is dropped
-# for now. The `/usr/bin/yarn`
-# launcher is a `/bin/sh` wrapper that `exec node`s the bundled CLI, so BOTH a
-# POSIX shell (busybox: sh + dirname/readlink/sed) and the node runtime are
-# required -- both are added below. busybox's post-install creates /bin/sh and
-# the coreutils applet symlinks at assembly time.
+# The `/usr/bin/yarn` launcher (installed by the melange package) is a `/bin/sh`
+# wrapper that `exec node`s the bundled CLI, so BOTH a POSIX shell (busybox) and
+# the node runtime are required -- both are added below. CI renders nothing into
+# this file; the per-release __VER__/__URL__/__SHA256__ live in melange.yaml.
 contents:
   keyring:
     - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
   repositories:
     - https://packages.wolfi.dev/os
+    - "@local ./packages"
   packages:
     - wolfi-baselayout
     - ca-certificates-bundle
     - busybox                     # provides /bin/sh + dirname/readlink/sed for the yarn launcher
     - nodejs-22                   # LTS Node runtime the yarn launcher exec's
-    - npm                         # standalone npm; depends on cmd:node
-    - __YARNPKG__                 # the pinned Yarn package line from Wolfi
+    - quench-yarn@local           # vendored upstream yarn CLI bundle (melange)
 
 accounts:
   groups:
