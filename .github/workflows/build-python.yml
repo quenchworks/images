@@ -1,18 +1,19 @@
 name: build-python
 
-# PILOT for the LANGUAGE-RUNTIMES track. Hardened Python base/runtime images,
-# assembled straight from Wolfi's versioned `python-3.X` packages with apko --
-# NO melange/from-source step, since Wolfi already packages CPython. A MATRIX
-# fans out over the latest 3 stable minors; each one runs a NATIVE per-arch apko
+# LANGUAGE-RUNTIMES track. Hardened OpenJDK (JDK) base images, assembled
+# straight from Wolfi's versioned `openpython-N-default-python` packages with apko --
+# NO melange/from-source step, since Wolfi already packages OpenJDK. A MATRIX
+# fans out over the latest 3 LTS lines; each one runs a NATIVE per-arch apko
 # build (no QEMU), the hard 0-CVE Trivy gate, then a per-version merge job that
 # assembles + signs + attests the multi-arch index.
 #
-# IMAGE-ONLY: Python is a base/runtime image with no Helm chart, so there is NO
-# charts-repo dispatch.
+# IMAGE-ONLY: the JDK is a base/runtime image with no Helm chart, so there is
+# NO charts-repo dispatch.
 #
-# TEMPLATE: to add another minor (or another runtime), copy a matrix entry and
-# change `pyver`/`pkg`; apps/python/apko.yaml carries the `__PYVER__` placeholder
-# that CI substitutes per entry. No :latest tag is ever published.
+# TEMPLATE: to add another LTS (or another runtime), copy a matrix entry and
+# change `ver`; apps/python/apko.yaml carries the `__VER__` placeholder that CI
+# substitutes per entry (it also feeds JAVA_HOME). No :latest tag is ever
+# published.
 on:
   workflow_dispatch:
 permissions:
@@ -22,17 +23,33 @@ permissions:
   attestations: write    # SLSA build provenance + SBOM attestation
 
 env:
+  APP: python
   GHCR_IMAGE: ghcr.io/quenchworks/images/python
 
 jobs:
+  prep:
+    runs-on: ubuntu-latest
+    outputs:
+      vers: ${{ steps.v.outputs.vers }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: v
+        run: |
+          set -euo pipefail
+          source "apps/${APP}/build.conf"
+          n=${#VERSIONS[@]}; start=$(( n > 3 ? n - 3 : 0 ))   # last up-to-3 (negative slice breaks for n<3)
+          latest3=("${VERSIONS[@]:start}")
+          echo "building: ${latest3[*]}"
+          echo "vers=$(printf '%s\n' "${latest3[@]}" | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: prep
     strategy:
       fail-fast: false
       matrix:
-        # latest 3 stable Wolfi-packaged minors x both native arches.
-        # GitHub's `include` does NOT cross-product with two free axes here, so we
-        # enumerate the full product explicitly (3 minors x 2 arches = 6 jobs).
-        pyver: ["3.12", "3.13", "3.14"]
+        # latest 3 LTS Wolfi-packaged OpenJDK lines x both native arches,
+        # driven by apps/python/build.conf VERSIONS (the single source of truth).
+        ver: ${{ fromJson(needs.prep.outputs.vers) }}
         arch:
           - { name: x86_64,  platform: amd64, runner: ubuntu-latest }
           - { name: aarch64, platform: arm64, runner: ubuntu-24.04-arm }   # native arm64, free for public repos
@@ -51,8 +68,11 @@ jobs:
             | sudo tar xz --strip-components=1 -C /usr/local/bin
           apko version | head -1
 
-      - name: Render apko config for Python ${{ matrix.pyver }}
-        run: sed "s/__PYVER__/${{ matrix.pyver }}/g" apko.yaml > apko.rendered.yaml
+      - name: Render apko config for OpenJDK ${{ matrix.ver }} (build.conf render)
+        run: |
+          set -euo pipefail
+          source build.conf
+          sed -e "$(render '${{ matrix.ver }}')" apko.yaml > apko.rendered.yaml
 
       - name: Assemble single-arch image for the scan gate
         run: apko build apko.rendered.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}
@@ -72,7 +92,7 @@ jobs:
           docker load < image.tar
           # apko load tags the image as <ref>-<arch>; the scan ref ended in the platform.
           docker tag "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}-${{ matrix.arch.platform }}" python-smoke:local
-          bash test.sh python-smoke:local "${{ matrix.pyver }}"
+          bash test.sh python-smoke:local "${{ matrix.ver }}"
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -82,15 +102,15 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish the single-arch image
-        run: apko publish apko.rendered.yaml "${GHCR_IMAGE}:${{ matrix.pyver }}-${{ matrix.arch.platform }}" --arch ${{ matrix.arch.name }}
+        run: apko publish apko.rendered.yaml "${GHCR_IMAGE}:${{ matrix.ver }}-${{ matrix.arch.platform }}" --arch ${{ matrix.arch.name }}
 
   merge:
-    needs: build
+    needs: [prep, build]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        pyver: ["3.12", "3.13", "3.14"]
+        ver: ${{ fromJson(needs.prep.outputs.vers) }}
     steps:
       - uses: actions/checkout@v5
       - uses: sigstore/cosign-installer@v3
@@ -105,11 +125,11 @@ jobs:
       - name: Assemble the multi-arch index
         id: merge
         run: |
-          docker buildx imagetools create -t "${GHCR_IMAGE}:${{ matrix.pyver }}" \
-            "${GHCR_IMAGE}:${{ matrix.pyver }}-amd64" "${GHCR_IMAGE}:${{ matrix.pyver }}-arm64"
-          digest="$(docker buildx imagetools inspect "${GHCR_IMAGE}:${{ matrix.pyver }}" --format '{{.Manifest.Digest}}')"
+          docker buildx imagetools create -t "${GHCR_IMAGE}:${{ matrix.ver }}" \
+            "${GHCR_IMAGE}:${{ matrix.ver }}-amd64" "${GHCR_IMAGE}:${{ matrix.ver }}-arm64"
+          digest="$(docker buildx imagetools inspect "${GHCR_IMAGE}:${{ matrix.ver }}" --format '{{.Manifest.Digest}}')"
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
-          echo "published ${GHCR_IMAGE}:${{ matrix.pyver }}@${digest}"
+          echo "published ${GHCR_IMAGE}:${{ matrix.ver }}@${digest}"
 
       - name: Sign the multi-arch index (cosign keyless)
         run: cosign sign --yes "${GHCR_IMAGE}@${{ steps.merge.outputs.digest }}"
@@ -137,4 +157,4 @@ jobs:
           subject-digest: ${{ steps.merge.outputs.digest }}
           push-to-registry: true
 
-      # IMAGE-ONLY: no charts-repo dispatch. Python is a base/runtime image.
+      # IMAGE-ONLY: no charts-repo dispatch. The JDK is a base/runtime image.
