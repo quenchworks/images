@@ -1,0 +1,49 @@
+# Assembles the Distribution (OCI registry) runtime image. Minimal, nonroot,
+# multi-arch, SBOM by apko. The default command serves the bundled config, which
+# stores blobs under /var/lib/registry and listens on :5000. The chart overrides
+# the config and provides persistence by mounting over /etc/distribution and
+# /var/lib/registry.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-distribution@local
+
+accounts:
+  groups:
+    - groupname: registry
+      gid: 1001
+  users:
+    - username: registry
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/registry serve /etc/distribution/config.yml
+
+work-dir: /var/lib/registry
+
+paths:
+  - path: /var/lib/registry
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-distribution"
+  org.opencontainers.image.licenses: "Apache-2.0"

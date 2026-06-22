@@ -1,0 +1,41 @@
+# Assembles the CoreDNS runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# The default command runs the bundled Corefile, which binds DNS on 1053 and serves
+# health (8080) and ready (8181). The chart overrides the Corefile (and can grant
+# NET_BIND_SERVICE to bind 53) by mounting its own config over /etc/coredns/Corefile.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-coredns@local
+
+accounts:
+  groups:
+    - groupname: coredns
+      gid: 1001
+  users:
+    - username: coredns
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/coredns -conf /etc/coredns/Corefile
+
+work-dir: /etc/coredns
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-coredns"
+  org.opencontainers.image.licenses: "Apache-2.0"

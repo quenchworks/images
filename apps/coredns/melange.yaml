@@ -1,0 +1,49 @@
+# Builds CoreDNS from source onto Wolfi. Single static Go binary, no CGO. The
+# generated plugin registries (zplugin.go, zdirectives.go) ship in the release
+# tarball, so a plain `go build` at the repo root produces the full server.
+# Output is a signed APK in Quenchworks' own repo. No upstream distro binaries.
+# A minimal default Corefile ships at /etc/coredns/Corefile: it binds DNS on the
+# unprivileged port 1053 (so the image runs as nonroot with no capabilities) and
+# turns on the health (8080) and ready (8181) endpoints for probes. The chart
+# mounts its own Corefile over this default.
+package:
+  name: quench-coredns
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened CoreDNS, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/coredns/coredns/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      go build -trimpath -ldflags "-s -w" -o "${{targets.destdir}}/usr/bin/coredns" .
+      mkdir -p "${{targets.destdir}}/etc/coredns"
+      printf '%s\n' \
+        '.:1053 {' \
+        '    health :8080' \
+        '    ready :8181' \
+        '    whoami' \
+        '    log' \
+        '    errors' \
+        '}' > "${{targets.destdir}}/etc/coredns/Corefile"
