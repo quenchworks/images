@@ -21,6 +21,7 @@ View a single app with: yq '.apps.jdk' catalog.lock.yaml
 import json
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from pathlib import Path
 
@@ -124,24 +125,71 @@ def versions_of(pkg: str, repo: str, with_meta: bool) -> list:
     return versions
 
 
+def _log(msg: str) -> None:
+    print(f"\N{BULLET} {msg}", file=sys.stderr, flush=True)
+
+
+def _bar(done: int, total: int, label: str) -> None:
+    """One-line progress bar on stderr (stdout/the lock stay clean)."""
+    if not total:
+        return
+    pct = done * 100 // total
+    fill = "#" * (pct // 4)  # 25-char track
+    print(f"\r  {label} [{fill:<25}] {pct:3d}% ({done}/{total})",
+          end="\n" if done == total else "", file=sys.stderr, flush=True)
+
+
 def collect(with_meta: bool = False) -> dict:
     # Iterate catalog.yaml (the editorial source of truth) so EVERY app lands in
     # the lock -- including planned ones with no published versions yet.
     rows = yaml.safe_load(CURATED.read_text())["catalog"]
+    repo = lambda slug: f"ghcr.io/{ORG}/images/{slug}"
+
+    # ponytail: the whole runtime is network wait. Parallelize it in two flat
+    # fan-outs instead of per-app loops (which let a version-heavy app serialize
+    # its own inspects). lru_cache is thread-safe; assembly below is cache-hot.
+    # phase 1: list each app's published tags -- one gh call per app, concurrent.
+    _log(f"phase 1/3: listing published tags for {len(rows)} apps")
+    listed = [None] * len(rows)
+    with ThreadPoolExecutor(max_workers=16) as ex:
+        futs = {ex.submit(versions_of, f"images/{r['name']}", repo(r["name"]), False): i
+                for i, r in enumerate(rows)}
+        for n, f in enumerate(as_completed(futs), 1):
+            i = futs[f]
+            listed[i] = (rows[i], f.result())  # index back -> keep catalog.yaml order
+            _bar(n, len(rows), "tags")
+
+    if with_meta:
+        # phase 2: warm per-image metadata for every UNIQUE digest at once, so the
+        # ~300 inspects finish in ~ceil(N/32) waves, not app-by-app. 32 workers;
+        # raise it until GHCR rate-limits.
+        pairs = sorted({(repo(r["name"]), v["digest"]) for r, vs in listed for v in vs})
+        _log(f"phase 2/3: inspecting {len(pairs)} unique image digests")
+        with ThreadPoolExecutor(max_workers=32) as ex:
+            futs = [ex.submit(image_meta, rp, dg) for rp, dg in pairs]
+            for n, _f in enumerate(as_completed(futs), 1):
+                _bar(n, len(pairs), "meta")
+
+    _log("phase 3/3: assembling lock (cache-hot, no network)")
     apps = {}
-    for r in rows:
-        slug = r["name"]
-        repo = f"ghcr.io/{ORG}/images/{slug}"
-        versions = versions_of(f"images/{slug}", repo, with_meta)
-        arches = (image_meta(repo, versions[0]["digest"]).get("arches", ARCHES)
-                  if with_meta and versions else ARCHES)
-        app = {"image": repo}
+    for r, versions in listed:
+        rp = repo(r["name"])
+        if with_meta:
+            for v in versions:  # cache-hot from phase 2 -> no network here
+                im = image_meta(rp, v["digest"])
+                v["size"] = im.get("size")
+                v["layers"] = im.get("layers")
+            arches = (image_meta(rp, versions[0]["digest"]).get("arches", ARCHES)
+                      if versions else ARCHES)
+        else:
+            arches = ARCHES
+        app = {"image": rp}
         for k in EDITORIAL_FIELDS:
             if r.get(k) is not None:
                 app[k] = r[k]
         app["arches"] = arches
         app["versions"] = versions
-        apps[slug] = app
+        apps[r["name"]] = app
     return {"registry": f"ghcr.io/{ORG}/images", "apps": apps}
 
 
