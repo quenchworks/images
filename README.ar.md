@@ -8,7 +8,7 @@
   <a href="https://quench-works.com"><img src="https://raw.githubusercontent.com/quenchworks/.github/main/profile/assets/demo.gif" alt="QuenchWorks في الطرفية: تشغيل صورة بصفر ثغرات، والتحقق منها باستخدام cosign، ونشر مخطط Helm، ومراقبة وصول الـ pod إلى حالة Running." width="760"></a>
 </p>
 
-**92 صورة مُحصَّنة** للبنية التحتية التي تُشغّلها فعليًا. لا توجد ملفات Dockerfile. لا شيء موروث من توزيعة أخرى. مجانية وموقّعة ويُعاد بناؤها يوميًا.
+**90+ صورة مُحصَّنة** للبنية التحتية التي تُشغّلها فعليًا. لا توجد ملفات Dockerfile. لا شيء موروث من توزيعة أخرى. مجانية وموقّعة ويُعاد بناؤها يوميًا.
 
 جزء من [QuenchWorks](https://github.com/quenchworks)، البديل بصفر ثغرات لكتالوج Bitnami. تصفّح كل صورة، مع الإصدارات والبصمات، على [quench-works.com/images](https://quench-works.com/images).
 

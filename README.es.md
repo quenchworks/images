@@ -8,7 +8,7 @@ La fabrica de imagenes. Construye imagenes de contenedor endurecidas desde el co
   <a href="https://quench-works.com"><img src="https://raw.githubusercontent.com/quenchworks/.github/main/profile/assets/demo.gif" alt="QuenchWorks en una terminal: ejecuta una imagen 0-CVE, verificala con cosign, despliega el chart de Helm y observa como el pod alcanza el estado Running." width="760"></a>
 </p>
 
-**92 imagenes endurecidas** para la infraestructura que realmente ejecutas. Sin Dockerfiles. Nada heredado de otra distro. Gratis, firmadas y reconstruidas a diario.
+**90+ imagenes endurecidas** para la infraestructura que realmente ejecutas. Sin Dockerfiles. Nada heredado de otra distro. Gratis, firmadas y reconstruidas a diario.
 
 Parte de [QuenchWorks](https://github.com/quenchworks), el reemplazo 0-CVE del catalogo de Bitnami. Explora cada imagen, con versiones y digests, en [quench-works.com/images](https://quench-works.com/images).
 
