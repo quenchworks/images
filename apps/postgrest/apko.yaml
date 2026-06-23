@@ -1,0 +1,41 @@
+# Assembles the PostgREST runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Ships upstream's official prebuilt `postgrest` binary. PostgREST is configured via
+# PGRST_* env vars (and/or a config file passed as an arg), so the entrypoint is the
+# binary itself: `docker run ...postgrest <config>`. ca-certificates-bundle is included
+# for TLS to the database. Default REST API port is 3000.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - glibc
+    - ca-certificates-bundle
+    - quench-postgrest@local
+
+accounts:
+  groups:
+    - groupname: postgrest
+      gid: 1001
+  users:
+    - username: postgrest
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/postgrest
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-postgrest"
+  org.opencontainers.image.licenses: "MIT"

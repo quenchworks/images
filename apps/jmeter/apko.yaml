@@ -1,0 +1,50 @@
+# Assembles the JMeter runtime image: hardened Wolfi JRE + the JMeter distribution.
+# Minimal, nonroot, multi-arch (jars are arch-independent; the JRE is per-arch),
+# SBOM by apko. Image-only (a load-testing tool, no chart).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - openjdk-21-jre
+    - bash
+    - busybox
+    - quench-jmeter@local
+
+accounts:
+  groups:
+    - groupname: jmeter
+      gid: 1001
+  users:
+    - username: jmeter
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /opt/apache-jmeter/bin/jmeter
+
+environment:
+  # openjdk-21-jre installs under /usr/lib/jvm with no /usr/bin/java symlink, so the
+  # jmeter launcher needs JAVA_HOME (it runs $JAVA_HOME/bin/java when set, else
+  # searches PATH). Set both to be safe.
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  PATH: /usr/lib/jvm/java-21-openjdk/bin:/usr/bin:/opt/apache-jmeter/bin
+
+work-dir: /opt/apache-jmeter
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-jmeter"
+  org.opencontainers.image.licenses: "Apache-2.0"

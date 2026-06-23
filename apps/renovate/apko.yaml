@@ -1,0 +1,43 @@
+# Assembles the Renovate runtime image: the quench-renovate npm package plus the
+# Wolfi Node 24 runtime that executes it. Renovate is a CLI, so the entrypoint is
+# /usr/bin/renovate and `docker run ...renovate --version` / `<config>` works.
+# git is included because renovate shells out to git (clone, branch, commit, push)
+# and ca-certificates-bundle so it can reach package registries and the platform
+# API over TLS. Minimal, nonroot, multi-arch, SBOM by apko.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - nodejs-24
+    - git
+    - quench-renovate@local
+
+accounts:
+  groups:
+    - groupname: renovate
+      gid: 1001
+  users:
+    - username: renovate
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/renovate
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-renovate"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"

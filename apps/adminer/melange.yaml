@@ -1,0 +1,38 @@
+# Packages Adminer (vrana/adminer) for Wolfi. Adminer ships as ONE self-contained
+# PHP file; there is nothing to compile. We `fetch` the full-edition release asset
+# (adminer-<VER>.php, sha256-pinned) and install it as the docroot's index.php at
+# /var/www/html/index.php. The PHP runtime + DB-driver extensions come from Wolfi
+# (declared in apko.yaml), not from this package. Output is a signed APK in
+# Quenchworks' own repo. Image-only (web UI, no chart).
+package:
+  name: quench-adminer
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Adminer (single-file PHP database manager), served by a Wolfi PHP runtime"
+  copyright:
+    - license: Apache-2.0
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+
+pipeline:
+  # The release asset is the finished application, not a source archive: fetch the
+  # exact adminer-<VER>.php and verify its sha256. extract:false keeps it as a file.
+  - uses: fetch
+    with:
+      uri: https://github.com/vrana/adminer/releases/download/v${{package.version}}/adminer-${{package.version}}.php
+      expected-sha256: __SHA256__
+      extract: false
+  - runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      # Install the single PHP file as the docroot index so PHP's built-in server
+      # serves it at "/". 0644, no exec bit (it is served, not run directly).
+      install -d -m 0755 "$destdir/var/www/html"
+      install -m 0644 "adminer-${{package.version}}.php" "$destdir/var/www/html/index.php"

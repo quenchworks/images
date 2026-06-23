@@ -1,0 +1,46 @@
+# Builds the Quenchworks Renovate package: the upstream renovate npm package
+# installed at a PINNED version onto Wolfi. Renovate is a Node.js CLI (not a Go
+# binary), so this is an npm global install rather than a from-source compile.
+# `npm install -g renovate@<ver> --prefix=<destdir>/usr` lays down the launcher at
+# /usr/bin/renovate (a symlink to ../lib/node_modules/renovate/dist/renovate.js,
+# shebang `#!/usr/bin/env node`) plus its bundled node_modules under
+# /usr/lib/node_modules/renovate. npm verifies the registry tarball's own
+# integrity hash, so the exact version is the pin (no source sha256). The node
+# runtime, git (renovate shells out to git for clone/commit/branch) and the CA
+# bundle (HTTPS to registries + the renovate platform API) are runtime deps.
+package:
+  name: quench-renovate
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Renovate (automated dependency updates), npm package on a Wolfi Node 24 runtime"
+  copyright:
+    - license: AGPL-3.0-only
+  dependencies:
+    runtime:
+      - nodejs-24
+      - git
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - nodejs-24
+      - npm
+
+pipeline:
+  - runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      # Global install of the exact pinned version into the image prefix. npm
+      # creates ${destdir}/usr/bin/renovate -> ../lib/node_modules/renovate/...
+      # and unpacks the bundled deps under ${destdir}/usr/lib/node_modules.
+      npm install -g "renovate@${{package.version}}" --prefix="${destdir}/usr"
+      # Sanity: the launcher symlink must exist (build fails loudly otherwise).
+      test -L "${destdir}/usr/bin/renovate"
+      test -f "${destdir}/usr/lib/node_modules/renovate/dist/renovate.js"

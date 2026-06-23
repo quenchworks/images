@@ -1,0 +1,55 @@
+# Assembles the Adminer runtime image: the single-file Adminer PHP app
+# (quench-adminer) plus a hardened Wolfi PHP CLI and the DB-driver extensions
+# Adminer needs to talk to MySQL/MariaDB, PostgreSQL and SQLite. Minimal, nonroot,
+# multi-arch, SBOM by apko. PHP's built-in webserver serves /var/www/html on 8080
+# (nonroot can't bind <1024). Mount a writable tmpfs at /tmp for a read-only
+# rootfs; Adminer writes only transient session/upload data there.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    # PHP runtime (base bundles session + sqlite3 lib) + DB driver extensions so
+    # Adminer can connect to MySQL/MariaDB, PostgreSQL and SQLite. Missing drivers
+    # only hide a login option; they never stop the page from serving.
+    - php-8.3
+    - php-8.3-pdo
+    - php-8.3-pdo_mysql
+    - php-8.3-mysqli
+    - php-8.3-pdo_pgsql
+    - php-8.3-pgsql
+    - php-8.3-pdo_sqlite
+    - quench-adminer@local
+
+accounts:
+  groups:
+    - groupname: adminer
+      gid: 1001
+  users:
+    - username: adminer
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# PHP's built-in webserver in the foreground as PID 1, serving the docroot that
+# holds Adminer's index.php. No shell wrapper; php handles signals as PID 1.
+entrypoint:
+  command: /usr/bin/php -S 0.0.0.0:8080 -t /var/www/html
+
+work-dir: /var/www/html
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-adminer"
+  org.opencontainers.image.licenses: "Apache-2.0"
