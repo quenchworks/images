@@ -148,6 +148,16 @@ jobs:
           output-file: sbom.spdx.json
           upload-artifact: false
 
+      - name: Trim SBOM to packages-only
+        # Renovate bundles a huge node_modules tree, so the full SPDX SBOM (with
+        # per-file checksums) exceeds GitHub's 16 MB attestation-predicate limit.
+        # Drop the file-level sections; the package inventory (the supply-chain
+        # signal) is retained and the document stays valid SPDX.
+        run: |
+          jq 'del(.files) | del(.relationships)' sbom.spdx.json > sbom.trimmed.json
+          mv sbom.trimmed.json sbom.spdx.json
+          echo "trimmed SBOM size: $(wc -c < sbom.spdx.json) bytes"
+
       - name: Attest the SBOM (keyless, pushed to GHCR)
         uses: actions/attest-sbom@v2
         with:
