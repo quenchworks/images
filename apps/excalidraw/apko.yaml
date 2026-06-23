@@ -26,8 +26,11 @@ accounts:
       gid: 1001
   run-as: 1001
 
+# Exec nginx directly (PID 1, foreground). No shell in the image and no entrypoint
+# script: nginx handles signals fine as PID 1. `daemon off;` lives in the config
+# (below), so the command needs no quotes or shell.
 entrypoint:
-  command: /usr/bin/docker-entrypoint.sh
+  command: /usr/bin/nginx -c /etc/excalidraw/nginx.conf
 
 work-dir: /usr/share/nginx/html
 
