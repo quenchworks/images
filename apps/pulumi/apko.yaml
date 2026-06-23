@@ -1,0 +1,39 @@
+# Assembles the Pulumi CLI runtime image. Minimal, nonroot, multi-arch, SBOM by
+# apko. Pulumi is a CLI: the entrypoint is the binary, so `docker run ...pulumi
+# <args>` works (e.g. `version`, `up`, `preview`). ca-certificates-bundle is
+# included so it can reach the Pulumi service and cloud providers over TLS.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-pulumi@local
+
+accounts:
+  groups:
+    - groupname: pulumi
+      gid: 1001
+  users:
+    - username: pulumi
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/pulumi
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-pulumi"
+  org.opencontainers.image.licenses: "Apache-2.0"

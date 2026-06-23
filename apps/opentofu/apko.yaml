@@ -1,0 +1,39 @@
+# Assembles the OpenTofu runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# OpenTofu is a CLI: the entrypoint is the binary, so `docker run ...opentofu <args>`
+# works (e.g. `version`, `init`, `plan`, `apply`). ca-certificates-bundle is
+# included so it can reach provider/module registries and remote backends over TLS.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-opentofu@local
+
+accounts:
+  groups:
+    - groupname: opentofu
+      gid: 1001
+  users:
+    - username: opentofu
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/tofu
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-opentofu"
+  org.opencontainers.image.licenses: "MPL-2.0"

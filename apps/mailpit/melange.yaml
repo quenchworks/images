@@ -1,0 +1,40 @@
+# Builds Mailpit (axllent/mailpit) from source on Wolfi. Single static Go binary,
+# no CGO. The web UI is committed and embedded via go:embed, so `go build .` from
+# the tag tarball yields a fully working binary with no npm/esbuild step. The
+# version is stamped via -X so `mailpit version` reports the real release. Output
+# is a signed APK in Quenchworks' own repo. No upstream distro binaries.
+# Image-only (a server/CLI, no chart).
+package:
+  name: quench-mailpit
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Mailpit (email & SMTP testing tool), built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/axllent/mailpit/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      go build -trimpath \
+        -ldflags "-s -w -X github.com/axllent/mailpit/config.Version=v${{package.version}}" \
+        -o "${{targets.destdir}}/usr/bin/mailpit" .

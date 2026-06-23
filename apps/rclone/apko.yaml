@@ -1,0 +1,39 @@
+# Assembles the rclone runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# rclone is a CLI: the entrypoint is the binary, so `docker run ...rclone <args>`
+# works (e.g. `version`, `sync`, `copy`). ca-certificates-bundle is included so
+# it can reach cloud storage providers and registries over TLS.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-rclone@local
+
+accounts:
+  groups:
+    - groupname: rclone
+      gid: 1001
+  users:
+    - username: rclone
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/rclone
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-rclone"
+  org.opencontainers.image.licenses: "MIT"

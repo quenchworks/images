@@ -1,0 +1,39 @@
+# Assembles the ExternalDNS runtime image. Minimal, nonroot, multi-arch, SBOM by
+# apko. ExternalDNS is a controller: the entrypoint is the binary, so
+# `docker run ...external-dns <flags>` works (e.g. --version). ca-certificates-bundle
+# is included so it can reach DNS-provider APIs and the Kubernetes API over TLS.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-external-dns@local
+
+accounts:
+  groups:
+    - groupname: external-dns
+      gid: 1001
+  users:
+    - username: external-dns
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/external-dns
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-external-dns"
+  org.opencontainers.image.licenses: "Apache-2.0"

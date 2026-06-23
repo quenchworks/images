@@ -1,0 +1,40 @@
+# Assembles the Buildkite Agent runtime image. Minimal, nonroot, multi-arch, SBOM
+# by apko. buildkite-agent is a CLI/daemon: the entrypoint is the binary, so
+# `docker run ...buildkite-agent <args>` works (e.g. `--version`, `start`).
+# ca-certificates-bundle is included so it can reach the Buildkite API and
+# registries over TLS.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-buildkite-agent@local
+
+accounts:
+  groups:
+    - groupname: buildkite-agent
+      gid: 1001
+  users:
+    - username: buildkite-agent
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/buildkite-agent
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-buildkite-agent"
+  org.opencontainers.image.licenses: "MIT"

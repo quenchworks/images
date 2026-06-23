@@ -1,0 +1,39 @@
+# Builds Grype (Anchore) from source onto Wolfi. Single static Go binary, no CGO
+# (matches upstream .goreleaser.yaml CGO_ENABLED=0). The version is stamped via
+# -X main.version so `grype version` reports the real release. Output is a signed
+# APK in Quenchworks' own repo. No upstream distro binaries. Image-only (CLI, no
+# chart). Upstream tags carry a "v" prefix; goreleaser stamps the bare version.
+package:
+  name: quench-grype
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Grype (Anchore vulnerability scanner), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/anchore/grype/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      go build -trimpath \
+        -ldflags "-s -w -X main.version=${{package.version}}" \
+        -o "${{targets.destdir}}/usr/bin/grype" ./cmd/grype

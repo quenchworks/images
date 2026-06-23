@@ -1,0 +1,49 @@
+# Builds Litestream from source onto Wolfi. Litestream is streaming replication for
+# SQLite databases to object storage. Single static Go binary. The version is
+# stamped via -X main.Version so `litestream version` reports the real release.
+# Most lines are pure Go (CGO_ENABLED=0); the 0.3.x line uses mattn/go-sqlite3 and
+# needs cgo, so the build detects that in go.mod and links a static cgo binary
+# against musl (build-base) instead. Output is a signed APK in Quenchworks' own
+# repo. No upstream distro binaries. Image-only (daemon/CLI, no chart).
+package:
+  name: quench-litestream
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Litestream (streaming SQLite replication), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/benbjohnson/litestream/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      export GOFLAGS=-mod=mod
+      # 0.3.x uses the mattn/go-sqlite3 cgo driver; everything else is pure Go.
+      if grep -q 'mattn/go-sqlite3' go.mod; then
+        export CGO_ENABLED=1
+        go build -trimpath \
+          -ldflags '-s -w -X main.Version=v${{package.version}} -extldflags "-static"' \
+          -o "${{targets.destdir}}/usr/bin/litestream" ./cmd/litestream
+      else
+        export CGO_ENABLED=0
+        go build -trimpath \
+          -ldflags "-s -w -X main.Version=v${{package.version}}" \
+          -o "${{targets.destdir}}/usr/bin/litestream" ./cmd/litestream
+      fi

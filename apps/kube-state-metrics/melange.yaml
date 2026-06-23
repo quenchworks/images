@@ -1,0 +1,46 @@
+# Builds kube-state-metrics from source onto Wolfi. Single static Go binary, no CGO
+# (the upstream release build). The main package is the repo root. Version metadata
+# is stamped via -X onto github.com/prometheus/common/version.* so
+# `kube-state-metrics version` reports the real release. Branch/Revision/BuildUser/
+# BuildDate get static, reproducible values (the tarball build has no git context).
+# Output is a signed APK in Quenchworks' own repo. Image-only (exporter, no chart).
+package:
+  name: quench-kube-state-metrics
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened kube-state-metrics, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/kubernetes/kube-state-metrics/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      PKG=github.com/prometheus/common
+      go build -trimpath \
+        -ldflags "-s -w \
+          -X ${PKG}/version.Version=${{package.version}} \
+          -X ${PKG}/version.Revision=unknown \
+          -X ${PKG}/version.Branch=release \
+          -X ${PKG}/version.BuildUser=quenchworks \
+          -X ${PKG}/version.BuildDate=1970-01-01T00:00:00Z" \
+        -o "${{targets.destdir}}/usr/bin/kube-state-metrics" .

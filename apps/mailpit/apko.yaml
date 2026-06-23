@@ -1,0 +1,40 @@
+# Assembles the Mailpit runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Mailpit is a server (SMTP on :1025, web UI on :8025) and CLI: the entrypoint is
+# the binary, so `docker run ...mailpit` starts the server and
+# `docker run ...mailpit version` works. ca-certificates-bundle is included so it
+# can reach SMTP relays/registries over TLS.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-mailpit@local
+
+accounts:
+  groups:
+    - groupname: mailpit
+      gid: 1001
+  users:
+    - username: mailpit
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/mailpit
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-mailpit"
+  org.opencontainers.image.licenses: "MIT"

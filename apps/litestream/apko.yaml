@@ -1,0 +1,40 @@
+# Assembles the Litestream runtime image. Minimal, nonroot, multi-arch, SBOM by
+# apko. Litestream is a daemon/CLI: the entrypoint is the binary, so
+# `docker run ...litestream replicate ...` (or `version`) works.
+# ca-certificates-bundle is included so it can reach object storage (S3/GCS/ABS)
+# over TLS.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-litestream@local
+
+accounts:
+  groups:
+    - groupname: litestream
+      gid: 1001
+  users:
+    - username: litestream
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/litestream
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-litestream"
+  org.opencontainers.image.licenses: "Apache-2.0"

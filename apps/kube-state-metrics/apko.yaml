@@ -1,0 +1,40 @@
+# Assembles the kube-state-metrics runtime image. Minimal, nonroot, multi-arch,
+# SBOM by apko. kube-state-metrics is a long-running exporter: the entrypoint is the
+# binary, so `docker run ...kube-state-metrics <flags>` works (and `version` reports
+# the build). ca-certificates-bundle is included so it can reach the Kubernetes API
+# server over TLS.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-kube-state-metrics@local
+
+accounts:
+  groups:
+    - groupname: ksm
+      gid: 1001
+  users:
+    - username: ksm
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/kube-state-metrics
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-kube-state-metrics"
+  org.opencontainers.image.licenses: "Apache-2.0"
