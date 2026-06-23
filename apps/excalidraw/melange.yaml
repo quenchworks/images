@@ -1,6 +1,7 @@
 # Builds the Excalidraw SPA from source onto Wolfi, then ships it as static assets
-# served by nginx. The build stage uses Node 18 + yarn (matching upstream's
-# Dockerfile): `yarn` installs the workspace (optional deps kept, native rollup
+# served by nginx. The build stage uses Node 22 + yarn (0.18.x pulls transitive
+# deps -- chevrotain, marked -- that require Node >=22): `yarn` installs the
+# workspace (optional deps kept, native rollup
 # binary resolved per-arch on the native runner), then `yarn build:app:docker`
 # emits the production bundle to excalidraw-app/build. We relocate that to
 # /usr/share/nginx/html and ship a nonroot, read-only-rootfs nginx config plus a
@@ -23,7 +24,7 @@ environment:
       - build-base
       - busybox
       - ca-certificates-bundle
-      - nodejs-18
+      - nodejs-22
       - yarn
       - python3
 
@@ -34,12 +35,15 @@ pipeline:
       expected-sha256: __SHA256__
   - runs: |
       set -eu
-      export NODE_ENV=production
-      # Install the workspace. Keep optional deps so the native rollup binary for
-      # this arch is pulled (upstream Dockerfile notes this). Generous timeout.
+      # Install the workspace FIRST, without NODE_ENV=production: yarn would
+      # otherwise skip devDependencies (vite, cross-env), and the build spawns vite
+      # directly (`spawn vite ENOENT`). Keep optional deps so the native rollup
+      # binary for this arch is pulled (upstream Dockerfile notes this).
       yarn install --frozen-lockfile --network-timeout 600000
-      # Build the static app bundle (no backend, suitable for static hosting).
-      yarn build:app:docker
+      # Build the static app bundle in production mode (no backend, static hosting).
+      # vite build defaults to production; NODE_ENV is set only for this step,
+      # mirroring upstream's Dockerfile (ARG NODE_ENV=production before the build).
+      NODE_ENV=production yarn build:app:docker
 
       destdir="${{targets.destdir}}"
 
