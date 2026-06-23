@@ -1,0 +1,39 @@
+# Assembles the Cosign runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Cosign is a CLI: the entrypoint is the binary, so `docker run ...cosign <args>`
+# works (e.g. `version`, `verify`, `sign`). ca-certificates-bundle is included so
+# it can reach Sigstore (Fulcio/Rekor) and registries over TLS.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-cosign@local
+
+accounts:
+  groups:
+    - groupname: cosign
+      gid: 1001
+  users:
+    - username: cosign
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/cosign
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-cosign"
+  org.opencontainers.image.licenses: "Apache-2.0"

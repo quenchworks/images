@@ -1,0 +1,40 @@
+# Assembles the Trivy runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Trivy is a CLI: the entrypoint is the binary, so `docker run ...trivy <args>`
+# works (e.g. `--version`, `image`, `fs`, `repo`). ca-certificates-bundle is
+# included so it can fetch the vuln DB and scan remote targets over TLS. For real
+# scans, mount a writable cache (TRIVY_CACHE_DIR) since the rootfs is read-only.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-trivy@local
+
+accounts:
+  groups:
+    - groupname: trivy
+      gid: 1001
+  users:
+    - username: trivy
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/trivy
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-trivy"
+  org.opencontainers.image.licenses: "Apache-2.0"

@@ -1,0 +1,42 @@
+# Builds Trivy (Aqua Security) from source onto Wolfi. Single static Go binary, no
+# CGO (trivy ships the pure-Go modernc.org/sqlite driver, so the SQLite-backed
+# RPM/Java DBs need no cgo). The version is stamped via -X so `trivy --version`
+# reports the real release. Output is a signed APK in Quenchworks' own repo. No
+# upstream distro binaries. Image-only (CLI, no chart).
+package:
+  name: quench-trivy
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Trivy (Aqua Security) scanner, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/aquasecurity/trivy/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      # Trivy 0.7x uses Go's experimental encoding/json/v2, which is gated behind
+      # this GOEXPERIMENT (matches trivy's own goreleaser build).
+      export GOEXPERIMENT=jsonv2
+      go build -trimpath \
+        -ldflags "-s -w -X github.com/aquasecurity/trivy/pkg/version/app.ver=${{package.version}}" \
+        -o "${{targets.destdir}}/usr/bin/trivy" ./cmd/trivy
