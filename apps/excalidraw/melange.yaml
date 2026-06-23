@@ -1,0 +1,102 @@
+# Builds the Excalidraw SPA from source onto Wolfi, then ships it as static assets
+# served by nginx. The build stage uses Node 18 + yarn (matching upstream's
+# Dockerfile): `yarn` installs the workspace (optional deps kept, native rollup
+# binary resolved per-arch on the native runner), then `yarn build:app:docker`
+# emits the production bundle to excalidraw-app/build. We relocate that to
+# /usr/share/nginx/html and ship a nonroot, read-only-rootfs nginx config plus a
+# thin entrypoint. No upstream distro binaries; nginx itself comes from Wolfi.
+package:
+  name: quench-excalidraw
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Excalidraw (static SPA served by nginx), built from source on Wolfi"
+  copyright:
+    - license: MIT
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - nodejs-18
+      - yarn
+      - python3
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/excalidraw/excalidraw/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      export NODE_ENV=production
+      # Install the workspace. Keep optional deps so the native rollup binary for
+      # this arch is pulled (upstream Dockerfile notes this). Generous timeout.
+      yarn install --frozen-lockfile --network-timeout 600000
+      # Build the static app bundle (no backend, suitable for static hosting).
+      yarn build:app:docker
+
+      destdir="${{targets.destdir}}"
+
+      # Relocate the production bundle to the conventional nginx docroot.
+      install -d "$destdir/usr/share/nginx/html"
+      cp -a excalidraw-app/build/. "$destdir/usr/share/nginx/html/"
+
+      # Nonroot / read-only-rootfs nginx config. Served by the Wolfi nginx package
+      # at runtime; shipped at /etc/excalidraw to avoid colliding with that
+      # package's own /etc/nginx/nginx.conf. Listens on 8080 (nonroot can't bind
+      # <1024), writes pid + temp under /tmp, logs to stdout/stderr, and falls back
+      # to index.html so client-side routes resolve.
+      install -d "$destdir/etc/excalidraw"
+      cat > "$destdir/etc/excalidraw/nginx.conf" <<'EOF'
+      worker_processes auto;
+      pid /tmp/nginx.pid;
+      error_log /dev/stderr notice;
+
+      events {
+          worker_connections 1024;
+      }
+
+      http {
+          include       /etc/nginx/mime.types;
+          default_type  application/octet-stream;
+
+          client_body_temp_path /tmp/client_body_temp;
+          proxy_temp_path       /tmp/proxy_temp;
+          fastcgi_temp_path     /tmp/fastcgi_temp;
+          uwsgi_temp_path       /tmp/uwsgi_temp;
+          scgi_temp_path        /tmp/scgi_temp;
+
+          access_log /dev/stdout;
+          sendfile      on;
+          tcp_nopush    on;
+          gzip          on;
+          server_tokens off;
+
+          server {
+              listen      8080;
+              server_name _;
+              root        /usr/share/nginx/html;
+              index       index.html;
+
+              location / {
+                  try_files $uri $uri/ /index.html;
+              }
+          }
+      }
+      EOF
+
+      # Thin entrypoint: run nginx in the foreground (PID 1, logs to stdout/stderr)
+      # against our config. `nginx` resolves from the Wolfi package on PATH.
+      install -d "$destdir/usr/bin"
+      cat > "$destdir/usr/bin/docker-entrypoint.sh" <<'EOF'
+      #!/bin/sh
+      set -eu
+      exec nginx -c /etc/excalidraw/nginx.conf -g 'daemon off;'
+      EOF
+      chmod 0755 "$destdir/usr/bin/docker-entrypoint.sh"
