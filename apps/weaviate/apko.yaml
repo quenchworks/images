@@ -1,0 +1,41 @@
+# Assembles the Weaviate runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# The default command starts the server on :8080 (REST) and :50051 (gRPC), unprivileged,
+# so the image runs as nonroot with no capabilities. Matches upstream's container CMD
+# (--host 0.0.0.0 --port 8080 --scheme http). The image just runs the server; the chart
+# supplies runtime env (e.g. PERSISTENCE_DATA_PATH, AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED)
+# and persistence. Readiness: /v1/.well-known/ready, liveness: /v1/.well-known/live.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-weaviate@local
+
+accounts:
+  groups:
+    - groupname: weaviate
+      gid: 1001
+  users:
+    - username: weaviate
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/weaviate-server --host 0.0.0.0 --port 8080 --scheme http
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-weaviate"
+  org.opencontainers.image.licenses: "BSD-3-Clause"
