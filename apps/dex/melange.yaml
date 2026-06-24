@@ -1,4 +1,7 @@
-# Builds Dex (dexidp/dex) from source onto Wolfi. Single static Go binary, no CGO.
+# Builds Dex (dexidp/dex) from source onto Wolfi. CGO is ON: Dex's SQLite storage
+# backend (mattn/go-sqlite3) defines sql.SQLite3 only under cgo, and cmd/dex/config.go
+# references it on the 2.43/2.44 lines, so a CGO_ENABLED=0 build fails with
+# "undefined: sql.SQLite3". gcc comes from build-base; the binary is glibc-linked.
 # Dex's main package is at ./cmd/dex, producing the full `dex` binary (serve, version,
 # and the OIDC server). The version is stamped via -X main.version so `dex version`
 # reports the real release. Output is a signed APK in Quenchworks' own repo. No upstream
@@ -13,6 +16,8 @@ package:
   dependencies:
     runtime:
       - ca-certificates-bundle
+      - glibc
+      - libgcc
 
 environment:
   contents:
@@ -32,7 +37,7 @@ pipeline:
       uri: https://github.com/dexidp/dex/archive/refs/tags/v${{package.version}}.tar.gz
       expected-sha256: __SHA256__
   - runs: |
-      export CGO_ENABLED=0
+      export CGO_ENABLED=1
       export GOFLAGS=-mod=mod
       go build -trimpath \
         -ldflags "-s -w -X main.version=${{package.version}}" \

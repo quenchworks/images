@@ -54,8 +54,10 @@ pipeline:
       curl -fsSL -o ollama.tar.zst "$url"
       echo "${sha}  ollama.tar.zst" | sha256sum -c -
 
+      # busybox tar (in the melange sandbox) has no --use-compress-program, so
+      # decompress with zstd and pipe the plain tar stream into it.
       mkdir -p extracted
-      tar --use-compress-program=unzstd -xf ollama.tar.zst -C extracted
+      zstd -d -c ollama.tar.zst | tar -x -C extracted
 
       # the binary -> /usr/bin/ollama
       install -Dm0755 extracted/bin/ollama "${{targets.destdir}}/usr/bin/ollama"
