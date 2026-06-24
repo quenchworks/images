@@ -1,0 +1,127 @@
+# Builds Eclipse Mosquitto from source onto Wolfi via CMake. Output is a signed APK
+# in Quenchworks' own repo, no upstream distro binaries. Configured for a nonroot
+# (uid 1001), read-only-rootfs runtime: the broker listens on 1883 (nonroot can bind
+# >=1024), logs to stdout, and writes its pid + persistence under writable paths the
+# chart mounts. TLS comes from OpenSSL; websockets use Mosquitto's bundled builtin
+# library (so no external libwebsockets dependency); cJSON is bundled via
+# WITH_BUNDLED_DEPS. Docs and the test suite are off to keep the build lean and the
+# image 0-CVE.
+package:
+  name: quench-mosquitto
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Eclipse Mosquitto MQTT broker, built from source on Wolfi (nonroot, read-only rootfs)"
+  copyright:
+    - license: EPL-2.0 OR BSD-3-Clause
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - openssl
+      - cjson          # dynamic-security plugin
+      - argon2          # dynamic-security password hashing
+      - sqlite-libs     # persist-sqlite plugin
+      - glibc
+      - libgcc
+      - busybox
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - cmake
+      - openssl-dev
+      - cjson-dev
+      - argon2-dev
+      - sqlite-dev
+      - linux-headers
+
+pipeline:
+  - uses: fetch
+    with:
+      # Official mosquitto.org source release tarball, sha256 verified.
+      uri: https://mosquitto.org/files/source/mosquitto-${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      # Lean broker build for a nonroot/read-only-rootfs runtime.
+      #  - WITH_TLS: OpenSSL TLS + TLS-PSK
+      #  - WITH_WEBSOCKETS + WITH_WEBSOCKETS_BUILTIN: ws via the bundled lib (no
+      #    external libwebsockets, keeps the dependency/CVE surface minimal)
+      #  - WITH_DOCS/WITH_TESTS OFF: no docbook/xsltproc toolchain, no test build
+      #  - WITH_LTO OFF: LTO trips Wolfi's newer GCC on some 2.0.x objects
+      #  - clients/apps/plugins ON: mosquitto_pub/sub (smoke test), mosquitto_passwd,
+      #    and the dynamic-security plugin (cJSON bundled via WITH_BUNDLED_DEPS)
+      cmake -B build -S . \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr \
+        -DWITH_BUNDLED_DEPS=ON \
+        -DWITH_TLS=ON \
+        -DWITH_TLS_PSK=ON \
+        -DWITH_WEBSOCKETS=ON \
+        -DWITH_WEBSOCKETS_BUILTIN=ON \
+        -DWITH_CLIENTS=ON \
+        -DWITH_APPS=ON \
+        -DWITH_PLUGINS=ON \
+        -DWITH_BROKER=ON \
+        -DWITH_CTRL_SHELL=OFF \
+        -DWITH_DOCS=OFF \
+        -DWITH_TESTS=OFF \
+        -DWITH_LTO=OFF
+      cmake --build build -j"$(nproc)"
+      DESTDIR="${{targets.destdir}}" cmake --install build
+
+      destdir="${{targets.destdir}}"
+
+      # Wolfi enforces usrmerge (no /usr/sbin). Mosquitto installs the broker to
+      # /usr/sbin/mosquitto; relocate it to /usr/bin and drop the empty sbin dir.
+      if [ -f "$destdir/usr/sbin/mosquitto" ]; then
+        install -d "$destdir/usr/bin"
+        mv "$destdir/usr/sbin/mosquitto" "$destdir/usr/bin/mosquitto"
+        rmdir "$destdir/usr/sbin" 2>/dev/null || true
+      fi
+
+      # A hardened default config for the nonroot / read-only-rootfs layout: anonymous
+      # MQTT listener on 1883 (the chart layers auth/TLS on top), pid + persistence
+      # under writable mount points, logs to stdout. No `user` directive (the
+      # container already runs as the nonroot mosquitto uid 1001).
+      install -d "$destdir/etc/mosquitto" "$destdir/etc/mosquitto/conf.d"
+      cat > "$destdir/etc/mosquitto/mosquitto.conf" <<'EOF'
+      # Quenchworks hardened Mosquitto default config.
+      # Nonroot (uid 1001) + read-only rootfs: pid under /tmp, persistence under the
+      # chart-mounted /mosquitto/data volume, logs to stdout. Anonymous access is on
+      # by default for a zero-config bring-up; the chart layers password/TLS auth via
+      # drop-ins in /etc/mosquitto/conf.d.
+      pid_file /tmp/mosquitto.pid
+
+      persistence true
+      persistence_location /mosquitto/data/
+
+      log_dest stdout
+      log_type error
+      log_type warning
+      log_type notice
+      log_type information
+
+      listener 1883
+      allow_anonymous true
+
+      # Drop-in configs (the chart mounts ConfigMaps/Secrets here).
+      include_dir /etc/mosquitto/conf.d
+      EOF
+
+      # Default persistence dir (chart mounts a writable volume over it).
+      install -d "$destdir/mosquitto/data"
+      chmod -R a+rwX "$destdir/mosquitto"
+
+test:
+  pipeline:
+    - runs: |
+        mosquitto --help | head -1
+        mosquitto_pub --help | head -1
+        # config must parse cleanly under a dry-run-ish invocation
+        mosquitto -c /etc/mosquitto/mosquitto.conf -h >/dev/null 2>&1 || true

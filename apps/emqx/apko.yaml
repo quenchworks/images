@@ -1,0 +1,47 @@
+# Assembles the EMQX runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# EMQX ships as an Erlang/OTP release under /opt/emqx with a bundled ERTS; the
+# entrypoint runs it in the foreground. The chart mounts writable volumes at
+# /opt/emqx/data (mnesia + generated configs) and /opt/emqx/log on a read-only
+# rootfs. Ports: 1883 (MQTT), 8883 (MQTT/TLS), 8083 (MQTT over websockets),
+# 8084 (WSS), 18083 (dashboard + REST API, liveness on /status). Runs as the
+# nonroot emqx user (uid 1001). HOME is set so the bootscript and Erlang cookie
+# land under the writable data dir.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-emqx@local
+
+accounts:
+  groups:
+    - groupname: emqx
+      gid: 1001
+  users:
+    - username: emqx
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  HOME: /opt/emqx/data
+  EMQX_NODE__DATA_DIR: /opt/emqx/data
+
+entrypoint:
+  command: /opt/emqx/bin/emqx foreground
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-emqx"
+  org.opencontainers.image.licenses: "BUSL-1.1"

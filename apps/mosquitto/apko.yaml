@@ -1,0 +1,41 @@
+# Assembles the Mosquitto runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# The broker reads /etc/mosquitto/mosquitto.conf (shipped by the package); the chart
+# layers auth/TLS via drop-ins in /etc/mosquitto/conf.d and mounts a writable volume
+# at /mosquitto/data for persistence. Ports: 1883 (MQTT), 8883 (MQTT over TLS, the
+# chart supplies certs), 8080 (websockets, builtin). Runs as the nonroot mosquitto
+# user (uid 1001) with no capabilities.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-mosquitto@local
+
+accounts:
+  groups:
+    - groupname: mosquitto
+      gid: 1001
+  users:
+    - username: mosquitto
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/mosquitto -c /etc/mosquitto/mosquitto.conf
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-mosquitto"
+  org.opencontainers.image.licenses: "EPL-2.0 OR BSD-3-Clause"

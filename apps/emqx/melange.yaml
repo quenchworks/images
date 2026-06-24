@@ -1,0 +1,84 @@
+# Packages EMQX onto Wolfi from its OWN official el9 release tarball (NOT built from
+# source: EMQX is a large Erlang/OTP + dashboard build that is infeasible on the
+# 2-core CI matrix — same rationale as clickhouse/ollama). The tarball bundles its
+# own ERTS (Erlang runtime) plus a `dynlibs/` set of portable libs (libcrypto,
+# libtinfo, libatomic) that its bootscript prepends to LD_LIBRARY_PATH. We still
+# supply the system libs the BEAM and the bundled NIFs (quicer = MQTT-over-QUIC,
+# crypto) link against — glibc, libstdc++, libgcc, zlib, openssl, ncurses, brotli,
+# zstd, libatomic — and bash + busybox for the bash bootscript (which also shells out
+# to awk/sed/grep/openssl). Hardened on a minimal apko base and 0-CVE gated with Trivy.
+#
+# License: BSL-1.1 (single node free; cluster needs a commercial license; reverts to
+# Apache-2.0 four years post-release). Clean-room-consistent: this is upstream's own
+# published artifact, hardened and scanned — not a Bitnami chart.
+package:
+  name: quench-emqx
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened EMQX MQTT broker, packaged on Wolfi from EMQX's official Erlang/OTP release (BSL-1.1)"
+  copyright:
+    - license: BUSL-1.1
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - glibc
+      - libstdc++
+      - libgcc
+      - zlib
+      - openssl
+      - ncurses
+      - brotli
+      - zstd
+      - libatomic       # quicer NIF (MQTT-over-QUIC) links libatomic.so.1
+      - bash
+      - busybox
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - curl
+      - ca-certificates-bundle
+
+pipeline:
+  # EMQX publishes separate el9 amd64/arm64 tarballs; fetch the one matching the build
+  # arch by uname -m (x86_64->amd64, aarch64->arm64) with the arch-matching sha256.
+  # The archive has no top-level prefix (bin/ lib/ erts-*/ etc/ data/ dynlibs/
+  # releases/ at the root), so we extract the whole tree into /opt/emqx.
+  - runs: |
+      VER="${{package.version}}"
+      case "$(uname -m)" in
+        x86_64)  earch=amd64; sha=__SHA_AMD__ ;;
+        aarch64) earch=arm64; sha=__SHA_ARM__ ;;
+        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+      esac
+
+      url="https://github.com/emqx/emqx/releases/download/${VER}/emqx-enterprise-${VER}-el9-${earch}.tar.gz"
+      curl -fsSL -o emqx.tar.gz "$url"
+      echo "${sha}  emqx.tar.gz" | sha256sum -c -
+
+      dest="${{targets.destdir}}/opt/emqx"
+      install -d "$dest"
+      tar -xzf emqx.tar.gz -C "$dest"
+
+      # Convenience symlink so `emqx` is on PATH.
+      install -d "${{targets.destdir}}/usr/bin"
+      ln -sf /opt/emqx/bin/emqx "${{targets.destdir}}/usr/bin/emqx"
+      ln -sf /opt/emqx/bin/emqx_ctl "${{targets.destdir}}/usr/bin/emqx_ctl"
+
+      # Writable runtime dirs (the chart mounts volumes/emptyDir over these on a
+      # read-only rootfs). EMQX writes generated configs + mnesia under data/, and
+      # logs under log/.
+      install -d "$dest/data" "$dest/log"
+      chmod -R a+rwX "$dest/data" "$dest/log"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /opt/emqx/bin/emqx
+        # `emqx version` boots the bootscript far enough to print the release version.
+        /opt/emqx/bin/emqx version | grep -E "^6\."
