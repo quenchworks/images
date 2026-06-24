@@ -1,0 +1,40 @@
+# Assembles the Dex runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Dex needs a config file, so the entrypoint is `dex serve` and the chart supplies the
+# config path as an arg (typically /etc/dex/config.yaml). Ports: 5556 (HTTP), 5557
+# (gRPC), 5558 (telemetry/healthz, /healthz). Runs as the nonroot dex user (uid 1001)
+# with no capabilities.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-dex@local
+
+accounts:
+  groups:
+    - groupname: dex
+      gid: 1001
+  users:
+    - username: dex
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/dex serve
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-dex"
+  org.opencontainers.image.licenses: "Apache-2.0"

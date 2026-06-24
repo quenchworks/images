@@ -1,0 +1,60 @@
+# Assembles the Ollama runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Ships upstream's official `ollama` binary plus its bundled CPU GGML/llama.cpp
+# runner libs (under /usr/lib/ollama). The default command starts the inference
+# server on :11434; GET /api/version returns the version JSON once it is up.
+# This is a CPU-only image (GPU runners are out of scope).
+#
+# Ollama needs a WRITABLE model directory (OLLAMA_MODELS). The upstream default is
+# /root/.ollama, which a nonroot (uid 1001) process on a read-only rootfs cannot
+# write, so we point OLLAMA_MODELS at /models and seed it as a 1001-owned dir. The
+# chart MUST mount a writable volume (PVC) at /models for pulled models to persist.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-ollama@local
+
+accounts:
+  groups:
+    - groupname: ollama
+      gid: 1001
+  users:
+    - username: ollama
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/ollama serve
+
+environment:
+  OLLAMA_HOST: 0.0.0.0:11434
+  OLLAMA_MODELS: /models
+  PATH: /usr/bin:/bin
+
+work-dir: /models
+
+paths:
+  # writable model store for a read-only rootfs; the chart mounts a PVC here.
+  - path: /models
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-ollama"
+  org.opencontainers.image.licenses: "MIT"

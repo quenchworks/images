@@ -1,0 +1,73 @@
+# Packages Ollama onto Wolfi. Ollama is NOT built from source here: it is Go + a
+# bundled llama.cpp/GGML C++ inference engine whose CPU runner is compiled with
+# cmake (`cmake --build --preset Default`) over the full llama.cpp tree. A plain
+# `go build .` produces a working CLI/server (it boots and answers /api/version)
+# but CANNOT run inference — it looks for a `llama-server` runner the Go build does
+# not produce. Compiling that runner takes tens of CPU-minutes and OOMs/timeouts on
+# a 2-core GitHub runner. So, like clickhouse/kafka, we ship Ollama's OWN official
+# per-arch linux tarball, which bundles BOTH the `ollama` binary and the prebuilt
+# CPU GGML runner libs, then harden it on a minimal apko base and gate it 0-CVE with
+# Trivy. Clean-room-consistent: it is upstream's published artifact, not a Bitnami
+# chart, and the scan still fully applies.
+package:
+  name: quench-ollama
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Ollama, packaged on Wolfi (CPU-only)"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - libstdc++          # the bundled GGML CPU runner links libstdc++/libgcc
+      - libgcc
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - curl
+      - zstd               # the official tarballs are .tar.zst
+      - ca-certificates-bundle
+
+pipeline:
+  # Ollama publishes separate amd64/arm64 linux tarballs, so fetch the one matching
+  # the build arch by uname -m (x86_64->amd64, aarch64->arm64) with the arch-matching
+  # sha256 — the wrong arch yields a non-executable / wrong-arch binary. The tarball
+  # lays out ./bin/ollama (the multi-call binary) and ./lib/ollama/* (the prebuilt
+  # CPU GGML runner libs + llama-server). We install bin/ollama to /usr/bin and the
+  # whole lib/ollama tree to /usr/lib/ollama, which is exactly where ollama looks for
+  # its runner ("/lib/ollama" and relative-to-exe "../lib/ollama" are both probed).
+  - runs: |
+      VER="${{package.version}}"
+      case "$(uname -m)" in
+        x86_64)  oarch=amd64; sha=__SHA_AMD__ ;;
+        aarch64) oarch=arm64; sha=__SHA_ARM__ ;;
+        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+      esac
+
+      url="https://github.com/ollama/ollama/releases/download/v${VER}/ollama-linux-${oarch}.tar.zst"
+      curl -fsSL -o ollama.tar.zst "$url"
+      echo "${sha}  ollama.tar.zst" | sha256sum -c -
+
+      mkdir -p extracted
+      tar --use-compress-program=unzstd -xf ollama.tar.zst -C extracted
+
+      # the binary -> /usr/bin/ollama
+      install -Dm0755 extracted/bin/ollama "${{targets.destdir}}/usr/bin/ollama"
+
+      # the bundled CPU runner libs -> /usr/lib/ollama (preserve the tree)
+      install -d "${{targets.destdir}}/usr/lib/ollama"
+      cp -a extracted/lib/ollama/. "${{targets.destdir}}/usr/lib/ollama/"
+      chmod -R a+rX "${{targets.destdir}}/usr/lib/ollama"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/bin/ollama
+        ollama --version 2>&1 | grep -i "client version is"
+        test -d /usr/lib/ollama
