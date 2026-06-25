@@ -1,0 +1,80 @@
+# Assembles the Mattermost (Team Edition) runtime image. Minimal, nonroot, multi-arch,
+# SBOM by apko. Ships upstream's official prebuilt server tree under /opt/mattermost.
+# Mattermost is configured by MM_* env vars (which override config/config.json), so the
+# entrypoint is just the server subcommand: `mattermost server`. It MUST run from its
+# install dir to resolve client/, templates/, i18n/ and fonts/, hence work-dir.
+# Requires an external PostgreSQL (set MM_SQLSETTINGS_DRIVERNAME / _DATASOURCE).
+# The web/API listens on 8065.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - glibc
+    - ca-certificates-bundle
+    - tzdata
+    - quench-mattermost@local
+
+accounts:
+  groups:
+    - groupname: mattermost
+      gid: 1001
+  users:
+    - username: mattermost
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /opt/mattermost/bin/mattermost server
+
+environment:
+  MM_SERVICESETTINGS_LISTENADDRESS: ":8065"
+  PATH: /usr/bin:/bin
+
+work-dir: /opt/mattermost
+
+paths:
+  # Writable areas the server owns (config persistence, uploaded files, logs, plugins).
+  # type: directory adjusts ownership/perms on these dirs without dropping the upstream
+  # config.json that the package installed into /opt/mattermost/config.
+  - path: /opt/mattermost/config
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /opt/mattermost/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /opt/mattermost/logs
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /opt/mattermost/plugins
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /opt/mattermost/client/plugins
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-mattermost"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"

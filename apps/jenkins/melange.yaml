@@ -1,0 +1,46 @@
+# Packages Jenkins LTS onto Wolfi. Jenkins is a JVM app: we ship the upstream
+# noarch jenkins.war (prebuilt) on a hardened Wolfi JRE, which is the CVE surface
+# the Trivy gate scans. No compilation -- fetch the war, drop it under
+# /usr/share/jenkins, and create a writable nonroot JENKINS_HOME.
+package:
+  name: quench-jenkins
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Jenkins LTS automation server, packaged on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - openjdk-21-jre        # the JRE Jenkins runs on (the scanned CVE surface; Java 17 min, 21 supported)
+      - ca-certificates-bundle
+      - busybox
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+
+pipeline:
+  - uses: fetch
+    with:
+      # The war is architecture-independent: same artifact on amd64/arm64.
+      uri: https://get.jenkins.io/war-stable/${{package.version}}/jenkins.war
+      expected-sha256: "__SHA256__"
+      extract: false       # a bare noarch .war, not an archive: keep it as-is
+  - runs: |
+      # install the noarch war under /usr/share/jenkins
+      install -d "${{targets.destdir}}/usr/share/jenkins"
+      install -m 0644 jenkins.war "${{targets.destdir}}/usr/share/jenkins/jenkins.war"
+      # NOTE: the writable JENKINS_HOME (/var/jenkins_home) is created and owned by
+      # the nonroot uid via apko's `paths:` block -- numeric chown is not permitted
+      # in the melange build sandbox.
+
+test:
+  pipeline:
+    - runs: |
+        test -f /usr/share/jenkins/jenkins.war

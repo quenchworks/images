@@ -1,0 +1,58 @@
+# Assembles the Jenkins LTS runtime image: hardened Wolfi JRE + the noarch
+# jenkins.war. Minimal, nonroot, multi-arch (the war is arch-independent; the
+# JRE is per-arch), SBOM by apko. Server app (image + chart).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - openjdk-21-jre
+    - busybox
+    - quench-jenkins@local
+
+accounts:
+  groups:
+    - groupname: jenkins
+      gid: 1001
+  users:
+    - username: jenkins
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# Boot the noarch war on the JRE. httpPort baked in; JENKINS_HOME is a writable
+# dir created by the package (chown 1001). Override JENKINS_OPTS for extra flags.
+entrypoint:
+  command: /usr/lib/jvm/java-21-openjdk/bin/java -jar /usr/share/jenkins/jenkins.war --httpPort=8080
+
+environment:
+  # openjdk-21-jre installs under /usr/lib/jvm with no /usr/bin/java symlink, so we
+  # set JAVA_HOME and call the absolute java path in the entrypoint.
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  JENKINS_HOME: /var/jenkins_home
+  PATH: /usr/lib/jvm/java-21-openjdk/bin:/usr/bin
+
+work-dir: /var/jenkins_home
+
+paths:
+  - path: /var/jenkins_home
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-jenkins"
+  org.opencontainers.image.licenses: "MIT"
