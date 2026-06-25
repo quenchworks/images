@@ -1,0 +1,46 @@
+# Assembles the ZITADEL runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Ships upstream's official prebuilt static server binary as /usr/bin/zitadel (the
+# Angular console is embedded in the binary). ZITADEL is configured by ZITADEL_* env
+# vars and/or --config files; the chart passes the start subcommand + flags (e.g.
+# `start-from-init --masterkeyFromEnv --tlsMode disabled`), so the entrypoint is just
+# the bare binary. Requires an external PostgreSQL (ZITADEL_DATABASE_POSTGRES_*) and a
+# 32-char master key (ZITADEL_MASTERKEY). The HTTP/gRPC API listens on 8080.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - tzdata
+    - quench-zitadel@local
+
+accounts:
+  groups:
+    - groupname: zitadel
+      gid: 1001
+  users:
+    - username: zitadel
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/zitadel
+
+environment:
+  PATH: /usr/bin:/bin
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-zitadel"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"

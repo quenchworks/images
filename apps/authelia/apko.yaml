@@ -1,0 +1,47 @@
+# Assembles the Authelia runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Ships upstream's official prebuilt server binary as /usr/bin/authelia. Authelia is
+# configured by a YAML config file (the chart mounts it at /config/configuration.yml)
+# plus AUTHELIA_* env vars; the entrypoint is the bare binary and the chart passes
+# `--config /config/configuration.yml`. Needs an external storage backend (sqlite on a
+# PVC or postgres) and optionally redis for sessions — none of that lives in the image.
+# The web portal / API listens on 9091.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - glibc
+    - ca-certificates-bundle
+    - tzdata
+    - quench-authelia@local
+
+accounts:
+  groups:
+    - groupname: authelia
+      gid: 1001
+  users:
+    - username: authelia
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/authelia
+
+environment:
+  PATH: /usr/bin:/bin
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-authelia"
+  org.opencontainers.image.licenses: "Apache-2.0"

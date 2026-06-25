@@ -1,0 +1,65 @@
+# Packages Authelia onto Wolfi. Authelia is a Go authentication/authorization server
+# with an embedded React web portal baked into the binary (go:embed); a from-source
+# build needs a pnpm/Node toolchain and is infeasible in CI, so we ship Authelia's OWN
+# official prebuilt binary tarball from the GitHub release (the same upstream-artifact
+# pattern clickhouse/mattermost use), then harden it on a minimal apko base and gate it
+# 0-CVE with Trivy. This is clean-room-consistent: it is upstream's published artifact,
+# not a Bitnami chart, and the scan still fully applies.
+#
+# The (glibc) tarball is flat: it contains the binary `authelia` plus systemd/tmpfiles
+# unit files and a config.template.yml. We install ONLY the binary as /usr/bin/authelia.
+# The server binary is a dynamically-linked Go binary that links glibc (libc/libpthread/
+# libresolv/libdl), so the runtime surface is glibc + ca-certificates-bundle (TLS to the
+# external storage backend / SMTP / identity providers).
+package:
+  name: quench-authelia
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Authelia authentication & authorization server, packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - glibc                  # the Go binary links glibc (libc/libpthread/libresolv/libdl)
+      - ca-certificates-bundle # TLS to the external storage backend / SMTP / OIDC providers
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - curl
+      - ca-certificates-bundle
+
+pipeline:
+  # Authelia publishes separate amd64/arm64 (glibc) binary tarballs, so fetch the one
+  # matching the build arch by uname -m (x86_64->amd64, aarch64->arm64) with the
+  # arch-matching sha256 — using the wrong arch yields a wrong-arch binary. The version
+  # IS part of the asset filename and the leading `v` is part of the release tag, so both
+  # the path segment and the filename carry `v${VER}`.
+  - runs: |
+      VER="${{package.version}}"
+      case "$(uname -m)" in
+        x86_64)  goarch=amd64; sha=__SHA_AMD__ ;;
+        aarch64) goarch=arm64; sha=__SHA_ARM__ ;;
+        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+      esac
+
+      url="https://github.com/authelia/authelia/releases/download/v${VER}/authelia-v${VER}-linux-${goarch}.tar.gz"
+      curl -fsSL -o authelia.tar.gz "$url"
+      echo "${sha}  authelia.tar.gz" | sha256sum -c -
+      tar -xzf authelia.tar.gz   # flat: ./authelia + unit files + config.template.yml
+
+      # Install ONLY the server binary on PATH. The systemd/tmpfiles units and the config
+      # template are host-deployment scaffolding and have no place in a container image;
+      # the chart provides the configuration.yml.
+      install -Dm0755 authelia "${{targets.destdir}}/usr/bin/authelia"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/bin/authelia
+        authelia --version

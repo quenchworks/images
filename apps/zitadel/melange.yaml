@@ -1,0 +1,65 @@
+# Packages ZITADEL onto Wolfi. ZITADEL is a Go IAM/OIDC server with an Angular
+# console embedded into the binary via go:embed; a from-source build needs a
+# Node/Angular toolchain and is infeasible in CI, so we ship ZITADEL's OWN official
+# prebuilt server binary from the GitHub release (the same upstream-artifact pattern
+# clickhouse/mattermost use), then harden it on a minimal apko base and gate it
+# 0-CVE with Trivy. This is clean-room-consistent: it is upstream's published
+# artifact, not a Bitnami chart, and the scan still fully applies.
+#
+# The tarball unpacks to a single `zitadel-linux-<arch>/` dir containing the
+# `zitadel` binary plus LICENSE/README.md. The binary is a fully static (CGO_ENABLED=0)
+# Go binary -- `file` reports "statically linked" and `ldd` says "not a dynamic
+# executable" -- so the only runtime dependency is ca-certificates-bundle for TLS to
+# the external Postgres and to upstream OIDC/SMTP endpoints. We install just the
+# binary as /usr/bin/zitadel.
+package:
+  name: quench-zitadel
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened ZITADEL (identity & access management / OIDC), packaged on Wolfi"
+  copyright:
+    - license: AGPL-3.0-only
+  dependencies:
+    runtime:
+      - ca-certificates-bundle # TLS to the external PostgreSQL and to OIDC/SMTP endpoints
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - curl
+      - ca-certificates-bundle
+
+pipeline:
+  # ZITADEL publishes separate amd64/arm64 release tarballs whose filename carries the
+  # arch but NOT the version, so fetch the one matching the build arch by uname -m
+  # (x86_64->amd64, aarch64->arm64) with the arch-matching sha256 -- using the wrong
+  # arch yields a wrong-arch binary. The bare version gets a leading `v` only in the
+  # release path/tag.
+  - runs: |
+      VER="${{package.version}}"
+      case "$(uname -m)" in
+        x86_64)  zarch=amd64; sha=__SHA_AMD__ ;;
+        aarch64) zarch=arm64; sha=__SHA_ARM__ ;;
+        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+      esac
+
+      url="https://github.com/zitadel/zitadel/releases/download/v${VER}/zitadel-linux-${zarch}.tar.gz"
+      curl -fsSL -o zitadel.tar.gz "$url"
+      echo "${sha}  zitadel.tar.gz" | sha256sum -c -
+      tar -xzf zitadel.tar.gz   # unpacks to ./zitadel-linux-${zarch}/
+
+      # Install the single static server binary on PATH. The Angular console and all
+      # assets are embedded in the binary (go:embed), so there is nothing else to ship.
+      install -d -m 0755 "${{targets.destdir}}/usr/bin"
+      install -m 0755 "zitadel-linux-${zarch}/zitadel" "${{targets.destdir}}/usr/bin/zitadel"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/bin/zitadel
+        zitadel --version
