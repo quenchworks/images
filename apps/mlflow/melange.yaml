@@ -5,12 +5,19 @@
 # gate it 0-CVE with Trivy (which scans the venv's Python packages too). This is the
 # first pure-Python app in the catalog and establishes the venv-on-Wolfi pattern.
 #
-# We install `mlflow-skinny` (the tracking-server package WITHOUT the heavy ML libs
-# scipy/pandas/scikit-learn/matplotlib that explode both image size and CVE surface)
-# plus exactly what a production tracking server needs: gunicorn (the WSGI server the
-# `mlflow server` command launches), psycopg2-binary (Postgres backend-store driver)
-# and boto3 (S3 artifact store). The venv lives at /opt/mlflow/venv; we pin the build
-# version into mlflow-skinny so the install matches the catalog version exactly.
+# We install `mlflow-skinny` (the lightweight package, WITHOUT the heaviest CVE-prone
+# ML libs scipy/scikit-learn/matplotlib) and add ONLY the modules `mlflow server`
+# actually imports at boot. mlflow-skinny alone is client-only and `mlflow server`
+# crashes on a chain of ModuleNotFoundErrors; the complete minimal server set, found
+# empirically by booting the server until both /health and the experiments API return
+# 200, is: flask, flask-cors, sqlalchemy, alembic (DB schema/migrations for the backend
+# store), gunicorn (the WSGI server `mlflow server` launches), querystring-parser,
+# graphene (GraphQL endpoint), markdown, numpy, pandas (mlflow 3.x's genai scorer job
+# runner imports pandas at startup), huey (3.x background-job runner) and aiohttp. Plus
+# psycopg2-binary (Postgres backend-store driver) and boto3 (S3 artifact store). We do
+# NOT install full `mlflow` (it drags in scipy/scikit-learn/matplotlib — huge image +
+# CVE surface). The venv lives at /opt/mlflow/venv; mlflow-skinny is pinned to the build
+# version so the install matches the catalog version exactly.
 package:
   name: quench-mlflow
   version: __VER__
@@ -43,9 +50,9 @@ environment:
 
 pipeline:
   # Create an isolated venv and install the tracking-server stack from PyPI, pinned to
-  # the build version. --no-cache-dir keeps the layer small. mlflow 3.x's `mlflow server`
-  # launches gunicorn; psycopg2-binary is the Postgres backend-store driver; boto3 is the
-  # S3 artifact-store client. All shebangs in the venv point at /opt/mlflow/venv/bin/python.
+  # the build version. --no-cache-dir keeps the layer small. The package list is the
+  # complete minimal set `mlflow server` needs to boot and serve HTTP (see header). All
+  # shebangs in the venv point at /opt/mlflow/venv/bin/python.
   - runs: |
       VER="${{package.version}}"
       dest="${{targets.destdir}}"
@@ -54,11 +61,24 @@ pipeline:
       /opt/mlflow/venv/bin/pip install --no-cache-dir --upgrade pip
       /opt/mlflow/venv/bin/pip install --no-cache-dir \
         "mlflow-skinny==${VER}" \
+        flask \
+        flask-cors \
+        sqlalchemy \
+        alembic \
         gunicorn \
+        querystring-parser \
+        graphene \
+        markdown \
+        numpy \
+        pandas \
+        huey \
+        aiohttp \
         psycopg2-binary \
         boto3
 
-      # mlflow --version must work without a DB; assert it at build time.
+      # mlflow --version must work without a DB; assert it at build time. (The full
+      # server-boot HTTP check runs in test.sh against the assembled image, and in the
+      # chart's kind gate with a bundled Postgres.)
       /opt/mlflow/venv/bin/mlflow --version | grep -q "version ${VER}$"
 
       # Relocate the venv into the package tree under /opt/mlflow.
