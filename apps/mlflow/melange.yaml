@@ -1,0 +1,78 @@
+# Packages the MLflow Tracking Server onto Wolfi. MLflow is a pure-Python
+# (FastAPI/Flask + Gunicorn/Uvicorn) web app distributed as a pip package, not a
+# binary — there is no Wolfi `mlflow` package — so we install it from PyPI into a
+# virtualenv on a Wolfi python-3.12 base, then harden it on a minimal apko base and
+# gate it 0-CVE with Trivy (which scans the venv's Python packages too). This is the
+# first pure-Python app in the catalog and establishes the venv-on-Wolfi pattern.
+#
+# We install `mlflow-skinny` (the tracking-server package WITHOUT the heavy ML libs
+# scipy/pandas/scikit-learn/matplotlib that explode both image size and CVE surface)
+# plus exactly what a production tracking server needs: gunicorn (the WSGI server the
+# `mlflow server` command launches), psycopg2-binary (Postgres backend-store driver)
+# and boto3 (S3 artifact store). The venv lives at /opt/mlflow/venv; we pin the build
+# version into mlflow-skinny so the install matches the catalog version exactly.
+package:
+  name: quench-mlflow
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened MLflow Tracking Server, packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - python-3.12            # the venv references the system interpreter; it must be present at runtime
+      - ca-certificates-bundle # TLS to the external Postgres backend store / S3 artifact store
+      - glibc
+      - tzdata
+      # psycopg2-binary ships a manylinux wheel with a vendored libpq, so no system
+      # libpq runtime dep is needed. If Trivy ever flags the vendored libpq, switch the
+      # pip dep to the Wolfi py3.12-psycopg2 package + a `libpq` runtime dep here.
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - python-3.12
+      - py3.12-pip
+      - build-base             # fallback for any transitive dep that has no wheel (sdist build)
+
+pipeline:
+  # Create an isolated venv and install the tracking-server stack from PyPI, pinned to
+  # the build version. --no-cache-dir keeps the layer small. mlflow 3.x's `mlflow server`
+  # launches gunicorn; psycopg2-binary is the Postgres backend-store driver; boto3 is the
+  # S3 artifact-store client. All shebangs in the venv point at /opt/mlflow/venv/bin/python.
+  - runs: |
+      VER="${{package.version}}"
+      dest="${{targets.destdir}}"
+
+      python3.12 -m venv /opt/mlflow/venv
+      /opt/mlflow/venv/bin/pip install --no-cache-dir --upgrade pip
+      /opt/mlflow/venv/bin/pip install --no-cache-dir \
+        "mlflow-skinny==${VER}" \
+        gunicorn \
+        psycopg2-binary \
+        boto3
+
+      # mlflow --version must work without a DB; assert it at build time.
+      /opt/mlflow/venv/bin/mlflow --version | grep -q "version ${VER}$"
+
+      # Relocate the venv into the package tree under /opt/mlflow.
+      install -d "${dest}/opt/mlflow"
+      cp -a /opt/mlflow/venv "${dest}/opt/mlflow/venv"
+
+      # Convenience symlink on PATH.
+      install -d "${dest}/usr/bin"
+      ln -sf /opt/mlflow/venv/bin/mlflow "${dest}/usr/bin/mlflow"
+
+      chmod -R a+rX "${dest}/opt/mlflow"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /opt/mlflow/venv/bin/mlflow
+        mlflow --version

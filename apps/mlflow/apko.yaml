@@ -1,0 +1,70 @@
+# Assembles the MLflow Tracking Server runtime image. Minimal, nonroot, multi-arch,
+# SBOM by apko. Ships the pip venv under /opt/mlflow/venv with python-3.12 present at
+# runtime (the venv references the system interpreter). The entrypoint is the bare
+# `mlflow` launcher so the chart controls the args, e.g.:
+#   server --host 0.0.0.0 --port 5000 \
+#          --backend-store-uri postgresql://... \
+#          --artifacts-destination s3://... (or --default-artifact-root)
+# The tracking server listens on 5000 and only boots with a reachable backend store,
+# so the chart bundles a PostgreSQL (kind gate); readiness path is /health on 5000.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - glibc
+    - ca-certificates-bundle
+    - tzdata
+    - python-3.12              # the venv's interpreter
+    - quench-mlflow@local      # the mlflow-skinny venv + /usr/bin/mlflow symlink
+
+accounts:
+  groups:
+    - groupname: mlflow
+      gid: 1001
+  users:
+    - username: mlflow
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/mlflow
+
+environment:
+  PATH: /opt/mlflow/venv/bin:/usr/bin:/bin
+  HOME: /opt/mlflow
+  # Default filesystem artifact store writes to ./mlruns; the chart overrides backend
+  # store + artifact destination. TMPDIR keeps gunicorn worker temp under a writable dir.
+  TMPDIR: /tmp
+
+work-dir: /opt/mlflow
+
+paths:
+  # /opt/mlflow is writable by the server uid: the default filesystem artifact store
+  # (./mlruns) and any local scratch land here when no external stores are configured.
+  - path: /opt/mlflow
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /tmp
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o1777
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-mlflow"
+  org.opencontainers.image.licenses: "Apache-2.0"

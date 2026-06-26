@@ -1,0 +1,52 @@
+# Assembles the Thanos runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+#
+# Thanos is one binary with subcommands. The entrypoint is the bare binary
+# (/usr/bin/thanos) -- the chart passes the subcommand (query, store, compact,
+# sidecar, receive, rule, ...) plus that component's flags as args. There is no
+# shell wrapper.
+#
+# Default ports (advisory -- the chart sets the actual --http-address / --grpc-address):
+#   - 10902  HTTP   (web UI, /-/healthy, /-/ready, /metrics)
+#   - 10901  gRPC   (the Store API; thanos query dials sidecars/stores here)
+#
+# Read-only rootfs friendly: thanos writes nothing to the rootfs. Components that
+# need local state (store/compact caches, receive TSDB) take an explicit
+# --data-dir; object storage is configured via --objstore.config(-file). The chart
+# mounts writable volumes for those paths. busybox is included only as a minimal
+# debug shell; it is not on the entrypoint path.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - busybox
+    - ca-certificates-bundle
+    - quench-thanos@local
+
+accounts:
+  groups:
+    - groupname: thanos
+      gid: 1001
+  users:
+    - username: thanos
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/thanos
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-thanos"
+  org.opencontainers.image.licenses: "Apache-2.0"

@@ -1,0 +1,84 @@
+# Builds Thanos from source onto Wolfi. Single static Go binary (CGO disabled,
+# netgo), multi-arch. Output is a signed APK in Quenchworks' own repo. No upstream
+# distro binaries.
+#
+# Thanos is a set of components that turn Prometheus into a highly-available,
+# long-term-storage metrics system backed by object storage (a CNCF project). It
+# ships as ONE binary, `thanos`, with subcommands (query, store, compact, sidecar,
+# receive, rule, ...). It has NO bundled JS web UI build step -- the small status
+# UIs are committed Go-embedded assets in the tree -- so there is no Node toolchain.
+#
+# Thanos does NOT vendor its dependencies (no vendor/), so we build with -mod=mod
+# and let the Go module cache fetch deps in the build sandbox. We build from the
+# pinned git tag (git-checkout, verified by the dereferenced commit) rather than the
+# codeload tarball.
+#
+# Version is stamped exactly like upstream's promu build (.promu.yml): the ldflags
+# set the github.com/prometheus/common/version package vars, so `thanos --version`
+# reports the pinned release. Build tags netgo,slicelabels match .promu.yml.
+package:
+  name: quench-thanos
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Thanos (highly-available Prometheus with long-term object-storage), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      # go.mod declares go 1.25; .promu.yml pins the toolchain to 1.25. Use go-1.26
+      # (newest, clears stdlib CVE advisories) with GOTOOLCHAIN=local so go.mod's
+      # 1.25 directive does not trigger a toolchain download.
+      - go-1.26
+
+pipeline:
+  # git-checkout, not fetch: building from the pinned git tag avoids the slow
+  # codeload.github.com CDN (the source tree is ~30 MB) and is the robust source.
+  # git-checkout verifies the dereferenced commit, not the annotated tag object.
+  - uses: git-checkout
+    with:
+      repository: https://github.com/thanos-io/thanos
+      tag: v${{package.version}}
+      expected-commit: __COMMIT__
+
+  - name: Build the thanos binary (static, CGO off, netgo+slicelabels)
+    runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's 1.25
+      export GO111MODULE=on
+
+      REVISION="$(git rev-parse HEAD)"
+      DATE="$(date -u +'%Y%m%d-%H:%M:%S')"
+      VERPKG="github.com/prometheus/common/version"
+      # Mirror upstream/promu (.promu.yml) version stamping so `thanos --version`
+      # and the build_info metric report the pinned release.
+      LDFLAGS="-s -w \
+        -X ${VERPKG}.Version=${{package.version}} \
+        -X ${VERPKG}.Revision=${REVISION} \
+        -X ${VERPKG}.Branch=HEAD \
+        -X ${VERPKG}.BuildUser=quenchworks \
+        -X ${VERPKG}.BuildDate=${DATE}"
+
+      # netgo: pure-Go resolver (no libc dependency, matches upstream's static build).
+      # slicelabels: upstream's default build tag (.promu.yml tags.all).
+      go build -trimpath -tags "netgo,slicelabels" -ldflags "${LDFLAGS}" \
+        -o "${{targets.destdir}}/usr/bin/thanos" ./cmd/thanos
+
+test:
+  pipeline:
+    - runs: |
+        thanos --version
+        thanos query --help >/dev/null
