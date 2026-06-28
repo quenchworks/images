@@ -43,10 +43,17 @@ def npm(pkg):
     return list(data["versions"])
 
 def wolfi(pkg):
-    """Versions of a Wolfi apk (X.Y.Z, -rN stripped)."""
+    """Versions of a flat Wolfi apk (X.Y.Z, -rN stripped)."""
     out = subprocess.run(["python3", f"{BASE}/scripts/wolfi-latest.py", pkg, "40"],
                          capture_output=True, text=True).stdout.split()
     return [v.split("-r")[0] for v in out]
+
+def wolfi_majors(prefix, n=4):
+    """Newest patch of the latest N major lines for versioned Wolfi apks
+    (e.g. prefix 'go-' -> go-1.26 / go-1.25 ...). Returns version strings."""
+    out = subprocess.run(["python3", f"{BASE}/scripts/wolfi-latest.py", "--majors", prefix, str(n)],
+                         capture_output=True, text=True).stdout.split("\n")
+    return [ln.split("->")[-1].strip().split("-r")[0] for ln in out if "->" in ln]
 
 # ---- report --------------------------------------------------------------
 def report(app, candidates, n=None, keep=None):

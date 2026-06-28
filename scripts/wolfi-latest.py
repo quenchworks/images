@@ -51,11 +51,12 @@ def main():
     if a and a[0] == "--majors":
         prefix, n = a[1], int(a[2]) if len(a) > 2 else 4
         # packages named <prefix><major> with a purely-numeric major suffix
+        # major suffix may be an int (erlang-27, nodejs-26) or dotted (go-1.26)
         majors = {}
         for p in idx:
-            m = re.fullmatch(re.escape(prefix) + r'(\d+)', p)
+            m = re.fullmatch(re.escape(prefix) + r'(\d+(?:\.\d+)*)', p)
             if m:
-                majors[int(m.group(1))] = p
+                majors[tuple(int(x) for x in m.group(1).split("."))] = p
         for maj in sorted(majors, reverse=True)[:n]:
             newest = best_per_release(idx[majors[maj]])[0]
             print(f"{majors[maj]}  ->  {newest}")
