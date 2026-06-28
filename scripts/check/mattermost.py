@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
-# mattermost: Wolfi apk (FROM_SOURCE=0). Window = latest patch per line in build.conf.
-from _lib import wolfi, report
-report("mattermost", wolfi("mattermost"))
+# mattermost: build fetches releases.mattermost.com/<ver>/mattermost-team-...,
+# but versions track GitHub releases (mattermost/mattermost), tag vX.Y.Z.
+from _lib import github, report
+report("mattermost", github("mattermost/mattermost"))

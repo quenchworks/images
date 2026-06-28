@@ -42,6 +42,10 @@ def npm(pkg):
     data = json.load(urllib.request.urlopen(f"https://registry.npmjs.org/{pkg}", timeout=30))
     return list(data["versions"])
 
+def pypi(pkg):
+    data = json.load(urllib.request.urlopen(f"https://pypi.org/pypi/{pkg}/json", timeout=30))
+    return list(data["releases"])
+
 def wolfi(pkg):
     """Versions of a flat Wolfi apk (X.Y.Z, -rN stripped)."""
     out = subprocess.run(["python3", f"{BASE}/scripts/wolfi-latest.py", pkg, "40"],

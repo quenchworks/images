@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
-# authelia: Wolfi apk (FROM_SOURCE=0). Window = latest patch per line in build.conf.
-from _lib import wolfi, report
-report("authelia", wolfi("authelia"))
+# authelia: GitHub release asset (authelia/authelia), tag vX.Y.Z. FROM_SOURCE=0
+# but the melange fetches the upstream release binary, so the source is GitHub.
+from _lib import github, report
+report("authelia", github("authelia/authelia"))
