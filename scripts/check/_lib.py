@@ -52,6 +52,68 @@ def wolfi(pkg):
                          capture_output=True, text=True).stdout.split()
     return [v.split("-r")[0] for v in out]
 
+def wolfi_match(pattern):
+    """{pkgname: best_version} for every Wolfi apk whose name matches `pattern`."""
+    out = subprocess.run(["python3", f"{BASE}/scripts/wolfi-latest.py", "--match", pattern],
+                         capture_output=True, text=True).stdout.splitlines()
+    return {ln.split("\t")[0]: ln.split("\t")[1].split("-r")[0] for ln in out if "\t" in ln}
+
+def report_wolfi_suffix(app, regex, label_fmt):
+    """Per-line check for apks named with a suffix (e.g. dotnet-8-sdk,
+    aspnet-9-runtime). `regex` matches them; the FIRST integer in the pkg name is
+    the major/line. Compare each line's newest to our current entry sharing it."""
+    m = wolfi_match(regex)
+    byline = {}
+    for p, v in m.items():
+        maj = re.findall(r'\d+', p)[0]
+        if maj not in byline or vkey(v) > vkey(byline[maj]):
+            byline[maj] = v
+    cur = current(app); behind = []
+    print(app)
+    for c in cur:
+        maj = re.findall(r'\d+', c)[0]
+        w = byline.get(maj)
+        upd = bool(w) and vkey(w) > vkey(c)
+        if upd: behind.append(w)
+        print(f"  {label_fmt.format(maj=maj)}: have={c:>10s}  latest={(w or '?'):>10s}  {'UPDATE' if upd else 'ok'}")
+    print(f"  => {'UPDATE -> ' + str(behind) if behind else 'ok'}")
+    return behind
+
+def wolfi_one(pkg):
+    """Newest X.Y.Z of a single Wolfi apk, or None."""
+    vs = wolfi(pkg)
+    return sorted(vs, key=vkey, reverse=True)[0] if vs else None
+
+def report_wolfi_lines(app, prefix, depth, line_only=False):
+    """Per-line Wolfi check (like node): for each version line we ship (keyed to
+    `depth` numeric components), compare Wolfi's newest patch for prefix-<line>
+    against our current entry. prefix+line must be the real apk name (go-1.26,
+    openjdk-21, php-8.4, ...).
+    line_only: we pin the LINE only (e.g. php '8.3', patch floats) — compare at
+    line granularity so a floating patch isn't a false 'UPDATE'; only a NEWER
+    line counts."""
+    cur = current(app)
+    majors = wolfi_majors(prefix, 12)
+    wmap = {}
+    for w in majors:
+        wmap[".".join(re.findall(r'\d+', w)[:depth])] = w
+    behind = []
+    print(app)
+    for c in cur:
+        lk = ".".join(re.findall(r'\d+', c)[:depth])
+        w = wmap.get(lk)
+        cmpw = vkey(".".join(re.findall(r'\d+', w)[:depth])) if (w and line_only) else (vkey(w) if w else None)
+        upd = bool(w) and cmpw > vkey(c)
+        if upd: behind.append(w)
+        print(f"  {prefix}{lk}: have={c:>12s}  latest={(w or '?'):>12s}  {'UPDATE' if upd else 'ok'}")
+    # a brand-new upstream line beyond our newest (window-shift candidate)
+    ours_top = max((vkey(".".join(re.findall(r'\d+', c)[:depth])) for c in cur), default=(0,))
+    newer = sorted((k for k in wmap if vkey(k) > ours_top), key=vkey, reverse=True)
+    if newer:
+        print(f"  NEW LINE available: {prefix}{newer[0]} ({wmap[newer[0]]})")
+    print(f"  => {'UPDATE -> ' + str(behind) if behind else ('NEW LINE ' + newer[0] if newer else 'ok')}")
+    return behind
+
 def wolfi_majors(prefix, n=4):
     """Newest patch of the latest N major lines for versioned Wolfi apks
     (e.g. prefix 'go-' -> go-1.26 / go-1.25 ...). Returns version strings."""

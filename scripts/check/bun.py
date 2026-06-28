@@ -1,4 +1,4 @@
 #!/usr/bin/env python3
-# bun: Wolfi apk (FROM_SOURCE=0). Window = latest patch per line in build.conf.
+# bun: flat Wolfi apk 'bun' — latest patch stream.
 from _lib import wolfi, report
 report("bun", wolfi("bun"))

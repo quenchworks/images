@@ -1,4 +1,4 @@
 #!/usr/bin/env python3
-# gradle: Wolfi apk (FROM_SOURCE=0). Window = latest patch per line in build.conf.
+# gradle: flat Wolfi apk 'gradle-9' — latest patch stream.
 from _lib import wolfi, report
-report("gradle", wolfi("gradle"))
+report("gradle", wolfi("gradle-9"))

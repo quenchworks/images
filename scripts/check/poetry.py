@@ -1,4 +1,4 @@
 #!/usr/bin/env python3
-# poetry: Wolfi apk (FROM_SOURCE=0). Window = latest patch per line in build.conf.
+# poetry: flat Wolfi apk 'py3.13-poetry-bin' — latest patch stream.
 from _lib import wolfi, report
-report("poetry", wolfi("poetry"))
+report("poetry", wolfi("py3.13-poetry-bin"))

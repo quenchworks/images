@@ -61,6 +61,13 @@ def main():
             newest = best_per_release(idx[majors[maj]])[0]
             print(f"{majors[maj]}  ->  {newest}")
         return
+    if a and a[0] == "--match":
+        # emit "pkg<TAB>bestversion" for every package whose name matches the regex
+        pat = re.compile(a[1])
+        for p in sorted(idx):
+            if pat.search(p):
+                print(f"{p}\t{best_per_release(idx[p])[0]}")
+        return
     pkg = a[0]; n = int(a[1]) if len(a) > 1 else 3
     if pkg not in idx:
         print(f"NOT IN WOLFI: {pkg}", file=sys.stderr); sys.exit(1)

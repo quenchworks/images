@@ -1,4 +1,4 @@
 #!/usr/bin/env python3
-# erlang: Wolfi apk (FROM_SOURCE=0). Window = latest patch per line in build.conf.
-from _lib import wolfi, report
-report("erlang", wolfi("erlang"))
+# erlang: Wolfi versioned apk erlang-<line>. Per-line newest-patch check.
+from _lib import report_wolfi_lines
+report_wolfi_lines("erlang", "erlang-", 1)

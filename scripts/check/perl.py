@@ -1,4 +1,4 @@
 #!/usr/bin/env python3
-# perl: Wolfi apk (FROM_SOURCE=0). Window = latest patch per line in build.conf.
+# perl: flat Wolfi apk 'perl' — latest patch stream.
 from _lib import wolfi, report
 report("perl", wolfi("perl"))

@@ -1,4 +1,4 @@
 #!/usr/bin/env python3
-# go: Wolfi apk (FROM_SOURCE=0). Window = latest patch per line in build.conf.
-from _lib import wolfi, report
-report("go", wolfi("go"))
+# go: Wolfi versioned apk go-<minor> (go-1.26). Per-line: newest patch per line.
+from _lib import report_wolfi_lines
+report_wolfi_lines("go", "go-", 2)
