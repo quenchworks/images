@@ -40,6 +40,11 @@ environment:
       - busybox
       - ca-certificates-bundle
       - nodejs-22
+      - npm                    # re2/sharp probe a PREBUILT binary via npm FIRST; without npm
+                               # that path fails and they fall back to a GCC-16 source compile
+                               # (re2's vendored abseil won't compile under GCC 16). With npm
+                               # present they use the prebuilt and the install succeeds.
+      - node-gyp               # the standalone node-gyp install scripts shell out to
       - pnpm                   # Ghost 6 ships pnpm-lock.yaml; pnpm is the prod-install path (Wolfi package)
       - python-3.13            # node-gyp requires python3 at build time (Wolfi names it python-3.13)
 
@@ -77,10 +82,24 @@ pipeline:
       install -d "$app"
       # Install the whole app tree (index.js, ghost.js, core/, content/, node_modules/,
       # package.json, ...) read-only under /var/lib/ghost. The server boots via
-      # `node index.js` from this dir.
-      cp -a ./. "$app/"
+      # `node index.js` from this dir. Copy top-level entries individually and SKIP
+      # melange-out: melange's build-output dir (which holds destdir) lives inside this
+      # workspace, so a blanket `cp -a ./.` would recurse into the very dir we're writing.
+      # CI runs melange with working-directory apps/ghost, so the workspace also holds the
+      # recipe + CI-generated files (build.conf, *.yaml, test.sh, rendered files, signing
+      # keys, packages/, image.tar, melange-out, sbom). Copy ONLY the extracted+installed
+      # Ghost tree by skipping that fixed denylist; a blanket `cp -a *` would leak them in.
+      for item in * .[!.]* ..?*; do
+        [ -e "$item" ] || continue
+        case "$item" in
+          melange-out|melange.rsa|melange.rsa.pub|packages|build.conf|melange.yaml|apko.yaml|test.sh|melange.rendered.yaml|apko.rendered.yaml|image.tar|sbom-*|*.log|.git) continue ;;
+        esac
+        cp -a "$item" "$app/"
+      done
       # The bootable default content tree (themes/source is the active default theme) ships
       # inside the tarball at content/ — keep it so a standalone container serves a 200.
+      # World-readable so a read-only deployment can still serve; ownership (uid 1001) is
+      # set recursively in apko (the melange sandbox cannot chown to a uid it doesn't map).
       chmod -R a+rX "$app"
 
 test:

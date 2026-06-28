@@ -39,6 +39,11 @@ entrypoint:
 
 environment:
   NODE_ENV: production
+  # Bind all interfaces, not Ghost's default 127.0.0.1 — otherwise the server only answers
+  # on container loopback and a Kubernetes Service (or docker port-forward) can't reach it.
+  # The official Ghost image forces this too.
+  server__host: "0.0.0.0"
+  server__port: "2368"
   # Where Ghost stores themes/images/data/logs/settings. Overridable by the chart, but
   # this default points at the writable PVC mount baked below.
   paths__contentPath: /var/lib/ghost/content
@@ -47,14 +52,20 @@ environment:
 work-dir: /var/lib/ghost
 
 paths:
-  # Ghost's content dir must be writable by the runtime user (themes, images, data,
-  # logs, settings). type: directory adjusts ownership without disturbing the app tree
-  # that quench-ghost installed. The chart mounts a PVC over this path.
-  - path: /var/lib/ghost/content
+  # The whole app tree must be owned by the runtime user (uid/gid 1001). The package's
+  # files are copied with cp -a (build-user ownership) and the melange sandbox cannot
+  # chown to 1001, so apko does it here at assembly time as root. recursive: true also
+  # fixes the content/ SUBDIRS (data, themes, logs, ...) — leaving content/data root-owned
+  # breaks Ghost (SQLITE_CANTOPEN on dev sqlite, and write failures for logs/images).
+  # Ghost writes caches/lock files onto its app tree at runtime, so the chart runs with
+  # readOnlyRootFilesystem disabled and the runtime user needs ownership of the tree.
+  # The chart mounts a content PVC over /var/lib/ghost/content (seeded by an initContainer).
+  - path: /var/lib/ghost
     type: directory
     uid: 1001
     gid: 1001
     permissions: 0o755
+    recursive: true
 
 archs:
   - x86_64

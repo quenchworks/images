@@ -14,14 +14,15 @@ cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
 echo "starting $IMAGE"
-# Ghost listens on 2368. content + tmp must be writable for the nonroot user on a
-# read-only rootfs; mount tmpfs at both and point Ghost's content path at the writable
-# one. NODE_ENV=development selects the default sqlite DB (no external MySQL needed).
+# Ghost listens on 2368. The image SHIPS its content dir (themes + the data/ subdir the
+# dev sqlite DB lives in) at /var/lib/ghost/content; do NOT mount an empty volume over it
+# (that hides the shipped tree and dev-mode sqlite fails with SQLITE_CANTOPEN). The default
+# container layer is writable and the dir is owned by uid 1001, so a standalone boot works
+# as-is. (In Kubernetes a PVC overmounts this path and the chart's seed initContainer
+# repopulates the defaults.) NODE_ENV=development selects the default sqlite DB.
 docker run -d --name "$NAME" \
-  --tmpfs /var/lib/ghost/content:rw,uid=1001,gid=1001,mode=0755 \
   --tmpfs /tmp:rw,mode=1777 \
   -e NODE_ENV=development \
-  -e paths__contentPath=/var/lib/ghost/content \
   -e url=http://127.0.0.1:2368 \
   -p 127.0.0.1:2368:2368 "$IMAGE" >/dev/null
 
