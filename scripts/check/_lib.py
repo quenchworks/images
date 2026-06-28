@@ -122,12 +122,19 @@ def wolfi_majors(prefix, n=4):
     return [ln.split("->")[-1].strip().split("-r")[0] for ln in out if "->" in ln]
 
 # ---- report --------------------------------------------------------------
-def report(app, candidates, n=None, keep=None):
+def report(app, candidates, n=None, keep=None, clean=None):
     """Compare the newest `n` source versions to what we ship.
-    keep: optional predicate to filter candidate versions (e.g. drop majors)."""
+    keep:  predicate to filter raw candidates (e.g. drop prereleases/majors).
+    clean: map a raw tag to a version string (e.g. 'REL_17_2' -> '17.2')."""
     cur = current(app)
     n = n or len(cur) or 3
-    cands = [c for c in candidates if (keep(c) if keep else True) and re.match(r'\d', c)]
+    cands = []
+    for c in candidates:
+        if keep and not keep(c):
+            continue
+        cv = clean(c) if clean else c
+        if re.match(r'\d', cv):
+            cands.append(cv)
     top = sorted(set(cands), key=vkey, reverse=True)[:n]
     have = vkey(cur[-1]) if cur else (0,)
     behind = [v for v in top if vkey(v) > have]

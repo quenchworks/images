@@ -1,21 +1,24 @@
 #!/usr/bin/env bash
-# Smoke test for a built quench-php image. Usage: test.sh <image-ref> <minor>
-# where <minor> is the expected PHP minor version, e.g. 8.4.
+# Smoke test for a built quench-php image. Usage: test.sh <image-ref> <version>
+# where <version> is the expected PHP version (full X.Y.Z, e.g. 8.4.22; a bare
+# minor like 8.4 also works as a prefix).
 #
 # This is a LANGUAGE/BASE image: the interpreter IS the entrypoint, there is no
 # long-running service to ping. So we exercise php + its extensions directly
 # under a READ-ONLY rootfs and confirm the nonroot uid.
 set -euo pipefail
 
-IMAGE="${1:?usage: test.sh <image-ref> <minor>}"
-MINOR="${2:?usage: test.sh <image-ref> <minor>}"   # e.g. 8.4
+IMAGE="${1:?usage: test.sh <image-ref> <version>}"
+EXPECT="${2:?usage: test.sh <image-ref> <version>}"   # e.g. 8.4.22
 
-echo "== php -v matches $MINOR (default entrypoint) =="
+echo "== php -v matches $EXPECT (default entrypoint) =="
 ver="$(docker run --rm --read-only --tmpfs /tmp "$IMAGE" -v 2>&1)"
 echo "$ver"
+# php -v prints "PHP X.Y.Z (cli) ...": match EXPECT at a word boundary so a full
+# X.Y.Z (followed by a space) and a bare minor (followed by a dot) both pass.
 case "$ver" in
-  "PHP $MINOR."*) : ;;
-  *) echo "expected 'PHP $MINOR.*', got '$ver'"; exit 1 ;;
+  "PHP $EXPECT "* | "PHP $EXPECT."*) : ;;
+  *) echo "expected 'PHP $EXPECT', got '$ver'"; exit 1 ;;
 esac
 
 echo "== php -m lists the expected extensions =="
