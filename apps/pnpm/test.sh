@@ -1,21 +1,22 @@
 #!/usr/bin/env bash
-# Smoke test for a built quench-pnpm image. Usage: test.sh <image-ref> <major>
-# where <major> is the expected pnpm major version, e.g. 10 or 11.
+# Smoke test for a built quench-pnpm image. Usage: test.sh <image-ref> <version>
+# where <version> is the expected pnpm version (full X.Y.Z, e.g. 11.9.0; a bare
+# major like 11 also works as a prefix).
 #
 # This is a BUILD/PACKAGE-TOOL image: `pnpm` (run through the node interpreter)
 # IS the entrypoint, there is no long-running service. We exercise pnpm + the
 # bundled node directly under a READ-ONLY rootfs and confirm the nonroot uid.
 set -euo pipefail
 
-IMAGE="${1:?usage: test.sh <image-ref> <major>}"
-MAJOR="${2:?usage: test.sh <image-ref> <major>}"   # e.g. 10
+IMAGE="${1:?usage: test.sh <image-ref> <version>}"
+EXPECT="${2:?usage: test.sh <image-ref> <version>}"   # e.g. 11.9.0
 
-echo "== pnpm --version matches $MAJOR (default entrypoint) =="
+echo "== pnpm --version matches $EXPECT (default entrypoint) =="
 ver="$(docker run --rm --read-only --tmpfs /tmp "$IMAGE" --version 2>&1)"
 echo "$ver"
 case "$ver" in
-  "$MAJOR."*) : ;;
-  *) echo "expected '$MAJOR.*', got '$ver'"; exit 1 ;;
+  "$EXPECT"|"$EXPECT".*) : ;;
+  *) echo "expected '$EXPECT', got '$ver'"; exit 1 ;;
 esac
 
 echo "== node -v works (the runtime backing pnpm) =="

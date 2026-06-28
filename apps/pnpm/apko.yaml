@@ -1,30 +1,29 @@
-# Assembles a hardened pnpm package-manager image directly from Wolfi's own
-# versioned `pnpm` package layered onto a pinned Node.js runtime. No Dockerfile,
-# NO melange build -- apko pulls the `pnpm-__PNPMVER__` package plus `nodejs-22`
-# straight from the Wolfi `os` repository, so each pnpm major line is a pure
-# package-assembly.
+# Assembles a hardened pnpm package-manager image from our own melange-built
+# `quench-pnpm` package (the EXACT upstream pnpm npm release, sha256-pinned)
+# layered onto a pinned Node.js runtime. We build pnpm from the npm tarball
+# rather than apko-pulling Wolfi's `pnpm` apk, because Wolfi lags upstream and
+# we want exact version control.
 #
 # IMAGE-ONLY -- no Helm chart. This is a BUILD/PACKAGE-TOOL image: the 0-CVE,
 # signed, nonroot, multi-arch answer to the community `pnpm` images. Developers
 # `FROM` it in CI or run `pnpm` directly (`docker run <img> install`).
 #
-# TEMPLATE NOTE: `__PNPMVER__` is a build-time placeholder. CI substitutes the
-# pnpm major-line package suffix per matrix entry with `sed` before apko runs.
-# Wolfi packages the major lines as `pnpm` (the current 10.x line) and
-# `pnpm-11` (the 11.x line); both ship pnpm as a node `.cjs` whose
-# `#!/usr/bin/env node` shebang resolves against the bundled Node runtime, so
-# nodejs-22 is added explicitly to give `node -v` and to back the launcher.
+# quench-pnpm ships pnpm as a node `.cjs` whose `#!/usr/bin/env node` shebang
+# resolves against the bundled Node runtime, so nodejs-22 is added explicitly to
+# give `node -v` and to back the launcher.
 contents:
   keyring:
     - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
   repositories:
     - https://packages.wolfi.dev/os
+    - "@local ./packages"
   packages:
     - wolfi-baselayout
     - ca-certificates-bundle
     - nodejs-22                   # LTS Node runtime backing pnpm's launcher
     - npm                         # standalone npm; depends on cmd:node
-    - __PNPMPKG__                 # the pinned pnpm package line from Wolfi
+    - quench-pnpm@local           # our pinned pnpm, built from the npm tarball
 
 accounts:
   groups:

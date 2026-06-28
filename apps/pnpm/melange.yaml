@@ -1,0 +1,44 @@
+# pnpm from-source: pnpm ships on npm as a SELF-CONTAINED, prebuilt bundle
+# (bin/pnpm.cjs + a bundled dist/), so there is nothing to compile -- we just
+# fetch the exact npm release tarball (sha256-pinned) and lay it down under
+# /usr/lib/node_modules/pnpm on the Wolfi nodejs-22 runtime. This lets us pin
+# EXACT upstream pnpm versions that Wolfi's own apk lags behind. __VER__ and
+# __SHA256__ are rendered in from apps/pnpm/build.conf.
+package:
+  name: quench-pnpm
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened pnpm (prebuilt npm release on Wolfi Node)"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - nodejs-22
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+
+pipeline:
+  # npm tarballs extract to ./package/; keep that dir (fetch defaults to
+  # strip-components: 1, which would flatten it away).
+  - uses: fetch
+    with:
+      uri: https://registry.npmjs.org/pnpm/-/pnpm-${{package.version}}.tgz
+      expected-sha256: __SHA256__
+      strip-components: 0
+  - runs: |
+      set -eu
+      dest="${{targets.destdir}}/usr/lib/node_modules/pnpm"
+      install -d "$dest"
+      cp -a package/. "$dest/"
+      # PATH launcher; the .cjs carries `#!/usr/bin/env node`. The image
+      # entrypoint runs it through node explicitly (shell-less rootfs).
+      install -d "${{targets.destdir}}/usr/bin"
+      ln -s ../lib/node_modules/pnpm/bin/pnpm.cjs "${{targets.destdir}}/usr/bin/pnpm"

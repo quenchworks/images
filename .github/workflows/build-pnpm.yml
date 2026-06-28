@@ -1,19 +1,18 @@
 name: build-pnpm
 
-# LANGUAGE-RUNTIMES track. Hardened OpenJDK (JDK) base images, assembled
-# straight from Wolfi's versioned `openpnpm-N-default-pnpm` packages with apko --
-# NO melange/from-source step, since Wolfi already packages OpenJDK. A MATRIX
-# fans out over the latest 3 LTS lines; each one runs a NATIVE per-arch apko
-# build (no QEMU), the hard 0-CVE Trivy gate, then a per-version merge job that
-# assembles + signs + attests the multi-arch index.
+# LANGUAGE-RUNTIMES track. Hardened pnpm images built FROM SOURCE with melange:
+# each release is the exact upstream pnpm npm tarball (sha256-pinned) installed
+# onto the Wolfi nodejs-22 runtime, then assembled with apko. A MATRIX fans out
+# over the latest 3 pnpm lines (build.conf VERSIONS); each runs a NATIVE per-arch
+# melange build + apko assembly (no QEMU), the hard 0-CVE Trivy gate, then a
+# per-version merge job that assembles + signs + attests the multi-arch index.
 #
-# IMAGE-ONLY: the JDK is a base/runtime image with no Helm chart, so there is
+# IMAGE-ONLY: pnpm is a build/package-tool image with no Helm chart, so there is
 # NO charts-repo dispatch.
 #
-# TEMPLATE: to add another LTS (or another runtime), copy a matrix entry and
-# change `ver`; apps/pnpm/apko.yaml carries the `__VER__` placeholder that CI
-# substitutes per entry (it also feeds JAVA_HOME). No :latest tag is ever
-# published.
+# TEMPLATE: to bump/add a version, edit apps/pnpm/build.conf VERSIONS + SHA256;
+# render() substitutes __VER__/__SHA256__ into melange.yaml + apko.yaml per
+# matrix entry. No :latest tag is ever published.
 on:
   workflow_dispatch:
 permissions:
@@ -47,8 +46,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # latest 3 LTS Wolfi-packaged OpenJDK lines x both native arches,
-        # driven by apps/pnpm/build.conf VERSIONS (the single source of truth).
+        # latest 3 pnpm lines x both native arches, driven by
+        # apps/pnpm/build.conf VERSIONS (the single source of truth).
         ver: ${{ fromJson(needs.prep.outputs.vers) }}
         arch:
           - { name: x86_64,  platform: amd64, runner: ubuntu-latest }
@@ -60,19 +59,41 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install apko (native ${{ matrix.arch.platform }})
+      - name: Install melange and apko (native ${{ matrix.arch.platform }})
         working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          APKO_VER="$(curl -fsSL https://api.github.com/repos/chainguard-dev/apko/releases/latest | grep -m1 '"tag_name"' | cut -d'"' -f4)"
+          set -euo pipefail
+          sudo apt-get update && sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          MELANGE_VER=v0.53.0
+          curl -fsSL "https://github.com/chainguard-dev/melange/releases/download/${MELANGE_VER}/melange_${MELANGE_VER#v}_linux_${{ matrix.arch.platform }}.tar.gz" \
+            | sudo tar xz --strip-components=1 -C /usr/local/bin
+          APKO_VER=""
+          for i in 1 2 3 4 5; do
+            APKO_VER="$(gh api repos/chainguard-dev/apko/releases/latest --jq .tag_name 2>/dev/null || true)"
+            [ -n "$APKO_VER" ] && break
+            echo "apko lookup attempt $i failed; retrying..." >&2; sleep 5
+          done
+          [ -n "$APKO_VER" ] || { echo "could not resolve latest apko"; exit 1; }
           curl -fsSL "https://github.com/chainguard-dev/apko/releases/download/${APKO_VER}/apko_${APKO_VER#v}_linux_${{ matrix.arch.platform }}.tar.gz" \
             | sudo tar xz --strip-components=1 -C /usr/local/bin
+          melange version | head -1
           apko version | head -1
 
-      - name: Render apko config for OpenJDK ${{ matrix.ver }} (build.conf render)
+      - name: Render recipes for pnpm ${{ matrix.ver }} (build.conf render)
         run: |
           set -euo pipefail
           source build.conf
-          sed -e "$(render '${{ matrix.ver }}')" apko.yaml > apko.rendered.yaml
+          prog="$(render '${{ matrix.ver }}')"
+          sed -e "$prog" melange.yaml > melange.rendered.yaml
+          sed -e "$prog" apko.yaml    > apko.rendered.yaml
+
+      - name: Build package from source (native ${{ matrix.arch.name }})
+        run: |
+          melange keygen melange.rsa
+          melange build melange.rendered.yaml --arch ${{ matrix.arch.name }} --signing-key melange.rsa --out-dir ./packages
 
       - name: Assemble single-arch image for the scan gate
         run: apko build apko.rendered.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}
@@ -157,4 +178,4 @@ jobs:
           subject-digest: ${{ steps.merge.outputs.digest }}
           push-to-registry: true
 
-      # IMAGE-ONLY: no charts-repo dispatch. The JDK is a base/runtime image.
+      # IMAGE-ONLY: no charts-repo dispatch. pnpm is a build/package-tool image.
