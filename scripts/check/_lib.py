@@ -46,6 +46,45 @@ def pypi(pkg):
     data = json.load(urllib.request.urlopen(f"https://pypi.org/pypi/{pkg}/json", timeout=30))
     return list(data["releases"])
 
+def scrape(url, pattern):
+    """Fetch a directory-listing / page and return all regex group-1 matches."""
+    html = urllib.request.urlopen(url, timeout=30).read().decode("utf-8", "replace")
+    return re.findall(pattern, html)
+
+def json_get(url):
+    return json.load(urllib.request.urlopen(url, timeout=30))
+
+def report_lines(app, candidates, depth, keep=None, clean=None):
+    """Source-agnostic per-line check: from a flat candidate list, take the
+    newest per version line (keyed to `depth` numeric components) and compare to
+    our current entry on that line. Mirrors report_wolfi_lines for non-Wolfi
+    sources (ftp listings, vendor JSON, git tags)."""
+    cur = current(app)
+    wmap = {}
+    for c in candidates:
+        if keep and not keep(c):
+            continue
+        cv = clean(c) if clean else c
+        if not re.match(r'\d', cv):
+            continue
+        lk = ".".join(re.findall(r'\d+', cv)[:depth])
+        if lk not in wmap or vkey(cv) > vkey(wmap[lk]):
+            wmap[lk] = cv
+    behind = []
+    print(app)
+    for c in cur:
+        lk = ".".join(re.findall(r'\d+', c)[:depth])
+        w = wmap.get(lk)
+        upd = bool(w) and vkey(w) > vkey(c)
+        if upd: behind.append(w)
+        print(f"  {lk}: have={c:>12s}  latest={(w or '?'):>12s}  {'UPDATE' if upd else 'ok'}")
+    ours_top = max((vkey(".".join(re.findall(r'\d+', c)[:depth])) for c in cur), default=(0,))
+    newer = sorted((k for k in wmap if vkey(k) > ours_top), key=vkey, reverse=True)
+    if newer:
+        print(f"  NEW LINE available: {newer[0]} ({wmap[newer[0]]})")
+    print(f"  => {'UPDATE -> ' + str(behind) if behind else ('NEW LINE ' + newer[0] if newer else 'ok')}")
+    return behind
+
 def wolfi(pkg):
     """Versions of a flat Wolfi apk (X.Y.Z, -rN stripped)."""
     out = subprocess.run(["python3", f"{BASE}/scripts/wolfi-latest.py", pkg, "40"],
