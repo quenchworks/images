@@ -102,7 +102,7 @@ def is_version_tag(tag: str) -> bool:
 
 # Editorial fields carried straight through from catalog.yaml into the lock, so
 # the lock is the single complete dataset the website reshapes (no second source).
-EDITORIAL_FIELDS = ("category", "summary", "source", "upstream", "license", "tier", "status", "cleanAlternative")
+EDITORIAL_FIELDS = ("category", "summary", "source", "upstream", "license", "tier", "status", "cleanAlternative", "knownIssue")
 
 
 def versions_of(pkg: str, repo: str, with_meta: bool) -> list:
