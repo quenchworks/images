@@ -1,0 +1,117 @@
+# Builds the TimescaleDB PostgreSQL extension (time-series) onto Wolfi's
+# PostgreSQL 17 and layers it on top, like postgres-documentdb. Built Apache-only
+# (-DAPACHE_ONLY=1), which drops the TSL community-licensed code and keeps the
+# package cleanly Apache-2.0. Output is a signed APK in Quenchworks' own repo.
+#
+# PostgreSQL 17 itself comes from Wolfi (built from source there, 0-CVE) and is
+# layered in by apko; our package adds the timescaledb .so + SQL and the bootstrap
+# entrypoint that preloads it and runs CREATE EXTENSION timescaledb CASCADE.
+package:
+  name: quench-timescaledb
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened PostgreSQL 17 + TimescaleDB extension (Apache-only edition), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - postgresql-17
+      - postgresql-17-client
+      - postgresql-17-contrib
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - bash
+      - curl
+      - file
+      - git
+      - cmake
+      - pkgconf
+      - postgresql-17
+      - postgresql-17-dev
+      - postgresql-17-client
+      - openssl-dev
+      - zlib-dev
+      - icu-dev
+      - krb5-dev      # Wolfi's PG17 has GSSAPI, so libpq-be.h pulls gssapi/gssapi.h
+
+pipeline:
+  # TimescaleDB (Apache-only) built via its cmake bootstrap against Wolfi's PG17.
+  - uses: git-checkout
+    with:
+      repository: https://github.com/timescale/timescaledb
+      tag: __VER__
+      expected-commit: __COMMIT__
+      destination: timescaledb
+  - runs: |
+      cd timescaledb
+      # APACHE_ONLY=1 drops the TSL (community-licensed) sources, keeping the build
+      # cleanly Apache-2.0. REGRESS_CHECKS=OFF and WARNINGS_AS_ERRORS=OFF keep the
+      # source build from depending on the regression harness or tripping new GCC
+      # diagnostics. PG_CONFIG is also exported so bootstrap reliably finds PG17.
+      export PG_CONFIG="$(command -v pg_config)"
+      ./bootstrap \
+        -DAPACHE_ONLY=1 \
+        -DPG_CONFIG="$PG_CONFIG" \
+        -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+        -DREGRESS_CHECKS=OFF \
+        -DWARNINGS_AS_ERRORS=OFF
+      cmake --build build -j"$(nproc)"
+      make -C build install DESTDIR="${{targets.destdir}}"
+
+  # Bootstrap entrypoint: initdb, preload timescaledb, CREATE EXTENSION timescaledb CASCADE.
+  - runs: |
+      install -d "${{targets.destdir}}/usr/local/bin"
+      cat > "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh" <<'SCRIPT'
+      #!/bin/sh
+      set -eu
+      PGDATA="${PGDATA:-/var/lib/postgresql/data}"
+      POSTGRES_USER="${POSTGRES_USER:-postgres}"
+      POSTGRES_DB="${POSTGRES_DB:-$POSTGRES_USER}"
+      SOCKET_DIR="${PGSOCKET_DIR:-/var/run/postgresql}"
+
+      if [ ! -s "$PGDATA/PG_VERSION" ]; then
+        if [ -z "${POSTGRES_PASSWORD:-}" ]; then
+          echo "POSTGRES_PASSWORD is required for first initialization" >&2
+          exit 1
+        fi
+        pwfile="$(mktemp)"
+        printf '%s' "$POSTGRES_PASSWORD" > "$pwfile"
+        initdb -D "$PGDATA" -U "$POSTGRES_USER" \
+          --auth-local=scram-sha-256 --auth-host=scram-sha-256 \
+          --pwfile="$pwfile" --encoding=UTF8 --locale=C
+        rm -f "$pwfile"
+
+        # listen on all interfaces; the cluster network is the trust boundary, auth is scram
+        printf "\nlisten_addresses = '*'\n" >> "$PGDATA/postgresql.conf"
+        printf "host all all all scram-sha-256\n" >> "$PGDATA/pg_hba.conf"
+
+        # TimescaleDB must be preloaded for CREATE EXTENSION to succeed
+        printf "shared_preload_libraries = 'timescaledb'\n" >> "$PGDATA/postgresql.conf"
+
+        # start a temporary server (preload now active) to create the extension, then stop
+        pg_ctl -D "$PGDATA" -o "-c listen_addresses='' -k $SOCKET_DIR" -w start
+        if [ "$POSTGRES_DB" != "postgres" ] && [ "$POSTGRES_DB" != "$POSTGRES_USER" ]; then
+          PGPASSWORD="$POSTGRES_PASSWORD" createdb -h "$SOCKET_DIR" -U "$POSTGRES_USER" "$POSTGRES_DB" || true
+        fi
+        PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$SOCKET_DIR" -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+          -v ON_ERROR_STOP=1 -c 'CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;'
+        pg_ctl -D "$PGDATA" -m fast -w stop
+      fi
+
+      exec postgres -D "$PGDATA" -k "$SOCKET_DIR"
+      SCRIPT
+      chmod 0755 "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        test -f "/usr/lib/postgresql17/timescaledb.so" || ls -la /usr/lib/postgresql17/

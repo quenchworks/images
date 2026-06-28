@@ -1,0 +1,94 @@
+# Packages Ghost from its OFFICIAL npm distribution onto Wolfi. Ghost ships as the npm
+# package `ghost` (exactly what ghost-cli installs): an immutable registry tarball with a
+# published sha256. We fetch that tarball (uses: fetch, sha-pinned), strip its leading
+# `package/` component into /var/lib/ghost, then install PRODUCTION dependencies in a
+# melange `runs` step. melange `runs` steps have network access at build time (same as the
+# postgres-documentdb recipe's curl), so `pnpm install --prod` works; Ghost 6 ships a
+# pnpm-lock.yaml + pnpm-workspace.yaml, and pnpm is the install path that cleanly produces a
+# bootable tree (npm chokes on the workspace protocol).
+#
+# Ghost has NATIVE modules (sqlite3, the default standalone DB driver, plus
+# @tryghost/html-to-mobiledoc) compiled via node-gyp, so the build env needs python3 +
+# build-base (make/g++) on top of nodejs-22 + pnpm. We prune dev/test cruft after install.
+#
+# The tarball already ships a default content tree (content/themes/source +
+# content/themes/casper, adapters, data, images, logs, settings) — without an active theme
+# Ghost 500s. We keep that tree at /var/lib/ghost/content so a standalone container boots;
+# the chart mounts a PVC over it and is responsible for seeding the default theme on a fresh
+# volume.
+package:
+  name: quench-ghost
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Ghost (Node.js publishing platform), from the official npm distribution on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - nodejs-22              # Ghost 6 requires Node ^22.18.0 (core/package.json engines)
+      - ca-certificates-bundle # TLS to the external MySQL/MariaDB, SMTP, update checks
+      - tzdata                 # Ghost schedules/publishes against the configured timezone
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base             # make + g++ for node-gyp (native modules: sqlite3, bcrypt-ish)
+      - busybox
+      - ca-certificates-bundle
+      - nodejs-22
+      - pnpm                   # Ghost 6 ships pnpm-lock.yaml; pnpm is the prod-install path (Wolfi package)
+      - python-3.13            # node-gyp requires python3 at build time (Wolfi names it python-3.13)
+
+pipeline:
+  - uses: fetch
+    with:
+      # Immutable npm registry tarball (the same artifact ghost-cli installs).
+      uri: https://registry.npmjs.org/ghost/-/ghost-${{package.version}}.tgz
+      expected-sha256: __SHA256__
+      # npm tarballs extract under package/; drop that leading component.
+      strip-components: 1
+
+  - runs: |
+      set -eu
+      # Install ONLY production deps; --no-frozen-lockfile because the published tarball's
+      # lockfile is the upstream dev lockfile and we install the prod subset. This compiles
+      # the native sqlite3 module via node-gyp (python3 + build-base present above).
+      export CI=true
+      export npm_config_loglevel=warn
+      # Wolfi ships the interpreter as python3.13; point node-gyp at it explicitly so the
+      # native sqlite3 build doesn't fail probing for a bare `python3`/`python`.
+      export PYTHON="$(command -v python3.13 || command -v python3)"
+      export npm_config_python="$PYTHON"
+      pnpm install --prod --no-frozen-lockfile
+
+      # Trim build-time cruft that bloats the image and the CVE surface but is never run:
+      # caches, source maps for vendored deps, and pnpm's own store metadata.
+      rm -rf node_modules/.cache .pnpm-store 2>/dev/null || true
+      find . -type d -name '.cache' -prune -exec rm -rf {} + 2>/dev/null || true
+
+  - runs: |
+      set -eu
+      dest="${{targets.destdir}}"
+      app="$dest/var/lib/ghost"
+      install -d "$app"
+      # Install the whole app tree (index.js, ghost.js, core/, content/, node_modules/,
+      # package.json, ...) read-only under /var/lib/ghost. The server boots via
+      # `node index.js` from this dir.
+      cp -a ./. "$app/"
+      # The bootable default content tree (themes/source is the active default theme) ships
+      # inside the tarball at content/ — keep it so a standalone container serves a 200.
+      chmod -R a+rX "$app"
+
+test:
+  pipeline:
+    - runs: |
+        test -f /var/lib/ghost/index.js
+        test -f /var/lib/ghost/core/server/web/parent/app.js
+        test -d /var/lib/ghost/node_modules
+        test -d /var/lib/ghost/content/themes/source
+        # the native sqlite3 binding must have compiled
+        find /var/lib/ghost/node_modules -path '*sqlite3*/build/Release/*.node' | grep -q .

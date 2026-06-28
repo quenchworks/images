@@ -1,0 +1,68 @@
+# Assembles the Ghost runtime image: Ghost's npm distribution (app + production
+# node_modules, installed at build time by quench-ghost) running on the Wolfi nodejs-22
+# package. Minimal, nonroot, multi-arch, SBOM by apko. Ghost is configured ENTIRELY by
+# environment variables (url, NODE_ENV, database__*, server__*), so the entrypoint is a
+# bare `node index.js` from the app dir — no shell, no wrapper.
+#
+# Default standalone DB is sqlite3; the chart wires an external MySQL/MariaDB via
+# database__client=mysql + database__connection__*. Ghost writes to its content dir
+# (themes, images, data, logs, settings) — mounted as a PVC and made writable for uid
+# 1001 below. /tmp must be a writable tmpfs for a read-only rootfs.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - tzdata
+    - nodejs-22
+    - quench-ghost@local
+
+accounts:
+  groups:
+    - groupname: ghost
+      gid: 1001
+  users:
+    - username: ghost
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# Exec node directly on Ghost's bootstrap (PID 1, foreground). Ghost boots via
+# `node index.js`, which loads ghost.js and the core server. No shell in the image.
+entrypoint:
+  command: /usr/bin/node /var/lib/ghost/index.js
+
+environment:
+  NODE_ENV: production
+  # Where Ghost stores themes/images/data/logs/settings. Overridable by the chart, but
+  # this default points at the writable PVC mount baked below.
+  paths__contentPath: /var/lib/ghost/content
+  PATH: /usr/bin:/bin
+
+work-dir: /var/lib/ghost
+
+paths:
+  # Ghost's content dir must be writable by the runtime user (themes, images, data,
+  # logs, settings). type: directory adjusts ownership without disturbing the app tree
+  # that quench-ghost installed. The chart mounts a PVC over this path.
+  - path: /var/lib/ghost/content
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-ghost"
+  org.opencontainers.image.licenses: "MIT"
