@@ -152,6 +152,16 @@ jobs:
           output-file: sbom.spdx.json
           upload-artifact: false
 
+      - name: Trim SBOM to packages-only
+        # Ghost ships ~1GB of node_modules, so the SPDX .files/.relationships arrays push
+        # the document past actions/attest-sbom's hard 16 MB predicate cap. Drop the
+        # per-file entries; the package list (the security-relevant part) stays intact.
+        run: |
+          before=$(wc -c < sbom.spdx.json)
+          jq 'del(.files) | del(.relationships)' sbom.spdx.json > sbom.trimmed.json
+          mv sbom.trimmed.json sbom.spdx.json
+          echo "SBOM trimmed: ${before} -> $(wc -c < sbom.spdx.json) bytes"
+
       - name: Attest the SBOM (keyless, pushed to GHCR)
         uses: actions/attest-sbom@v2
         with:
