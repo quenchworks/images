@@ -1,0 +1,57 @@
+# Assembles a hardened Jenkins inbound agent image directly from Wolfi packages. No
+# Dockerfile, NO melange build -- apko pulls the jenkins-agent script (jenkins-docker-agent,
+# which brings OpenJDK 17 + bash) and the remoting agent.jar (jenkins-remoting) straight
+# from the Wolfi `os` repository.
+#
+# IMAGE-ONLY -- no Helm chart. The 0-CVE, signed, nonroot, multi-arch answer to
+# jenkins/inbound-agent: the controller launches it over JNLP/websocket. The entrypoint
+# is the jenkins-agent script, which execs `java -jar agent.jar` with the connection args
+# the controller injects (-url / -secret / -name). `__PKG__` is the pinned docker-agent apk.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - __PKG__            # jenkins-docker-agent: /usr/local/bin/jenkins-agent + OpenJDK 17 + bash
+    - jenkins-remoting   # the remoting agent.jar (/usr/share/jenkins/agent.jar)
+
+accounts:
+  groups:
+    - groupname: jenkins
+      gid: 1001
+  users:
+    - username: jenkins
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/local/bin/jenkins-agent
+
+environment:
+  HOME: /home/jenkins
+  # the agent writes its workspace/remoting cache under the work dir; keep it writable
+  AGENT_WORKDIR: /home/jenkins/agent
+
+work-dir: /home/jenkins
+
+paths:
+  - path: /home/jenkins
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-jenkins-inbound-agent"
+  org.opencontainers.image.licenses: "MIT"

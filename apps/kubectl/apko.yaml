@@ -1,0 +1,57 @@
+# Assembles a hardened kubectl image directly from Wolfi packages. No Dockerfile,
+# NO melange build -- apko pulls kubectl plus the common cluster toolbelt (helm,
+# kustomize, jq) and a busybox shell straight from the Wolfi `os` repository.
+#
+# IMAGE-ONLY -- no Helm chart. This is the 0-CVE, signed, nonroot, multi-arch
+# answer to alpine/k8s and bitnami/kubectl: `FROM` it in CI, or run kubectl/helm
+# directly. `__PKG__` is substituted per matrix entry (the kubectl-<minor> apk).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - busybox            # a POSIX shell + coreutils so the image is usable in CI pipelines
+    - __PKG__            # the pinned kubectl minor (/usr/bin/kubectl)
+    - helm               # cluster toolbelt: helm
+    - kustomize          # cluster toolbelt: kustomize
+    - jq                 # cluster toolbelt: jq (parse kubectl -o json)
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/kubectl
+
+environment:
+  HOME: /home/nonroot
+  KUBECONFIG: /home/nonroot/.kube/config
+
+work-dir: /home/nonroot
+
+paths:
+  - path: /home/nonroot
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-kubectl"
+  org.opencontainers.image.licenses: "Apache-2.0"
