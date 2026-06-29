@@ -16,7 +16,8 @@ contents:
     - wolfi-baselayout
     - ca-certificates-bundle
     - busybox            # a POSIX shell so the scanner is usable in CI pipelines
-    - __PKG__            # sonar-scanner-cli (/usr/bin/sonar-scanner-cli) + its OpenJDK + bash
+    - openjdk-21-jre     # the JRE the scanner runs on (the apk's java dep is not auto-pulled by apko)
+    - __PKG__            # sonar-scanner-cli (/usr/bin/sonar-scanner-cli)
 
 accounts:
   groups:
@@ -34,6 +35,7 @@ entrypoint:
 environment:
   HOME: /home/nonroot
   SONAR_USER_HOME: /tmp/.sonar
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
 
 work-dir: /home/nonroot
 
