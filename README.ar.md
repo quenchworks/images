@@ -2,6 +2,12 @@
 
 [English](README.md) · **العربية** · [Español](README.es.md)
 
+<p align="center">
+  <a href="https://quench-works.com/images"><img src="https://img.shields.io/endpoint?url=https://quench-works.com/api/v1/badge/images.json" alt="hardened images"></a>
+  <a href="https://quench-works.com/charts"><img src="https://img.shields.io/endpoint?url=https://quench-works.com/api/v1/badge/charts.json" alt="signed charts"></a>
+  <a href="https://quench-works.com/security"><img src="https://img.shields.io/endpoint?url=https://quench-works.com/api/v1/badge/cves.json" alt="open CVEs"></a>
+</p>
+
 مصنع الصور. يبني صور حاويات مُحصَّنة من المصدر على [Wolfi](https://github.com/wolfi-dev) باستخدام [melange](https://github.com/chainguard-dev/melange) و[apko](https://github.com/chainguard-dev/apko)، ويُخضعها لبوابة صارمة بصفر ثغرات (0-CVE)، ويوقّعها باستخدام cosign، وينشرها إلى GHCR.
 
 <p align="center">

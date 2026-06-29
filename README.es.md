@@ -2,6 +2,12 @@
 
 [English](README.md) · [العربية](README.ar.md) · **Español**
 
+<p align="center">
+  <a href="https://quench-works.com/images"><img src="https://img.shields.io/endpoint?url=https://quench-works.com/api/v1/badge/images.json" alt="hardened images"></a>
+  <a href="https://quench-works.com/charts"><img src="https://img.shields.io/endpoint?url=https://quench-works.com/api/v1/badge/charts.json" alt="signed charts"></a>
+  <a href="https://quench-works.com/security"><img src="https://img.shields.io/endpoint?url=https://quench-works.com/api/v1/badge/cves.json" alt="open CVEs"></a>
+</p>
+
 La fabrica de imagenes. Construye imagenes de contenedor endurecidas desde el codigo fuente sobre [Wolfi](https://github.com/wolfi-dev) con [melange](https://github.com/chainguard-dev/melange) y [apko](https://github.com/chainguard-dev/apko), las somete a una barrera estricta de 0 CVE, las firma con cosign y las publica en GHCR.
 
 <p align="center">

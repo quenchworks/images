@@ -2,6 +2,12 @@
 
 **English** · [العربية](README.ar.md) · [Español](README.es.md)
 
+<p align="center">
+  <a href="https://quench-works.com/images"><img src="https://img.shields.io/endpoint?url=https://quench-works.com/api/v1/badge/images.json" alt="hardened images"></a>
+  <a href="https://quench-works.com/charts"><img src="https://img.shields.io/endpoint?url=https://quench-works.com/api/v1/badge/charts.json" alt="signed charts"></a>
+  <a href="https://quench-works.com/security"><img src="https://img.shields.io/endpoint?url=https://quench-works.com/api/v1/badge/cves.json" alt="open CVEs"></a>
+</p>
+
 The image factory. It builds hardened container images from source on [Wolfi](https://github.com/wolfi-dev) with [melange](https://github.com/chainguard-dev/melange) and [apko](https://github.com/chainguard-dev/apko), holds them to a hard 0-CVE gate, signs them with cosign, and publishes to GHCR.
 
 <p align="center">
