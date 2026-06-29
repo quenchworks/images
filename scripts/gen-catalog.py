@@ -105,22 +105,44 @@ def is_version_tag(tag: str) -> bool:
 EDITORIAL_FIELDS = ("category", "summary", "source", "upstream", "license", "tier", "status", "cleanAlternative", "knownIssue")
 
 
+@lru_cache(maxsize=None)
+def build_versions(slug: str) -> frozenset:
+    """The exact VERSIONS declared in apps/<slug>/build.conf -- the source of truth
+    for which tags belong to an app. Empty if the app has no build.conf (e.g. a
+    chart-only/stack entry), in which case versions_of keeps its default behaviour."""
+    conf = ROOT / "apps" / slug / "build.conf"
+    if not conf.is_file():
+        return frozenset()
+    res = subprocess.run(
+        ["bash", "-c", f'source "{conf}"; printf "%s\\n" "${{VERSIONS[@]}}"'],
+        capture_output=True, text=True,
+    )
+    return frozenset(v for v in res.stdout.split() if v)
+
+
 def versions_of(pkg: str, repo: str, with_meta: bool) -> list:
-    """Published version tags for one package (newest first). Empty if unpublished."""
+    """Published version tags for one package (newest first). Empty if unpublished.
+    Only tags that EXACTLY match the app's build.conf VERSIONS are kept -- registry
+    extras like the `8` / `latest` major-alias tags are dropped, so the catalog
+    version list always mirrors build.conf."""
     try:
         raw = gh(f"/orgs/{ORG}/packages/container/{pkg.replace('/', '%2F')}/versions?per_page=100")
     except subprocess.CalledProcessError:
         return []  # planned app, no GHCR package yet
+    allowed = build_versions(pkg.split("/")[-1])
     versions = []
     for v in raw:
         for tag in v.get("metadata", {}).get("container", {}).get("tags", []):
-            if is_version_tag(tag):
-                row = {"version": tag, "digest": v["name"], "published": v["created_at"]}
-                if with_meta:
-                    im = image_meta(repo, v["name"])
-                    row["size"] = im.get("size")
-                    row["layers"] = im.get("layers")
-                versions.append(row)
+            if not is_version_tag(tag):
+                continue
+            if allowed and tag not in allowed:
+                continue  # a real tag, but not one of this app's build.conf VERSIONS
+            row = {"version": tag, "digest": v["name"], "published": v["created_at"]}
+            if with_meta:
+                im = image_meta(repo, v["name"])
+                row["size"] = im.get("size")
+                row["layers"] = im.get("layers")
+            versions.append(row)
     versions.sort(key=lambda x: x["published"], reverse=True)
     return versions
 
