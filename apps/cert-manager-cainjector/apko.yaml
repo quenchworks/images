@@ -1,0 +1,38 @@
+# Assembles the cert-manager cainjector runtime image. Minimal, nonroot, multi-arch, SBOM
+# by apko. Entrypoint is the bare cainjector binary; the chart supplies its flags. This is
+# cainjector: the controller that injects CA bundles into webhooks, APIServices, and conversion CRDs.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-cert-manager-cainjector@local
+
+accounts:
+  groups:
+    - groupname: cert-manager
+      gid: 1001
+  users:
+    - username: cert-manager
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/cainjector
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-cert-manager-cainjector"
+  org.opencontainers.image.licenses: "Apache-2.0"

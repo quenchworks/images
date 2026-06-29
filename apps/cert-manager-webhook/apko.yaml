@@ -1,0 +1,38 @@
+# Assembles the cert-manager webhook runtime image. Minimal, nonroot, multi-arch, SBOM
+# by apko. Entrypoint is the bare webhook binary; the chart supplies its flags. This is
+# webhook: the admission webhook that validates and mutates cert-manager API resources.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-cert-manager-webhook@local
+
+accounts:
+  groups:
+    - groupname: cert-manager
+      gid: 1001
+  users:
+    - username: cert-manager
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/webhook
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-cert-manager-webhook"
+  org.opencontainers.image.licenses: "Apache-2.0"

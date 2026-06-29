@@ -1,0 +1,39 @@
+# Assembles the External Secrets Operator runtime image. Minimal, nonroot, multi-arch,
+# SBOM by apko. The entrypoint is the bare controller binary; the chart supplies the
+# subcommand (default manager, `webhook`, or `certcontroller`) and flags. The manager
+# needs in-cluster credentials, so there is no default server command to run here.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-external-secrets@local
+
+accounts:
+  groups:
+    - groupname: external-secrets
+      gid: 1001
+  users:
+    - username: external-secrets
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/external-secrets
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-external-secrets"
+  org.opencontainers.image.licenses: "Apache-2.0"
