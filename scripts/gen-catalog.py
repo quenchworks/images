@@ -100,6 +100,12 @@ def is_version_tag(tag: str) -> bool:
     )
 
 
+def is_full_version(tag: str) -> bool:
+    """A full release tag (e.g. 8.0.127, 2026.04.0), not a bare major/minor alias
+    like `8` or `1.26` that registries publish as moving pointers."""
+    return is_version_tag(tag) and tag.count(".") >= 2
+
+
 # Editorial fields carried straight through from catalog.yaml into the lock, so
 # the lock is the single complete dataset the website reshapes (no second source).
 EDITORIAL_FIELDS = ("category", "summary", "source", "upstream", "license", "tier", "status", "cleanAlternative", "knownIssue")
@@ -129,20 +135,32 @@ def versions_of(pkg: str, repo: str, with_meta: bool) -> list:
         raw = gh(f"/orgs/{ORG}/packages/container/{pkg.replace('/', '%2F')}/versions?per_page=100")
     except subprocess.CalledProcessError:
         return []  # planned app, no GHCR package yet
-    allowed = build_versions(pkg.split("/")[-1])
-    versions = []
+
+    # tag -> (digest, published) for every published version tag
+    published = {}
     for v in raw:
         for tag in v.get("metadata", {}).get("container", {}).get("tags", []):
-            if not is_version_tag(tag):
-                continue
-            if allowed and tag not in allowed:
-                continue  # a real tag, but not one of this app's build.conf VERSIONS
-            row = {"version": tag, "digest": v["name"], "published": v["created_at"]}
-            if with_meta:
-                im = image_meta(repo, v["name"])
-                row["size"] = im.get("size")
-                row["layers"] = im.get("layers")
-            versions.append(row)
+            if is_version_tag(tag):
+                published.setdefault(tag, (v["name"], v["created_at"]))
+
+    # Prefer the exact build.conf VERSIONS. If the image is stale (build.conf was
+    # bumped but not rebuilt, so those exact tags aren't published), fall back to the
+    # published FULL versions -- never the bare `8` / `1.26` major-alias tags, and
+    # never empty just because build.conf ran ahead of the registry.
+    allowed = build_versions(pkg.split("/")[-1])
+    keep = [t for t in published if t in allowed]
+    if not keep:
+        keep = [t for t in published if is_full_version(t)]
+
+    versions = []
+    for tag in keep:
+        digest, created = published[tag]
+        row = {"version": tag, "digest": digest, "published": created}
+        if with_meta:
+            im = image_meta(repo, digest)
+            row["size"] = im.get("size")
+            row["layers"] = im.get("layers")
+        versions.append(row)
     versions.sort(key=lambda x: x["published"], reverse=True)
     return versions
 
