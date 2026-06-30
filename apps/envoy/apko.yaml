@@ -1,0 +1,38 @@
+# Assembles a hardened Envoy image directly from Wolfi's own envoy package. No
+# Dockerfile, NO melange build -- apko pulls the envoy binary straight from the Wolfi
+# `os` repo. Envoy needs a bootstrap config to act as a proxy (the chart mounts one and
+# passes `-c`); the entrypoint is the bare binary so `envoy --version` and `-c <cfg>`
+# both work. `__PKG__` is the pinned envoy-<minor> apk, substituted per matrix entry.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - __PKG__
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/envoy
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-envoy"
+  org.opencontainers.image.licenses: "Apache-2.0"

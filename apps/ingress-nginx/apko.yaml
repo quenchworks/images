@@ -1,0 +1,38 @@
+# Assembles a hardened NGINX Ingress Controller image directly from Wolfi's own
+# ingress-nginx-controller package (which brings nginx). No Dockerfile, NO melange
+# build -- apko pulls the controller + nginx straight from the Wolfi `os` repo. The
+# entrypoint is the controller binary; the chart supplies its flags. `__PKG__` is the
+# pinned ingress-nginx-controller-<minor> apk, substituted per matrix entry.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - __PKG__
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/nginx-ingress-controller
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-ingress-nginx"
+  org.opencontainers.image.licenses: "Apache-2.0"
