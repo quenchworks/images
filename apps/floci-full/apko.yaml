@@ -1,0 +1,59 @@
+# Assembles the Floci FULL runtime image: Wolfi openjdk-25-jre + the Quarkus
+# fast-jar built from source by melange. This is the OPT-IN, deliberately
+# NON-hardened counterpart to apps/floci/apko.yaml. It runs as ROOT (uid 0),
+# and enables ALL 65 Floci AWS services INCLUDING the 10 Docker-backed ones
+# (Lambda, RDS, ElastiCache, MSK, ECS, EKS, OpenSearch, ECR, DocumentDB,
+# Neptune). Those services need the host Docker daemon: run this image with
+# `-u root -v /var/run/docker.sock:/var/run/docker.sock`. Floci talks to the
+# daemon over the socket API directly (no docker CLI needed), so this image
+# stays on the same clean JRE base as the hardened variant. Multi-arch (fast-jar
+# is arch-independent; the JRE is per-arch). We exec java directly (shell-free
+# base) and bind Quarkus HTTP to 0.0.0.0 so the port is reachable from outside.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - openjdk-25-jre
+    - busybox
+    - quench-floci-full@local
+
+# NO accounts / run-as block: this variant runs as ROOT (uid 0). Managing the
+# Docker-backed containers via the mounted host docker.sock needs root, and this
+# image is intentionally NOT the read-only-friendly hardened variant.
+
+# Boot the Quarkus fast-jar on the JRE. Quarkus system properties (-D...) MUST
+# precede -jar. Bind to 0.0.0.0 so the edge port is reachable; port 4566 is the
+# LocalStack-compatible edge port Floci listens on by default.
+entrypoint:
+  command: /usr/lib/jvm/java-25-openjdk/bin/java --enable-native-access=ALL-UNNAMED -Dquarkus.http.host=0.0.0.0 -Dquarkus.http.port=4566 -jar /usr/share/floci/quarkus-app/quarkus-run.jar
+
+environment:
+  # openjdk-25-jre installs under /usr/lib/jvm with no /usr/bin/java symlink, so
+  # we set JAVA_HOME and call the absolute java path in the entrypoint.
+  JAVA_HOME: /usr/lib/jvm/java-25-openjdk
+  PATH: /usr/lib/jvm/java-25-openjdk/bin:/usr/bin
+  # Persistent-state dir (writable; root owns it here).
+  FLOCI_STORAGE_PERSISTENT_PATH: /app/data
+  # FULL mode: enable the Docker-backed bootstrap the hardened image disables.
+  # With the host docker.sock mounted + root, this turns on the 10 Docker-backed
+  # services so ALL 65 Floci AWS services are available.
+  LOCALSTACK_PARITY: "true"
+
+work-dir: /app
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-floci-full"
+  org.opencontainers.image.licenses: "MIT"
