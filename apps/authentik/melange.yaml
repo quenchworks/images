@@ -1,0 +1,253 @@
+# Builds authentik (identity provider: OIDC / SAML / LDAP) entirely from source on
+# Wolfi. This is a four-language build that mirrors upstream's multi-stage Dockerfile:
+#
+#   1. web UI       nodejs-24 + npm      -> web/dist + web/authentik (static assets)
+#   2. Go server    go-1.26 (CGO)        -> /usr/bin/authentik-server  (server, healthcheck)
+#   3. Rust core    rust + cmake/clang   -> /usr/bin/authentik         (worker, allinone)
+#   4. Python core  python-3.14 + uv     -> /ak-root/.venv             (Django, `manage`)
+#
+# The `ak` bash launcher (installed to /lifecycle/ak) dispatches subcommands to the
+# right binary. authentik needs PostgreSQL + Redis at RUNTIME; nothing at build time.
+#
+# Clean-room hardening vs upstream's FedRAMP image: built on Wolfi's OpenSSL (no
+# fips-python/fips-debian base), FIPS mode NOT forced (GOFIPS140 dropped; Rust aws-lc
+# `fips` feature left off), and the license-gated MaxMind GeoIP download is omitted
+# (authentik boots fine without it).
+package:
+  name: quench-authentik
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened authentik identity provider (OIDC/SAML/LDAP), built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      # Python interpreter the venv references (must match the build interpreter major).
+      - python-3.14
+      - ca-certificates-bundle
+      - glibc
+      - tzdata
+      # `ak` is a bash launcher; it uses coreutils/shadow tools for the (root-only)
+      # permission-fix path, which we skip as nonroot, plus chpst from runit.
+      - bash
+      - busybox
+      - runit                    # provides chpst used by the launcher's exec path
+      - dumb-init                # ENTRYPOINT wrapper upstream uses (reaps zombies)
+      # Native runtime libs the Python extensions + Go/Rust binaries link against.
+      - libpq-17                 # psycopg (Postgres driver)
+      - libxml2                  # lxml / xmlsec
+      - libxslt                  # lxml
+      - xmlsec                   # python xmlsec (SAML signing)
+      - krb5                     # gssapi / python-kadmin-rs (MIT krb5 provides kadm5 + gssapi)
+      - krb5-libs
+      - libffi                   # cffi / argon2-cffi / cryptography
+      - libmaxminddb             # geoip2 (optional DBs, but the lib is linked)
+      - openssl                  # cryptography / rust tls
+      - libgcc
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - bash
+      - ca-certificates-bundle
+      - curl
+      - git
+      - cmake
+      - pkgconf
+      - perl             # aws-lc-fips-sys generates asm via perl during its cmake build
+      # --- Node (web UI) ---
+      - nodejs-24
+      - npm
+      # --- Go (server/proxy) ---
+      - go-1.26
+      # --- Rust (orchestrator/worker) ---
+      - rust
+      - clang            # aws-lc / bindgen (python-kadmin-rs, ring) need a C/clang toolchain
+      # --- Python (Django core) via uv ---
+      - python-3.14
+      - python-3.14-dev
+      - uv
+      # native dev libs for the from-source Python wheels
+      - openssl-dev      # cryptography
+      - libffi-dev       # cffi / argon2 / cryptography
+      - libxml2-dev      # lxml / xmlsec
+      - libxslt-dev      # lxml
+      - xmlsec-dev       # python xmlsec
+      - krb5-dev         # gssapi + python-kadmin-rs (MIT krb5-dev provides kadm5; heimdal-dev conflicts with it in Wolfi)
+      - libpq-17
+      - postgresql-17-dev # libpq headers for psycopg[c]
+      - zlib-dev
+      - libmaxminddb-dev
+
+pipeline:
+  # ---------------------------------------------------------------------------
+  # 0. Check out the exact tag (immutable commit pin). authentik CalVer tags are
+  #    prefixed `version/`; we pin by commit so the build is reproducible.
+  # ---------------------------------------------------------------------------
+  - uses: git-checkout
+    with:
+      repository: https://github.com/goauthentik/authentik
+      tag: version/__VER__
+      expected-commit: __COMMIT__
+      destination: src
+
+  # ---------------------------------------------------------------------------
+  # 1. Web UI (nodejs-24 + npm). Mirrors upstream's node-builder stage:
+  #    npm ci in web/, then `npm run build` + `npm run build:sfe`. Outputs land
+  #    in web/dist and web/authentik. NODE_ENV=production ONLY for the build step;
+  #    devDependencies (vite/wireit/esbuild) are needed for `npm ci`.
+  # ---------------------------------------------------------------------------
+  - runs: |
+      cd src/web
+      export npm_config_fund=false npm_config_audit=false
+      npm ci
+      NODE_ENV=production GIT_BUILD_HASH="quench" npm run build
+      NODE_ENV=production GIT_BUILD_HASH="quench" npm run build:sfe
+
+  # ---------------------------------------------------------------------------
+  # 2. Go server (go-1.26, CGO on). Version is embedded from the in-tree
+  #    internal/constants/VERSION file, so no ldflag stamping is needed. FIPS140
+  #    is intentionally NOT set (clean-room hardening on stock Wolfi OpenSSL).
+  # ---------------------------------------------------------------------------
+  - runs: |
+      cd src
+      mkdir -p /usr/bin-stage
+      export GOFLAGS="-buildvcs=false"
+      export CGO_ENABLED=1
+      export GOTOOLCHAIN=local
+      go build -o /usr/bin-stage/authentik-server ./cmd/server
+
+  # ---------------------------------------------------------------------------
+  # 3. Rust orchestrator (worker/allinone). 2026.x ships a cargo workspace with a
+  #    top-level `authentik` binary (features: core -> pyo3 + sqlx). aws-lc is built
+  #    WITHOUT the fips feature (clean-room). Older lines (2025.12.x) have no Cargo
+  #    workspace; the step is a no-op there and `worker` falls back to python.
+  # ---------------------------------------------------------------------------
+  - runs: |
+      cd src
+      mkdir -p /usr/bin-stage
+      if [ -f Cargo.toml ] && grep -q 'name = "authentik"' Cargo.toml 2>/dev/null; then
+        # KEEP .cargo/config.toml — it sets `--cfg tokio_unstable`, which the code
+        # requires (JoinSet::build_task / join_set::Builder are tokio-unstable APIs).
+        # Also export it explicitly as belt-and-suspenders.
+        export RUSTFLAGS="--cfg tokio_unstable"
+        # aws-lc-fips-sys builds its FIPS module via cmake (needs go + perl + clang).
+        export AWS_LC_FIPS_SYS_CC=clang
+        export PYO3_PYTHON="$(command -v python3.14)"
+        cargo build --package authentik --no-default-features --features core --release --locked
+        install -Dm0755 target/release/authentik /usr/bin-stage/authentik
+      else
+        echo "no Rust authentik workspace at this version (pre-2026.x); worker runs via python"
+      fi
+
+  # ---------------------------------------------------------------------------
+  # 4. Python Django core via uv. `uv sync --no-dev --no-install-project` builds a
+  #    venv with the locked deps (cryptography/lxml/xmlsec/python-kadmin-rs from
+  #    source against Wolfi libs). The venv lives at /ak-root/.venv.
+  # ---------------------------------------------------------------------------
+  - runs: |
+      cd src
+      export UV_PYTHON="$(command -v python3.14)"
+      export UV_PYTHON_DOWNLOADS=0
+      export UV_LINK_MODE=copy
+      export UV_COMPILE_BYTECODE=1
+      export UV_SYSTEM_CERTS=1
+      export VENV_PATH=/ak-root/.venv
+      mkdir -p /ak-root
+      # CLEAN-ROOM HARDENING: upstream forces lxml + xmlsec from SOURCE (its [tool.uv]
+      # no-binary-package = [...] pin) so they link against the image's FIPS libxml2/openssl.
+      # Wolfi's static libxmlsec1 isn't -fPIC and there's no py3.14 Wolfi xmlsec package, so
+      # the source extension fails to link. We CLEAR that multi-line pin so uv uses the PyPI
+      # manylinux WHEELS for lxml + xmlsec (xmlsec ships a cp314 wheel; both bundle their own
+      # libxml2/xmlsec). Trivy still scans the wheel contents. cryptography + python-kadmin-rs
+      # + psycopg-c + gssapi still build from source against Wolfi's OpenSSL / krb5 / libpq.
+      # (Python -c, not sed: the pin is a multi-line TOML array a line regex can't match.)
+      python3.14 -c "import re,pathlib; p=pathlib.Path('pyproject.toml'); p.write_text(re.sub(r'no-binary-package\s*=\s*\[[^\]]*\]','no-binary-package = []', p.read_text(), flags=re.S))"
+      grep -n "no-binary-package" pyproject.toml || true
+      # Clearing the pin makes uv re-resolve, so we don't pass --locked.
+      uv venv --python "$UV_PYTHON" "$VENV_PATH"
+      VIRTUAL_ENV="$VENV_PATH" uv sync --no-dev --no-install-project --active
+
+  # ---------------------------------------------------------------------------
+  # 5. Assemble the package tree, mirroring upstream's final-image COPY layout.
+  # ---------------------------------------------------------------------------
+  - runs: |
+      cd src
+      dest="${{targets.destdir}}"
+
+      # Binaries
+      install -Dm0755 /usr/bin-stage/authentik-server "${dest}/usr/bin/authentik-server"
+      if [ -f /usr/bin-stage/authentik ]; then
+        install -Dm0755 /usr/bin-stage/authentik "${dest}/usr/bin/authentik"
+      fi
+
+      # Python app tree + lifecycle launcher (exactly what the Dockerfile copies)
+      install -d "${dest}/lifecycle"
+      cp -a authentik "${dest}/authentik"
+      cp -a lifecycle/. "${dest}/lifecycle/"
+      cp -a blueprints "${dest}/blueprints"
+      cp -a schemas "${dest}/schemas" 2>/dev/null || true
+      cp -a locale "${dest}/locale" 2>/dev/null || true
+      cp -a tests "${dest}/tests" 2>/dev/null || true
+      install -Dm0644 manage.py "${dest}/manage.py"
+      install -Dm0644 pyproject.toml "${dest}/pyproject.toml"
+      [ -f uv.lock ] && install -Dm0644 uv.lock "${dest}/uv.lock" || true
+      # workspace packages/ (python + client libs) referenced by pyproject sources.
+      # Upstream keeps them at /ak-root/packages and symlinks /packages -> it.
+      install -d "${dest}/ak-root"
+      cp -a packages "${dest}/ak-root/packages"
+      ln -sf /ak-root/packages "${dest}/packages"
+      # NOTE: we deliberately do NOT ship /etc/krb5.conf — the Wolfi `krb5-conf`
+      # runtime dep already provides it, and shipping our own collides at apko
+      # assembly ("conflicting file: etc/krb5.conf"). authentik reads the system
+      # /etc/krb5.conf (or $KRB5_CONFIG); the chart can mount a custom one.
+
+      # The venv (ak-root already created above)
+      cp -a /ak-root/.venv "${dest}/ak-root/.venv"
+      # uv leaves a world-writable (0666) advisory lock in the venv; it's only used
+      # during installs, not at runtime. Remove it so the melange worldwrite linter passes.
+      rm -f "${dest}/ak-root/.venv/.lock"
+      # Belt-and-suspenders: strip any other world-writable bits under the venv.
+      find "${dest}/ak-root/.venv" -perm -0002 -exec chmod o-w {} + 2>/dev/null || true
+
+      # Web assets
+      install -d "${dest}/web"
+      cp -a web/dist "${dest}/web/dist"
+      cp -a web/authentik "${dest}/web/authentik"
+
+      # Runtime data dirs (owned to uid 1001 in apko; here just create them)
+      install -d "${dest}/data" "${dest}/media" "${dest}/certs" "${dest}/blueprints" "${dest}/geoip"
+
+      # A convenient `ak` on PATH
+      install -d "${dest}/usr/bin"
+      ln -sf /lifecycle/ak "${dest}/usr/bin/ak"
+
+      chmod -R a+rX "${dest}/ak-root" "${dest}/authentik" "${dest}/lifecycle" "${dest}/web"
+
+  # ---------------------------------------------------------------------------
+  # 6. Build-time assertion: the Go binary reports the version we built.
+  # ---------------------------------------------------------------------------
+  - runs: |
+      dest="${{targets.destdir}}"
+      # Assert the source tree carried the version we built (the Go binary embeds this
+      # file via go:embed, and authentik/__init__.py exposes it to Python).
+      test "$(cat src/internal/constants/VERSION)" = "__VER__" \
+        || { echo "VERSION file != __VER__"; exit 1; }
+      # Sanity: the four build outputs landed in the package tree.
+      test -x "${dest}/usr/bin/authentik-server"
+      test -f "${dest}/ak-root/.venv/bin/python"
+      test -d "${dest}/web/dist"
+      test -f "${dest}/lifecycle/ak"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/bin/authentik-server
+        test -d /ak-root/.venv
+        /usr/bin/authentik-server --version

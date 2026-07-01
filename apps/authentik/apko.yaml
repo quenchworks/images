@@ -1,0 +1,107 @@
+# Assembles the authentik runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Ships the four build outputs from the melange package: the Go `authentik-server`
+# binary (server/healthcheck), the Rust `authentik` binary (worker/allinone), the
+# Python Django venv at /ak-root/.venv, and the built web assets at /web. The `ak`
+# bash launcher (/lifecycle/ak, also on PATH as /usr/bin/ak) dispatches subcommands.
+#
+# ENTRYPOINT mirrors upstream: `dumb-init -- ak`. The chart passes the mode, e.g.
+# `server` (the Go HTTP server + embedded outpost, listens 9000/9443) or `worker`.
+# authentik needs PostgreSQL + Redis at RUNTIME — configured via AUTHENTIK_* env vars
+# / a config file by the chart; none of that lives in the image. Full readiness is
+# gated by the chart's kind install (which bundles PG + Redis), not by this image.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - glibc
+    - ca-certificates-bundle
+    - tzdata
+    - bash                     # the `ak` launcher is a bash script
+    - busybox                  # coreutils (cat, mkdir, printf) used by `ak`
+    - runit                    # chpst, used by the launcher's exec path
+    - dumb-init                # PID 1 / zombie reaper (entrypoint wrapper)
+    - python-3.14              # interpreter the venv references (`manage`, imports)
+    - quench-authentik@local   # the four build outputs + app tree
+
+accounts:
+  groups:
+    - groupname: authentik
+      gid: 1001
+  users:
+    - username: authentik
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  # dumb-init as PID 1, then the `ak` launcher. The chart supplies the mode arg
+  # (server / worker). ak dispatches server+healthcheck -> authentik-server (Go),
+  # worker+allinone -> authentik (Rust), everything else -> python -m manage.
+  command: /usr/bin/dumb-init -- /lifecycle/ak
+
+environment:
+  # /lifecycle first (ak + python helper modules), then the venv bin (python, gunicorn),
+  # then the system bins. VENV_PATH mirrors upstream so the launcher's activate path works.
+  PATH: /lifecycle:/ak-root/.venv/bin:/usr/bin:/bin
+  VENV_PATH: /ak-root/.venv
+  HOME: /authentik
+  # TMPDIR must be writable under a read-only rootfs; upstream uses /dev/shm. The chart
+  # mounts an emptyDir at /dev/shm (and /tmp) so gunicorn/prometheus temp files land there.
+  TMPDIR: /dev/shm
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+  # authentik reads its Python path from the working dir; the app lives at / (manage.py).
+  PYTHONPATH: /
+
+work-dir: /
+
+paths:
+  # Runtime data dirs owned by the server uid. Under a read-only rootfs the chart
+  # overlays emptyDir/PVC volumes here; these ownership entries make the image usable
+  # standalone and give the launcher writable spots without root.
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /media
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /certs
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /blueprints
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /ak-root
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /tmp
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o1777
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-authentik"
+  org.opencontainers.image.licenses: "MIT"
