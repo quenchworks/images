@@ -1,0 +1,76 @@
+# Assembles the Floci runtime image: hardened Wolfi openjdk-25-jre + the
+# Quarkus fast-jar built from source by melange. Minimal, nonroot (uid 1001),
+# multi-arch (the fast-jar is arch-independent; the JRE is per-arch), SBOM by
+# apko. Server app (image + chart).
+#
+# Hardened scope: this image launches the Floci edge server (LocalStack edge
+# port 4566) as uid 1001 with NO Docker socket. That covers the in-process
+# services (S3, DynamoDB, SQS, SNS, IAM). The Docker-backed services (Lambda,
+# RDS, ECS, EKS, ...) require the host docker.sock + root and are out of scope;
+# the chart documents that. We exec java directly (shell-free base) and bind
+# Quarkus HTTP to 0.0.0.0 so the port is reachable from outside the container.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - openjdk-25-jre
+    - busybox
+    - quench-floci@local
+
+accounts:
+  groups:
+    - groupname: floci
+      gid: 1001
+  users:
+    - username: floci
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# Boot the Quarkus fast-jar on the JRE. Quarkus system properties (-D...) MUST
+# precede -jar. Bind to 0.0.0.0 so the edge port is reachable; port 4566 is the
+# LocalStack-compatible edge port Floci listens on by default.
+entrypoint:
+  command: /usr/lib/jvm/java-25-openjdk/bin/java --enable-native-access=ALL-UNNAMED -Dquarkus.http.host=0.0.0.0 -Dquarkus.http.port=4566 -jar /usr/share/floci/quarkus-app/quarkus-run.jar
+
+environment:
+  # openjdk-25-jre installs under /usr/lib/jvm with no /usr/bin/java symlink, so
+  # we set JAVA_HOME and call the absolute java path in the entrypoint.
+  JAVA_HOME: /usr/lib/jvm/java-25-openjdk
+  PATH: /usr/lib/jvm/java-25-openjdk/bin:/usr/bin
+  # Persistent-state dir (writable, owned by uid 1001 via paths: below).
+  FLOCI_STORAGE_PERSISTENT_PATH: /app/data
+  # In-process-only mode: no docker.sock in this image, so skip the parity/root
+  # bootstrap the upstream compose entrypoint does for Docker-backed services.
+  LOCALSTACK_PARITY: "false"
+
+work-dir: /app
+
+paths:
+  - path: /app
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /app/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-floci"
+  org.opencontainers.image.licenses: "MIT"
