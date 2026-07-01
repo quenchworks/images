@@ -1175,6 +1175,15 @@ catalog:
     tier: standard
     status: built
 
+  - name: floci-full
+    category: Apps & productivity
+    summary: "Opt-in, NON-hardened companion to the floci image: it runs as root and expects the host Docker socket mounted, which lets it emulate all 65 of Floci's AWS services including the 10 Docker-backed ones (Lambda, RDS, ElastiCache, MSK, ECS, EKS, OpenSearch, ECR, DocumentDB, Neptune). Same from-source Quarkus build and 0-CVE Trivy gate as floci, but running root with a mounted /var/run/docker.sock is a node-root / container-escape surface, so use it only in trusted single-tenant dev or CI. The floci Helm chart selects this image via mode=full behind an explicit acknowledgeRisk gate. Image only, no separate chart."
+    source: https://github.com/floci-io/floci
+    upstream: https://floci.io
+    license: MIT
+    tier: standard
+    status: built
+
   - name: postgrest
     category: Databases & engines
     summary: REST API server that serves a RESTful API directly from a PostgreSQL schema. Shipped as upstream's official prebuilt static binary. Image only, no chart.
