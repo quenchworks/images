@@ -45,4 +45,34 @@ echo "$CFG_OUT" | tail -5 | sed 's/^/  /'
 echo "$CFG_OUT" | grep -qiE 'authentik|postgresql|redis|django|"[a-z_]+"' \
   || { echo "FAIL: python could not import/emit the authentik core config"; exit 1; }
 
-echo "PASS: authentik image smoke green (uid 1001, authentik-server version, Python core imports; full boot deferred to chart kind gate)"
+echo "django.setup() populates the FULL INSTALLED_APPS registry (no DB required):"
+# Regression guard for the uv-workspace editable-install bug: authentik's
+# settings.py lists workspace-local packages (django_channels_postgres et al.)
+# in INSTALLED_APPS unconditionally. `ak dump_config` above only imports the
+# config module and does NOT populate Django's app registry, so it MISSED that
+# those packages were installed as dangling editable stubs (.pth -> build-time
+# source path absent from the runtime image). django.setup() imports EVERY
+# INSTALLED_APPS module, so any missing/dangling workspace package fails here,
+# pre-publish. This reaches app-registry population without touching Postgres/
+# Redis (no live connection at import time). Run as the image user (1001).
+SETUP_OUT="$(docker run --rm --user 1001 \
+  -e AUTHENTIK_SECRET_KEY=smoketest \
+  -e DJANGO_SETTINGS_MODULE=authentik.root.settings \
+  --entrypoint /ak-root/.venv/bin/python "$IMAGE" \
+  -c 'import django; django.setup(); print("django.setup OK: INSTALLED_APPS registry populated")' 2>&1)" \
+  || { echo "$SETUP_OUT" | tail -25 | sed 's/^/  /'; echo "FAIL: django.setup() could not populate the app registry (missing INSTALLED_APPS module?)"; exit 1; }
+echo "$SETUP_OUT" | tail -3 | sed 's/^/  /'
+echo "$SETUP_OUT" | grep -q 'django.setup OK' \
+  || { echo "FAIL: django.setup() did not report success"; exit 1; }
+
+# Belt-and-suspenders: import each uv-workspace-local package directly, so a
+# regression is unambiguous even if a future settings refactor drops one from
+# INSTALLED_APPS. Modules: guardian (ak-guardian), django_channels_postgres,
+# django_dramatiq_postgres, django_postgres_cache.
+echo "importing every uv-workspace-local package directly (uid 1001):"
+WS_OUT="$(docker run --rm --user 1001 --entrypoint /ak-root/.venv/bin/python "$IMAGE" \
+  -c 'import guardian, django_channels_postgres, django_dramatiq_postgres, django_postgres_cache; print("workspace packages import OK")' 2>&1)" \
+  || { echo "$WS_OUT" | tail -15 | sed 's/^/  /'; echo "FAIL: a uv-workspace-local package is not importable"; exit 1; }
+echo "$WS_OUT" | tail -1 | sed 's/^/  /'
+
+echo "PASS: authentik image smoke green (uid 1001, authentik-server version, Python core imports, django.setup app registry + workspace packages; full boot deferred to chart kind gate)"

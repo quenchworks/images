@@ -172,7 +172,27 @@ pipeline:
       grep -n "no-binary-package" pyproject.toml || true
       # Clearing the pin makes uv re-resolve, so we don't pass --locked.
       uv venv --python "$UV_PYTHON" "$VENV_PATH"
-      VIRTUAL_ENV="$VENV_PATH" uv sync --no-dev --no-install-project --active
+      # --no-editable: authentik is a uv WORKSPACE with local path members under
+      # packages/ (ak-guardian, django-channels-postgres, django-dramatiq-postgres,
+      # django-postgres-cache). By default `uv sync` installs each as an EDITABLE
+      # install: a `_editable_impl_<pkg>.pth` in site-packages pointing at the
+      # build-time source path (/home/build/src/packages/<pkg>). That path does NOT
+      # exist in the runtime image (only the .dist-info metadata is copied), so the
+      # stubs dangle and `import django_channels_postgres` (referenced unconditionally
+      # by INSTALLED_APPS + CHANNEL_LAYERS) raises ModuleNotFoundError, crashing
+      # `ak server`/`ak worker` at django.setup(). --no-editable builds a real wheel
+      # for each workspace member and installs the package tree INTO site-packages,
+      # so the imports resolve with no dependency on the build-time source path.
+      VIRTUAL_ENV="$VENV_PATH" uv sync --no-dev --no-install-project --no-editable --active
+      # Assert the editable stubs are gone and the real workspace packages landed in
+      # site-packages (fail the build here rather than ship a dangling venv).
+      sp="$VENV_PATH/lib/python3.14/site-packages"
+      if ls "$sp"/_editable_impl_*.pth >/dev/null 2>&1; then
+        echo "FAIL: editable .pth stubs still present after --no-editable:"; ls "$sp"/_editable_impl_*.pth; exit 1
+      fi
+      for mod in guardian django_channels_postgres django_dramatiq_postgres django_postgres_cache; do
+        test -e "$sp/$mod/__init__.py" || { echo "FAIL: workspace package '$mod' not materialized in site-packages"; exit 1; }
+      done
 
   # ---------------------------------------------------------------------------
   # 5. Assemble the package tree, mirroring upstream's final-image COPY layout.
