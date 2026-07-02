@@ -1,0 +1,48 @@
+# Assembles the LiveKit runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# LiveKit is the WebRTC SFU server: the entrypoint is the binary, so
+# `docker run ...livekit-server <flags>` works. Configuration is supplied via a
+# mounted YAML config (--config) or environment (e.g. LIVEKIT_KEYS for API keys),
+# so no writable paths are baked in -- the image runs happily with a read-only
+# root filesystem. ca-certificates-bundle is included for outbound TLS (webhooks,
+# Redis TLS, TURN/TLS, cloud object storage).
+#
+# Ports (documented; the operator publishes/exposes them):
+#   7880/tcp  HTTP + WebSocket signaling (and the built-in TURN/TLS multiplexer)
+#   7881/tcp  ICE/RTC over TCP fallback
+#   ICE/RTC over UDP (a port range, default 50000-60000) is the operator's
+#   concern -- it is a runtime/deployment choice, not baked into the image.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-livekit@local
+
+accounts:
+  groups:
+    - groupname: livekit
+      gid: 1001
+  users:
+    - username: livekit
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/livekit-server
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-livekit"
+  org.opencontainers.image.licenses: "Apache-2.0"

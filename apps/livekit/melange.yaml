@@ -1,0 +1,51 @@
+# Builds LiveKit (the WebRTC SFU server) from source onto Wolfi. Single static
+# Go binary, no CGO (matches upstream Dockerfile: CGO_ENABLED=0; the media stack
+# is Pion, pure Go). Output is a signed APK in Quenchworks' own repo. No upstream
+# distro binaries.
+#
+# The release version lives as a const (version.Version) in version/version.go
+# and is wired into the CLI (cli.Command.Version), so `livekit-server --version`
+# reports the real release straight from the tag tarball -- no -ldflags -X needed
+# (and a const cannot be overridden by -X anyway).
+package:
+  name: quench-livekit
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened LiveKit (WebRTC SFU server), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      # go.mod declares `go 1.26`; pin the matching go-1.26 toolchain (newest,
+      # clears stdlib CVE advisories) and set GOTOOLCHAIN=local so the go.mod
+      # directive never triggers an on-the-fly toolchain download.
+      - go-1.26
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/livekit/livekit/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local
+      go build -trimpath -ldflags "-s -w" \
+        -o "${{targets.destdir}}/usr/bin/livekit-server" ./cmd/server
+
+test:
+  pipeline:
+    - runs: |
+        livekit-server --version

@@ -1,0 +1,44 @@
+# Assembles the SpiceDB runtime image. Minimal, nonroot, multi-arch, read-only
+# rootfs friendly, SBOM by apko. SpiceDB is a server: the entrypoint is the bare
+# binary, so the operator supplies the subcommand and datastore, e.g.
+#   docker run ...spicedb serve --grpc-preshared-key <k> --datastore-engine postgres --datastore-conn-uri <uri>
+# For local testing an in-memory datastore is available via `serve-testing` (no
+# DB required). No database is baked in — postgres/crdb wiring is the operator's
+# concern. Ports (documentation only; apko has no EXPOSE): 50051 gRPC API,
+# 8443 HTTP/JSON gateway, 9090 Prometheus metrics. Config is via flags or the
+# SPICEDB_* environment variables; nothing is written to the rootfs at runtime.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-spicedb@local
+
+accounts:
+  groups:
+    - groupname: spicedb
+      gid: 1001
+  users:
+    - username: spicedb
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/spicedb
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-spicedb"
+  org.opencontainers.image.licenses: "Apache-2.0"

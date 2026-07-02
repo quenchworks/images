@@ -1,0 +1,45 @@
+# Builds SpiceDB (authzed) from source onto Wolfi. Single static Go binary, no
+# CGO (matches upstream .goreleaser.yml CGO_ENABLED=0). Built with the same
+# release build tag ("memoryprotection") and linker flags ("-s -w -checklinkname=0")
+# upstream ships; the memoryprotection tag pulls a go-rtml memory-usage provider
+# that references runtime internals via go:linkname, hence -checklinkname=0. The
+# version is stamped via -X github.com/jzelinskie/cobrautil/v2.Version=v<VER> so
+# `spicedb version` reports the real release. go-1.26 is pinned (go.mod requires
+# go 1.26.x) with GOTOOLCHAIN=local so the sandboxed toolchain is used as-is and
+# no network toolchain download is attempted. Output is a signed APK in
+# Quenchworks' own repo. No upstream distro binaries. Image-only (server, no chart).
+package:
+  name: quench-spicedb
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened SpiceDB (authzed Zanzibar-style authorization database), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go-1.26
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/authzed/spicedb/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      export CGO_ENABLED=0
+      export GOTOOLCHAIN=local
+      export GOFLAGS=-mod=mod
+      go build -trimpath -tags memoryprotection \
+        -ldflags "-s -w -checklinkname=0 -X github.com/jzelinskie/cobrautil/v2.Version=v${{package.version}}" \
+        -o "${{targets.destdir}}/usr/bin/spicedb" ./cmd/spicedb

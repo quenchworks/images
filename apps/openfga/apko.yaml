@@ -1,0 +1,42 @@
+# Assembles the OpenFGA runtime image. Minimal, nonroot (uid 1001), multi-arch,
+# SBOM by apko. The default command is `openfga run`, which starts the server
+# with the in-memory storage engine: HTTP API on 8080, gRPC API on 8081 and the
+# Playground on 3000 (all bound to 0.0.0.0 by upstream defaults). No datastore
+# is baked in -- postgres/mysql are the operator's concern at runtime via env
+# (OPENFGA_DATASTORE_ENGINE / OPENFGA_DATASTORE_URI) or flags. In-memory mode
+# writes nothing to disk, so the image runs happily read-only-rootfs.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-openfga@local
+
+accounts:
+  groups:
+    - groupname: openfga
+      gid: 1001
+  users:
+    - username: openfga
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/openfga run
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-openfga"
+  org.opencontainers.image.licenses: "Apache-2.0"

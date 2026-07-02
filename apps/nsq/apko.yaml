@@ -1,0 +1,47 @@
+# Assembles the NSQ runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Ships three daemons on PATH: nsqd, nsqlookupd, nsqadmin. The default entrypoint
+# is nsqd (the message daemon); run nsqlookupd or nsqadmin as separate processes
+# by overriding the command, e.g.
+#   docker run ...nsq nsqlookupd
+#   docker run ...nsq nsqadmin --nsqlookupd-http-address=nsqlookupd:4161
+# Ports: nsqd 4150 (TCP) / 4151 (HTTP), nsqlookupd 4160 (TCP) / 4161 (HTTP),
+# nsqadmin 4171 (HTTP). nsqd's default --data-path is the work-dir /data, a
+# world-writable mount point so the rootfs can stay read-only (mount a volume
+# there). ca-certificates-bundle is included for TLS to lookupd/registries.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-nsq@local
+
+accounts:
+  groups:
+    - groupname: nsq
+      gid: 1001
+  users:
+    - username: nsq
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/nsqd
+
+work-dir: /data
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-nsq"
+  org.opencontainers.image.licenses: "MIT"
