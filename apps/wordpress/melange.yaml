@@ -1,0 +1,272 @@
+# Packages WordPress core (wordpress.org) for Wolfi. WordPress ships as a finished
+# release tarball of PHP files (plus some bundled JS/PHP libs) — there is nothing to
+# compile. We `fetch` the official wordpress-<VER>.tar.gz, verify its sha256, and
+# install the extracted tree as the docroot at /var/www/html. The PHP-FPM runtime +
+# extensions and the nginx web server come from Wolfi (declared in apko.yaml), not
+# from this package; this package only lays down the app tree and the runtime wiring
+# (nginx config, php-fpm pool + php.ini overrides, supervisord config, entrypoint).
+# Output is a signed APK in QuenchWorks' own repo.
+package:
+  name: quench-wordpress
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened WordPress CMS (PHP), served by a Wolfi PHP-FPM + nginx runtime"
+  copyright:
+    - license: GPL-2.0-or-later   # WordPress core is GPL-2.0-or-later (license.txt)
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+
+pipeline:
+  # The release asset is the finished application, not a source archive. Fetch the
+  # exact wordpress-<VER>.tar.gz and verify its sha256. It extracts to a top-level
+  # wordpress/ directory.
+  - uses: fetch
+    with:
+      uri: https://wordpress.org/wordpress-${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+      # The tarball has a top-level wordpress/ dir; keep it (default strips 1 level)
+      # so the install step can copy wordpress/. into the docroot.
+      strip-components: "0"
+
+  - name: Install the WordPress tree as the docroot at /var/www/html
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      app="$destdir/var/www/html"
+      install -d -m 0755 "$app"
+      # The tarball extracts to ./wordpress; copy its contents into the docroot.
+      cp -a wordpress/. "$app/"
+      # Sanity: the core loader + version file must be present.
+      test -f "$app/index.php"
+      test -f "$app/wp-login.php"
+      test -f "$app/wp-includes/version.php"
+      grep -q "wp_version = '${{package.version}}'" "$app/wp-includes/version.php"
+      # wp-content/uploads is the one writable app path at runtime (emptyDir/tmpfs on a
+      # read-only rootfs). Create it so the mount target exists; apko owns it to 1001.
+      install -d -m 0755 "$app/wp-content/uploads"
+
+  - name: Install the nginx site config (FastCGI to php-fpm, port 8080, /var/www/html)
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/etc/wordpress"
+      install -d "$destdir/etc/wordpress/conf.d"
+      # A self-contained nginx.conf run via `nginx -c /etc/wordpress/nginx.conf`. We do
+      # NOT overwrite /etc/nginx/nginx.conf — that file is owned by the Wolfi nginx
+      # package and writing it here would collide in apko's solve. This config is
+      # nonroot- + read-only-rootfs-friendly: no `user` directive (we already run as
+      # uid 1001), pid + every *_temp_path under /tmp (writable tmpfs), logs to
+      # stdout/stderr. It serves /var/www/html on 8080 (nonroot can't bind <1024) and
+      # FastCGI-passes .php to php-fpm on 127.0.0.1:9000.
+      cat > "$destdir/etc/wordpress/nginx.conf" <<'EOF'
+      worker_processes auto;
+      pid /tmp/nginx.pid;
+      error_log /dev/stderr warn;
+
+      events {
+          worker_connections 1024;
+      }
+
+      http {
+          include       /etc/nginx/mime.types;
+          default_type  application/octet-stream;
+          access_log    /dev/stdout;
+
+          # Keep every writable path under /tmp so the rootfs can stay read-only.
+          client_body_temp_path /tmp/nginx-client-body;
+          proxy_temp_path       /tmp/nginx-proxy;
+          fastcgi_temp_path     /tmp/nginx-fastcgi;
+          uwsgi_temp_path       /tmp/nginx-uwsgi;
+          scgi_temp_path        /tmp/nginx-scgi;
+
+          sendfile      on;
+          tcp_nopush    on;
+          keepalive_timeout 65;
+          server_tokens off;
+
+          # WordPress happily serves large media uploads; keep nginx in step with the
+          # php.ini upload_max_filesize/post_max_size below.
+          client_max_body_size 64m;
+
+          server {
+              listen 8080 default_server;
+              listen [::]:8080 default_server;
+              server_name _;
+
+              root  /var/www/html;
+              index index.php index.html;
+
+              charset utf-8;
+
+              location = /favicon.ico { access_log off; log_not_found off; }
+              location = /robots.txt  { access_log off; log_not_found off; }
+
+              # Don't serve dotfiles (e.g. .htaccess, .user.ini) as content.
+              location ~ /\.(?!well-known).* { deny all; }
+
+              location / {
+                  try_files $uri $uri/ /index.php?$args;
+              }
+
+              location ~ \.php$ {
+                  try_files $uri =404;
+                  include        /etc/nginx/fastcgi_params;
+                  fastcgi_split_path_info ^(.+\.php)(/.+)$;
+                  fastcgi_param  SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                  fastcgi_param  PATH_INFO $fastcgi_path_info;
+                  fastcgi_index  index.php;
+                  fastcgi_pass   127.0.0.1:9000;
+                  fastcgi_buffers 16 16k;
+                  fastcgi_buffer_size 32k;
+                  fastcgi_read_timeout 300;
+              }
+
+              # Long-cache static assets.
+              location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff2?)$ {
+                  expires max;
+                  log_not_found off;
+                  access_log off;
+              }
+
+              # Chart drop-in server-level config (ConfigMap mounts land here).
+              include /etc/wordpress/conf.d/*.conf;
+          }
+      }
+      EOF
+      # Ensure the include glob never fails when the drop-in dir is empty.
+      : > "$destdir/etc/wordpress/conf.d/.keep.conf"
+
+  - name: Install the php-fpm pool + php.ini overrides for nonroot / read-only rootfs
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/etc/php/php-fpm.d"
+      install -d "$destdir/etc/php/conf.d"
+
+      # The Wolfi php pool config (www.conf) sets user/group = nobody and zz-apko.conf
+      # pins listen to [::]:9000. A nonroot master (uid 1001) can't setuid workers, so
+      # the user/group directives are ignored with a warning (fine). This zzz- override
+      # (loaded last) pins the listen socket back to 127.0.0.1:9000 (what nginx
+      # FastCGI-passes to), keeps the master in the foreground and logs to stderr.
+      cat > "$destdir/etc/php/php-fpm.d/zzz-wordpress.conf" <<'EOF'
+      [global]
+      daemonize = no
+      error_log = /proc/self/fd/2
+
+      [www]
+      listen = 127.0.0.1:9000
+      catch_workers_output = yes
+      decorate_workers_output = no
+      clear_env = no
+      pm = dynamic
+      pm.max_children = 16
+      pm.start_servers = 2
+      pm.min_spare_servers = 1
+      pm.max_spare_servers = 4
+      access.log = /proc/self/fd/2
+      EOF
+
+      # WordPress runtime PHP tuning: sane upload/memory limits, opcache on, sessions +
+      # upload scratch under /tmp (writable tmpfs on a read-only rootfs), errors to
+      # stderr (captured by supervisord), expose_php off.
+      cat > "$destdir/etc/php/conf.d/zzz-wordpress.ini" <<'EOF'
+      expose_php = Off
+      memory_limit = 256M
+      upload_max_filesize = 64M
+      post_max_size = 64M
+      max_execution_time = 300
+      max_input_time = 300
+      max_input_vars = 3000
+      sys_temp_dir = /tmp
+      upload_tmp_dir = /tmp
+      session.save_path = /tmp
+      error_reporting = E_ALL & ~E_DEPRECATED & ~E_STRICT
+      display_errors = Off
+      log_errors = On
+      error_log = /proc/self/fd/2
+      opcache.enable = 1
+      opcache.enable_cli = 0
+      opcache.memory_consumption = 128
+      opcache.max_accelerated_files = 10000
+      opcache.revalidate_freq = 2
+      EOF
+
+  - name: Install the supervisord config + container entrypoint
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/etc/wordpress"
+      install -d "$destdir/usr/bin"
+
+      # supervisord runs php-fpm (on 127.0.0.1:9000) + nginx (on :8080) as the two
+      # always-on programs. It lives at /etc/wordpress/supervisord.conf (NOT
+      # /etc/supervisord.conf, which the Wolfi supervisor-config package owns and would
+      # collide in apko's solve). Nonroot-friendly: pid + sock under /tmp, logs to
+      # stdout. The entrypoint points supervisord at this file explicitly.
+      cat > "$destdir/etc/wordpress/supervisord.conf" <<'EOF'
+      [supervisord]
+      nodaemon=true
+      logfile=/dev/stdout
+      logfile_maxbytes=0
+      pidfile=/tmp/supervisord.pid
+
+      [unix_http_server]
+      file=/tmp/supervisor.sock
+
+      [supervisorctl]
+      serverurl=unix:///tmp/supervisor.sock
+
+      [rpcinterface:supervisor]
+      supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+
+      [program:php-fpm]
+      command=/usr/bin/php-fpm --nodaemonize --fpm-config /etc/php/php-fpm.conf
+      autostart=true
+      autorestart=true
+      priority=10
+      stdout_logfile=/dev/stdout
+      stdout_logfile_maxbytes=0
+      stderr_logfile=/dev/stderr
+      stderr_logfile_maxbytes=0
+
+      [program:nginx]
+      command=/usr/sbin/nginx -c /etc/wordpress/nginx.conf -g "daemon off;"
+      autostart=true
+      autorestart=true
+      priority=20
+      stdout_logfile=/dev/stdout
+      stdout_logfile_maxbytes=0
+      stderr_logfile=/dev/stderr
+      stderr_logfile_maxbytes=0
+      EOF
+
+      # Container entrypoint: create the writable scratch dirs nginx + php need under
+      # /tmp (emptyDir/tmpfs on a read-only rootfs), then exec supervisord as PID 1.
+      cat > "$destdir/usr/bin/wordpress-entrypoint.sh" <<'EOF'
+      #!/bin/sh
+      set -eu
+      # nginx temp paths + pid, php sessions/uploads all live under /tmp.
+      mkdir -p /tmp/nginx-client-body /tmp/nginx-proxy /tmp/nginx-fastcgi \
+               /tmp/nginx-uwsgi /tmp/nginx-scgi 2>/dev/null || true
+      exec supervisord -c /etc/wordpress/supervisord.conf
+      EOF
+      chmod 0755 "$destdir/usr/bin/wordpress-entrypoint.sh"
+
+  - name: Sanity-check the assembled tree
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      test -f "$destdir/var/www/html/index.php"
+      test -f "$destdir/var/www/html/wp-includes/version.php"
+      test -f "$destdir/etc/wordpress/nginx.conf"
+      test -f "$destdir/etc/php/php-fpm.d/zzz-wordpress.conf"
+      test -f "$destdir/etc/php/conf.d/zzz-wordpress.ini"
+      test -f "$destdir/etc/wordpress/supervisord.conf"
+      test -x "$destdir/usr/bin/wordpress-entrypoint.sh"
