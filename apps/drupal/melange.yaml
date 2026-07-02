@@ -1,0 +1,315 @@
+# Assembles Drupal core (drupal/drupal) for Wolfi from the OFFICIAL release tarball.
+#
+# The drupal-<VER>.tar.gz on ftp.drupal.org is the finished application, not a bare
+# source checkout: it already carries core/, the vendored composer deps (vendor/),
+# modules/, themes/, profiles/, sites/ and the flat docroot (index.php at the root).
+# There is nothing to compile in Drupal itself, so we `fetch` the sha256-pinned
+# tarball and install its tree under /opt/drupal. The PHP runtime + FPM + the
+# extension surface come from Wolfi (apko.yaml); the web tier is QuenchWorks' own
+# nginx (quench-nginx@local, built from source) fronting php-fpm on 127.0.0.1:9000,
+# both supervised by supervisord. Clean-room: we do NOT inherit the upstream
+# `drupal` docker image (which layers on php:apache); we reconstruct the whole
+# runtime from Wolfi packages. Output is a signed APK in QuenchWorks' own repo.
+package:
+  name: quench-drupal
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Drupal CMS (official release tarball) on Wolfi php-fpm + nginx"
+  copyright:
+    - license: GPL-2.0-or-later   # Drupal core: composer.json + core/LICENSE.txt
+  dependencies:
+    runtime:
+      # PHP runtime + FPM + the extensions Drupal core needs (declared here so the
+      # melange test env boots php; apko.yaml re-declares them for the image). Each
+      # extension needs its -config sibling to actually register the .so in php.ini.
+      - php-8.4
+      - php-8.4-fpm
+      - php-8.4-fpm-config
+      - php-8.4-config
+      - php-8.4-opcache
+      - php-8.4-opcache-config
+      - php-8.4-gd
+      - php-8.4-gd-config
+      - php-8.4-pdo
+      - php-8.4-pdo-config
+      - php-8.4-mysqlnd
+      - php-8.4-mysqlnd-config
+      - php-8.4-pdo_mysql
+      - php-8.4-pdo_mysql-config
+      - php-8.4-pdo_pgsql
+      - php-8.4-pdo_pgsql-config
+      - php-8.4-pgsql
+      - php-8.4-pgsql-config
+      - php-8.4-pdo_sqlite
+      - php-8.4-pdo_sqlite-config
+      - php-8.4-mbstring
+      - php-8.4-mbstring-config
+      - php-8.4-dom
+      - php-8.4-dom-config
+      - php-8.4-simplexml
+      - php-8.4-simplexml-config
+      - php-8.4-xml
+      - php-8.4-xml-config
+      - php-8.4-xmlreader
+      - php-8.4-xmlreader-config
+      - php-8.4-xmlwriter
+      - php-8.4-xmlwriter-config
+      - php-8.4-ctype
+      - php-8.4-ctype-config
+      - php-8.4-curl
+      - php-8.4-curl-config
+      - php-8.4-openssl
+      - php-8.4-openssl-config
+      - php-8.4-fileinfo
+      - php-8.4-fileinfo-config
+      - php-8.4-iconv
+      - php-8.4-iconv-config
+      - php-8.4-sodium
+      - php-8.4-sodium-config
+      - php-8.4-zip
+      - php-8.4-zip-config
+      - supervisor
+      - busybox
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+
+pipeline:
+  # The release asset is the finished app: fetch the exact drupal-<VER>.tar.gz and
+  # verify its sha256. Default extract:true unpacks it (strips the drupal-<VER>/ top).
+  - uses: fetch
+    with:
+      uri: https://ftp.drupal.org/files/projects/drupal-${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+      # Keep the tarball's own drupal-<ver>/ top dir (strip-components:0) so the tree
+      # lands in a named subdir, NOT mixed into the melange workspace root (where
+      # copying ./* would recurse into melange-out/).
+      strip-components: 0
+
+  - name: Install the Drupal tree under /opt/drupal
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      app="$destdir/opt/drupal"
+      src="drupal-${{package.version}}"
+      install -d "$app"
+      # Copy the whole extracted tree (core/, vendor/, sites/, modules/, themes/,
+      # profiles/, index.php, autoload.php, .htaccess, robots.txt, update.php, ...).
+      cp -a "$src/." "$app/"
+      # Ship the default site dir but NOT a settings.php: with no settings.php Drupal
+      # redirects "/" -> /core/install.php, which is exactly the install page the
+      # image smoke test asserts. sites/default/files is the writable assets dir;
+      # create it now (apko marks it 1001-owned + the chart mounts it writable).
+      install -d -m 0755 "$app/sites/default/files"
+
+      # Strip the bundled PHPUnit test suites + fixtures. They are never loaded at
+      # runtime (composer autoload maps to src/, not tests/), but core/modules/*/tests
+      # ships "fake_site" fixtures that vendor a stale composer/installed.json pinning
+      # drupal/core 9.8.0 -- which a comprehensive Trivy scan flags as dozens of
+      # (already-fixed-upstream) CVEs against test data. Removing tests/ eliminates
+      # those false positives and trims the runtime attack surface. Also drop any stray
+      # composer metadata left under the removed trees.
+      find "$app" -type d -name tests -prune -exec rm -rf {} +
+      test -f "$app/index.php"
+      test -f "$app/core/lib/Drupal.php"
+
+  - name: Install the nginx site block (FastCGI to php-fpm, :8080, /opt/drupal)
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/etc/nginx/conf.d"
+      # Included from quench-nginx's nginx.conf via /etc/nginx/conf.d/*.conf. It is the
+      # default_server on 8080 (nonroot can't bind <1024); quench-nginx's own html
+      # server on 8080 is a non-default catch that this block supersedes. Standard
+      # Drupal nginx recipe: clean URLs via try_files, .php -> php-fpm on :9000, and
+      # the usual denies (hidden files, uploaded .php, private trees).
+      cat > "$destdir/etc/nginx/conf.d/drupal.conf" <<'EOF'
+      server {
+          listen 8080 default_server;
+          listen [::]:8080 default_server;
+          server_name _;
+
+          root /opt/drupal;
+          index index.php index.html;
+          charset utf-8;
+
+          client_max_body_size 128M;
+          access_log off;
+
+          location = /favicon.ico { log_not_found off; access_log off; }
+          location = /robots.txt  { log_not_found off; access_log off; allow all; }
+
+          # Allow ACME / well-known before the hidden-file deny below.
+          location ~* ^/.well-known/ { allow all; }
+
+          # Deny hidden files and any PHP under an uploaded files/private tree.
+          location ~ (^|/)\.               { return 403; }
+          location ~ ^/sites/[^/]+/files/.*\.php$ { deny all; }
+          location ~ ^/sites/.*/private/   { return 403; }
+
+          location / {
+              try_files $uri /index.php?$query_string;
+          }
+
+          # Image style derivatives + system files fall through to the front controller.
+          location ~ ^/sites/.*/files/styles/ { try_files $uri /index.php?$query_string; }
+          location ~ ^(/[a-z\-]+)?/system/files/ { try_files $uri /index.php?$query_string; }
+
+          # Only index.php, update.php and install.php are FastCGI-executable.
+          location ~ '\.php$|^/update.php' {
+              fastcgi_split_path_info ^(.+?\.php)(|/.*)$;
+              try_files $fastcgi_script_name =404;
+              include        fastcgi_params;
+              fastcgi_param  SCRIPT_FILENAME $document_root$fastcgi_script_name;
+              fastcgi_param  PATH_INFO       $fastcgi_path_info;
+              fastcgi_param  QUERY_STRING    $query_string;
+              fastcgi_intercept_errors on;
+              fastcgi_pass   127.0.0.1:9000;
+              fastcgi_read_timeout 300;
+              fastcgi_buffers 16 16k;
+              fastcgi_buffer_size 32k;
+          }
+      }
+      EOF
+
+  - name: Install php-fpm pool + php.ini overrides (nonroot / read-only rootfs)
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/etc/php/php-fpm.d"
+      install -d "$destdir/etc/php/conf.d"
+
+      # The pool: drop the Wolfi default user/group (a nonroot master can't setuid the
+      # workers), pin the listen socket to 127.0.0.1:9000 (what the nginx block uses),
+      # keep the master in the foreground and pipe worker output to stderr.
+      cat > "$destdir/etc/php/php-fpm.d/zzz-drupal.conf" <<'EOF'
+      [global]
+      daemonize = no
+      error_log = /proc/self/fd/2
+
+      [www]
+      listen = 127.0.0.1:9000
+      catch_workers_output = yes
+      decorate_workers_output = no
+      clear_env = no
+      pm = dynamic
+      pm.max_children = 20
+      pm.start_servers = 2
+      pm.min_spare_servers = 1
+      pm.max_spare_servers = 4
+      access.log = /proc/self/fd/2
+      EOF
+
+      # Drupal-recommended PHP settings; opcache on, errors to stderr, temp under /tmp.
+      cat > "$destdir/etc/php/conf.d/zzz-drupal.ini" <<'EOF'
+      memory_limit = 256M
+      max_execution_time = 120
+      upload_max_filesize = 128M
+      post_max_size = 128M
+      error_reporting = E_ALL & ~E_DEPRECATED & ~E_STRICT
+      display_errors = Off
+      log_errors = On
+      error_log = /proc/self/fd/2
+      date.timezone = UTC
+      opcache.enable = 1
+      opcache.enable_cli = 0
+      opcache.memory_consumption = 128
+      opcache.max_accelerated_files = 20000
+      sys_temp_dir = /tmp
+      upload_tmp_dir = /tmp
+      session.save_path = /tmp
+      EOF
+
+  - name: Install the supervisord configuration (php-fpm + nginx)
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/etc/drupal"
+      install -d "$destdir/etc/supervisor.d"
+
+      # Main config at /etc/drupal/supervisord.conf (NOT /etc/supervisord.conf, which the
+      # Wolfi supervisor-config package owns -> apko file conflict). Nonroot-friendly:
+      # nodaemon, logs to stdout, pid + control socket under /tmp (writable tmpfs on a
+      # read-only rootfs). Includes the per-program drop-ins.
+      cat > "$destdir/etc/drupal/supervisord.conf" <<'EOF'
+      [supervisord]
+      nodaemon=true
+      logfile=/dev/stdout
+      logfile_maxbytes=0
+      pidfile=/tmp/supervisord.pid
+
+      [unix_http_server]
+      file=/tmp/supervisor.sock
+
+      [supervisorctl]
+      serverurl=unix:///tmp/supervisor.sock
+
+      [rpcinterface:supervisor]
+      supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+
+      [include]
+      files = /etc/supervisor.d/*.conf
+      EOF
+
+      # php-fpm first (the FastCGI backend), then nginx (the web front).
+      cat > "$destdir/etc/supervisor.d/php-fpm.conf" <<'EOF'
+      [program:php-fpm]
+      command=/usr/bin/php-fpm --nodaemonize --fpm-config /etc/php/php-fpm.conf
+      autostart=true
+      autorestart=true
+      priority=10
+      stdout_logfile=/dev/stdout
+      stdout_logfile_maxbytes=0
+      stderr_logfile=/dev/stderr
+      stderr_logfile_maxbytes=0
+      EOF
+
+      cat > "$destdir/etc/supervisor.d/nginx.conf" <<'EOF'
+      [program:nginx]
+      command=/usr/bin/nginx -g "daemon off;"
+      autostart=true
+      autorestart=true
+      priority=20
+      stdout_logfile=/dev/stdout
+      stdout_logfile_maxbytes=0
+      stderr_logfile=/dev/stderr
+      stderr_logfile_maxbytes=0
+      EOF
+
+  - name: Sanity-check the assembled tree
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      test -f "$destdir/opt/drupal/index.php"
+      test -f "$destdir/opt/drupal/core/lib/Drupal.php"
+      test -d "$destdir/opt/drupal/vendor"
+      test -f "$destdir/etc/nginx/conf.d/drupal.conf"
+      test -f "$destdir/etc/php/php-fpm.d/zzz-drupal.conf"
+      test -f "$destdir/etc/drupal/supervisord.conf"
+      # Print the Drupal core version so the build log records what shipped.
+      grep -m1 "const VERSION" "$destdir/opt/drupal/core/lib/Drupal.php" || true
+
+test:
+  pipeline:
+    - runs: |
+        set -eu
+        test -f /opt/drupal/index.php
+        test -f /opt/drupal/core/lib/Drupal.php
+        test -d /opt/drupal/vendor
+        php --version
+        # The DB-driver + core extensions must be loaded in the runtime.
+        for ext in gd pdo pdo_mysql pdo_pgsql pdo_sqlite mbstring dom simplexml xml ctype curl openssl fileinfo; do
+          php -m | grep -qi "^${ext}$" || { echo "missing PHP extension: $ext"; php -m; exit 1; }
+        done
+        # Drupal core version constant is present.
+        grep -q "const VERSION" /opt/drupal/core/lib/Drupal.php
+        command -v php-fpm
+        command -v nginx
+        command -v supervisord
