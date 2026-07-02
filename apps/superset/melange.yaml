@@ -1,0 +1,111 @@
+# Packages Apache Superset (data-exploration / BI web app) onto Wolfi. Superset is a
+# pure-Python Flask app distributed as a pip package (`apache-superset`), not a binary
+# — there is no Wolfi `superset` package — so we install it from PyPI into a virtualenv
+# on a Wolfi python-3.11 base, then harden it on a minimal apko base and gate it 0-CVE
+# with Trivy (which scans the venv's Python packages too). Same venv-on-Wolfi pattern
+# as MLflow.
+#
+# NO NODE BUILD: the PyPI artifact already carries Superset's prebuilt frontend under
+# superset/static/assets (the 6.1.0 / 5.0.0 wheels and even the sdist-only 6.0.0 ship
+# the built js/css), so `pip install` never invokes npm/webpack.
+#
+# PYTHON: built on python-3.11, the single interpreter all three shipped lines
+# (6.1 / 6.0 / 5.0) support (5.0.0 has no 3.12 classifier). See build.conf.
+#
+# The install pulls Superset's own pinned dependency tree (Flask, gunicorn, SQLAlchemy,
+# Celery, pandas, marshmallow, ...); we add ONLY the two runtime DRIVERS the chart wires
+# up — psycopg2-binary (the PostgreSQL metadata-DB driver) and redis (cache / Celery
+# results broker) — plus gunicorn (the WSGI server the image launches). We do NOT add
+# heavy optional DB-engine drivers (that is the operator's / chart's concern). The venv
+# lives at /opt/superset/venv; apache-superset is pinned to the build version so the
+# install matches the catalog version exactly.
+package:
+  name: quench-superset
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Apache Superset (data exploration & BI), packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - python-3.11            # the venv references the system interpreter; it must be present at runtime
+      - ca-certificates-bundle # TLS to the external Postgres metadata store / Redis / upstream data sources
+      - glibc
+      - tzdata
+      - libmagic               # python-magic (Superset file-upload MIME sniffing) dlopen's libmagic at runtime
+      # psycopg2-binary ships a manylinux wheel with a vendored libpq, so no system
+      # libpq runtime dep is needed. If Trivy ever flags the vendored libpq, switch the
+      # pip dep to the Wolfi py3.11-psycopg2 package + a `libpq` runtime dep here.
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - python-3.11
+      - py3.11-pip
+      - build-base             # fallback for any transitive dep that has no wheel (sdist build)
+      - python-3.11-dev        # headers for any sdist that compiles a C extension
+
+pipeline:
+  # Create an isolated venv and install Superset from PyPI, pinned to the build
+  # version, plus the two runtime drivers the chart wires (psycopg2 + redis) and the
+  # WSGI server (gunicorn). --no-cache-dir keeps the layer small. The frontend is
+  # already prebuilt inside the PyPI artifact, so no npm/webpack runs here. All
+  # shebangs in the venv point at /opt/superset/venv/bin/python.
+  - runs: |
+      VER="${{package.version}}"
+      dest="${{targets.destdir}}"
+
+      python3.11 -m venv /opt/superset/venv
+      /opt/superset/venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel
+      /opt/superset/venv/bin/pip install --no-cache-dir \
+        "apache-superset==${VER}" \
+        gunicorn \
+        psycopg2-binary \
+        redis
+
+      # ---- 0-CVE security bumps -------------------------------------------------
+      # Superset's own dependency pins drag in transitive packages with FIXABLE CVEs.
+      # Trivy in `comprehensive` detection-priority scans the venv's .dist-info, so
+      # these MUST be patched to reach the 0-CVE gate. We upgrade ONLY the minimal set
+      # to the fixed versions (Superset's ranges allow these), then re-run pip check +
+      # re-import to prove nothing broke. Keep this list minimal and CVE-driven.
+      /opt/superset/venv/bin/pip install --no-cache-dir --upgrade \
+        "cryptography>=48.0.1" \
+        "msgpack>=1.2.1" \
+        "pyarrow>=23.0.1"
+      # Resolver sanity: no broken/conflicting deps after the bumps.
+      /opt/superset/venv/bin/pip check
+
+      # Assert the install is importable and reports the right version WITHOUT a DB
+      # (the full server-boot check runs in test.sh against the assembled image, and in
+      # the chart's kind gate with a bundled Postgres + Redis). `import superset.app`
+      # catches missing-module defects at import time (Day-13 authentik lesson).
+      # NOTE: the `superset` module exposes NO `__version__` attribute — the version
+      # lives in the package metadata, so read it via importlib.metadata.
+      /opt/superset/venv/bin/python -c "import importlib.metadata as m; v=m.version('apache-superset'); assert v=='${VER}', v; import superset, superset.app; print('superset', v, 'import OK')"
+
+      # Relocate the venv into the package tree under /opt/superset.
+      install -d "${dest}/opt/superset"
+      cp -a /opt/superset/venv "${dest}/opt/superset/venv"
+
+      # Convenience symlinks on PATH (the `superset` CLI + gunicorn).
+      install -d "${dest}/usr/bin"
+      ln -sf /opt/superset/venv/bin/superset "${dest}/usr/bin/superset"
+      ln -sf /opt/superset/venv/bin/gunicorn "${dest}/usr/bin/gunicorn"
+
+      # pip may drop a world-writable advisory lock or 0666 files in the venv; strip
+      # any world-writable bits so the melange worldwrite linter passes.
+      find "${dest}/opt/superset/venv" -perm -0002 -exec chmod o-w {} + 2>/dev/null || true
+      chmod -R a+rX "${dest}/opt/superset"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /opt/superset/venv/bin/superset
+        /opt/superset/venv/bin/python -c "import importlib.metadata as m; print(m.version('apache-superset'))"

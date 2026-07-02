@@ -1,0 +1,78 @@
+# Assembles the Apache Superset runtime image. Minimal, nonroot, multi-arch, SBOM by
+# apko. Ships the pip venv under /opt/superset/venv with python-3.11 present at runtime
+# (the venv references the system interpreter). The entrypoint boots the Superset web
+# server via gunicorn on :8088 (the app factory `superset.app:create_app()`); the chart
+# can override the command/args. Superset only becomes fully healthy with a reachable
+# PostgreSQL metadata DB + Redis and a SUPERSET_SECRET_KEY, all supplied by the chart —
+# full DB-backed boot is the chart's kind gate, not this image's smoke.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - glibc
+    - ca-certificates-bundle
+    - tzdata
+    - libmagic                 # python-magic dlopen's libmagic (file-upload MIME sniffing)
+    - python-3.11              # the venv's interpreter
+    - quench-superset@local    # the apache-superset venv + /usr/bin/superset + gunicorn symlinks
+
+accounts:
+  groups:
+    - groupname: superset
+      gid: 1001
+  users:
+    - username: superset
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  # Boot the Superset web server. gunicorn imports the app factory
+  # `superset.app:create_app()`; worker temp lives under /tmp so the server runs under
+  # a read-only rootfs. The chart typically overrides args (workers/timeout/bind).
+  command: /opt/superset/venv/bin/gunicorn --bind 0.0.0.0:8088 --workers 4 --worker-class gthread --threads 20 --timeout 120 --worker-tmp-dir /tmp --limit-request-line 0 --limit-request-field_size 0 superset.app:create_app()
+
+environment:
+  PATH: /opt/superset/venv/bin:/usr/bin:/bin
+  HOME: /opt/superset
+  # SUPERSET_HOME is where Superset keeps its default (sqlite) metadata DB, logs and
+  # cache; the chart points the metadata DB/cache at external Postgres/Redis and
+  # overlays a writable emptyDir here for the read-only rootfs.
+  SUPERSET_HOME: /opt/superset/home
+  # gunicorn worker heartbeat + any Python temp land under a writable dir.
+  TMPDIR: /tmp
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+
+work-dir: /opt/superset
+
+paths:
+  # SUPERSET_HOME: writable by the server uid for the default sqlite store / logs when
+  # no external metadata DB is configured. Under a read-only rootfs the chart overlays
+  # an emptyDir/PVC here.
+  - path: /opt/superset/home
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /tmp
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o1777
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-superset"
+  org.opencontainers.image.licenses: "Apache-2.0"
