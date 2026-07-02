@@ -1282,3 +1282,57 @@ catalog:
     license: Apache-2.0
     tier: standard
     status: built
+
+  - name: wordpress
+    category: Apps & productivity
+    summary: WordPress, the PHP content-management system and blogging platform. Reconstructed clean-room from the official release on a hardened Wolfi php-8.4-fpm + nginx runtime (nonroot, read-only rootfs, supervisord), not the php:apache upstream image. The image ships no wp-config.php; the chart supplies one via ConfigMap and provides a MySQL backend.
+    source: https://wordpress.org/wordpress-7.0.tar.gz
+    upstream: https://wordpress.org
+    license: GPL-2.0-or-later
+    tier: standard
+    status: built
+
+  - name: drupal
+    category: Apps & productivity
+    summary: Drupal core, the open-source CMS and content framework. Built from the official release tarball on a hardened Wolfi php-8.4-fpm + nginx runtime (nonroot, read-only rootfs, supervisord); the chart supplies settings.php via ConfigMap and a MySQL backend. Ships the 11.3/11.4 lines (11.2 is held because drupal/core-recommended pins guzzle below its CVE fix).
+    source: https://ftp.drupal.org/files/projects/drupal-11.4.0.tar.gz
+    upstream: https://www.drupal.org
+    license: GPL-2.0-or-later
+    tier: standard
+    status: built
+
+  - name: nextcloud
+    category: Apps & productivity
+    summary: Nextcloud, the self-hosted file-sync and content-collaboration platform. Reconstructed clean-room on a hardened Wolfi php-8.4-fpm + nginx runtime (nonroot, read-only rootfs); the chart installs via occ and provides a MariaDB backend. Nextcloud is AGPL-3.0-only (strong copyleft).
+    source: https://download.nextcloud.com/server/releases/nextcloud-34.0.1.tar.bz2
+    upstream: https://nextcloud.com
+    license: AGPL-3.0-only
+    tier: standard
+    status: built
+
+  - name: graylog
+    category: Observability
+    summary: Graylog, the log-management and analysis server (search, dashboards, alerting, GELF/Beats inputs). Built clean-room on a hardened Wolfi JRE (nonroot, read-only rootfs); the chart provides MongoDB (metadata) and OpenSearch (log storage) backends. Graylog Server is SSPL-1.0 (source-available, not OSI-approved).
+    source: https://packages.graylog2.org/releases/graylog/graylog
+    upstream: https://www.graylog.org
+    license: SSPL-1.0
+    tier: standard
+    status: built
+
+  - name: xyops
+    category: Workflow
+    summary: xyops, a workflow-automation and server-monitoring system (job scheduler, monitors, alerting, ticketing) by the creator of Cronicle. Built from source on Wolfi nodejs-22 (native better-sqlite3), nonroot on a hardened read-only-rootfs base. Single-instance with an embedded SQLite store on a persistent volume; the chart runs it as a StatefulSet.
+    source: https://github.com/pixlcore/xyops
+    upstream: https://github.com/pixlcore/xyops
+    license: BSD-3-Clause
+    tier: standard
+    status: built
+
+  - name: vllm
+    category: Machine learning & AI
+    summary: vLLM, the high-throughput LLM inference and serving engine with an OpenAI-compatible API. CPU build — installs vLLM's prebuilt CPU wheel (torch+cpu, no source compile, no CUDA) into a venv on a hardened Wolfi python-3.12 base, 0-CVE across ~140 Python packages. The user supplies the model; the chart runs it as a StatefulSet with a persistent model cache.
+    source: https://github.com/vllm-project/vllm
+    upstream: https://docs.vllm.ai
+    license: Apache-2.0
+    tier: standard
+    status: built
