@@ -41,9 +41,12 @@ environment:
       # (newest, clears stdlib CVE advisories) and GOTOOLCHAIN=local so go.mod's
       # 1.25 directive does not trigger a toolchain download.
       - go-1.26
-      # UI toolchain: web/ui/.nvmrc pins Node v22; npm ci builds the React/Mantine SPA.
+      # UI toolchain: web/ui/.nvmrc pins Node v22. 3.11/3.12 build the SPA with npm
+      # (package-lock.json); 3.13 migrated web/ui to pnpm (pnpm-lock.yaml). Ship both
+      # package managers and branch on the committed lockfile at build time.
       - nodejs-22
       - npm
+      - pnpm
 
 pipeline:
   # git-checkout, not fetch: building from the pinned git tag avoids the
@@ -60,13 +63,28 @@ pipeline:
   - name: Build the web UI from source (Node), reproducing `make assets`
     runs: |
       set -eu
-      # build_ui.sh expects a writable npm cache; HOME in the sandbox is writable.
+      # build_ui.sh / npm / pnpm expect a writable cache; HOME in the sandbox is writable.
       export npm_config_cache="$(mktemp -d)"
-      # ui-install: deterministic install from the committed package-lock.json.
-      # --foreground-scripts runs lifecycle scripts inline; esbuild (pulled in by
-      # mantine-ui's Vite build) downloads its platform binary in a postinstall that
-      # npm's allowScripts guard otherwise blocks, which would break `vite build`.
-      ( cd web/ui && npm ci --foreground-scripts )
+      # ui-install: deterministic install from the committed lockfile. 3.13 migrated
+      # web/ui from npm (package-lock.json) to pnpm (pnpm-lock.yaml + pnpm-workspace.yaml),
+      # so branch on which lockfile the checked-out tag ships.
+      if [ -f web/ui/pnpm-lock.yaml ]; then
+        # pnpm path (3.13+): --frozen-lockfile is the deterministic equivalent of `npm ci`.
+        # Route the content-addressable store to a writable temp dir. pnpm v10 blocks
+        # dependency build scripts by default (upstream's pnpm-workspace.yaml allowlists
+        # esbuild + unrs-resolver, but that key is not honored by every pnpm release), so
+        # explicitly rebuild esbuild — mantine-ui's `vite build` shells out to esbuild's
+        # native binary, which a blocked postinstall would leave unbuilt.
+        ( cd web/ui
+          pnpm install --frozen-lockfile --store-dir "$(mktemp -d)"
+          pnpm rebuild esbuild )
+      else
+        # npm path (3.11/3.12): deterministic install from package-lock.json.
+        # --foreground-scripts runs lifecycle scripts inline; esbuild (pulled in by
+        # mantine-ui's Vite build) downloads its platform binary in a postinstall that
+        # npm's allowScripts guard otherwise blocks, which would break `vite build`.
+        ( cd web/ui && npm ci --foreground-scripts )
+      fi
       # ui-build: build the promql modules + the Mantine UI into web/ui/static/**.
       # The Mantine SPA is the DEFAULT served UI (web.go serves /static/mantine-ui;
       # the legacy CRA react-app is only reached behind --enable-feature=old-ui and
@@ -83,6 +101,12 @@ pipeline:
           npm run build -w @prometheus-io/mantine-ui
           mkdir -p static && rm -rf static/mantine-ui && mv mantine-ui/dist static/mantine-ui
         fi )
+      # Guard against a silently-empty embed: a no-op UI build (unrecognized flag, or
+      # a pnpm/npm build that emitted nothing) leaves web/ui/static empty. That still
+      # compiles under -tags builtinassets but ships a BLANK UI, so fail loudly here.
+      [ -n "$(find web/ui/static -type f -print -quit)" ] \
+        || { echo "web/ui/static is empty after the UI build — refusing to embed a blank UI"; exit 1; }
+      echo "UI assets built: $(find web/ui/static -type f | wc -l) files, $(du -sh web/ui/static | cut -f1) under web/ui/static"
 
   - name: Compress the assets and generate the go:embed manifest (web/ui/embed.go)
     runs: |
