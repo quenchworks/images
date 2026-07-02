@@ -1,0 +1,99 @@
+# Packages Graylog onto Wolfi. Graylog is a JVM app: we ship the upstream official
+# tarball (prebuilt graylog.jar + plugins) on a hardened Wolfi JRE, which is the
+# CVE surface the Trivy gate scans. No compilation -- fetch the tarball, drop the
+# server jar + plugins under /opt/graylog, and bake an env-driven entrypoint that
+# renders server.conf and launches `java -jar graylog.jar server`.
+#
+# LICENSE: SSPL-1.0 (Server Side Public License) -- source-available, NOT OSI.
+package:
+  name: quench-graylog
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Graylog log management server (SSPL), packaged on Wolfi"
+  copyright:
+    - license: SSPL-1.0
+  dependencies:
+    runtime:
+      - openjdk-21-jre        # the JRE Graylog runs on (the scanned CVE surface; 6.3=Java17, 7.x=Java21, 21 runs both)
+      - bash                  # the baked entrypoint is bash
+      - busybox
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+
+pipeline:
+  - uses: fetch
+    with:
+      # The tarball is architecture-independent (jars): same artifact on amd64/arm64.
+      uri: https://packages.graylog2.org/releases/graylog/graylog-${{package.version}}.tgz
+      expected-sha256: "__SHA256__"
+      strip-components: 1
+  - runs: |
+      # install the server jar, launcher, plugins and config example under /opt/graylog
+      dest="${{targets.destdir}}/opt/graylog"
+      install -d "$dest"
+      cp -r graylog.jar bin plugin graylog.conf.example LICENSE "$dest/"
+      # bake the env-driven entrypoint. A read-only rootfs means server.conf and all
+      # state (node-id, message journal) live under the writable data dir; every
+      # config key is overridable via a GRAYLOG_<KEY> env var (Graylog's own
+      # convention), which is what the chart wires MongoDB + the search store into.
+      install -d "${{targets.destdir}}/usr/bin"
+      cat > "${{targets.destdir}}/usr/bin/docker-entrypoint.sh" <<'EOS'
+      #!/bin/bash
+      set -euo pipefail
+
+      GRAYLOG_HOME="${GRAYLOG_HOME:-/opt/graylog}"
+      CONF="${GRAYLOG_SERVER_CONF:-/var/lib/graylog/server.conf}"
+
+      # Non-server subcommands (version, --help, ...) run the jar directly: no config,
+      # no MongoDB/OpenSearch needed. This is what the smoke test drives.
+      if [ "${1:-server}" != "server" ]; then
+        exec java -jar "$GRAYLOG_HOME/graylog.jar" "$@"
+      fi
+
+      DATA_DIR="${GRAYLOG_DATA_DIR:-/var/lib/graylog/data}"
+      mkdir -p "$DATA_DIR" "$DATA_DIR/journal" "$(dirname "$CONF")"
+
+      # Defaults for the keys Graylog needs to boot; each is overridable via env.
+      # Exported so the render loop below emits them into server.conf.
+      export GRAYLOG_DATA_DIR="$DATA_DIR"
+      export GRAYLOG_IS_LEADER="${GRAYLOG_IS_LEADER:-true}"
+      export GRAYLOG_NODE_ID_FILE="${GRAYLOG_NODE_ID_FILE:-$DATA_DIR/node-id}"
+      export GRAYLOG_BIN_DIR="${GRAYLOG_BIN_DIR:-$GRAYLOG_HOME/bin}"
+      export GRAYLOG_PLUGIN_DIR="${GRAYLOG_PLUGIN_DIR:-$GRAYLOG_HOME/plugin}"
+      export GRAYLOG_MESSAGE_JOURNAL_DIR="${GRAYLOG_MESSAGE_JOURNAL_DIR:-$DATA_DIR/journal}"
+      export GRAYLOG_HTTP_BIND_ADDRESS="${GRAYLOG_HTTP_BIND_ADDRESS:-0.0.0.0:9000}"
+      export GRAYLOG_MONGODB_URI="${GRAYLOG_MONGODB_URI:-mongodb://localhost/graylog}"
+
+      # Required to start; fail fast with a clear message (the chart supplies these).
+      : "${GRAYLOG_PASSWORD_SECRET:?set GRAYLOG_PASSWORD_SECRET (>= 16 chars)}"
+      : "${GRAYLOG_ROOT_PASSWORD_SHA2:?set GRAYLOG_ROOT_PASSWORD_SHA2 (sha256 of the admin password)}"
+
+      # Render server.conf: every GRAYLOG_<KEY> env var becomes a lowercased
+      # <key> = <value> line. A few control vars are consumed by this script only.
+      : > "$CONF"
+      while IFS='=' read -r name value; do
+        case "$name" in
+          GRAYLOG_HOME|GRAYLOG_SERVER_CONF|GRAYLOG_SERVER_JAVA_OPTS) continue ;;
+        esac
+        key="$(printf '%s' "${name#GRAYLOG_}" | tr '[:upper:]' '[:lower:]')"
+        printf '%s = %s\n' "$key" "$value" >> "$CONF"
+      done < <(env | grep '^GRAYLOG_')
+
+      exec java ${GRAYLOG_SERVER_JAVA_OPTS:-} -jar "$GRAYLOG_HOME/graylog.jar" server -f "$CONF"
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        test -f /opt/graylog/graylog.jar
+        test -x /usr/bin/docker-entrypoint.sh

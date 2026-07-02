@@ -1,0 +1,62 @@
+# Assembles the Graylog runtime image: hardened Wolfi JRE + the Graylog server jar.
+# Minimal, nonroot, multi-arch, SBOM by apko. The image only launches the server;
+# the chart wires the required MongoDB + search store (OpenSearch/Elasticsearch).
+#
+# LICENSE: SSPL-1.0 (Server Side Public License) -- source-available, NOT OSI.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - openjdk-21-jre
+    - bash
+    - busybox
+    - quench-graylog@local
+
+accounts:
+  groups:
+    - groupname: graylog
+      gid: 1001
+  users:
+    - username: graylog
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/docker-entrypoint.sh
+
+environment:
+  # openjdk-21-jre installs under /usr/lib/jvm with no /usr/bin/java symlink; the
+  # entrypoint invokes `java`, so JAVA_HOME/bin must be on PATH.
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  GRAYLOG_HOME: /opt/graylog
+  # graylogctl's DEFAULT_JAVA_OPTS, minus the pid-file bits (we exec java directly).
+  GRAYLOG_SERVER_JAVA_OPTS: "-Dlog4j2.formatMsgNoLookups=true -Djdk.tls.acknowledgeCloseNotify=true -Xms1g -Xmx1g -XX:+UseG1GC -server -XX:-OmitStackTraceInFastThrow"
+  PATH: /usr/lib/jvm/java-21-openjdk/bin:/usr/bin:/opt/graylog/bin
+
+work-dir: /var/lib/graylog
+
+paths:
+  # writable state dir (server.conf, node-id, message journal) for the read-only root
+  - path: /var/lib/graylog
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-graylog"
+  org.opencontainers.image.licenses: "SSPL-1.0"
