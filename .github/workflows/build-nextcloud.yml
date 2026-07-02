@@ -112,6 +112,12 @@ jobs:
           ignore-unfixed: true
           severity: CRITICAL,HIGH,MEDIUM,LOW
           scanners: vuln,secret,misconfig
+          # False positive: Trivy's secret scanner flags an Azure account-key FORMAT
+          # constant in the bundled Azure Storage PHP SDK (Resources.php) as a leaked
+          # key. It is a documented format string, not a credential. Skip only that
+          # source file; CVE detection for the SDK comes from composer's installed.json
+          # (a different file), so this does not weaken vulnerability scanning.
+          skip-files: "**/microsoft/azure-storage-*/src/**/Resources.php"
 
       - name: Log in to GHCR
         uses: docker/login-action@v4

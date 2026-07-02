@@ -79,6 +79,17 @@ pipeline:
       /opt/vllm/venv/bin/pip install --no-cache-dir \
         "setuptools==80.9.0" "wheel>=0.46.2" "jaraco.context>=6.1.0"
 
+      # setuptools 80.9.0 still bundles OLD vendored copies under setuptools/_vendor:
+      # jaraco.context 5.3.0 (CVE-2026-23949) and wheel 0.45.1 (CVE-2026-24049). They
+      # are used only by setuptools' package-BUILD machinery, never at inference. The
+      # fixed top-level copies (jaraco.context 6.1.x, wheel >=0.46.2) are installed and
+      # setuptools' extern importer falls back to them, so deleting the vendored dupes
+      # (code + dist-info) ships no vulnerable code and keeps `import setuptools`/
+      # `pkg_resources` working. Verified by the `import vllm` smoke in test.sh.
+      sp="/opt/vllm/venv/lib/python3.12/site-packages/setuptools/_vendor"
+      rm -rf "$sp"/jaraco.context-5*.dist-info "$sp"/jaraco/context.py \
+             "$sp"/wheel-0.45*.dist-info "$sp"/wheel
+
       # vllm --version must work headless (no GPU, no model); assert it at build time.
       # (import vllm + the version check run in test.sh against the assembled image.)
       /opt/vllm/venv/bin/vllm --version | tail -1 | grep -q "^${VER}+cpu$"
