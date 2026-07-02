@@ -1,0 +1,58 @@
+# Assembles the rqlite runtime image. Minimal, nonroot (uid 1001), multi-arch,
+# SBOM by apko. Ships both binaries on PATH: rqlited (the server, the entrypoint)
+# and rqlite (the CLI). The default command starts the server bound on 0.0.0.0 so
+# the container is reachable, and persists to /rqlite/data.
+#
+#   Port 4001  HTTP API (queries, cluster join, admin)
+#   Port 4002  Raft (inter-node consensus)
+#
+# rqlited needs a WRITABLE data directory: /rqlite/data is created owned by uid
+# 1001. Mount a volume there for durable storage (e.g. -v rqlite-data:/rqlite/data
+# or a PVC). The rest of the rootfs can stay read-only -- only /rqlite/data is
+# written -- so the image is read-only-rootfs friendly with that one volume.
+# ca-certificates-bundle is included for TLS (HTTPS API, node-to-node TLS, S3
+# auto-backups).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-rqlite@local
+
+accounts:
+  groups:
+    - groupname: rqlite
+      gid: 1001
+  users:
+    - username: rqlite
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  - path: /rqlite/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+entrypoint:
+  command: /usr/bin/rqlited -http-addr 0.0.0.0:4001 -raft-addr 0.0.0.0:4002 /rqlite/data
+
+work-dir: /rqlite
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-rqlite"
+  org.opencontainers.image.licenses: "MIT"

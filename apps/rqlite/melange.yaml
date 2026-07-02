@@ -1,0 +1,58 @@
+# Builds rqlite from source onto Wolfi. rqlite is a lightweight, distributed
+# relational database that uses SQLite as its storage engine and Raft for
+# consensus. It ships two binaries under ./cmd: rqlited (the server) and rqlite
+# (the CLI); both are built and shipped. The SQLite driver is the mattn/go-sqlite3
+# fork (rqlite/go-sqlite3), which is CGO, so CGO_ENABLED=1 and the C SQLite amalga-
+# mation is compiled in and statically linked against musl (build-base) via
+# -extldflags "-static" -- the result is a self-contained static binary, so the
+# runtime image carries no libc. Go 1.26 is required (go.mod), pinned as go-1.26
+# with GOTOOLCHAIN=local so no toolchain is fetched at build time. Version is
+# stamped via -X on github.com/rqlite/rqlite/v10/cmd.Version so `rqlited -version`
+# reports the real release. Output is a signed APK in Quenchworks' own repo. No
+# upstream distro binaries. Image-only (server + CLI, no chart). MIT-licensed.
+package:
+  name: quench-rqlite
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened rqlite (distributed relational database on SQLite + Raft), built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go-1.26
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/rqlite/rqlite/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      export CGO_ENABLED=1
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local
+      LDFLAGS='-s -w -X github.com/rqlite/rqlite/v10/cmd.Version=${{package.version}} -extldflags "-static"'
+      # rqlited: the distributed database server.
+      go build -trimpath -ldflags "$LDFLAGS" \
+        -o "${{targets.destdir}}/usr/bin/rqlited" ./cmd/rqlited
+      # rqlite: the command-line query client.
+      go build -trimpath -ldflags "$LDFLAGS" \
+        -o "${{targets.destdir}}/usr/bin/rqlite" ./cmd/rqlite
+
+test:
+  pipeline:
+    - runs: |
+        rqlited -version
+        # the CLI's flag parser reads "-version" as bundled short flags; use -v.
+        rqlite -v
