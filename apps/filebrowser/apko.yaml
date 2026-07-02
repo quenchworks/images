@@ -1,0 +1,73 @@
+# Assembles the File Browser runtime image. Minimal, nonroot, multi-arch, SBOM by
+# apko. File Browser is a web file manager: the entrypoint is the binary, which
+# reads all flags from FB_-prefixed env vars (viper), so no wrapper script is
+# needed. ca-certificates-bundle is included for outbound TLS (e.g. auth/OIDC).
+#
+# Read-only rootfs friendly. File Browser needs THREE writable paths, all created
+# here owned by the nonroot uid 1001 and meant to be mounted as volumes:
+#   /database  -> the bbolt DB file (FB_DATABASE=/database/filebrowser.db). Written
+#                 on every change; auto-created on first run.
+#   /srv       -> the served directory tree (FB_ROOT=/srv). Mount your files here.
+#   /config    -> optional config file location (FB_CONFIG unset by default).
+# Everything else (the binary, embedded UI) is read-only. The server binds
+# 0.0.0.0:8080 (FB_ADDRESS/FB_PORT); upstream defaults to 127.0.0.1 which is
+# unreachable in a container, so we override the address. 8080 is >1024, so the
+# nonroot user can bind it.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-filebrowser@local
+
+accounts:
+  groups:
+    - groupname: filebrowser
+      gid: 1001
+  users:
+    - username: filebrowser
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  FB_DATABASE: /database/filebrowser.db
+  FB_ROOT: /srv
+  FB_ADDRESS: 0.0.0.0
+  FB_PORT: "8080"
+
+paths:
+  - path: /database
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /srv
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /config
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /usr/bin/filebrowser
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-filebrowser"
+  org.opencontainers.image.licenses: "Apache-2.0"

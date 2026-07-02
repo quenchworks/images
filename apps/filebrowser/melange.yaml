@@ -1,0 +1,92 @@
+# Builds File Browser (filebrowser/filebrowser) from source onto Wolfi. Single
+# static Go binary (CGO disabled, matching upstream .goreleaser.yml), multi-arch.
+# Output is a signed APK in Quenchworks' own repo. No upstream distro binaries.
+#
+# File Browser is a Go web file manager with a Vite/Vue 3 web UI. The backend
+# embeds the compiled UI via go:embed (`//go:embed dist/*` in frontend/assets.go),
+# but the source tree ships frontend/dist with only a .gitkeep -- the UI is NOT
+# pre-built in the tag. So we reproduce upstream's own asset pipeline here:
+#   frontend: pnpm install --frozen-lockfile + vite build -> frontend/dist/**
+#   go build -> frontend/assets.go's `//go:embed dist/*` picks up the compiled UI.
+# We run `vite build` directly (not `pnpm run build`, which also runs a vue-tsc
+# typecheck): the emitted dist assets are identical, and we skip the dev-only
+# type gate. Node/pnpm live ONLY in the build sandbox; the runtime image is a
+# static Go binary with no JS toolchain, so Node never enters the Trivy scan
+# surface.
+#
+# go.mod declares go 1.25; we build with go-1.26 (newest, clears stdlib CVE
+# advisories) and GOTOOLCHAIN=local so go.mod's 1.25 directive does not trigger a
+# toolchain download. GOFLAGS=-mod=mod lets the module graph resolve patched deps.
+package:
+  name: quench-filebrowser
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened File Browser (web file manager), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - bash
+      - ca-certificates-bundle
+      - go-1.26
+      # UI toolchain: frontend is built with vite (Vue 3). package.json requires
+      # node >=24 and pnpm >=10; pnpm is installed locally via npm below.
+      - nodejs-24
+      - npm
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/filebrowser/filebrowser/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Build the web UI from source (pnpm + vite)
+    runs: |
+      set -eu
+      # Writable caches/HOME for npm + pnpm inside the sandbox.
+      export npm_config_cache="$(mktemp -d)"
+      export HOME="$(mktemp -d)"
+      # Install pnpm@10 (required by frontend/package.json) into a private prefix
+      # on PATH -- avoids writing to the global node prefix.
+      export PNPM_PREFIX="$(mktemp -d)"
+      npm install -g --prefix "$PNPM_PREFIX" pnpm@10
+      export PATH="$PNPM_PREFIX/bin:${PATH}"
+      pnpm --version
+      (
+        cd frontend
+        pnpm install --frozen-lockfile
+        # Emit dist assets directly (skip the vue-tsc typecheck in `pnpm run build`).
+        pnpm exec vite build
+      )
+      # frontend/assets.go embeds dist/*; assert vite produced the UI entrypoint.
+      test -f frontend/dist/index.html
+
+  - name: Build the filebrowser binary (static, CGO off)
+    runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's 1.25
+      export GO111MODULE=on
+      COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+      VERPKG="github.com/filebrowser/filebrowser/v2/version"
+      # Bump the one transitive dep the comprehensive Trivy gate flags: golang.org/x/image
+      # v0.42.0 carries CVE-2026-46601 (webp DoS), fixed in 0.43.0. Same minor API, so this
+      # is a safe patch bump within the module graph (GOFLAGS=-mod=mod), not a fork/force.
+      go get golang.org/x/image@v0.43.0
+      go mod tidy
+      # Mirror upstream ldflags so `filebrowser version` reports the real release.
+      go build -trimpath \
+        -ldflags "-s -w -X ${VERPKG}.Version=${{package.version}} -X ${VERPKG}.CommitSHA=${COMMIT}" \
+        -o "${{targets.destdir}}/usr/bin/filebrowser" .

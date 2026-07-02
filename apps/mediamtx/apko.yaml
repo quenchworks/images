@@ -1,0 +1,52 @@
+# Assembles the MediaMTX runtime image. Minimal, nonroot, multi-arch, SBOM by
+# apko. MediaMTX is a real-time media server: the entrypoint runs the binary
+# against a config file. It auto-discovers /etc/mediamtx/mediamtx.yml, which the
+# package ships with upstream defaults; operators override it by mounting their
+# own mediamtx.yml at that path. busybox is included only for a minimal debug
+# shell and is not on the entrypoint path. ca-certificates-bundle lets it reach
+# upstream sources / TURN servers over TLS.
+#
+# Read-only rootfs friendly: with the default config MediaMTX only logs to
+# stdout and does not write to disk. If recording/playback is enabled, mount a
+# writable volume at the configured recordPath (and /tmp as needed).
+#
+# Ports are UNPRIVILEGED (uid 1001 cannot bind <1024): the defaults are all
+# >=1024. Main advisory ports: 8554 RTSP, 8888 HLS/HTTP, 8889 WebRTC, 9997 API.
+# (Also, from the default config: 1935 RTMP, 8890 SRT, 9998 metrics.) Actual
+# listeners come from the mounted mediamtx.yml.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - busybox
+    - ca-certificates-bundle
+    - quench-mediamtx@local
+
+accounts:
+  groups:
+    - groupname: mediamtx
+      gid: 1001
+  users:
+    - username: mediamtx
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/mediamtx /etc/mediamtx/mediamtx.yml
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-mediamtx"
+  org.opencontainers.image.licenses: "MIT"

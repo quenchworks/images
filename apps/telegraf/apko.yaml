@@ -1,0 +1,46 @@
+# Assembles the Telegraf runtime image. Minimal, nonroot, multi-arch, SBOM by
+# apko. Telegraf is a metrics agent: the entrypoint is the binary, so
+# `docker run ...telegraf <args>` works (e.g. `--version`, `--config <path>`).
+# ca-certificates-bundle is included so it can reach input/output endpoints
+# (databases, cloud APIs, scraped HTTPS targets) over TLS.
+#
+# CONFIG: Telegraf reads its config from --config (or $TELEGRAF_CONFIG_PATH).
+# This image ships NO default telegraf.conf; mount one at /etc/telegraf/telegraf.conf
+# and run e.g. `--config /etc/telegraf/telegraf.conf`. The rootfs can stay
+# read-only: mount the config read-only and Telegraf needs no writable paths for
+# the common input->output flow.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-telegraf@local
+
+accounts:
+  groups:
+    - groupname: telegraf
+      gid: 1001
+  users:
+    - username: telegraf
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/telegraf
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-telegraf"
+  org.opencontainers.image.licenses: "MIT"

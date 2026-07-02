@@ -1,0 +1,69 @@
+# Builds MediaMTX (bluenviron) from source onto Wolfi. Single static Go binary,
+# no CGO (matches upstream's CGO_ENABLED=0 build). Output is a signed APK in
+# Quenchworks' own repo. No upstream distro binaries. Image-only (a media
+# server, no chart). Upstream tags carry a "v" prefix.
+#
+# Version: upstream embeds it via `//go:embed VERSION` (internal/core), where the
+# VERSION file is produced by a `go generate` step (`versiongetter`) that runs
+# `git describe`. A source tarball has no .git, so we write that file ourselves
+# as v<version> before `go build` -- this is what makes `mediamtx --version`
+# report the real release (there is no ldflags -X hook upstream).
+#
+# go generate: upstream's build also downloads two embedded assets before
+# building -- the HLS.js player bundle (internal/servers/hls, embedded on ALL
+# arches) and the Raspberry Pi camera helper binaries (internal/staticsources/
+# rpicamera, embedded on arm/arm64 only). Both downloaders verify their payload
+# against a committed HASH, so the fetch is pinned + reproducible. We run those
+# two generators (NOT the versiongetter one, which needs .git).
+package:
+  name: quench-mediamtx
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened MediaMTX (real-time media server / proxy for RTSP, RTMP, HLS, WebRTC, SRT), built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      # MediaMTX's go.mod requires Go 1.26; pin the matching toolchain (default
+      # `go` in Wolfi may lag). GOTOOLCHAIN=local then prevents a network
+      # toolchain swap.
+      - go-1.26
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/bluenviron/mediamtx/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local
+      # Fetch + embed the generated assets (HLS.js bundle; rpicamera helpers on
+      # arm). Payloads are verified against committed HASH files upstream.
+      go generate ./internal/servers/hls/...
+      go generate ./internal/staticsources/rpicamera/...
+      # Stamp the real version into the //go:embed'd VERSION file (a tarball has
+      # no .git, so upstream's versiongetter would otherwise write v0.0.0).
+      printf 'v%s' "${{package.version}}" > internal/core/VERSION
+      go build -trimpath -ldflags "-s -w" \
+        -o "${{targets.destdir}}/usr/bin/mediamtx" .
+      # Ship the upstream default config at a path MediaMTX auto-discovers
+      # (/etc/mediamtx/mediamtx.yml). Operators mount their own at this path.
+      install -Dm644 mediamtx.yml "${{targets.destdir}}/etc/mediamtx/mediamtx.yml"
+
+test:
+  pipeline:
+    - runs: |
+        mediamtx --version

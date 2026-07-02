@@ -1,0 +1,56 @@
+# Assembles the Grafana Alloy runtime image. Minimal, nonroot, multi-arch, SBOM by
+# apko. Alloy is Grafana's OpenTelemetry Collector distribution: it runs a pipeline
+# defined by an Alloy-syntax config and serves an HTTP endpoint (UI + /-/ready +
+# /metrics) on :12345 by default.
+#
+# USAGE -- the entrypoint is the binary. Alloy needs a subcommand + a config:
+#   run /etc/alloy/config.alloy --server.http.listen-addr=0.0.0.0:12345 \
+#       --storage.path=/var/lib/alloy/data
+# This base image ships NO default config; a chart (or `docker run ... run <cfg>`)
+# supplies the config.alloy and the flags. The embedded web UI is baked into the
+# binary (embedalloyui), so no static UI files are needed at runtime.
+#
+# READ-ONLY ROOTFS -- Alloy writes nothing to the rootfs EXCEPT its data/WAL
+# directory (--storage.path, e.g. component WALs and the file-based clustering/
+# state). Mount that path (e.g. /var/lib/alloy/data) as a writable volume; the rest
+# of the rootfs can stay read-only. busybox gives operators a minimal debug shell;
+# it is not on the entrypoint path.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - busybox
+    - ca-certificates-bundle
+    - quench-grafana-alloy@local
+
+accounts:
+  groups:
+    - groupname: alloy
+      gid: 1001
+  users:
+    - username: alloy
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/alloy
+
+# Default HTTP port (advisory; the actual listen address comes from the
+# --server.http.listen-addr flag the chart supplies):
+#   12345  Alloy HTTP server (web UI, /-/ready, /-/reload, /metrics)
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-grafana-alloy"
+  org.opencontainers.image.licenses: "Apache-2.0"

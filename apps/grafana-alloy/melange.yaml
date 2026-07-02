@@ -1,0 +1,98 @@
+# Builds Grafana Alloy from source onto Wolfi. Alloy is Grafana's OpenTelemetry
+# Collector distribution / all-in-one telemetry agent (receives, processes and
+# ships metrics/logs/traces/profiles). One large Go binary. Output is a signed APK
+# in Quenchworks' own repo. No upstream distro binaries. Image-only (no chart here).
+#
+# BUILD METHOD -- Alloy's production binary is `make alloy`, which (a) builds the
+# React web UI under internal/web/ui with npm, then (b) `cd collector && go build`
+# with GO_TAGS "netgo embedalloyui promtail_journal_enabled" and the version stamped
+# via -X ldflags. We reproduce that pipeline directly (instead of driving `make`) so
+# we can skip upstream's optional codegen/journald pieces and keep the runtime clean:
+#   1. internal/web/ui: `npm ci && npm run build` -> internal/web/ui/dist. The
+#      `embedalloyui` tag makes internal/web/ui/assets_builtin.go `//go:embed dist`,
+#      baking the built browser UI into the binary (no runtime UI files needed).
+#   2. `cd collector && CGO_ENABLED=0 go build -tags "netgo embedalloyui"`. `collector`
+#      is a separate Go module (github.com/grafana/alloy/otel_engine) whose main.go is
+#      Alloy's entrypoint; it `replace`s github.com/grafana/alloy => ../, so the parent
+#      packages (incl. the embedded UI + the build.Version stamp) compile in.
+#
+# We drop upstream's `promtail_journal_enabled` tag: it enables the loki.source.journal
+# component via CGO against libsystemd, which would pull a systemd runtime dependency
+# (and its CVE surface) into an otherwise static, glibc-free image. Everything else in
+# the default distribution is retained. CGO is disabled (netgo, pure-Go static binary)
+# -- matches our sibling Go agents (prometheus, alertmanager, otel-collector).
+#
+# VERSION STAMP -- upstream stamps github.com/grafana/alloy/internal/build.Version
+# (normalized to a leading "v"); `alloy --version` / the build_info metric then report
+# the real release. We pass v${package.version} and match upstream's release ldflags
+# (-s -w). go.mod pins go 1.26.x; go-1.26 + GOTOOLCHAIN=local uses it without a
+# toolchain download and picks up the latest stdlib CVE fixes.
+package:
+  name: quench-grafana-alloy
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Grafana Alloy (OpenTelemetry Collector distribution / telemetry agent), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - bash
+      - ca-certificates-bundle
+      - findutils
+      # go.mod pins go 1.26.x; use go-1.26 (newest stdlib CVE fixes) with
+      # GOTOOLCHAIN=local so no toolchain is fetched.
+      - go-1.26
+      # UI toolchain: internal/web/ui is a Vite/React app. .nvmrc pins Node 24;
+      # `npm ci && npm run build` -> internal/web/ui/dist, embedded via embedalloyui.
+      - nodejs-24
+      - npm
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/grafana/alloy/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Build the embedded web UI from source (npm -> internal/web/ui/dist)
+    runs: |
+      set -eu
+      # npm needs a writable cache + HOME (both writable in the sandbox).
+      export npm_config_cache="$(mktemp -d)"
+      export HOME="$(mktemp -d)"
+      cd internal/web/ui
+      npm ci --no-audit --no-fund --ignore-scripts
+      npm run build
+      # assets_builtin.go does `//go:embed dist`; assert the build produced it.
+      test -f dist/index.html
+
+  - name: Build the alloy binary (static, CGO off, UI embedded)
+    runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local
+      export GO111MODULE=on
+      # Upstream normalizes Version to a leading "v" (internal/build.normalizeVersion).
+      VERPKG="github.com/grafana/alloy/internal/build"
+      LDFLAGS="-s -w -X ${VERPKG}.Version=v${{package.version}} -X ${VERPKG}.Branch=HEAD -X ${VERPKG}.BuildUser=quenchworks"
+      # main.go lives in the ./collector module; it replaces github.com/grafana/alloy
+      # => ../, so the parent packages (embedded UI, build.Version) compile in.
+      cd collector
+      go build -trimpath -tags "netgo embedalloyui" -ldflags "${LDFLAGS}" \
+        -o "${{targets.destdir}}/usr/bin/alloy" .
+
+test:
+  pipeline:
+    - runs: |
+        alloy --version

@@ -1,0 +1,41 @@
+# Builds Centrifugo (centrifugal) from source onto Wolfi. Single static Go binary,
+# no CGO (matches upstream .goreleaser.yml CGO_ENABLED=0). The version is stamped
+# via -X internal/build.Version so `centrifugo version` reports the real release.
+# Output is a signed APK in Quenchworks' own repo. No upstream distro binaries.
+# Image-only (a server, no chart). Upstream tags carry a "v" prefix; goreleaser
+# stamps the bare version (module path is .../centrifugo/v6). go.mod requires
+# Go 1.26, so build with the go-1.26 toolchain explicitly.
+package:
+  name: quench-centrifugo
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Centrifugo (real-time messaging server), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go-1.26
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/centrifugal/centrifugo/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      go build -trimpath \
+        -ldflags "-s -w -X github.com/centrifugal/centrifugo/v6/internal/build.Version=${{package.version}}" \
+        -o "${{targets.destdir}}/usr/bin/centrifugo" .

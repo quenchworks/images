@@ -93,8 +93,16 @@ NATIVE="$(uname -m)"; [ "$NATIVE" = "arm64" ] && NATIVE="aarch64"
 echo "🔎 apko build (scan tar, $NATIVE) ..."
 apko build "$APKO" "$GHCR:scan" image.tar --arch "$NATIVE" >/dev/null
 echo "🛡  trivy 0-CVE gate ..."
+# --detection-priority comprehensive is REQUIRED, not optional: in the default
+# "precise" mode Trivy drops language files that are owned by an OS package, so a
+# from-source binary packaged into an apk (every Go/Rust/etc. app here) has its
+# language module graph SKIPPED -- the scan then only covers the ~3 OS packages
+# and reports a false-clean. Comprehensive keeps the gobinary/language analyzers,
+# so the gate actually scans the app's own dependencies. Matches the per-app CI
+# workflows that already set TRIVY_DETECTION_PRIORITY=comprehensive.
 trivy image --input image.tar --exit-code 1 --ignore-unfixed \
-  --severity CRITICAL,HIGH,MEDIUM,LOW --scanners vuln --quiet
+  --severity CRITICAL,HIGH,MEDIUM,LOW --scanners vuln \
+  --detection-priority comprehensive --quiet
 echo "✅ 0 fixable CVEs"
 
 if [ "$PUSH" != "1" ]; then
