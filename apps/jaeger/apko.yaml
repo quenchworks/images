@@ -1,0 +1,66 @@
+# Assembles the Jaeger v2 runtime image. Minimal, nonroot, multi-arch, SBOM by
+# apko. Jaeger v2 is a single OTel-Collector binary: run with no `--config` and it
+# uses its embedded all-in-one configuration (in-memory trace storage, all
+# receivers + the query UI), so `docker run ...jaeger` is a working all-in-one out
+# of the box. ca-certificates-bundle is included for outbound TLS (e.g. remote
+# storage backends over TLS).
+#
+# Ports (all >1024, so the nonroot uid 1001 can bind them):
+#   16686  Jaeger query UI + API (binds 0.0.0.0 by default)
+#   4317   OTLP gRPC receiver
+#   4318   OTLP HTTP receiver
+#   (also 5778 sampling, 9411 zipkin, 14250/14268 jaeger, 13133 health, 8888 metrics)
+#
+# The embedded all-in-one config binds receivers/health/metrics to
+# ${JAEGER_LISTEN_HOST:-localhost}; localhost is unreachable from outside a
+# container, so we default JAEGER_LISTEN_HOST=0.0.0.0 to make OTLP et al. reachable.
+# The query UI (16686) already binds 0.0.0.0 regardless.
+#
+# Read-only-rootfs friendly: the default in-memory storage writes nothing to disk.
+# For the optional badger backend, mount a writable volume over /data (created here
+# owned by uid 1001); point the badger config's directories at it.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-jaeger@local
+
+accounts:
+  groups:
+    - groupname: jaeger
+      gid: 1001
+  users:
+    - username: jaeger
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  JAEGER_LISTEN_HOST: 0.0.0.0
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /usr/bin/jaeger
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-jaeger"
+  org.opencontainers.image.licenses: "Apache-2.0"

@@ -1,0 +1,43 @@
+# Assembles the Ory Kratos runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Kratos is a server that needs a config file and a DSN (database) at runtime, so NO
+# database is baked in: the chart supplies config via env (DSN, etc.) and/or a mounted
+# kratos.yaml passed as `-c /path/kratos.yaml`. The entrypoint is the bare binary so
+# `docker run ...kratos version` works and the chart appends `serve ...`. Ports:
+# 4433 (public API) and 4434 (admin API). Runs as the nonroot kratos user (uid 1001)
+# with no capabilities; the binary is on PATH and the image is read-only-rootfs friendly
+# (Kratos writes nothing outside its configured DB).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-kratos@local
+
+accounts:
+  groups:
+    - groupname: kratos
+      gid: 1001
+  users:
+    - username: kratos
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/kratos
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-kratos"
+  org.opencontainers.image.licenses: "Apache-2.0"

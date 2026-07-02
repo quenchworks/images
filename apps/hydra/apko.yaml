@@ -1,0 +1,44 @@
+# Assembles the Ory Hydra runtime image. Minimal, nonroot (uid 1001), multi-arch,
+# SBOM by apko. The default command is `hydra serve all`, which starts both HTTP
+# services -- the public OAuth2/OIDC endpoint on 4444 and the admin endpoint on
+# 4445 (bound to 0.0.0.0 by upstream defaults; matches upstream's distroless
+# ENTRYPOINT ["hydra"] / CMD ["serve","all"] and EXPOSE 4444 4445). No datastore
+# is baked in: postgres/mysql/cockroach is the operator's concern at runtime via
+# env (DSN=...) or a mounted config file. Hydra writes nothing to disk in normal
+# operation, so the image runs happily read-only-rootfs.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-hydra@local
+
+accounts:
+  groups:
+    - groupname: hydra
+      gid: 1001
+  users:
+    - username: hydra
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/hydra
+cmd: serve all
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-hydra"
+  org.opencontainers.image.licenses: "Apache-2.0"

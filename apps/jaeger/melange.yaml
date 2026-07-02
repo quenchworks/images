@@ -1,0 +1,82 @@
+# Builds Jaeger v2 (jaegertracing/jaeger) from source onto Wolfi. Jaeger v2 is a
+# single OpenTelemetry-Collector-based `jaeger` binary that embeds the React query
+# UI; it is a static Go binary (CGO disabled, matching upstream's GOBUILD_EXEC),
+# multi-arch. Output is a signed APK in Quenchworks' own repo. No upstream distro
+# binaries.
+#
+# The UI: cmd/jaeger/internal/extension/jaegerquery/internal/ui/actual/ is embedded
+# via `//go:embed actual/*`, but ships empty in the tag (gitignored; the jaeger-ui
+# submodule is not vendored in the tarball). We reproduce upstream's own release
+# path (scripts/build/rebuild-ui.sh): download the prebuilt jaeger-ui assets.tar.gz
+# for the matching UI tag (the UI version tracks the jaeger version 1:1), then gzip
+# each asset into actual/ exactly as `make build-ui` does. GetStaticFiles() looks
+# for actual/index.html.gz to decide the real UI is present. Node/vite never touch
+# the sandbox, so the runtime image is a pure static Go binary and the JS toolchain
+# stays out of the Trivy surface.
+#
+# go.mod declares go 1.26.0; we build with go-1.26 and GOTOOLCHAIN=local so the
+# 1.26 directive does not trigger a toolchain download. GOFLAGS=-mod=mod lets the
+# module graph resolve patched deps if a CVE bump is needed. Version is stamped via
+# -X on internal/version.latestVersion (upstream stamps the full "v"-prefixed tag).
+package:
+  name: quench-jaeger
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Jaeger v2 (distributed tracing), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - bash
+      - curl
+      - ca-certificates-bundle
+      - go-1.26
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/jaegertracing/jaeger/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Embed the prebuilt Jaeger UI assets (upstream rebuild-ui release path)
+    runs: |
+      set -eu
+      UI_URL="https://github.com/jaegertracing/jaeger-ui/releases/download/v${{package.version}}/assets.tar.gz"
+      UI_SHA="__UISHA256__"
+      TMP="$(mktemp -d)"
+      curl -fsSL -o "$TMP/assets.tar.gz" "$UI_URL"
+      echo "${UI_SHA}  $TMP/assets.tar.gz" | sha256sum -c -
+      # The bundle contains packages/jaeger-ui/build/**; extract just that tree.
+      tar -C "$TMP" -xzf "$TMP/assets.tar.gz" packages/jaeger-ui/build/
+      DEST="cmd/jaeger/internal/extension/jaegerquery/internal/ui/actual"
+      # Mirror `make build-ui`: copy the built UI into actual/ and gzip every file
+      # (the embed reads .gz assets), leaving the .gitignore in place.
+      cp -r "$TMP/packages/jaeger-ui/build/"* "$DEST/"
+      find "$DEST" -type f ! -name '.gitignore' -print0 | xargs -0 gzip --no-name
+      test -f "$DEST/index.html.gz"
+
+  - name: Build the jaeger binary (static, CGO off)
+    runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's toolchain
+      export GO111MODULE=on
+      VERPKG="github.com/jaegertracing/jaeger/internal/version"
+      DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      # Mirror upstream ldflags so `jaeger version` reports the real release
+      # (latestVersion carries the "v" prefix, per scripts/utils/compute-version.sh).
+      go build -trimpath \
+        -ldflags "-s -w -X ${VERPKG}.latestVersion=v${{package.version}} -X ${VERPKG}.date=${DATE}" \
+        -o "${{targets.destdir}}/usr/bin/jaeger" ./cmd/jaeger
