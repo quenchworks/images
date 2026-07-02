@@ -58,8 +58,8 @@ pipeline:
   # and filename; pin both arches to the same release build 2026.1.5.
   - runs: |
       VER="${{package.version}}"
-      BUILD="__BUILD__"          # the 2026.1.5 release build id
-      REL="2026.1"                              # relocatable directory (major.minor LTS)
+      BUILD="__BUILD__"          # the per-version release build id
+      REL="${VER%.*}"                           # relocatable dir = major.minor, derived from VER (e.g. 2026.1 / 2026.2)
       case "$(uname -m)" in
         x86_64)  rarch=x86_64;  sha=__SHA_AMD__ ;;
         aarch64) rarch=aarch64; sha=__SHA_ARM__ ;;
