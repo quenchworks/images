@@ -1,0 +1,125 @@
+# Builds xyOps FROM the pixlcore/xyops GitHub source tag onto Wolfi. xyOps is a
+# Node.js server app that is NOT published to npm (package.json is `private:true`),
+# so there is no registry tarball -- we fetch the immutable GitHub source archive
+# (sha-pinned), install PRODUCTION deps in a melange `runs` step (network is
+# available at build time, same as the ghost recipe), then bundle the web UI.
+#
+# NATIVE module: better-sqlite3 (the default embedded storage engine) compiles via
+# node-gyp, so the build env needs python3 + build-base (make/g++) on top of
+# nodejs-22 + npm. npm is also what lets better-sqlite3 fetch its PREBUILT binary
+# first (prebuild-install), avoiding a GCC-16 source compile. After install we run
+# `node bin/build.js dist`, which symlinks vendored assets into htdocs/ and
+# bundles + compresses the combined JS/CSS the web UI serves (uglify-js is a
+# runtime dep, so it survives --omit=dev). We then relocate the whole bootable
+# app tree to /opt/xyops (upstream's conventional home) and bake a default conf/
+# from sample_conf so a container boots without a shell-driven bootstrap. The
+# secret_key stays EMPTY in the baked config and is supplied at runtime via the
+# XYOPS_secret_key env var (pixl-config env override), so no secret is baked in.
+package:
+  name: quench-xyops
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened xyOps (workflow automation + server monitoring), built from source on Wolfi"
+  copyright:
+    - license: BSD-3-Clause
+  dependencies:
+    runtime:
+      - nodejs-22              # xyOps runs on Node (Dockerfile uses node:22; lib/main.js requires >=16)
+      - ca-certificates-bundle # TLS to external Postgres/Redis, SMTP, update + marketplace checks
+      - tzdata                 # the scheduler runs cron-style events against the configured timezone
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base             # make + g++ for node-gyp (native better-sqlite3)
+      - busybox
+      - ca-certificates-bundle
+      - nodejs-22
+      - npm                    # better-sqlite3 probes a PREBUILT binary via npm/prebuild-install
+                               # FIRST; without npm that path fails and it falls back to a
+                               # GCC-16 source compile. With npm present the prebuilt is used.
+      - node-gyp               # native-module build backend (fallback compile path)
+      - python-3.13            # node-gyp requires python3 (Wolfi names the pkg python-3.13)
+
+pipeline:
+  - uses: fetch
+    with:
+      # Immutable GitHub source archive for the tag (tags carry a `v` prefix).
+      # melange fetch strips the leading `xyops-<ver>/` component by default.
+      uri: https://github.com/pixlcore/xyops/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - runs: |
+      set -eu
+      # Install ONLY production dependencies. Point node-gyp at Wolfi's python3.13 so
+      # the native better-sqlite3 build/probe doesn't fail looking for a bare `python3`.
+      export CI=true
+      export npm_config_loglevel=warn
+      export PYTHON="$(command -v python3.13 || command -v python3)"
+      export npm_config_python="$PYTHON"
+      npm install --omit=dev --no-audit --no-fund
+
+      # Upstream Dockerfile fixes a non-readable file shipped by useragent-ng.
+      chmod 644 node_modules/useragent-ng/lib/regexps.js 2>/dev/null || true
+
+      # Bundle + compress the web UI (symlinks vendored assets into htdocs/, builds
+      # htdocs/js/_combo.js etc.). uglify-js is a runtime dep so it survives --omit=dev.
+      node bin/build.js dist
+
+      # Trim build-time cruft that bloats the image + CVE surface but is never run.
+      rm -rf node_modules/.cache .npm 2>/dev/null || true
+      find . -type d -name '.cache' -prune -exec rm -rf {} + 2>/dev/null || true
+
+  - runs: |
+      set -eu
+      dest="${{targets.destdir}}"
+      app="$dest/opt/xyops"
+      install -d "$app"
+      # Install the whole bootable app tree (lib/, htdocs/ with built assets,
+      # node_modules/, bin/, internal/, sample_conf/, package.json, ...) read-only under
+      # /opt/xyops. Copy top-level entries individually and SKIP melange-out: melange's
+      # build-output dir (which holds destdir) lives inside this workspace, so a blanket
+      # `cp -a ./.` would recurse into the dir we're writing. CI runs melange with
+      # working-directory apps/xyops, so the workspace also holds the recipe + CI files
+      # (build.conf, *.yaml, test.sh, rendered files, signing keys, packages/, image.tar,
+      # sbom); copy ONLY the extracted+installed tree by skipping that fixed denylist.
+      for item in * .[!.]* ..?*; do
+        [ -e "$item" ] || continue
+        case "$item" in
+          melange-out|melange.rsa|melange.rsa.pub|packages|build.conf|melange.yaml|apko.yaml|test.sh|melange.rendered.yaml|apko.rendered.yaml|image.tar|sbom-*|*.log|.git) continue ;;
+        esac
+        cp -a "$item" "$app/"
+      done
+
+      # Bake a default config from the shipped sample_conf so a container boots without a
+      # shell-driven bootstrap (the upstream image uses a bash container-start.sh; this
+      # image has no shell). config.json keeps secret_key EMPTY -- it is supplied at
+      # runtime via the XYOPS_secret_key env var (pixl-config env override), so nothing
+      # secret is baked in. The self-signed sample tls.crt/tls.key ride along for the
+      # optional https listener (https_force is false, so plain http on 5522 works too).
+      install -d "$app/conf"
+      cp -a sample_conf/. "$app/conf/"
+
+      # Runtime writable dirs: SQLite storage (data/), logs, temp. Created empty here and
+      # owned by uid 1001 recursively in apko (the melange sandbox cannot chown to 1001).
+      install -d "$app/data" "$app/logs" "$app/temp"
+
+      # World-readable so a nonroot user can read the tree; ownership (uid 1001) is applied
+      # recursively in apko at assembly time.
+      chmod -R a+rX "$app"
+
+test:
+  pipeline:
+    - runs: |
+        test -f /opt/xyops/lib/main.js
+        test -d /opt/xyops/node_modules
+        test -f /opt/xyops/package.json
+        test -f /opt/xyops/conf/config.json
+        # the web UI bundle must have been built by `node bin/build.js dist`
+        test -f /opt/xyops/htdocs/js/_combo.js
+        # the native better-sqlite3 binding must have compiled/installed
+        find /opt/xyops/node_modules -path '*better-sqlite3*/build/Release/*.node' | grep -q .

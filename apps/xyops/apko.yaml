@@ -1,0 +1,79 @@
+# Assembles the xyOps runtime image: the built app tree + production node_modules
+# (installed by quench-xyops) running on the Wolfi nodejs-22 package. Minimal,
+# nonroot, multi-arch, SBOM by apko. xyOps boots via `node lib/main.js
+# --foreground` from /opt/xyops; pixl-server reads its base config from conf/ and
+# applies XYOPS_* env overrides (the same mechanism the upstream Dockerfile uses
+# for XYOPS_foreground). No shell, no wrapper script.
+#
+# The web UI + API listen on 5522 (http) and 5523 (https, self-signed sample cert,
+# https_force off). The chart fronts 5522 with a Service/Ingress. This is a
+# hardened control-plane image: the job-runner tooling the upstream batteries-
+# included image bundles (docker cli, git, ssh, uv) is intentionally omitted to
+# shrink the attack surface -- remote job execution and data collection are the
+# job of the xySat satellite / xyrun, not this image.
+#
+# xyOps writes to its SQLite store (data/), logs/ and temp/ under /opt/xyops, so
+# the chart runs with readOnlyRootFilesystem disabled (or mounts writable volumes
+# over those paths) and mounts a PVC over /opt/xyops/data. /tmp is a writable
+# tmpfs for a read-only rootfs.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - tzdata
+    - nodejs-22
+    - quench-xyops@local
+
+accounts:
+  groups:
+    - groupname: xyops
+      gid: 1001
+  users:
+    - username: xyops
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# Exec node directly on xyOps' entry point (PID 1, foreground). main.js chdirs to
+# /opt/xyops and loads pixl-server; --foreground keeps it in the foreground (no
+# daemonize/pidfile fork). No shell in the image.
+entrypoint:
+  command: /usr/bin/node /opt/xyops/lib/main.js --foreground
+
+environment:
+  # Belt-and-suspenders foreground (pixl-config env override), and plain log output
+  # (no ANSI colour escapes in container logs).
+  XYOPS_foreground: "true"
+  XYOPS_color: "false"
+  PATH: /usr/bin:/bin
+
+work-dir: /opt/xyops
+
+paths:
+  # The whole app tree must be owned by the runtime user (uid/gid 1001): the package's
+  # files are copied with cp -a (build-user ownership) and the melange sandbox cannot
+  # chown to 1001, so apko does it here at assembly time as root. recursive: true also
+  # fixes data/ logs/ temp/ so the nonroot server can write the SQLite store + logs.
+  - path: /opt/xyops
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+    recursive: true
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-xyops"
+  org.opencontainers.image.licenses: "BSD-3-Clause"
