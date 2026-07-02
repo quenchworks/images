@@ -1,0 +1,82 @@
+# Assembles the vLLM (CPU) inference/serving runtime image. Minimal, nonroot, multi-arch,
+# SBOM by apko. Ships the pip venv under /opt/vllm/venv with python-3.12 present at runtime
+# (the venv references the system interpreter). The entrypoint is the bare `vllm` launcher
+# so the chart controls the args; the OpenAI-compatible server is:
+#   serve <model> --host 0.0.0.0 --port 8000
+# The server listens on 8000 and needs a model (downloaded from Hugging Face Hub into
+# HF_HOME, or a mounted path). CPU inference wants an avx512f/avx2 host CPU. This is the
+# CPU variant of a GPU-runtime app; the image gate is a CPU-only smoke (no GPU, no model).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - glibc
+    - libgcc
+    - libstdc++
+    - ca-certificates-bundle
+    - tzdata
+    - python-3.12              # the venv's interpreter
+    - quench-vllm@local        # the vLLM CPU venv + /usr/bin/vllm symlink
+
+accounts:
+  groups:
+    - groupname: vllm
+      gid: 1001
+  users:
+    - username: vllm
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/vllm
+
+environment:
+  PATH: /opt/vllm/venv/bin:/usr/bin:/bin
+  HOME: /opt/vllm
+  # vLLM/torch/HF write caches at runtime; keep them under writable dirs.
+  HF_HOME: /opt/vllm/.cache/huggingface
+  XDG_CACHE_HOME: /opt/vllm/.cache
+  TMPDIR: /tmp
+  # Force the CPU device explicitly (belt-and-braces; the CPU wheel is CPU-only anyway).
+  VLLM_TARGET_DEVICE: cpu
+
+work-dir: /opt/vllm
+
+paths:
+  # /opt/vllm is writable by the server uid: HF/torch caches (downloaded model weights,
+  # compiled artifacts) land under /opt/vllm/.cache when no external cache is mounted.
+  - path: /opt/vllm
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /opt/vllm/.cache
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /tmp
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o1777
+
+# vLLM publishes CPU wheels for x86_64 AND aarch64 (cp38-abi3, manylinux_2_34). Only
+# x86_64 is locally validated for the 0-CVE gate + smoke; aarch64 shares the same pip
+# recipe (its own +cpu wheel) and is built/scanned by CI.
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-vllm"
+  org.opencontainers.image.licenses: "Apache-2.0"
