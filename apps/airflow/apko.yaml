@@ -1,0 +1,77 @@
+# Assembles the Apache Airflow runtime image. Minimal, nonroot, multi-arch, SBOM by
+# apko. Ships the pip venv under /opt/airflow-venv with python-3.12 present at runtime
+# (the venv references the system interpreter). The entrypoint is the BARE `airflow`
+# launcher so the chart controls the subcommand per component, e.g.:
+#   api-server        (the webserver / UI + REST API, listens on 8080)
+#   scheduler
+#   dag-processor
+#   triggerer
+#   celery worker
+# Each component needs a reachable PostgreSQL metadata store (and, for CeleryExecutor,
+# a Redis broker) plus a Fernet key + AIRFLOW__DATABASE__SQL_ALCHEMY_CONN — all supplied
+# by the chart, which also runs `airflow db migrate`. readOnlyRootFilesystem-friendly:
+# AIRFLOW_HOME (/opt/airflow) and /tmp are the only writable paths (the chart mounts
+# emptyDir volumes there); the venv stays read-only.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - glibc
+    - libgcc
+    - ca-certificates-bundle
+    - tzdata
+    - python-3.12              # the venv's interpreter
+    - quench-airflow@local     # the airflow venv + /usr/bin/airflow symlink
+
+accounts:
+  groups:
+    - groupname: airflow
+      gid: 1001
+  users:
+    - username: airflow
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/airflow
+
+environment:
+  PATH: /opt/airflow-venv/bin:/usr/bin:/bin
+  # AIRFLOW_HOME holds airflow.cfg, logs and any local scratch; it is a writable mount.
+  AIRFLOW_HOME: /opt/airflow
+  HOME: /opt/airflow
+  # Keep any worker/temp files under a writable dir on the read-only rootfs.
+  TMPDIR: /tmp
+
+work-dir: /opt/airflow
+
+paths:
+  # AIRFLOW_HOME is writable by the server uid: airflow.cfg + logs land here. On a
+  # read-only rootfs the chart mounts a writable volume at this path.
+  - path: /opt/airflow
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /tmp
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o1777
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-airflow"
+  org.opencontainers.image.licenses: "Apache-2.0"

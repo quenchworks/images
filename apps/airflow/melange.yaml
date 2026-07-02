@@ -1,0 +1,115 @@
+# Packages Apache Airflow (workflow orchestration) onto Wolfi. Airflow is a pure-
+# Python app distributed as the PyPI package `apache-airflow`, not a binary — there
+# is no Wolfi `airflow` package — so we install it from PyPI into a virtualenv on a
+# Wolfi python-3.12 base, then harden it on a minimal apko base and gate it 0-CVE
+# with Trivy (which scans the venv's Python packages too).
+#
+# Airflow's dependency resolve REQUIRES the official constraints file for the exact
+# version + python minor, or pip's backtracking resolver explodes. We install
+# `apache-airflow[celery,postgres,redis]==<VER>` (the providers the standard multi-
+# component chart uses: CeleryExecutor worker + Redis broker + PostgreSQL metadata
+# store) constrained by:
+#   https://raw.githubusercontent.com/apache/airflow/constraints-<VER>/constraints-3.12.txt
+#
+# The venv lives at /opt/airflow-venv (read-only, part of the image), SEPARATE from
+# AIRFLOW_HOME (/opt/airflow, a writable mount) so the chart's read-only rootfs can
+# mount an emptyDir at AIRFLOW_HOME without shadowing the venv. The image exposes a
+# bare `airflow` entrypoint; the chart passes the per-component subcommand.
+package:
+  name: quench-airflow
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Apache Airflow (workflow orchestration), packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - python-3.12            # the venv references the system interpreter; it must be present at runtime
+      - ca-certificates-bundle # TLS to the external Postgres metadata store / Redis broker / artifact stores
+      - glibc
+      - libgcc                 # C++ runtime for manylinux wheels (pydantic-core, cryptography, etc.)
+      - tzdata                 # Airflow is timezone-aware (pendulum) and reads the zoneinfo DB
+      # psycopg2-binary (pulled by the [postgres] extra) ships a manylinux wheel with a
+      # vendored libpq, so no system libpq runtime dep is needed. If Trivy ever flags the
+      # vendored libpq, switch to the Wolfi py3.12-psycopg2 pkg + a `libpq` runtime dep.
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - python-3.12
+      - py3.12-pip
+      - build-base             # fallback for any transitive dep that has no wheel (sdist build)
+
+pipeline:
+  # Create an isolated venv and install Airflow + the celery/postgres/redis providers
+  # from PyPI, pinned to the build version and CONSTRAINED by Airflow's official
+  # constraints file for this version + python 3.12 (mandatory — the resolve fails
+  # without it). --no-cache-dir keeps the layer small. All venv shebangs point at
+  # /opt/airflow-venv/bin/python.
+  - runs: |
+      VER="${{package.version}}"
+      dest="${{targets.destdir}}"
+      PYMINOR="3.12"
+      CONSTRAINTS="https://raw.githubusercontent.com/apache/airflow/constraints-${VER}/constraints-${PYMINOR}.txt"
+
+      # `airflow version` initializes config under AIRFLOW_HOME; point it at a scratch
+      # dir inside the sandbox for the build-time assertion below.
+      export AIRFLOW_HOME=/tmp/airflow-build
+
+      python3.12 -m venv /opt/airflow-venv
+      /opt/airflow-venv/bin/pip install --no-cache-dir --upgrade pip
+      /opt/airflow-venv/bin/pip install --no-cache-dir \
+        "apache-airflow[celery,postgres,redis]==${VER}" \
+        --constraint "${CONSTRAINTS}"
+
+      # SECURITY BUMPS: the 3.2.2 constraints pin a handful of transitive deps to
+      # CVE-affected versions. Bump them to their patched releases (WITHOUT the
+      # constraint file so pip may re-resolve). Verified: `pip check` stays clean and
+      # airflow still imports + `airflow version`/`airflow info` run. These are the
+      # ONLY deltas from the official constraints, required to pass the 0-CVE gate:
+      #   cryptography     42/48.0.0  -> 48.0.1+  (multiple HIGH)
+      #   pydantic-settings 2.14.1    -> 2.14.2+  (MEDIUM)
+      #   python-multipart 0.0.29     -> 0.0.31+  (HIGH DoS)
+      #   starlette        1.1.0      -> 1.3.1+   (HIGH path-validation / info-disclosure)
+      #   tornado          6.5.5      -> 6.5.7+   (HIGH auth-header leak / gzip bomb)
+      /opt/airflow-venv/bin/pip install --no-cache-dir --upgrade \
+        "cryptography>=48.0.1" \
+        "pydantic-settings>=2.14.2" \
+        "python-multipart>=0.0.31" \
+        "starlette>=1.3.1" \
+        "tornado>=6.5.7"
+      # Fail the build if the bumps broke Airflow's declared dependency graph.
+      /opt/airflow-venv/bin/pip check
+
+      # airflow version must work without a DB; assert it matches the build version.
+      # (The chart's kind gate runs the full DB-backed boot with a bundled Postgres.)
+      /opt/airflow-venv/bin/airflow version | grep -qx "${VER}"
+
+      # Relocate the venv into the package tree under /opt/airflow-venv (SEPARATE from
+      # AIRFLOW_HOME so a read-only-rootfs emptyDir on AIRFLOW_HOME won't shadow it).
+      install -d "${dest}/opt/airflow-venv"
+      cp -a /opt/airflow-venv/. "${dest}/opt/airflow-venv/"
+
+      # AIRFLOW_HOME: created here (owned to uid 1001 in apko) for local runs; the chart
+      # mounts a writable volume here for the read-only rootfs.
+      install -d -m0755 "${dest}/opt/airflow"
+
+      # Convenience symlink on PATH — the bare launcher the chart passes subcommands to.
+      install -d "${dest}/usr/bin"
+      ln -sf /opt/airflow-venv/bin/airflow "${dest}/usr/bin/airflow"
+
+      chmod -R a+rX "${dest}/opt/airflow-venv"
+
+test:
+  pipeline:
+    - runs: |
+        export AIRFLOW_HOME=/tmp/airflow-test
+        test -x /opt/airflow-venv/bin/airflow
+        airflow version
+        python3.12 -c "import airflow; print(airflow.__version__)"
