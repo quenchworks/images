@@ -1,0 +1,81 @@
+# Assembles the n8n runtime image: n8n's npm distribution (app + production node_modules,
+# installed at build time by quench-n8n) running on the Wolfi nodejs-22 package. Minimal,
+# nonroot, multi-arch, SBOM by apko. n8n is configured ENTIRELY by environment variables
+# (N8N_*, DB_*), so the entrypoint is a bare `node bin/n8n start` from the app dir — no
+# shell, no wrapper.
+#
+# Default standalone DB is sqlite under ~/.n8n; the chart wires an external Postgres via
+# DB_TYPE=postgresdb + DB_POSTGRESDB_*. n8n writes to ~/.n8n (HOME=/home/node) — its sqlite
+# db, config, and generated encryption key — mounted as a PVC and made writable for uid
+# 1001 below. /tmp must be a writable tmpfs for a read-only rootfs.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - tzdata
+    - nodejs-22
+    - quench-n8n@local
+
+accounts:
+  groups:
+    - groupname: node
+      gid: 1001
+  users:
+    - username: node
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# Exec node directly on n8n's CLI (PID 1, foreground). `n8n start` boots the editor/API/
+# webhook server. No shell in the image.
+entrypoint:
+  command: /usr/bin/node /opt/n8n/bin/n8n start
+
+environment:
+  NODE_ENV: production
+  # Home dir holds ~/.n8n (sqlite db, config, encryption key). Baked writable for uid 1001;
+  # the chart overmounts a PVC here.
+  HOME: /home/node
+  # Bind all interfaces, not just loopback, so a Kubernetes Service / docker port-forward
+  # can reach the server.
+  N8N_LISTEN_ADDRESS: "0.0.0.0"
+  N8N_PORT: "5678"
+  # Silence the "permissions too wide" nag on the generated config file on a fresh volume.
+  N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "false"
+  PATH: /usr/bin:/bin
+
+work-dir: /opt/n8n
+
+paths:
+  # The app tree must be readable by uid 1001; files are copied with cp -a (build-user
+  # ownership) and the melange sandbox cannot chown to 1001, so apko does it here as root.
+  - path: /opt/n8n
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+    recursive: true
+  # n8n's writable home (~/.n8n lives here). Owned by the runtime user.
+  - path: /home/node
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+    recursive: true
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-n8n"
+  org.opencontainers.image.licenses: "LicenseRef-n8n-Sustainable-Use-License-1.0"

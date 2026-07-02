@@ -1,0 +1,150 @@
+# Packages n8n from its OFFICIAL npm distribution onto Wolfi. n8n ships as the npm package
+# `n8n` (exactly what `npm install -g n8n` installs): an immutable registry tarball with a
+# published sha256. We fetch that tarball (uses: fetch, sha-pinned), strip its leading
+# `package/` component into the workspace, then install PRODUCTION dependencies in a melange
+# `runs` step. melange `runs` steps have network access at build time (same as the
+# ghost/postgres-documentdb recipes), so `npm install --omit=dev` resolves the 144 direct
+# deps + their transitive tree from the registry. n8n's published package.json pins exact
+# versions (no workspace: protocol), so plain npm produces a bootable tree.
+#
+# n8n has ONE native module in the prod tree: sqlite3 (the default standalone DB driver,
+# via @n8n/typeorm), compiled/fetched via node-gyp + node-pre-gyp. So the build env needs
+# python3 + build-base (make/g++) + npm (so node-pre-gyp finds the PREBUILT binary first
+# instead of a GCC-16 source compile) on top of nodejs-22. We prune caches after install.
+#
+# LICENSE — CAUTION: fair-code, NOT OSI. Sustainable Use License v1.0 for the bulk of the
+# code; ".ee." files need a commercial n8n Enterprise License (LICENSE_EE.md).
+package:
+  name: quench-n8n
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened n8n (fair-code workflow automation), from the official npm distribution on Wolfi"
+  copyright:
+    - license: LicenseRef-n8n-Sustainable-Use-License-1.0
+  dependencies:
+    runtime:
+      - nodejs-22              # n8n requires Node >=22.22 (package.json engines)
+      - ca-certificates-bundle # TLS to external DBs, SMTP, webhooks, integrations, update checks
+      - tzdata                 # n8n schedules workflows against the configured timezone
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base             # make + g++ for node-gyp (native module: sqlite3)
+      - busybox
+      - ca-certificates-bundle
+      - nodejs-22
+      - npm                    # node-pre-gyp probes a PREBUILT sqlite3 binary via npm FIRST;
+                               # without npm that path fails and it falls back to a GCC-16
+                               # source compile. With npm present the prebuilt is used.
+      - node-gyp               # native module install scripts shell out to node-gyp
+      - python-3.13            # node-gyp requires python3 at build time (Wolfi names it python-3.13)
+
+pipeline:
+  - uses: fetch
+    with:
+      # Immutable npm registry tarball (the same artifact `npm install -g n8n` installs).
+      uri: https://registry.npmjs.org/n8n/-/n8n-${{package.version}}.tgz
+      expected-sha256: __SHA256__
+      # npm tarballs extract under package/; drop that leading component.
+      strip-components: 1
+
+  - runs: |
+      set -eu
+      # Install ONLY production deps into ./node_modules. The published package.json pins
+      # exact versions with no lockfile shipped, so we let npm resolve; --no-audit/--no-fund
+      # keep it quiet. This fetches the prebuilt sqlite3 native binding (node-pre-gyp).
+      export CI=true
+      export npm_config_loglevel=warn
+      # Wolfi ships the interpreter as python3.13; point node-gyp at it explicitly so a
+      # native build (if node-pre-gyp has no prebuilt) doesn't fail probing for `python3`.
+      export PYTHON="$(command -v python3.13 || command -v python3)"
+      export npm_config_python="$PYTHON"
+      # Strip devDependencies before install. n8n's published package.json lists INTERNAL,
+      # UNPUBLISHED workspace packages (e.g. @n8n/playwright-janitor@0.1.0) under
+      # devDependencies. With no lockfile in the tarball, npm's arborist resolves the full
+      # dependency graph (dev edges included) to build the ideal tree even under --omit=dev,
+      # and 404s fetching those private packages. Deleting devDependencies removes them from
+      # resolution; they are never needed to RUN n8n. (Mirrors upstream's own runners
+      # Dockerfile, which deletes devDependencies before installing.)
+      npm pkg delete devDependencies
+      # --legacy-peer-deps: n8n publishes with exact-pinned deps but ships NO lockfile in the
+      # tarball; its real install resolves against the monorepo pnpm-lock (where e.g. zod is
+      # pinned at 3.25.67). Some newly-floated transitive peers (e.g. @ai-sdk/* wanting a newer
+      # zod) then fail npm's strict peer check even though n8n runs fine on the pinned set.
+      # Legacy peer resolution reproduces the intended (lockfile) tree instead of erroring.
+      npm install --omit=dev --no-audit --no-fund --legacy-peer-deps
+
+      # --- strip foreign-arch + musl prebuilt native binaries ---------------------------
+      # n8n's tree VENDORS prebuilt .node/.so binaries for every platform/arch/libc inside
+      # single packages (@sentry/node-cpu-profiler, @sentry/node-native-stacktrace,
+      # isolated-vm, oracledb, ...). npm keeps them all regardless of host. Any non-host-arch
+      # ELF makes melange's SCA emit a bogus `so:ld-linux-<foreign>.so.1` dependency, and any
+      # musl-linked ELF a `so:libc.musl-*` dependency — neither of which Wolfi (one glibc
+      # arch per image) provides, so apko can't solve the package. We build ONE arch per image
+      # on glibc, so keep only host-arch glibc objects and delete the rest. This also trims
+      # image size and the scanned CVE surface.
+      case "$(uname -m)" in
+        x86_64)  keep=3e00 ;;   # ELF e_machine EM_X86_64  (offset 18, little-endian)
+        aarch64) keep=b700 ;;   # ELF e_machine EM_AARCH64
+        *)       keep="" ;;
+      esac
+      # Candidate binaries: shared objects (.node/.so) AND bare prebuilt executables that
+      # ship with NO extension — these live in bin/ dirs or have arch-suffixed names
+      # (e.g. agent-browser/bin/agent-browser-linux-arm64). We check each candidate's real
+      # ELF e_machine and drop any that isn't the host arch, plus any musl-linked one
+      # (Wolfi is glibc). Restricting to this candidate set keeps the scan fast.
+      if [ -n "$keep" ]; then
+        find node_modules -type f \( -name '*.node' -o -name '*.so' -o -name '*.so.*' \
+             -o -path '*/bin/*' -o ! -name '*.*' \) | \
+        while IFS= read -r f; do
+          case "$f" in *musl*) rm -f "$f"; continue ;; esac   # Wolfi is glibc
+          [ "$(od -An -tx1 -N4 "$f" 2>/dev/null | tr -d ' \n')" = "7f454c46" ] || continue
+          m="$(od -An -tx1 -j18 -N2 "$f" 2>/dev/null | tr -d ' \n')"
+          [ "$m" = "$keep" ] || rm -f "$f"
+        done
+      fi
+      # Prune prebuild dirs left empty by the above.
+      find node_modules -type d -empty -delete 2>/dev/null || true
+
+      # Trim build-time cruft that bloats the image and the CVE surface but is never run.
+      rm -rf node_modules/.cache 2>/dev/null || true
+      find . -type d -name '.cache' -prune -exec rm -rf {} + 2>/dev/null || true
+
+  - runs: |
+      set -eu
+      dest="${{targets.destdir}}"
+      app="$dest/opt/n8n"
+      install -d "$app"
+      # Install the whole app tree (bin/, dist/, package.json, templates/, node_modules/, ...)
+      # read-only under /opt/n8n. The server boots via `node bin/n8n start` from this dir.
+      # Copy top-level entries individually and SKIP melange's build-output/CI files: CI runs
+      # melange with working-directory apps/n8n, so the workspace also holds the recipe +
+      # generated files. A blanket `cp -a *` would leak them into the image.
+      for item in * .[!.]* ..?*; do
+        [ -e "$item" ] || continue
+        case "$item" in
+          melange-out|melange.rsa|melange.rsa.pub|packages|build.conf|melange.yaml|apko.yaml|test.sh|melange.rendered.yaml|apko.rendered.yaml|image.tar|sbom-*|*.log|.git) continue ;;
+        esac
+        cp -a "$item" "$app/"
+      done
+      # World-readable so a read-only deployment can serve; runtime ownership (uid 1001) is
+      # set recursively in apko (the melange sandbox cannot chown to a uid it doesn't map).
+      chmod -R a+rX "$app"
+      # n8n's home (~/.n8n: sqlite db, config, encryption key) must be writable at runtime.
+      # Bake a HOME dir; apko chowns it to 1001. The chart mounts a PVC/emptyDir over it.
+      install -d "$dest/home/node"
+
+test:
+  pipeline:
+    - runs: |
+        test -f /opt/n8n/bin/n8n
+        test -f /opt/n8n/package.json
+        test -d /opt/n8n/node_modules
+        test -d /opt/n8n/dist
+        # the CLI entry must be present and the sqlite3 native binding must have installed
+        find /opt/n8n/node_modules -path '*sqlite3*/*.node' | grep -q .

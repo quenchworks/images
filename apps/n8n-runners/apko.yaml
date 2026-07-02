@@ -1,0 +1,87 @@
+# Assembles the n8n task-runner sidecar image: the Go launcher + the JavaScript runner
+# (nodejs-24) + the Python runner venv (python-3.13), plus the package managers operators
+# use to add their own extra deps at deploy time. Minimal, nonroot, multi-arch, SBOM by apko.
+#
+# The launcher is PID-1-under-tini and reads /etc/n8n-task-runners.json. At runtime the chart
+# supplies N8N_RUNNERS_TASK_BROKER_URI (the n8n task broker, e.g. http://n8n:5679) and
+# N8N_RUNNERS_AUTH_TOKEN (shared with the n8n main/worker). The JS runner serves health on
+# 5681, the Python runner on 5682. No shell is needed to run it.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - tzdata
+    - tini
+    # busybox gives /usr/bin/env + /bin/sh + coreutils. Required so the package managers
+    # (npm/yarn/pnpm are `#!/usr/bin/env node` scripts) are invokable, and so a chart-time
+    # init step can run install commands. Upstream's runners image likewise ships a shell.
+    - busybox
+    - nodejs-24
+    - python-3.13
+    # package managers (Wolfi-tracked, 0-CVE maintained) for operator "bring your own deps"
+    - uv
+    - py3.13-poetry
+    - npm
+    - yarn
+    - pnpm
+    - quench-n8n-runners@local
+
+accounts:
+  groups:
+    - groupname: runner
+      gid: 1001
+  users:
+    - username: runner
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# tini as PID 1 reaps the runner subprocesses the launcher spawns and forwards signals.
+# The launcher takes the runner types to start as its arguments (cmd).
+entrypoint:
+  command: /usr/bin/tini -- /usr/bin/task-runner-launcher
+cmd: javascript python
+
+environment:
+  NODE_ENV: production
+  HOME: /home/runner
+  # Bind runner health servers to all interfaces so k8s probes can reach 5681/5682
+  # (the per-runner config also sets this; belt-and-suspenders).
+  N8N_RUNNERS_HEALTH_CHECK_SERVER_HOST: "0.0.0.0"
+  PATH: /usr/bin:/bin
+
+work-dir: /home/runner
+
+paths:
+  # Runner trees must be readable by uid 1001; installed with build-user ownership, so apko
+  # (as root) fixes ownership here. The Python venv interpreter + JS node_modules live here.
+  - path: /opt/runners
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+    recursive: true
+  # The launcher's working dir; runners chdir here.
+  - path: /home/runner
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+    recursive: true
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-n8n-runners"
+  org.opencontainers.image.licenses: "LicenseRef-n8n-Sustainable-Use-License-1.0"

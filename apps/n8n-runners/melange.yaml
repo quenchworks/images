@@ -1,0 +1,224 @@
+# Packages the n8n EXTERNAL task-runner sidecar (upstream `n8nio/runners`) onto Wolfi.
+# Three components, assembled exactly as upstream's docker/images/runners/Dockerfile does,
+# but built hardened + clean-room from immutable sources:
+#
+#   1. task-runner-launcher  (Go)      -> /usr/bin/task-runner-launcher
+#      Built FROM SOURCE (git-checkout, commit-pinned) on Wolfi go-1.25. Apache-2.0.
+#   2. JavaScript runner (@n8n/task-runner npm dist) -> /opt/runners/task-runner-javascript
+#      Fetched as the immutable npm registry tarball + production node_modules (nodejs-24).
+#   3. Python runner (@n8n/task-runner-python)       -> /opt/runners/task-runner-python
+#      Source from the sha-pinned n8n monorepo archive; venv built at .venv with `uv`,
+#      carrying ONLY the runner's own pinned deps (urllib3, websockets, sentry-sdk).
+#
+# The launcher is the entrypoint; it reads /etc/n8n-task-runners.json and connects to the
+# n8n task broker (N8N_RUNNERS_TASK_BROKER_URI) with N8N_RUNNERS_AUTH_TOKEN, then launches
+# the JS runner (health port 5681) and Python runner (health port 5682).
+#
+# NO user packages baked in (unlike the reference runner.Dockerfile). Operators add their
+# own extra Python/JS packages at deploy time via the chart hook; those are their concern.
+#
+# LICENSE — CAUTION: fair-code, NOT OSI. Runners are under the n8n Sustainable Use License
+# v1.0; the launcher is Apache-2.0.
+package:
+  name: quench-n8n-runners
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened n8n task runners (launcher + JavaScript + Python), external sidecar for n8n"
+  copyright:
+    - license: LicenseRef-n8n-Sustainable-Use-License-1.0
+  dependencies:
+    runtime:
+      - nodejs-24              # JS runner + the launcher spawns node
+      - python-3.13            # base interpreter the Python runner venv references
+      - ca-certificates-bundle # TLS to the task broker and any user integrations
+      - tzdata                 # runners honour GENERIC_TIMEZONE
+      - tini                   # PID-1 init: reaps runner subprocesses (matches upstream entrypoint)
+      # --- package managers: operator "bring your own packages" at deploy time ----------
+      # All Wolfi-tracked (0-CVE maintained). Present so a chart-time init step can install
+      # extra deps into the venv / JS tree with whichever tool the operator prefers.
+      - uv                     # Python (fast; also builds the shipped venv at build time)
+      - py3.13-poetry          # Python (poetry)
+      - npm                    # JS (npm)
+      - yarn                   # JS (yarn classic)
+      - pnpm                   # JS (pnpm)
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - wget                   # download the JS runner tarball + monorepo source in runs steps
+      - git                    # git-checkout of the launcher source
+      # --- Go (launcher) --- newer than the launcher go.mod's `go 1.25.11` directive so
+      # GOTOOLCHAIN=local never triggers a toolchain download.
+      - go-1.26
+      # --- Node (JS runner install) ---
+      - nodejs-24
+      - npm
+      - node-gyp               # native modules in the JS runner tree (n8n-core deps)
+      - python-3.13            # node-gyp needs python3 at build time
+      # --- Python runner venv (uv) ---
+      - uv
+
+pipeline:
+  # ---------------------------------------------------------------------------
+  # 1. task-runner-launcher (Go, from source). Upstream ships a prebuilt release
+  #    binary; we build it ourselves on Wolfi go-1.25 for a clean-room, 0-CVE
+  #    static binary. The Makefile is a plain `go build cmd/launcher/main.go`
+  #    (no version ldflag), so we mirror that.
+  # ---------------------------------------------------------------------------
+  - uses: git-checkout
+    with:
+      repository: https://github.com/n8n-io/task-runner-launcher
+      tag: __LVER__
+      expected-commit: __LCOMMIT__
+      destination: launcher-src
+
+  - runs: |
+      set -eu
+      cd launcher-src
+      export CGO_ENABLED=0
+      export GOFLAGS="-buildvcs=false -mod=mod"
+      export GOTOOLCHAIN=local
+      mkdir -p /home/build/stage/usr/bin
+      go build -trimpath -ldflags="-s -w" \
+        -o /home/build/stage/usr/bin/task-runner-launcher ./cmd/launcher
+      /home/build/stage/usr/bin/task-runner-launcher --help >/dev/null 2>&1 || true
+
+  # ---------------------------------------------------------------------------
+  # 2. JavaScript runner: the immutable @n8n/task-runner npm tarball + its
+  #    production node_modules. Mirrors the quench-n8n recipe (delete the
+  #    unpublished internal devDependencies, legacy-peer-deps install, strip
+  #    foreign-arch / musl prebuilt native binaries so apko can solve the apk).
+  #    melange `runs` steps have network access at build time.
+  # ---------------------------------------------------------------------------
+  - runs: |
+      set -eu
+      js="/home/build/stage/opt/runners/task-runner-javascript"
+      mkdir -p "$js"
+      cd "$js"
+      # Fetch + verify the immutable npm registry tarball.
+      url="https://registry.npmjs.org/@n8n/task-runner/-/task-runner-__JSVER__.tgz"
+      wget -q -O tr.tgz "$url"
+      echo "__JSSHA__  tr.tgz" | sha256sum -c -
+      tar --strip-components=1 -xzf tr.tgz
+      rm -f tr.tgz
+      export CI=true npm_config_loglevel=warn
+      export PYTHON="$(command -v python3.13 || command -v python3)"
+      export npm_config_python="$PYTHON"
+      # The published @n8n/task-runner package.json lists UNPUBLISHED internal workspace
+      # packages under devDependencies; delete them so npm's arborist doesn't 404 while
+      # resolving the tree even under --omit=dev (same issue/fix as the n8n recipe).
+      npm pkg delete devDependencies
+      npm install --omit=dev --no-audit --no-fund --legacy-peer-deps
+
+      # Strip foreign-arch + musl prebuilt native binaries (the JS runner pulls n8n-core /
+      # n8n-workflow, whose deps vendor multi-arch .node files: @sentry/node-*, isolated-vm,
+      # oracledb, ...). Non-host-arch or musl ELFs make melange's SCA emit unsatisfiable
+      # so:ld-linux-<foreign> / so:libc.musl-* deps and break apko. We ship ONE glibc arch
+      # per image, so keep host-arch glibc objects only. Also trims size + CVE surface.
+      case "$(uname -m)" in
+        x86_64)  keep=3e00 ;;
+        aarch64) keep=b700 ;;
+        *)       keep="" ;;
+      esac
+      # Candidate binaries: shared objects (.node/.so) AND bare prebuilt executables shipped
+      # with NO extension (in bin/ dirs or arch-suffixed names). Drop any whose real ELF
+      # e_machine isn't the host arch, plus any musl-linked one (Wolfi is glibc).
+      if [ -n "$keep" ]; then
+        find node_modules -type f \( -name '*.node' -o -name '*.so' -o -name '*.so.*' \
+             -o -path '*/bin/*' -o ! -name '*.*' \) | \
+        while IFS= read -r f; do
+          case "$f" in *musl*) rm -f "$f"; continue ;; esac   # Wolfi is glibc
+          [ "$(od -An -tx1 -N4 "$f" 2>/dev/null | tr -d ' \n')" = "7f454c46" ] || continue
+          m="$(od -An -tx1 -j18 -N2 "$f" 2>/dev/null | tr -d ' \n')"
+          [ "$m" = "$keep" ] || rm -f "$f"
+        done
+      fi
+      rm -rf node_modules/.cache 2>/dev/null || true
+      find node_modules -type d -empty -delete 2>/dev/null || true
+
+  # ---------------------------------------------------------------------------
+  # 3. Python runner (@n8n/task-runner-python). Source lives in the n8n monorepo;
+  #    fetch the sha-pinned GitHub source archive and build a relocatable venv at
+  #    /opt/runners/task-runner-python/.venv with uv, mirroring upstream's
+  #    `uv sync --frozen --no-dev --all-extras --no-editable` + `uv pip install .`.
+  #    The venv is built AT its final runtime path so its interpreter symlink +
+  #    prefix resolve correctly at runtime (python-3.13 is a runtime dep).
+  # ---------------------------------------------------------------------------
+  - runs: |
+      set -eu
+      work=/home/build/pysrc
+      mkdir -p "$work"
+      cd "$work"
+      wget -q -O mono.tgz "https://codeload.github.com/n8n-io/n8n/tar.gz/refs/tags/n8n@__VER__"
+      echo "__MONOSHA__  mono.tgz" | sha256sum -c -
+      tar xzf mono.tgz
+      rm -f mono.tgz
+      src="$(dirname "$(find . -type f -path '*task-runner-python/pyproject.toml' | head -1)")"
+      [ -n "$src" ] && [ -d "$src" ] || { echo "python runner source not found"; exit 1; }
+      # Build the venv at the FINAL path so baked interpreter/prefix paths are valid at runtime.
+      py="/opt/runners/task-runner-python"
+      mkdir -p "$py"
+      cp -a "$src"/. "$py"/
+      cd "$py"
+      export UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
+      # Built AT the final runtime path (/opt/runners/task-runner-python/.venv), so the venv's
+      # interpreter symlink + prefix resolve correctly at runtime (python-3.13 is a runtime dep).
+      uv venv --python "$(command -v python3.13)" .venv
+      # Installs the runner's pinned deps (urllib3, websockets) + the sentry extra + the
+      # project itself (the `src` package) into the venv, non-editable. Mirrors upstream.
+      uv sync --frozen --no-dev --all-extras --no-editable
+      # Prune caches/bytecode that bloat the image.
+      find . -type d -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
+      rm -rf .venv/share 2>/dev/null || true
+      # uv leaves a world-writable .venv/.lock (mode 666); it's an internal build-time lock,
+      # not needed at runtime, and the melange worldwrite linter rejects it. Remove it.
+      rm -f .venv/.lock 2>/dev/null || true
+      # Stage it for install into destdir.
+      mkdir -p /home/build/stage/opt/runners
+      cp -a "$py" /home/build/stage/opt/runners/
+
+  # ---------------------------------------------------------------------------
+  # 4. Config + assemble into destdir. The launcher reads /etc/n8n-task-runners.json.
+  #    We ship a config with the health-check host bound to 0.0.0.0 (so k8s probes
+  #    reach 5681/5682) and the code-execution allowlists OPEN (stdlib/external "*",
+  #    builtin/external "*") — this is a self-hosted automation runner where the
+  #    operator owns the workflows; the allowlist is the mechanism the chart can
+  #    tighten. Mirrors the reference n8n-task-runners.json.
+  # ---------------------------------------------------------------------------
+  - runs: |
+      set -eu
+      dest="${{targets.destdir}}"
+      mkdir -p "$dest"
+      cp -a /home/build/stage/. "$dest"/
+      install -d "$dest/etc"
+      install -m 0644 "$(pwd)/n8n-task-runners.json" "$dest/etc/n8n-task-runners.json"
+      # The py3.13-poetry apk ships poetry as a MODULE only (no /usr/bin/poetry console
+      # script). Bake a tiny launcher so operators can invoke `poetry` directly at deploy
+      # time (python3.13 + the poetry module are both present at runtime).
+      printf '#!/usr/bin/python3.13\nimport sys\nfrom poetry.console.application import main\nsys.exit(main())\n' > "$dest/usr/bin/poetry"
+      chmod 0755 "$dest/usr/bin/poetry"
+      # World-readable, but never group/other-writable (melange's worldwrite linter is strict);
+      # apko sets runtime ownership (uid 1001) recursively.
+      chmod -R a+rX,go-w "$dest/opt/runners" "$dest/usr/bin/task-runner-launcher"
+      # runners run with HOME=/home/runner and workdir there.
+      install -d "$dest/home/runner"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/bin/task-runner-launcher
+        test -f /opt/runners/task-runner-javascript/dist/start.js
+        test -d /opt/runners/task-runner-javascript/node_modules
+        test -x /opt/runners/task-runner-python/.venv/bin/python
+        test -f /etc/n8n-task-runners.json
+        # the python runner venv must import its pinned deps + the runner module
+        /opt/runners/task-runner-python/.venv/bin/python -c "import urllib3, websockets; print('py-runner deps ok')"
+        # package managers present for operator customization
+        for t in uv poetry npm yarn pnpm; do command -v "$t" >/dev/null || { echo "missing $t"; exit 1; }; done
