@@ -1,0 +1,197 @@
+name: build-nextcloud
+
+# Assembled build (Nextcloud Server, from the official release tarball). build.conf
+# is the SINGLE SOURCE OF TRUTH: VERSIONS holds the full X.Y.Z (used as-is as the
+# image tag) and per-version sha256. The matrix fans it across the last 3 stable
+# major lines x both NATIVE arches (amd64 + arm64, no QEMU). Recipes render via
+# build.conf render() (__VER__ / __SHA256__). The nextcloud image bundles
+# quench-nginx@local, so each arch prebuilds the nginx package first (same signing
+# key) into ./packages so apko's @local repo resolves both. Per-version merge job
+# assembles the multi-arch index, signs + attests it (SBOM trimmed -- Nextcloud
+# bundles a LOT of files), notifies charts for the newest only.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  attestations: write
+
+env:
+  APP: nextcloud
+  GHCR_IMAGE: ghcr.io/quenchworks/images/nextcloud
+
+jobs:
+  prep:
+    runs-on: ubuntu-latest
+    outputs:
+      vers: ${{ steps.v.outputs.vers }}
+      latest: ${{ steps.v.outputs.latest }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: v
+        run: |
+          set -euo pipefail
+          source "apps/${APP}/build.conf"
+          n=${#VERSIONS[@]}; start=$(( n > 3 ? n - 3 : 0 ))
+          latest3=("${VERSIONS[@]:start}")
+          echo "building: ${latest3[*]}"
+          echo "vers=$(printf '%s\n' "${latest3[@]}" | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
+          echo "latest=${latest3[${#latest3[@]}-1]}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prep
+    strategy:
+      fail-fast: false
+      matrix:
+        ver: ${{ fromJson(needs.prep.outputs.vers) }}
+        arch:
+          - { name: x86_64,  platform: amd64, runner: ubuntu-latest }
+          - { name: aarch64, platform: arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.arch.runner }}
+    defaults:
+      run:
+        working-directory: apps/nextcloud
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install melange and apko (native ${{ matrix.arch.platform }})
+        working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update && sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          MELANGE_VER=v0.53.0
+          curl -fsSL "https://github.com/chainguard-dev/melange/releases/download/${MELANGE_VER}/melange_${MELANGE_VER#v}_linux_${{ matrix.arch.platform }}.tar.gz" \
+            | sudo tar xz --strip-components=1 -C /usr/local/bin
+          APKO_VER=""
+          for i in 1 2 3 4 5; do
+            APKO_VER="$(gh api repos/chainguard-dev/apko/releases/latest --jq .tag_name 2>/dev/null || true)"
+            [ -n "$APKO_VER" ] && break
+            echo "apko lookup attempt $i failed; retrying..." >&2; sleep 5
+          done
+          [ -n "$APKO_VER" ] || { echo "could not resolve latest apko"; exit 1; }
+          curl -fsSL "https://github.com/chainguard-dev/apko/releases/download/${APKO_VER}/apko_${APKO_VER#v}_linux_${{ matrix.arch.platform }}.tar.gz" \
+            | sudo tar xz --strip-components=1 -C /usr/local/bin
+          melange version | head -1
+          apko version | head -1
+
+      - name: Render recipes for ${{ matrix.ver }} (build.conf render)
+        run: |
+          set -euo pipefail
+          source build.conf
+          prog="$(render '${{ matrix.ver }}')"
+          sed -e "$prog" melange.yaml > melange.rendered.yaml
+          sed -e "$prog" apko.yaml    > apko.rendered.yaml
+
+      - name: Build packages (quench-nginx dep + nextcloud, native ${{ matrix.arch.name }})
+        run: |
+          set -euo pipefail
+          melange keygen melange.rsa
+          # Inter-app dep: the nextcloud image bundles quench-nginx@local, so build
+          # the nginx package into ./packages FIRST (rendered at nginx's current
+          # version) with the SAME signing key so apko's @local repo resolves both.
+          ( cd ../nginx && source build.conf
+            nv="${VERSIONS[${#VERSIONS[@]}-1]}"
+            sed -e "$(render "$nv")" melange.yaml > nginx.rendered.yaml )
+          melange build ../nginx/nginx.rendered.yaml --arch ${{ matrix.arch.name }} --signing-key melange.rsa --out-dir ./packages
+          # then the nextcloud package itself
+          melange build melange.rendered.yaml --arch ${{ matrix.arch.name }} --signing-key melange.rsa --out-dir ./packages
+
+      - name: Assemble single-arch image for the scan gate
+        run: apko build apko.rendered.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}
+
+      - name: Scan, the hard 0-CVE gate (before publish; comprehensive, all severities)
+        uses: aquasecurity/trivy-action@master
+        with:
+          input: apps/nextcloud/image.tar
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH,MEDIUM,LOW
+          scanners: vuln,secret,misconfig
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish the single-arch image (tag = full X.Y.Z)
+        run: apko publish apko.rendered.yaml "${GHCR_IMAGE}:${{ matrix.ver }}-${{ matrix.arch.platform }}" --arch ${{ matrix.arch.name }}
+
+  merge:
+    needs: [prep, build]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ver: ${{ fromJson(needs.prep.outputs.vers) }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Assemble the multi-arch index (tag = full X.Y.Z)
+        id: merge
+        run: |
+          docker buildx imagetools create -t "${GHCR_IMAGE}:${{ matrix.ver }}" \
+            "${GHCR_IMAGE}:${{ matrix.ver }}-amd64" "${GHCR_IMAGE}:${{ matrix.ver }}-arm64"
+          digest="$(docker buildx imagetools inspect "${GHCR_IMAGE}:${{ matrix.ver }}" --format '{{.Manifest.Digest}}')"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          echo "published ${GHCR_IMAGE}:${{ matrix.ver }}@${digest}"
+
+      - name: Sign the multi-arch index (cosign keyless)
+        run: cosign sign --yes "${GHCR_IMAGE}@${{ steps.merge.outputs.digest }}"
+
+      - name: Generate SBOM (SPDX) for the signed index
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.GHCR_IMAGE }}@${{ steps.merge.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: false
+
+      - name: Trim the SBOM (Nextcloud bundles a LOT of files; keep it under attest limits)
+        run: |
+          # actions/attest-sbom rejects SBOMs > ~16MB. Nextcloud's tree carries
+          # thousands of vendored PHP/JS files -> the file+relationship graph is
+          # huge. Drop per-file entries and relationships, keep packages only.
+          jq 'del(.files) | del(.relationships)' sbom.spdx.json > sbom.trimmed.json
+          mv sbom.trimmed.json sbom.spdx.json
+          echo "trimmed SBOM size: $(du -h sbom.spdx.json | cut -f1)"
+
+      - name: Attest the SBOM (keyless, pushed to GHCR)
+        uses: actions/attest-sbom@v2
+        with:
+          subject-name: ${{ env.GHCR_IMAGE }}
+          subject-digest: ${{ steps.merge.outputs.digest }}
+          sbom-path: sbom.spdx.json
+          push-to-registry: true
+
+      - name: Attest build provenance (SLSA, pushed to GHCR)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.GHCR_IMAGE }}
+          subject-digest: ${{ steps.merge.outputs.digest }}
+          push-to-registry: true
+
+      - name: Notify the charts repo (newest version only)
+        if: ${{ matrix.ver == needs.prep.outputs.latest }}
+        env:
+          GH_TOKEN: ${{ secrets.CHARTS_DISPATCH_TOKEN }}
+        run: |
+          gh api repos/quenchworks/charts/dispatches \
+            -f event_type=image-published \
+            -F client_payload[app]=nextcloud \
+            -F client_payload[repository]="${GHCR_IMAGE}" \
+            -F client_payload[digest]="${{ steps.merge.outputs.digest }}"

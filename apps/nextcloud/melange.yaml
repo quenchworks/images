@@ -1,0 +1,427 @@
+# Assembles Nextcloud Server for Wolfi from the OFFICIAL upstream release tarball.
+#
+# Nextcloud ships each release as nextcloud-<VER>.tar.bz2 on download.nextcloud.com:
+# the complete, finished PHP application with its Composer dependencies (3rdparty/)
+# and all bundled first-party apps (apps/) already vendored. There is NOTHING to
+# compile -- we fetch the sha256-pinned tarball and lay the tree down under
+# /var/www/html, then wire the runtime (php-fpm + nginx + supervisord + the PHP
+# ini/pool overrides) from Wolfi packages. Clean-room: we do NOT inherit the
+# upstream `nextcloud` Docker image or its Debian base -- the whole runtime is
+# reconstructed from Wolfi (php-8.3 + FPM + extensions, QuenchWorks' own nginx,
+# supervisor). AGPL-3.0-only (copyleft) -- see the license field below.
+#
+# LICENSE NOTE: Nextcloud Server is AGPL-3.0-only. This is a strong copyleft
+# license (network-use == distribution). The image ships the unmodified upstream
+# release; consumers who modify the source and offer it over a network must make
+# their modified source available. Flagged in the catalog row (tier note).
+package:
+  name: quench-nextcloud
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Nextcloud Server (self-hosted content collaboration / file sync), php-fpm + nginx on Wolfi"
+  copyright:
+    - license: AGPL-3.0-only   # Nextcloud Server is GNU AGPL v3 (COPYING)
+  dependencies:
+    runtime:
+      # PHP 8.3 runtime + FPM + the extension surface Nextcloud requires and
+      # recommends (declared here so the package pulls them even if installed
+      # directly; the same set is listed in apko.yaml for the final image).
+      - php-8.3
+      - php-8.3-config
+      - php-8.3-fpm
+      - php-8.3-fpm-config
+      - php-8.3-opcache
+      - php-8.3-opcache-config
+      # --- required by Nextcloud ---
+      - php-8.3-ctype
+      - php-8.3-ctype-config
+      - php-8.3-curl
+      - php-8.3-curl-config
+      - php-8.3-dom
+      - php-8.3-dom-config
+      - php-8.3-gd
+      - php-8.3-gd-config
+      - php-8.3-fileinfo
+      - php-8.3-fileinfo-config
+      - php-8.3-iconv
+      - php-8.3-iconv-config
+      - php-8.3-mbstring
+      - php-8.3-mbstring-config
+      - php-8.3-openssl
+      - php-8.3-openssl-config
+      - php-8.3-posix
+      - php-8.3-posix-config
+      - php-8.3-simplexml
+      - php-8.3-simplexml-config
+      - php-8.3-xml
+      - php-8.3-xml-config
+      - php-8.3-xmlreader
+      - php-8.3-xmlreader-config
+      - php-8.3-xmlwriter
+      - php-8.3-xmlwriter-config
+      - php-8.3-zip
+      - php-8.3-zip-config
+      - php-8.3-phar
+      - php-8.3-phar-config
+      # --- database drivers (chart picks one: MySQL/MariaDB, PostgreSQL, SQLite) ---
+      - php-8.3-pdo
+      - php-8.3-pdo-config
+      - php-8.3-pdo_mysql
+      - php-8.3-pdo_mysql-config
+      - php-8.3-mysqli
+      - php-8.3-mysqli-config
+      - php-8.3-mysqlnd
+      - php-8.3-mysqlnd-config
+      - php-8.3-pdo_pgsql
+      - php-8.3-pdo_pgsql-config
+      - php-8.3-pgsql
+      - php-8.3-pgsql-config
+      - php-8.3-pdo_sqlite
+      - php-8.3-pdo_sqlite-config
+      # --- strongly recommended (perf, previews, caching, LDAP, occ jobs) ---
+      - php-8.3-intl
+      - php-8.3-intl-config
+      - php-8.3-bcmath
+      - php-8.3-bcmath-config
+      - php-8.3-gmp
+      - php-8.3-gmp-config
+      - php-8.3-exif
+      - php-8.3-exif-config
+      - php-8.3-sodium
+      - php-8.3-sodium-config
+      - php-8.3-sockets
+      - php-8.3-sockets-config
+      - php-8.3-ftp
+      - php-8.3-ftp-config
+      - php-8.3-pcntl
+      - php-8.3-pcntl-config
+      - php-8.3-sysvsem
+      - php-8.3-sysvsem-config
+      - php-8.3-gettext
+      - php-8.3-gettext-config
+      - php-8.3-apcu           # local memory cache (memcache.local)
+      - php-8.3-apcu-config
+      - php-8.3-redis          # distributed cache + file locking (memcache.distributed/locking)
+      - php-8.3-redis-config
+      - php-8.3-imagick        # image previews / avatars
+      - php-8.3-imagick-config
+      - php-8.3-ldap           # LDAP / Active Directory user backend
+      - php-8.3-ldap-config
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+
+pipeline:
+  # The release asset is the finished application (vendored deps + bundled apps),
+  # not a source archive. Fetch + verify the published sha256; melange's fetch
+  # extracts the .tar.bz2 natively. The tarball's top dir is `nextcloud/`, so
+  # keep it (strip-components: 0) and copy from there.
+  - uses: fetch
+    with:
+      uri: https://download.nextcloud.com/server/releases/nextcloud-${{package.version}}.tar.bz2
+      expected-sha256: __SHA256__
+      strip-components: 0
+
+  - name: Lay the release tree down under /var/www/html
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      app="$destdir/var/www/html"
+      install -d -m 0755 "$app"
+
+      test -f nextcloud/version.php
+      test -f nextcloud/occ
+      test -f nextcloud/status.php
+
+      # Lay the finished application tree down as the docroot. cp -a preserves the
+      # bundled apps/, 3rdparty/, core/, lib/, etc.
+      cp -a nextcloud/. "$app/"
+
+      # Writable carve-outs (mounted as tmpfs/emptyDir/PVC on the read-only rootfs
+      # at runtime; created here so they exist and are owned correctly). data/ holds
+      # user files, config/ holds config.php, custom_apps/ is the writable app dir
+      # (Nextcloud's standard split: bundled apps/ stays read-only/immutable).
+      install -d -m 0770 "$app/data"
+      install -d -m 0770 "$app/config"
+      install -d -m 0755 "$app/custom_apps"
+
+      # occ is executed as `php occ`; strip any exec bit (it is invoked via php).
+      chmod 0644 "$app/occ" || true
+
+  - name: Install the nginx site config (front controller -> php-fpm on :9000, listen :8080)
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/etc/nginx/conf.d"
+      # Ported from Nextcloud's documented nginx configuration, adapted for the
+      # QuenchWorks nginx layout (included from quench-nginx's nginx.conf via
+      # /etc/nginx/conf.d/*.conf). `listen 8080 default_server` makes this the
+      # default vhost (overriding quench-nginx's placeholder server on 8080 --
+      # nginx only errors on a DUPLICATE explicit default, not on shadowing an
+      # implicit one). FastCGI-passes .php to php-fpm on 127.0.0.1:9000.
+      cat > "$destdir/etc/nginx/conf.d/nextcloud.conf" <<'EOF'
+      upstream php-handler {
+          server 127.0.0.1:9000;
+      }
+
+      server {
+          listen 8080 default_server;
+          listen [::]:8080 default_server;
+          server_name _;
+
+          root /var/www/html;
+          index index.php index.html /index.php$request_uri;
+
+          # Large uploads (sync clients, big files). Chart can raise/lower.
+          client_max_body_size 10G;
+          client_body_timeout 3600s;
+          client_body_buffer_size 512k;
+          fastcgi_buffers 64 4K;
+
+          # Security response headers (Nextcloud admin recommendations).
+          add_header Referrer-Policy                   "no-referrer"       always;
+          add_header X-Content-Type-Options            "nosniff"           always;
+          add_header X-Frame-Options                   "SAMEORIGIN"        always;
+          add_header X-Permitted-Cross-Domain-Policies "none"              always;
+          add_header X-Robots-Tag                       "noindex, nofollow" always;
+          add_header X-XSS-Protection                  "1; mode=block"     always;
+          fastcgi_hide_header X-Powered-By;
+
+          # Service discovery for CalDAV / CardDAV / webfinger / nodeinfo.
+          location = /.well-known/carddav { return 301 /remote.php/dav/; }
+          location = /.well-known/caldav  { return 301 /remote.php/dav/; }
+          location = /.well-known/webfinger { return 301 /index.php/.well-known/webfinger; }
+          location = /.well-known/nodeinfo  { return 301 /index.php/.well-known/nodeinfo; }
+          location ^~ /.well-known/acme-challenge  { try_files $uri $uri/ =404; }
+          location ^~ /.well-known/pki-validation  { try_files $uri $uri/ =404; }
+          location  /.well-known { return 301 /index.php$request_uri; }
+
+          # Never serve these paths (source, config, data, dotfiles, tooling).
+          location ~ ^/(?:build|tests|config|lib|3rdparty|templates|data)(?:$|/)   { return 404; }
+          location ~ ^/(?:\.|autotest|occ|issue|indie|db_|console)                 { return 404; }
+
+          # Front controller.
+          location / {
+              try_files $uri $uri/ /index.php$request_uri;
+          }
+
+          location ~ \.php(?:$|/) {
+              fastcgi_split_path_info ^(.+?\.php)(/.*)$;
+              set $path_info $fastcgi_path_info;
+              try_files $fastcgi_script_name =404;
+              include fastcgi_params;
+              fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+              fastcgi_param PATH_INFO $path_info;
+              fastcgi_param HTTPS $https if_not_empty;
+              fastcgi_param modHeadersAvailable true;
+              fastcgi_param front_controller_active true;
+              fastcgi_pass php-handler;
+              fastcgi_intercept_errors on;
+              fastcgi_request_buffering off;
+              fastcgi_max_temp_file_size 0;
+              fastcgi_read_timeout 3600s;
+          }
+
+          # Static assets straight from disk, fall back to the front controller.
+          location ~ \.(?:css|js|mjs|svg|gif|png|jpg|jpeg|ico|wasm|tflite|map|ogg|flac|woff2?)$ {
+              try_files $uri /index.php$request_uri;
+              access_log off;
+              expires 6M;
+          }
+      }
+      EOF
+
+  - name: Install php-fpm pool + php.ini overrides (nonroot, read-only rootfs)
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/etc/php/php-fpm.d"
+      install -d "$destdir/etc/php/conf.d"
+
+      # Pool override (sorts after the Wolfi default www.conf; [www] directives
+      # merge). php-fpm runs as the nonroot runtime uid -- the default pool's
+      # user/group directives are IGNORED by FPM when it is not started as root,
+      # so workers run as uid 1001. We only need to pin the listen socket, keep
+      # the env, and log to stderr (supervisord captures it).
+      cat > "$destdir/etc/php/php-fpm.d/zzz-nextcloud.conf" <<'EOF'
+      [global]
+      daemonize = no
+      error_log = /proc/self/fd/2
+
+      [www]
+      listen = 127.0.0.1:9000
+      catch_workers_output = yes
+      decorate_workers_output = no
+      clear_env = no
+      access.log = /proc/self/fd/2
+      pm = dynamic
+      pm.max_children = 32
+      pm.start_servers = 4
+      pm.min_spare_servers = 2
+      pm.max_spare_servers = 8
+      ; Nextcloud shells out (occ, previews) and needs a sane PATH in the workers.
+      env[PATH] = /usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
+      EOF
+
+      # PHP settings tuned to Nextcloud's admin recommendations (memory, opcache
+      # with a large interned-strings buffer + JIT, big uploads, apcu on CLI so
+      # occ uses the local cache). Errors to stderr for container logging.
+      cat > "$destdir/etc/php/conf.d/zzz-nextcloud.ini" <<'EOF'
+      memory_limit = 512M
+      upload_max_filesize = 10G
+      post_max_size = 10G
+      max_execution_time = 3600
+      max_input_time = 3600
+      max_file_uploads = 100
+      output_buffering = 0
+      display_errors = Off
+      log_errors = On
+      error_log = /proc/self/fd/2
+      expose_php = Off
+      date.timezone = UTC
+
+      opcache.enable = 1
+      opcache.enable_cli = 1
+      opcache.interned_strings_buffer = 16
+      opcache.max_accelerated_files = 10000
+      opcache.memory_consumption = 128
+      opcache.save_comments = 1
+      opcache.revalidate_freq = 60
+      opcache.jit = 1255
+      opcache.jit_buffer_size = 128M
+
+      apc.enable_cli = 1
+      EOF
+
+  - name: Install the supervisord configuration (php-fpm + nginx)
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/etc/supervisor.d"
+      install -d "$destdir/etc/nextcloud"
+
+      # Main supervisord config at /etc/nextcloud/supervisord.conf (NOT
+      # /etc/supervisord.conf -- that path is owned by the Wolfi supervisor-config
+      # package and would collide in apko's solve). Nonroot-friendly: pid + sock
+      # under /tmp (writable tmpfs), logs to stdout.
+      cat > "$destdir/etc/nextcloud/supervisord.conf" <<'EOF'
+      [supervisord]
+      nodaemon=true
+      user=nextcloud
+      logfile=/dev/stdout
+      logfile_maxbytes=0
+      pidfile=/tmp/supervisord.pid
+
+      [unix_http_server]
+      file=/tmp/supervisor.sock
+
+      [supervisorctl]
+      serverurl=unix:///tmp/supervisor.sock
+
+      [rpcinterface:supervisor]
+      supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+
+      [include]
+      files = /etc/supervisor.d/*.conf
+      EOF
+
+      cat > "$destdir/etc/supervisor.d/php-fpm.conf" <<'EOF'
+      [program:php-fpm]
+      command=/usr/bin/php-fpm --nodaemonize --fpm-config /etc/php/php-fpm.conf
+      autostart=true
+      autorestart=true
+      priority=10
+      stdout_logfile=/dev/stdout
+      stdout_logfile_maxbytes=0
+      stderr_logfile=/dev/stderr
+      stderr_logfile_maxbytes=0
+      EOF
+
+      cat > "$destdir/etc/supervisor.d/nginx.conf" <<'EOF'
+      [program:nginx]
+      command=/usr/bin/nginx -g "daemon off;"
+      autostart=true
+      autorestart=true
+      priority=20
+      stdout_logfile=/dev/stdout
+      stdout_logfile_maxbytes=0
+      stderr_logfile=/dev/stderr
+      stderr_logfile_maxbytes=0
+      EOF
+
+  - name: Install the container entrypoint
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/usr/bin"
+      cat > "$destdir/usr/bin/nextcloud-entrypoint.sh" <<'EOF'
+      #!/bin/sh
+      set -eu
+      # Recreate the writable carve-outs on every boot (data/config/custom_apps are
+      # emptyDir/PVC/tmpfs on a read-only rootfs; /tmp holds the supervisor + nginx
+      # + php runtime scratch). Idempotent.
+      mkdir -p /var/www/html/data \
+               /var/www/html/config \
+               /var/www/html/custom_apps \
+               /tmp 2>/dev/null || true
+
+      # Seed an apps_paths config so the writable custom_apps/ dir is used for
+      # app installs/updates while the bundled apps/ stays read-only/immutable
+      # (a security win on a read-only rootfs). Only written if the operator has
+      # not supplied their own apps config yet -- config/ is a mount, so a real
+      # config.php (from the chart/installer) always takes precedence.
+      if [ ! -e /var/www/html/config/apps.config.php ]; then
+        cat > /var/www/html/config/apps.config.php <<'PHP' 2>/dev/null || true
+      <?php
+      $CONFIG = array (
+        'apps_paths' => array (
+          array ( 'path' => '/var/www/html/apps',        'url' => '/apps',        'writable' => false ),
+          array ( 'path' => '/var/www/html/custom_apps', 'url' => '/custom_apps', 'writable' => true ),
+        ),
+      );
+      PHP
+      fi
+
+      exec supervisord -c /etc/nextcloud/supervisord.conf
+      EOF
+      chmod 0755 "$destdir/usr/bin/nextcloud-entrypoint.sh"
+
+  - name: Sanity-check the assembled tree
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      app="$destdir/var/www/html"
+      test -f "$app/version.php"
+      test -f "$app/index.php"
+      test -f "$app/status.php"
+      test -f "$app/occ"
+      test -d "$app/3rdparty"
+      test -d "$app/apps"
+      test -f "$destdir/etc/nginx/conf.d/nextcloud.conf"
+      test -f "$destdir/etc/php/php-fpm.d/zzz-nextcloud.conf"
+      test -f "$destdir/etc/nextcloud/supervisord.conf"
+      test -x "$destdir/usr/bin/nextcloud-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        set -eu
+        php --version
+        test -f /var/www/html/version.php
+        test -f /var/www/html/occ
+        # The required + recommended extensions must be loaded in the runtime.
+        for ext in ctype curl dom gd fileinfo mbstring openssl posix simplexml \
+                   xmlreader xmlwriter zip pdo pdo_mysql pdo_pgsql pdo_sqlite \
+                   intl bcmath gmp exif sodium apcu redis imagick ldap; do
+          php -m | grep -qi "^${ext}$" || { echo "missing PHP ext: $ext"; php -m; exit 1; }
+        done
+        # opcache is reported as "Zend OPcache" by php -m.
+        php -m | grep -qi "opcache" || { echo "missing PHP ext: opcache"; php -m; exit 1; }
+        # occ prints the Nextcloud version without a database/config.
+        php /var/www/html/occ --version --no-warnings
