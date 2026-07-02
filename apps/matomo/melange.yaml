@@ -1,0 +1,364 @@
+# Packages Matomo (matomo-org/matomo) for Wolfi from its OFFICIAL build tarball.
+#
+# builds.matomo.org/matomo-<VER>.tar.gz is the finished, deployable application: it
+# already carries the vendored Composer dependencies (vendor/) and the built front-end
+# assets (node_modules is NOT shipped; the JS/CSS are pre-built), so there is nothing
+# to compile. We `fetch` the sha256-pinned tarball, lay the tree down under
+# /var/www/html, and wire the runtime (nginx :8080 -> php-fpm :9000) with supervisord.
+#
+# CLEAN-ROOM: we do NOT inherit any upstream Matomo/Bitnami image. The PHP runtime
+# (php-8.3 + php-8.3-fpm + the extension set Matomo's System Check requires) and nginx
+# all come from Wolfi packages (declared in apko.yaml); the app tree, the nginx site
+# config, the php-fpm pool + php.ini overrides, the supervisord wiring and the
+# entrypoint are all authored here.
+#
+# SUPERVISOR CHOICE -- supervisord. Two long-running processes must be kept alive
+# (php-fpm on 127.0.0.1:9000 and nginx on 8080); supervisord is the CVE-tracked Wolfi
+# `supervisor` package and is the house pattern for php-fpm+nginx images in this repo.
+#
+# Matomo needs a MySQL/MariaDB database for a full install; the chart wires one. This
+# image boots WITHOUT a DB to the installer "Welcome / System Check" page (HTTP 200)
+# -- the smoke test in test.sh proves exactly that.
+package:
+  name: quench-matomo
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Matomo (web analytics; PHP-FPM + nginx), from the official build tarball on Wolfi"
+  copyright:
+    - license: GPL-3.0-or-later   # Matomo is "GNU GPL v3 or later"
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - python3   # only to render a composer.lock from vendor/composer/installed.php (scan input)
+
+pipeline:
+  # The tarball is the finished application (vendored deps + built assets), not source.
+  # It extracts to a top-level matomo/ directory; we relocate its contents to the docroot.
+  - uses: fetch
+    with:
+      uri: https://builds.matomo.org/matomo-${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+      strip-components: "0"   # keep the top-level matomo/ dir (default would strip it)
+
+  - name: Lay the application tree down under /var/www/html
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      app="$destdir/var/www/html"
+      install -d "$app"
+      # The tarball unpacks to ./matomo/ ; copy its contents (dotfiles included) to the
+      # docroot. There is also a sibling How-to HTML + the GPL text at the top level.
+      cp -a matomo/. "$app/"
+      # Sanity: the entry points, the vendored deps and the config defaults must be here.
+      test -f "$app/index.php"
+      test -f "$app/matomo.php"
+      test -f "$app/core/Version.php"
+      test -f "$app/vendor/autoload.php"
+      test -f "$app/config/global.ini.php"
+      # tmp/ is Matomo's writable cache tree; keep it (a writable volume mounts over it
+      # at runtime on a read-only rootfs). Ensure the common subdirs exist.
+      install -d "$app/tmp/assets" "$app/tmp/cache/tracker" "$app/tmp/climulti" \
+                 "$app/tmp/latest" "$app/tmp/logs" "$app/tmp/sessions" \
+                 "$app/tmp/templates_c" "$app/tmp/tcpdf"
+      # Matomo REQUIRES config/ to be writable at boot (it fatals otherwise), so config/
+      # is a writable volume at runtime -- but an empty volume would hide the shipped
+      # defaults (global.ini.php, global.php, ...) Matomo reads. Keep a pristine, read-only
+      # copy of those defaults at config-default/ so the entrypoint can seed a fresh
+      # config volume from it (the same seed-if-empty pattern the chart relies on).
+      cp -a "$app/config" "$app/config-default"
+
+  - name: Emit composer.lock from vendor/composer/installed.php (makes the vendored PHP deps scannable)
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      app="$destdir/var/www/html"
+      # The official Matomo build tarball ships the resolved dependency inventory ONLY as
+      # vendor/composer/installed.php -- no composer.lock and no installed.json. Trivy /
+      # syft can't enumerate (and therefore can't CVE-scan) the vendored Composer packages
+      # from installed.php, which would leave the 0-CVE gate BLIND to Matomo's biggest CVE
+      # surface. We faithfully re-materialise the exact same {name, version} inventory into
+      # a standard composer.lock so BOTH the local build gate and the CI Trivy step really
+      # scan the vendored deps. This is scan input, not a runtime file (Matomo ignores it).
+      python3 - "$app/vendor/composer/installed.php" "$app/composer.lock" <<'PY'
+      import re, json, sys
+      src = open(sys.argv[1]).read()
+      pkgs, seen = [], set()
+      for m in re.finditer(r"'([^']+/[^']+)'\s*=>\s*array\((.*?)\),\n", src, re.S):
+          name, body = m.group(1), m.group(2)
+          pv = re.search(r"'pretty_version'\s*=>\s*'([^']+)'", body)
+          if pv and name not in seen:
+              seen.add(name)
+              pkgs.append({"name": name, "version": pv.group(1)})
+      json.dump({"_readme": ["Generated by QuenchWorks from vendor/composer/installed.php "
+                             "so security scanners can enumerate the vendored dependencies."],
+                 "content-hash": "quenchworks-generated",
+                 "packages": pkgs, "packages-dev": []},
+                open(sys.argv[2], "w"), indent=2)
+      print("composer.lock: %d packages" % len(pkgs))
+      PY
+      test -s "$app/composer.lock"
+      grep -q '"name": "twig/twig"' "$app/composer.lock" || { echo "sanity: twig not found in inventory"; exit 1; }
+
+  - name: Install the nginx site config (serves the docroot, FastCGI to php-fpm :9000)
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/etc/matomo"
+      # Self-contained nginx config (run with `nginx -c /etc/matomo/nginx.conf`), shipped
+      # under /etc/matomo so it does not collide with the Wolfi nginx package's own
+      # /etc/nginx/nginx.conf. Nonroot: listen 8080 (can't bind <1024), pid + all temp
+      # paths under /tmp (writable tmpfs on a read-only rootfs). Adapted from Matomo's
+      # officially recommended nginx config: only Matomo's real PHP entry points are
+      # FastCGI-passed; every other .php is denied; the sensitive dirs (config/, tmp/,
+      # lang/, the vendored libs) are blocked from direct web access.
+      cat > "$destdir/etc/matomo/nginx.conf" <<'EOF'
+      daemon off;
+      worker_processes auto;
+      pid /tmp/nginx.pid;
+      error_log /dev/stderr notice;
+
+      events {
+          worker_connections 1024;
+      }
+
+      http {
+          include       /etc/nginx/mime.types;
+          default_type  application/octet-stream;
+
+          client_body_temp_path /tmp/client_body_temp;
+          proxy_temp_path       /tmp/proxy_temp;
+          fastcgi_temp_path     /tmp/fastcgi_temp;
+          uwsgi_temp_path       /tmp/uwsgi_temp;
+          scgi_temp_path        /tmp/scgi_temp;
+
+          access_log /dev/stdout;
+          sendfile      on;
+          tcp_nopush    on;
+          gzip          on;
+          server_tokens off;
+          client_max_body_size 100M;
+
+          server {
+              listen      8080;
+              listen      [::]:8080;
+              server_name _;
+              root        /var/www/html;
+              index       index.php;
+
+              # Matomo's real PHP entry points (the officially recommended allowlist).
+              location ~ ^/(index|matomo|piwik|js/index|plugins/HeatmapSessionRecording/configs)\.php$ {
+                  include            /etc/nginx/fastcgi_params;
+                  fastcgi_pass       127.0.0.1:9000;
+                  fastcgi_index      index.php;
+                  fastcgi_param      SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                  fastcgi_buffers     16 16k;
+                  fastcgi_buffer_size 32k;
+                  fastcgi_read_timeout 300;
+                  try_files          $uri =404;
+              }
+
+              # Everything else that ends in .php is denied (no source disclosure / no
+              # execution of non-entry-point scripts).
+              location ~ \.php$ {
+                  return 403;
+              }
+
+              # Block direct web access to the writable / internal trees.
+              location ~ ^/(config|tmp|lang|core|libs|vendor|node_modules|plugins/.*/tests|misc/user)/ {
+                  return 403;
+              }
+              location ~ /\.(?!well-known) {
+                  return 403;
+              }
+
+              # Static assets (cache a little); unknown paths 404 (Matomo routes via
+              # query string on /index.php, not via path).
+              location ~* \.(gif|ico|jpe?g|png|svg|webp|js|css|map|woff2?|ttf|eot|json)$ {
+                  add_header Cache-Control "public, max-age=3600";
+                  try_files $uri =404;
+              }
+
+              location / {
+                  try_files $uri $uri/ =404;
+              }
+          }
+      }
+      EOF
+
+  - name: Install the php-fpm pool + php.ini overrides (nonroot, read-only rootfs)
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/etc/php/php-fpm.d"
+      install -d "$destdir/etc/php/conf.d"
+
+      # The Wolfi php-8.3-fpm-config pool sets user/group = nobody and listens on
+      # [::]:9000; a nonroot master can't setuid the workers. This zzz drop-in (sorts
+      # after www.conf + zz-apko.conf) drops user/group so workers inherit the runtime
+      # uid (1001) and pins the socket to 127.0.0.1:9000 (what the nginx block uses).
+      cat > "$destdir/etc/php/php-fpm.d/zzz-matomo.conf" <<'EOF'
+      [global]
+      daemonize = no
+      error_log = /proc/self/fd/2
+
+      [www]
+      ; run as the invoking (nonroot) user -- no setuid by the master
+      listen = 127.0.0.1:9000
+      catch_workers_output = yes
+      decorate_workers_output = no
+      clear_env = no
+      pm = dynamic
+      pm.max_children = 20
+      pm.start_servers = 2
+      pm.min_spare_servers = 1
+      pm.max_spare_servers = 4
+      access.log = /proc/self/fd/2
+      EOF
+
+      # Matomo's recommended PHP settings. Sessions go to /tmp (writable tmpfs) so the
+      # installer can start a file session before a DB exists; opcache on for speed.
+      cat > "$destdir/etc/php/conf.d/zzz-matomo.ini" <<'EOF'
+      memory_limit = 512M
+      max_execution_time = 300
+      upload_max_filesize = 100M
+      post_max_size = 100M
+      session.save_path = "/tmp"
+      opcache.enable = 1
+      opcache.enable_cli = 0
+      opcache.memory_consumption = 128
+      opcache.max_accelerated_files = 10000
+      expose_php = Off
+      EOF
+
+  - name: Install the supervisord configuration (php-fpm + nginx)
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/etc/matomo/supervisor.d"
+
+      # Main supervisord config at /etc/matomo/supervisord.conf (NOT /etc/supervisord.conf
+      # -- that path belongs to the Wolfi supervisor-config package and would collide in
+      # apko's solve). Nonroot-friendly: no privileged ops, logs to stdout, pid + sock
+      # under /tmp (writable tmpfs on a read-only rootfs).
+      cat > "$destdir/etc/matomo/supervisord.conf" <<'EOF'
+      [supervisord]
+      nodaemon=true
+      logfile=/dev/stdout
+      logfile_maxbytes=0
+      pidfile=/tmp/supervisord.pid
+
+      [unix_http_server]
+      file=/tmp/supervisor.sock
+
+      [supervisorctl]
+      serverurl=unix:///tmp/supervisor.sock
+
+      [rpcinterface:supervisor]
+      supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+
+      [include]
+      files = /etc/matomo/supervisor.d/*.conf
+      EOF
+
+      cat > "$destdir/etc/matomo/supervisor.d/php-fpm.conf" <<'EOF'
+      [program:php-fpm]
+      command=/usr/bin/php-fpm --nodaemonize --fpm-config /etc/php/php-fpm.conf
+      autostart=true
+      autorestart=true
+      priority=10
+      stdout_logfile=/dev/stdout
+      stdout_logfile_maxbytes=0
+      stderr_logfile=/dev/stderr
+      stderr_logfile_maxbytes=0
+      EOF
+
+      cat > "$destdir/etc/matomo/supervisor.d/nginx.conf" <<'EOF'
+      [program:nginx]
+      command=/usr/bin/nginx -c /etc/matomo/nginx.conf
+      autostart=true
+      autorestart=true
+      priority=20
+      stdout_logfile=/dev/stdout
+      stdout_logfile_maxbytes=0
+      stderr_logfile=/dev/stderr
+      stderr_logfile_maxbytes=0
+      EOF
+
+  - name: Install the container entrypoint
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/usr/bin"
+      # Recreate Matomo's writable cache subdirs on every boot (tmp/ is an emptyDir/tmpfs
+      # at runtime), then hand off to supervisord. config/ is a writable volume the chart
+      # mounts; the shipped defaults (global.ini.php ...) stay in the image layer.
+      cat > "$destdir/usr/bin/matomo-entrypoint.sh" <<'EOF'
+      #!/bin/sh
+      set -eu
+      cd /var/www/html
+      # Recreate Matomo's writable cache subdirs (tmp/ is an emptyDir/tmpfs at runtime).
+      mkdir -p tmp/assets tmp/cache/tracker tmp/climulti tmp/latest tmp/logs \
+               tmp/sessions tmp/templates_c tmp/tcpdf 2>/dev/null || true
+      # config/ is a writable volume; seed it from the baked defaults if it's empty (a
+      # fresh PVC/emptyDir). Matomo needs global.ini.php present AND config/ writable to
+      # boot; if the chart mounts a config.ini.php Secret this simply leaves it in place.
+      if [ ! -f config/global.ini.php ]; then
+          cp -a config-default/. config/ 2>/dev/null || true
+      fi
+      exec supervisord -c /etc/matomo/supervisord.conf
+      EOF
+      chmod 0755 "$destdir/usr/bin/matomo-entrypoint.sh"
+
+  - name: Sanity-check the assembled tree
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      app="$destdir/var/www/html"
+      test -f "$app/index.php"
+      test -f "$app/vendor/autoload.php"
+      test -f "$destdir/etc/matomo/nginx.conf"
+      test -f "$destdir/etc/matomo/supervisord.conf"
+      test -f "$destdir/etc/php/php-fpm.d/zzz-matomo.conf"
+      test -x "$destdir/usr/bin/matomo-entrypoint.sh"
+
+test:
+  environment:
+    contents:
+      packages:
+        - php-8.3
+        - php-8.3-cli
+        - php-8.3-pdo
+        - php-8.3-mysqlnd
+        - php-8.3-pdo_mysql
+        - php-8.3-mysqli
+        - php-8.3-gd
+        - php-8.3-mbstring
+        - php-8.3-xml
+        - php-8.3-dom
+        - php-8.3-simplexml
+        - php-8.3-curl
+        - php-8.3-openssl
+        - php-8.3-zip
+        - php-8.3-gmp
+        - php-8.3-intl
+        - php-8.3-opcache
+  pipeline:
+    - runs: |
+        set -eu
+        test -f /var/www/html/index.php
+        test -f /var/www/html/vendor/autoload.php
+        # Matomo reports its version from core/Version.php; prove it matches this build.
+        grep -q "public const VERSION = '${{package.version}}'" /var/www/html/core/Version.php
+        php --version
+        # The extensions Matomo's System Check requires must load.
+        for e in pdo_mysql mysqli gd mbstring dom curl openssl zip gmp intl; do
+          php -m | grep -qi "^${e}$" || { echo "missing php ext: $e"; php -m; exit 1; }
+        done
+        # The Matomo CLI boots (autoloader + core load OK) without a DB.
+        cd /var/www/html && php console --version
