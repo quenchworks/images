@@ -1,0 +1,64 @@
+# Assembles the SkyWalking OAP runtime image: hardened Wolfi JRE + the OAP
+# distribution. Minimal, nonroot, multi-arch, SBOM by apko. The OAP server needs
+# a storage backend (BanyanDB/Elasticsearch) to fully start -- that's the chart's
+# job; the image launches the OAP server with the upstream default config, which
+# is fully env-overridable (SW_STORAGE, SW_CLUSTER, ...). gRPC 11800 / HTTP 12800.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - openjdk-21-jre
+    - busybox
+    - quench-skywalking@local
+
+accounts:
+  groups:
+    - groupname: skywalking
+      gid: 1001
+  users:
+    - username: skywalking
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/docker-entrypoint.sh
+
+environment:
+  # openjdk-21-jre installs under /usr/lib/jvm with no /usr/bin/java symlink, so the
+  # entrypoint runs $JAVA_HOME/bin/java; the OAP launch scripts also honor JAVA_HOME.
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  JAVA_OPTS: "-Xms256M -Xmx2048M"
+  OAP_LOG_DIR: /var/lib/skywalking/logs   # OAP writes log4j2 files here, not the read-only root
+  PATH: /usr/lib/jvm/java-21-openjdk/bin:/usr/bin:/opt/skywalking/bin
+
+work-dir: /opt/skywalking
+
+paths:
+  - path: /var/lib/skywalking
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/lib/skywalking/logs
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-skywalking"
+  org.opencontainers.image.licenses: "Apache-2.0"

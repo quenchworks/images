@@ -1,0 +1,84 @@
+# Packages the Apache SkyWalking OAP (Observability Analysis Platform) backend
+# onto Wolfi. SkyWalking is a JVM app: we ship the upstream binary distribution
+# (prebuilt jars) on a hardened Wolfi JRE, which is the CVE surface Trivy scans.
+# This image is the OAP SERVER only -- the Rocketbot UI (webapp/skywalking-webapp.jar)
+# is a separate concern and is dropped here to keep the CVE surface minimal. OAP
+# exposes gRPC 11800 (agents) and HTTP 12800 (GraphQL/health). Storage (BanyanDB
+# or Elasticsearch) is the chart's job; the image just launches the OAP server.
+package:
+  name: quench-skywalking
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Apache SkyWalking OAP server, packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-21-jre     # the JRE OAP runs on (the scanned CVE surface); SkyWalking is JDK11+ bytecode
+      - busybox            # provides /bin/sh for the entrypoint
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://archive.apache.org/dist/skywalking/${{package.version}}/__FILE__
+      expected-sha256: "__SHA256__"
+      strip-components: 1
+  - runs: |
+      # install the OAP distribution under /opt/skywalking. Ship only what the OAP
+      # server needs: the launch scripts, config, and the oap-libs classpath.
+      # Drop the UI (webapp), the profiling/BanyanDB helper tools, the config
+      # examples, and the Windows launchers -- none belong in the OAP server image.
+      dest="${{targets.destdir}}/opt/skywalking"
+      install -d "$dest"
+      cp -r bin config oap-libs LICENSE NOTICE licenses "$dest/"
+      rm -rf "$dest/bin/"*.bat
+      # bake a shell-free-friendly OAP entrypoint. It builds the classpath, points
+      # logs at a writable dir (read-only rootfs), and execs java directly so log4j2's
+      # Console appender streams OAP logs to the container stdout (the upstream
+      # oapService.sh redirects stderr to a file, hiding logs from `docker logs`).
+      install -d "${{targets.destdir}}/usr/bin"
+      cat > "${{targets.destdir}}/usr/bin/docker-entrypoint.sh" <<'EOS'
+      #!/bin/sh
+      set -eu
+
+      OAP_HOME=/opt/skywalking
+      OAP_LOG_DIR="${OAP_LOG_DIR:-/var/lib/skywalking/logs}"
+      mkdir -p "$OAP_LOG_DIR"
+
+      CP="$OAP_HOME/config"
+      for j in "$OAP_HOME"/oap-libs/*.jar; do
+        CP="$CP:$j"
+      done
+
+      # JAVA_OPTS is intentionally word-split so heap flags can be overridden.
+      # shellcheck disable=SC2086
+      exec "${JAVA_HOME}/bin/java" ${JAVA_OPTS:--Xms256M -Xmx2048M} \
+        -Doap.logDir="$OAP_LOG_DIR" \
+        -classpath "$CP" \
+        org.apache.skywalking.oap.server.starter.OAPServerStartUp "$@"
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/docker-entrypoint.sh"
+
+test:
+  environment:
+    contents:
+      packages:
+        - openjdk-21-jre
+        - busybox
+  pipeline:
+    - runs: |
+        # the JRE runs, the OAP classpath + config are present, and the entrypoint parses
+        /usr/lib/jvm/java-21-openjdk/bin/java -version
+        sh -n /usr/bin/docker-entrypoint.sh
+        ls /opt/skywalking/oap-libs/server-starter-*.jar
+        test -f /opt/skywalking/config/application.yml
