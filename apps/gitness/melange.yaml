@@ -1,0 +1,120 @@
+# Builds Gitness (harness/gitness) from source onto Wolfi. Gitness is an
+# all-in-one self-hosted Git + CI/CD server: a Go backend that go:embeds a React
+# web UI (web/dist.go -> `//go:embed dist/*`). The source tag ships web/ but NOT
+# web/dist (the UI is not pre-built), so we reproduce upstream's own asset pipeline
+# (Dockerfile: `node:16` + `yarn && yarn build`) inside the build sandbox:
+#   web: yarn install --frozen-lockfile + yarn build -> web/dist/**
+#   go build -> web/dist.go's `//go:embed dist/*` picks up the compiled UI.
+# Node/yarn live ONLY in the build sandbox; the runtime image carries no JS
+# toolchain, so Node never enters the Trivy scan surface. We use nodejs-16 to match
+# upstream's node:16 exactly (the webpack 5.58 build predates the OpenSSL 3 fix, so
+# newer Node needs --openssl-legacy-provider; matching the upstream major sidesteps
+# that entirely).
+#
+# CGO: the default DB driver is sqlite via github.com/mattn/go-sqlite3, which is a
+# cgo package -- so unlike the pure-Go images here this build sets CGO_ENABLED=1
+# (build-base provides gcc + glibc-dev). The result is a glibc-dynamic binary;
+# melange auto-detects its SONAME deps (libc.so.6, libgcc_s) and the runtime image
+# is glibc-based, so no static musl cross-compile (upstream's arm64 dance) is
+# needed. Gitness also shells out to the `git` binary at runtime
+# (git/command/command.go: GitExecutable = "git"), so `git` is a runtime dependency.
+#
+# go.mod declares go 1.25.8; we build with go-1.26 (newest, clears stdlib CVE
+# advisories) and GOTOOLCHAIN=local so the go.mod directive does not trigger a
+# toolchain download. GOFLAGS=-mod=mod lets the module graph resolve patched deps.
+# The version is stamped via -X into github.com/harness/gitness/version
+# {major,minor,patch} + GitCommit, mirroring upstream's release ldflags, so
+# `gitness --version` reports the real release.
+package:
+  name: quench-gitness
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Gitness (self-hosted Git + CI/CD), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - git
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - bash
+      - ca-certificates-bundle
+      - go-1.26
+      # UI toolchain (build sandbox only): upstream builds the web frontend with
+      # `node:16` + yarn classic. nodejs-16 matches that major exactly; yarn is the
+      # Wolfi yarn-classic package (web/yarn.lock is a v1 lockfile).
+      - nodejs-16
+      - yarn
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/harness/gitness/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Build the embedded web UI from source (yarn + webpack)
+    runs: |
+      set -eu
+      # Writable HOME/caches for yarn inside the sandbox.
+      export HOME="$(mktemp -d)"
+      export YARN_CACHE_FOLDER="$(mktemp -d)"
+      export npm_config_cache="$(mktemp -d)"
+      # Skip husky's `prepare` git-hook install: the release tarball has no .git,
+      # and hooks are irrelevant to a production build.
+      export HUSKY=0
+      cd web
+      yarn install --frozen-lockfile --network-timeout 600000
+      yarn build
+      # web/dist.go embeds dist/*; assert webpack produced the UI entrypoint.
+      test -f dist/index.html
+
+  - name: Build the gitness binary (CGO on, glibc-dynamic)
+    runs: |
+      set -eu
+      export CGO_ENABLED=1
+      export CGO_CFLAGS="-D_LARGEFILE64_SOURCE"   # mattn/go-sqlite3 build flag
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local     # use the installed go-1.26, do not fetch go.mod's 1.25.8
+      export GO111MODULE=on
+      # --- minimal safe dependency bumps for the comprehensive Trivy gate --------
+      # The 0-CVE gate flags fixable CVEs in these transitive/direct modules; each
+      # is a same-major, source-compatible bump (verified to compile). x/net@0.55.0
+      # pulls x/crypto up to >=0.51.0; the distribution/oras bumps pull grpc up to
+      # v1.80.0, which clears the grpc CRITICAL (CVE-2026-33186).
+      go get golang.org/x/crypto@v0.51.0 golang.org/x/net@v0.55.0
+      go get github.com/cloudflare/circl@v1.6.3 \
+             github.com/distribution/distribution/v3@v3.1.1 \
+             github.com/go-chi/chi/v5@v5.2.4 \
+             github.com/jackc/pgx/v5@v5.9.2 \
+             github.com/ulikunitz/xz@v0.5.15 \
+             oras.land/oras-go/v2@v2.6.1
+      go mod tidy
+      # --- BLOCKED: github.com/docker/docker ------------------------------------
+      # CVE-2026-34040 (HIGH, Moby auth-bypass) and CVE-2026-33997 (MEDIUM, Moby
+      # plugin privilege-validation bypass) are fixed ONLY in 29.3.1. The
+      # github.com/docker/docker import path (used by gitness's gitspace/
+      # infraprovider/pipeline code) tops out at v28.5.2+incompatible -- v29 was
+      # renamed to the module github.com/moby/moby, whose packages live under a
+      # different import path. Clearing these therefore requires migrating gitness's
+      # docker-client integration to the moby/moby v29 API (module-path change +
+      # API break) = a fork of upstream, which the CVE discipline forbids. Until
+      # gitness upstream moves to moby/moby v29 (or the fixes are backported to a
+      # v28 docker/docker tag), this image stays BLOCKED and is not published.
+      V="${{package.version}}"
+      MAJ="${V%%.*}"; REST="${V#*.}"; MIN="${REST%%.*}"; PAT="${REST#*.}"
+      VERPKG="github.com/harness/gitness/version"
+      # Mirror upstream's release ldflags (version.{major,minor,patch}+GitCommit) so
+      # `gitness --version` reports the real release. No .git in the tarball, so
+      # GitCommit is the release tag.
+      go build -trimpath \
+        -ldflags "-s -w -X ${VERPKG}.major=${MAJ} -X ${VERPKG}.minor=${MIN} -X ${VERPKG}.patch=${PAT} -X ${VERPKG}.GitCommit=v${V}" \
+        -o "${{targets.destdir}}/usr/bin/gitness" ./cmd/gitness

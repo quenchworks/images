@@ -1,0 +1,65 @@
+# Builds the Tyk Gateway (TykTechnologies/tyk) from source onto Wolfi. Single
+# static Go binary, no CGO (the tree has no `import "C"`). Output is a signed APK
+# in Quenchworks' own repo. No upstream distro binaries. Image-only (no chart).
+#
+# main.go is just `gateway.Start()`; the real entrypoint is the module root, so a
+# plain `go build .` at the repo root produces the full gateway (CLI + server).
+# The version is injected via -X github.com/TykTechnologies/tyk/internal/build.Version
+# (the same var goreleaser stamps; default is "v5.5.0-dev"), so `tyk version`
+# reports the real release. Tyk's version string keeps the leading "v".
+#
+# go.mod declares go 1.25.0; we build with go-1.26 (newest, clears stdlib CVE
+# advisories) and GOTOOLCHAIN=local so go.mod's directive does not trigger a
+# toolchain download. GOFLAGS=-mod=mod lets the module graph resolve patched
+# deps for the 0-CVE gate.
+#
+# The gateway reads its error/webhook templates from disk (config default
+# template_path = "templates", relative to the working dir). They are not
+# embedded, so we bake them at /opt/tyk-gateway/templates; apko sets that as the
+# work-dir. Redis is a runtime dependency (operator's concern) and is NOT baked.
+package:
+  name: quench-tyk
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Tyk Gateway, built from source on Wolfi"
+  copyright:
+    - license: MPL-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go-1.26
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/TykTechnologies/tyk/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Build the Tyk Gateway binary (static, CGO off)
+    runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's 1.25.0
+      export GO111MODULE=on
+      # Stamp the version onto the same var goreleaser uses; keep the "v" prefix.
+      go build -trimpath \
+        -ldflags "-s -w -X github.com/TykTechnologies/tyk/internal/build.Version=v${{package.version}}" \
+        -o "${{targets.destdir}}/usr/bin/tyk" .
+
+  - name: Bake the on-disk gateway templates
+    runs: |
+      set -eu
+      mkdir -p "${{targets.destdir}}/opt/tyk-gateway"
+      cp -a templates "${{targets.destdir}}/opt/tyk-gateway/templates"

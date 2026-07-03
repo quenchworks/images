@@ -1,0 +1,74 @@
+# Assembles the Forgejo runtime image. Minimal, nonroot (uid 1001), multi-arch,
+# SBOM by apko. Forgejo is a self-hosted Git forge; the entrypoint runs the web
+# server (`forgejo web`), which binds 0.0.0.0:3000 by default. git + bash ship in
+# the image (Forgejo shells out to git and runs generated shell hooks);
+# ca-certificates-bundle covers outbound TLS (webhooks, OAuth, mirrors, mailer).
+#
+# Ports:
+#   3000  HTTP web UI + git-over-HTTP + API. Bound by default; nonroot can bind it.
+#   22    Git-over-SSH, upstream default. As nonroot the container CANNOT bind 22.
+#   2222  Recommended SSH port for this image: set the built-in SSH server to a
+#         high port, e.g. env FORGEJO__server__SSH_LISTEN_PORT=2222 (and
+#         FORGEJO__server__SSH_PORT=2222 for the URL), then publish/route 2222.
+#   Forgejo's built-in Go SSH server is used by default, so no openssh is needed.
+#
+# Writable data volume (REQUIRED). Forgejo persists everything under its work dir:
+# repositories, the LFS store, avatars, attachments, and -- with the default
+# SQLite backend -- the database file. GITEA_WORK_DIR and HOME are set to /data,
+# created here owned by uid 1001. Mount a volume at /data for durable storage
+# (e.g. -v forgejo-data:/data or a PVC). On first run Forgejo writes its config to
+# /data/... via the web installer, or provide app.ini yourself.
+#
+# Read-only-rootfs friendly: only /data (and a writable /tmp for git temp files)
+# is written; the binary and embedded UI are read-only. Run with a read-only root
+# filesystem plus a volume at /data and a writable /tmp (e.g. an emptyDir).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - git
+    - bash
+    - quench-forgejo@local
+
+accounts:
+  groups:
+    - groupname: forgejo
+      gid: 1001
+  users:
+    - username: forgejo
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  GITEA_WORK_DIR: /data
+  HOME: /data
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+entrypoint:
+  command: /usr/bin/forgejo web
+
+work-dir: /data
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-forgejo"
+  org.opencontainers.image.licenses: "GPL-3.0-or-later"

@@ -1,0 +1,59 @@
+# Assembles the Cadence runtime image. Minimal, nonroot (uid 1001), multi-arch,
+# SBOM by apko. Ships two binaries on PATH: cadence-server (the orchestration
+# engine) and cadence (the admin/workflow CLI). ca-certificates-bundle is included
+# so services can reach the datastore, Kafka, and peers over TLS.
+#
+# The default entrypoint is cadence-server; an operator runs it with a subcommand
+# and their own mounted config, e.g.:
+#   docker run -v ./config:/etc/cadence/config quench-cadence \
+#     cadence-server --root /etc/cadence --config config start --services=frontend,history,matching,worker
+#
+# Ports (documentation only; apko sets no OCI EXPOSE):
+#   frontend  7933 (membership/TChannel)   7833 (gRPC)
+#   history   7934 (membership/TChannel)   7834 (gRPC)
+#   matching  7935 (membership/TChannel)   7835 (gRPC)
+#   worker    7939 (membership/TChannel)
+# The Cadence Web UI (port 8088) is a SEPARATE Node.js app (uber/cadence-web) and
+# is NOT bundled in this server image.
+#
+# Runtime dependencies (Cassandra / MySQL / PostgreSQL persistence + optional
+# Kafka/ElasticSearch for visibility) are the operator's concern and are NOT baked.
+# read-only-rootfs friendly: the server writes nothing to the image filesystem;
+# config is mounted into /etc/cadence and logs go to stdout.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-cadence@local
+
+accounts:
+  groups:
+    - groupname: cadence
+      gid: 1001
+  users:
+    - username: cadence
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/cadence-server
+
+work-dir: /etc/cadence
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-cadence"
+  org.opencontainers.image.licenses: "MIT"

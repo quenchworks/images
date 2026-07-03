@@ -1,0 +1,45 @@
+# Assembles the Tyk Gateway runtime image. Minimal, nonroot, multi-arch, SBOM by
+# apko, read-only-rootfs friendly. The entrypoint is the bare binary, so
+# `docker run ...tyk version` works and operators pass their own args + config
+# (e.g. `--conf=/path/tyk.conf`). Tyk needs Redis at runtime; that is the
+# operator's concern and is deliberately NOT baked here. Default listen port is
+# 8080. The on-disk error/webhook templates live at /opt/tyk-gateway/templates,
+# which is the work-dir so the gateway finds them under the default relative
+# template_path.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-tyk@local
+
+accounts:
+  groups:
+    - groupname: tyk
+      gid: 1001
+  users:
+    - username: tyk
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/tyk
+
+work-dir: /opt/tyk-gateway
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-tyk"
+  org.opencontainers.image.licenses: "MPL-2.0"

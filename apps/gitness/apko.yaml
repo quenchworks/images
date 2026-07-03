@@ -1,0 +1,67 @@
+# Assembles the Gitness runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Gitness is an all-in-one self-hosted Git + CI/CD server: the entrypoint is the
+# binary's `server` subcommand, which reads all settings from GITNESS_-prefixed env
+# vars, so no config file / wrapper script is needed. The image carries `git` (the
+# server shells out to it) and ca-certificates-bundle (outbound TLS); glibc/libgcc
+# come in automatically as SONAME deps of the cgo (sqlite) binary.
+#
+# Read-only rootfs friendly. Gitness needs ONE writable path, created here owned by
+# the nonroot uid 1001 and meant to be mounted as a volume:
+#   /data -> git repositories (GITNESS_GIT_ROOT), the sqlite DB
+#            (GITNESS_DATABASE_DATASOURCE), the artifact registry root, and the
+#            XDG cache. Everything else (the binary, embedded UI) is read-only.
+# The HTTP server binds 0.0.0.0:3000 by default (GITNESS_HTTP_PORT); 3000 is >1024
+# so the nonroot user can bind it. Telemetry (GITNESS_METRIC_*) is disabled: a
+# hardened image should not phone home to stats.drone.ci by default.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - git
+    - quench-gitness@local
+
+accounts:
+  groups:
+    - groupname: gitness
+      gid: 1001
+  users:
+    - username: gitness
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  GITNESS_DATABASE_DRIVER: sqlite3
+  GITNESS_DATABASE_DATASOURCE: /data/database.sqlite
+  GITNESS_GIT_ROOT: /data
+  GITNESS_REGISTRY_FILESYSTEM_ROOT_DIRECTORY: /data/registry
+  XDG_CACHE_HOME: /data
+  GITNESS_HTTP_PORT: "3000"
+  GITNESS_METRIC_ENABLED: "false"
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /usr/bin/gitness server
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-gitness"
+  org.opencontainers.image.licenses: "Apache-2.0"

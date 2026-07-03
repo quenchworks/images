@@ -1,0 +1,82 @@
+# Builds Forgejo (codeberg.org/forgejo/forgejo) from source onto Wolfi. Forgejo is
+# a self-hosted Git forge (a Gitea fork): a Go backend that serves an embedded
+# Vite/Vue web UI. Output is a signed APK in Quenchworks' own repo. No upstream
+# distro binaries. Image-only (a server, no chart). GPL-3.0-or-later.
+#
+# NO Node build. The codeberg RELEASE source tarball (forgejo-src-X.Y.Z.tar.gz)
+# ships the frontend already compiled under public/assets AND the generated
+# bindata (modules/public/bindata.go, modules/templates/bindata.go, ...). The
+# `bindata` build tag makes the backend embed those committed files, so a plain
+# `go build -tags bindata` yields the full server + UI with no pnpm/vite step.
+# (This differs from a raw git checkout, which would need `make frontend`.)
+#
+# CGO + static musl. Forgejo's SQLite backend is github.com/mattn/go-sqlite3,
+# which is CGO -- upstream offers no pure-go (modernc) alternative. So we build
+# CGO_ENABLED=1 with the `sqlite sqlite_unlock_notify` tags and statically link
+# against musl via -extldflags "-static" (build-base), exactly like apps/rqlite:
+# the result is a self-contained static binary, so the runtime image carries no
+# libc. Dropping sqlite (CGO off) was rejected because SQLite is Forgejo's
+# zero-dependency default database and the most common single-node deployment.
+#
+# go.mod declares `go 1.25.0` (toolchain go1.26.4); we build with go-1.26 (newest,
+# clears stdlib CVE advisories) and GOTOOLCHAIN=local so the go.mod toolchain
+# directive does not trigger a download. GOFLAGS=-mod=mod lets the module graph
+# resolve any patched deps. CGO_CFLAGS mirrors upstream's SQLITE_MAX_VARIABLE_NUMBER.
+package:
+  name: quench-forgejo
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Forgejo (self-hosted Git forge), built from source on Wolfi"
+  copyright:
+    - license: GPL-3.0-or-later
+  dependencies:
+    runtime:
+      # ca-certificates for outbound TLS (webhooks, OAuth, mirrors, mailer).
+      - ca-certificates-bundle
+      # Forgejo shells out to the git binary for most repository operations, and
+      # runs generated shell hooks -- both are required at runtime.
+      - git
+      - bash
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go-1.26
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://codeberg.org/forgejo/forgejo/releases/download/v${{package.version}}/forgejo-src-${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - name: Build the forgejo binary (static, CGO on, embedded UI via bindata)
+    runs: |
+      set -eu
+      export CGO_ENABLED=1
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local          # use the installed go-1.26, not go.mod's toolchain
+      export CGO_CFLAGS="-DSQLITE_MAX_VARIABLE_NUMBER=32766"   # mirror upstream Makefile
+      TAGS="bindata sqlite sqlite_unlock_notify"
+      # Bump the two transitive deps the comprehensive Trivy gate flags; both are
+      # safe minor/patch bumps within the module graph (GOFLAGS=-mod=mod), not forks:
+      #   golang.org/x/image  v0.41.0 -> v0.43.0  (CVE-2026-33813 + CVE-2026-46601, WebP DoS)
+      #   github.com/Azure/go-ntlmssp  -> v0.1.1  (CVE-2026-32952, NTLM challenge DoS)
+      go get golang.org/x/image@v0.43.0
+      go get github.com/Azure/go-ntlmssp@v0.1.1
+      go mod tidy
+      # Mirror upstream ldflags so `forgejo --version` reports the real release; the
+      # binary is fully static (musl linked in) so the runtime image needs no libc.
+      LDFLAGS='-s -w -X "main.Version=${{package.version}}" -X "main.ReleaseVersion=${{package.version}}" -X "main.Tags='"$TAGS"'" -extldflags "-static"'
+      go build -trimpath -tags "$TAGS" -ldflags "$LDFLAGS" \
+        -o "${{targets.destdir}}/usr/bin/forgejo" .
+
+test:
+  pipeline:
+    - runs: |
+        forgejo --version

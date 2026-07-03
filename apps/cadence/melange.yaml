@@ -1,0 +1,92 @@
+# Builds Cadence (Uber) from source onto Wolfi. Two static Go binaries, no CGO
+# (statically linked, verified). Cadence is a multi-module repo: the server lives
+# in its own module under cmd/server (wired to the root module via go.work with
+# `replace github.com/uber/cadence => ../..`), while the `cadence` CLI is in the
+# root module at cmd/tools/cli. go.work is present in the tarball so workspace
+# mode resolves both without touching git.
+#
+# Version stamping mirrors upstream scripts/get-ldflags.sh, which -X-injects
+# common/metrics.ReleaseVersion (plus Revision/Branch). We build without the
+# Makefile/git, so we stamp ReleaseVersion=<tag> explicitly; the git-derived
+# Revision/Branch are left as static "release" markers (no git in the sandbox).
+#
+# Go is pinned to go-1.25 (>= 1.25.11) and GOTOOLCHAIN=local forbids any
+# on-the-fly toolchain download. Upstream go.mod asks for `go 1.24` / toolchain
+# go1.24.5, but the go-1.24 line is no longer receiving stdlib security patches,
+# so a from-source build on go-1.24 fails the 0-CVE gate on stdlib CVEs (net,
+# net/http, html/template, archive/tar, net/mail, net/textproto: CVE-2026-33811,
+# -33814, -39820, -39836, -42499, -42504, -42507, -27142, -32282, -32288, -32289,
+# -39823, -39825, -39826, -27139). All are fixed in Go 1.25.11, so we build on
+# go-1.25 (a fully backward-compatible superset of the `go 1.24` directive).
+# Output is a signed
+# APK in Quenchworks' own repo. No upstream distro binaries. Image-only (no chart).
+#
+# Runtime state store (Cassandra / MySQL / PostgreSQL) and the cadence config are
+# the operator's concern and are intentionally NOT baked into the image.
+package:
+  name: quench-cadence
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Cadence (Uber workflow orchestration engine), built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go-1.25
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/uber/cadence/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      export CGO_ENABLED=0
+      export GOTOOLCHAIN=local
+      LDFLAGS="-s -w \
+        -X github.com/uber/cadence/common/metrics.ReleaseVersion=${{package.version}} \
+        -X github.com/uber/cadence/common/metrics.Revision=release \
+        -X github.com/uber/cadence/common/metrics.Branch=release"
+
+      # --- 0-CVE dependency bumps -------------------------------------------
+      # v1.4.1 pins deps with known-fixed CVEs; bump them to the patched releases
+      # before building. Applied to BOTH workspace modules (root + cmd/server) so
+      # each binary's build list is clean, then `go mod tidy` reconciles go.sum:
+      #   golang.org/x/net    0.55.0  (CVE-2026-25680/25681/27136/33814/39821/42502/42506)
+      #   golang.org/x/crypto 0.52.0  (CVE-2026-39827..39835/42508/46595/46597/46598)
+      #   go.opentelemetry.io/otel 1.41.0  (CVE-2026-29181)
+      #   github.com/apache/thrift 0.23.0  (CVE-2026-41602)
+      #   github.com/sirupsen/logrus 1.9.3 (CVE-2025-65637)
+      # thrift is held to an old release by `replace` directives (root +
+      # common/archiver/gcloud, for ringpop-go/tchannel-go compat); those overrides
+      # win over `go get`, so the replaces must be re-pointed too. All workspace
+      # modules must agree on the replacement or workspace mode errors.
+      BUMPS="golang.org/x/net@v0.55.0 golang.org/x/crypto@v0.52.0 github.com/sirupsen/logrus@v1.9.3 go.opentelemetry.io/otel@v1.41.0 github.com/apache/thrift@v0.23.0"
+      go mod edit -replace github.com/apache/thrift=github.com/apache/thrift@v0.23.0
+      go mod edit -replace github.com/apache/thrift=github.com/apache/thrift@v0.23.0 common/archiver/gcloud/go.mod
+      go get $BUMPS && go mod tidy
+      ( cd cmd/server && go get $BUMPS && go mod tidy )
+
+      # cadence-server: separate module under cmd/server (main.go at its root)
+      ( cd cmd/server && \
+        go build -trimpath -ldflags "$LDFLAGS" \
+          -o "${{targets.destdir}}/usr/bin/cadence-server" . )
+
+      # cadence CLI: root module, package at cmd/tools/cli
+      go build -trimpath -ldflags "$LDFLAGS" \
+        -o "${{targets.destdir}}/usr/bin/cadence" ./cmd/tools/cli
+
+      # empty config dir for the operator to mount their own config into
+      # (read-only-rootfs friendly: nothing is written to it at build time)
+      mkdir -p "${{targets.destdir}}/etc/cadence/config"
