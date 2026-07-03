@@ -1,0 +1,123 @@
+# Builds Gotify server (gotify/server) from source onto Wolfi. Multi-arch, output
+# is a signed APK in Quenchworks' own repo. No upstream distro binaries. MIT.
+#
+# Gotify is a Go push-notification server with a Vite/React 19 web UI. The backend
+# embeds the compiled UI via go:embed (`//go:embed build/*` in ui/serve.go), but
+# the source tree gitignores ui/build -- the UI is NOT pre-built in the tag, and an
+# embed with an empty build/ dir would not even compile. So we reproduce upstream's
+# own asset pipeline here:
+#   ui: yarn install --frozen-lockfile + vite build -> ui/build/**
+#   go build -> ui/serve.go's `//go:embed build/*` picks up the compiled UI.
+# We run `vite build` directly (not `yarn build`, which first runs a `tsc`
+# typecheck via the prebuild hook): the emitted build assets are identical, and we
+# skip the dev-only type gate. Node/yarn live ONLY in the build sandbox; the runtime
+# image is a static binary with no JS toolchain, so Node never enters the scan.
+#
+# Storage engine: gorm.io/driver/sqlite, which wraps mattn/go-sqlite3 (CGO). So the
+# binary is built CGO_ENABLED=1 with the C SQLite amalgamation compiled in and
+# statically linked against musl (build-base) via -extldflags "-static" -- the
+# result is a self-contained static binary, so the runtime image carries no libc
+# (like apps/rqlite).
+#
+# go.mod declares go 1.26 (GO_VERSION 1.26.0); we pin go-1.26 with GOTOOLCHAIN=local
+# so no toolchain is fetched at build time. GOFLAGS=-mod=mod lets the module graph
+# resolve patched deps if the 0-CVE gate flags any. Version/Commit/BuildDate/Mode
+# are stamped via upstream's -X linker vars (main.*) so the startup banner and the
+# /version endpoint report the real release (Mode=prod, matching upstream).
+package:
+  name: quench-gotify
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Gotify server (self-hosted push notifications), built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - bash
+      - ca-certificates-bundle
+      - go-1.26
+      # UI toolchain: frontend is built with vite (React 19). Upstream uses Node 24
+      # + yarn (classic, yarn.lock v1); yarn is installed locally via npm below.
+      - nodejs-24
+      - npm
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/gotify/server/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Build the web UI from source (yarn + vite)
+    runs: |
+      set -eu
+      # Writable caches/HOME for npm + yarn inside the sandbox.
+      export npm_config_cache="$(mktemp -d)"
+      export HOME="$(mktemp -d)"
+      export YARN_CACHE_FOLDER="$(mktemp -d)"
+      # Install yarn@1 (classic; matches ui/yarn.lock) into a private prefix on
+      # PATH -- avoids writing to the global node prefix.
+      export YARN_PREFIX="$(mktemp -d)"
+      npm install -g --prefix "$YARN_PREFIX" yarn@1
+      export PATH="$YARN_PREFIX/bin:${PATH}"
+      yarn --version
+      (
+        cd ui
+        yarn install --frozen-lockfile --non-interactive
+        # Emit build assets directly (skip the `tsc` typecheck in the prebuild hook).
+        yarn vite build
+      )
+      # ui/serve.go embeds build/*; assert vite produced the UI entrypoint.
+      test -f ui/build/index.html
+
+  - name: Build the gotify binary (static CGO sqlite, musl)
+    runs: |
+      set -eu
+      export CGO_ENABLED=1
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch a toolchain
+      export GO111MODULE=on
+      COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+      BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      # Bump the transitive deps the comprehensive Trivy gate flags. All are
+      # minor/patch bumps within the module graph (GOFLAGS=-mod=mod), same APIs --
+      # safe, not forks/forced replaces:
+      #   golang.org/x/crypto  v0.47.0 -> v0.52.0  (13 CVEs: ssh/agent + more)
+      #   golang.org/x/net     v0.48.0 -> v0.55.0  (7 CVEs: net/html XSS/DoS, http2, idna)
+      #   github.com/quic-go/quic-go v0.55.0 -> v0.59.1  (2 CVEs)
+      #   github.com/jackc/pgx/v5    v5.7.6  -> v5.9.2   (3 CVEs)
+      #   filippo.io/edwards25519    v1.1.0  -> v1.1.1   (1 CVE)
+      go get \
+        golang.org/x/crypto@v0.52.0 \
+        golang.org/x/net@v0.55.0 \
+        github.com/quic-go/quic-go@v0.59.1 \
+        github.com/jackc/pgx/v5@v5.9.2 \
+        filippo.io/edwards25519@v1.1.1
+      go mod tidy
+      # Mirror upstream ldflags (Mode=prod) so the banner + /version report the real
+      # release; static-link libc so the runtime image needs no shared libraries.
+      LDFLAGS="-s -w \
+        -X main.Version=${{package.version}} \
+        -X main.Commit=${COMMIT} \
+        -X main.BuildDate=${BUILD_DATE} \
+        -X main.Mode=prod \
+        -extldflags \"-static\""
+      go build -trimpath -mod=mod -ldflags "$LDFLAGS" \
+        -o "${{targets.destdir}}/usr/bin/gotify" ./app.go
+
+test:
+  pipeline:
+    - runs: |
+        # gotify is a server with no subcommands/flags (running it would block),
+        # so just assert the binary is present and executable.
+        test -x /usr/bin/gotify

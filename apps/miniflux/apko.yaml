@@ -1,0 +1,48 @@
+# Assembles the Miniflux runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Miniflux is a server: the entrypoint runs the binary, which serves the web UI +
+# API. It listens on 127.0.0.1:8080 by default, so LISTEN_ADDR is set to
+# 0.0.0.0:8080 to make it reachable inside a container (port 8080). It stores all
+# state in PostgreSQL, so the image is read-only-rootfs friendly and needs no
+# writable volume. A PostgreSQL server (DATABASE_URL) is the operator's concern
+# and is NOT baked in. ca-certificates-bundle covers outbound TLS.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - tzdata
+    - quench-miniflux@local
+
+accounts:
+  groups:
+    - groupname: miniflux
+      gid: 1001
+  users:
+    - username: miniflux
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  # Bind all interfaces so the server is reachable in a container (default is
+  # 127.0.0.1:8080, which would only be reachable from inside the netns).
+  LISTEN_ADDR: "0.0.0.0:8080"
+
+entrypoint:
+  command: /usr/bin/miniflux
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-miniflux"
+  org.opencontainers.image.licenses: "Apache-2.0"

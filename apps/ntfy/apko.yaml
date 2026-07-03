@@ -1,0 +1,54 @@
+# Assembles the ntfy runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# ntfy is a server: the entrypoint runs `ntfy serve` bound to the unprivileged
+# port 8080 (so the image runs as nonroot with no capabilities). ca-certificates
+# and tzdata come in via the package's runtime deps; glibc is added by melange's
+# SCA (the binary links SQLite via CGO). By default `ntfy serve` uses an in-memory
+# cache and no attachment store, so the image runs happily on a READ-ONLY rootfs;
+# when a user enables the message cache / attachments / auth, /var/cache/ntfy is
+# provided as a writable location owned by the nonroot uid.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - tzdata
+    - quench-ntfy@local
+
+accounts:
+  groups:
+    - groupname: ntfy
+      gid: 1001
+  users:
+    - username: ntfy
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  # Writable cache/db/attachment location for a read-only rootfs. The chart (or
+  # `docker run -v`) mounts a volume here; ntfy's cache-file, attachment-cache-dir
+  # and auth-file can all be pointed at this path.
+  - path: /var/cache/ntfy
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /usr/bin/ntfy serve --listen-http :8080
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-ntfy"
+  org.opencontainers.image.licenses: "Apache-2.0"
