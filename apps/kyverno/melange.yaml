@@ -1,0 +1,80 @@
+# Builds Kyverno (Kubernetes policy engine) from source onto Wolfi. Static Go
+# binaries, no CGO (matches upstream Makefile CGO_ENABLED=0). Ships the full core
+# binary set from ./cmd: the kyverno admission controller, the background,
+# cleanup and reports controllers, kyvernopre (the kyverno-init image), the
+# readiness-checker, and the kubectl-kyverno CLI. The version is stamped via
+# -X pkg/version.BuildVersion=v<ver> (upstream LD_FLAGS convention) so every
+# binary reports the real release. Pins Go 1.26 per go.mod with GOTOOLCHAIN=local
+# so the toolchain directive never triggers a network download. Output is a
+# signed APK in Quenchworks' own repo. No upstream distro binaries. Image-only
+# (no chart). Upstream tags carry a "v" prefix.
+package:
+  name: quench-kyverno
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Kyverno (Kubernetes policy engine), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go-1.26
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/kyverno/kyverno/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local
+      # Minimal safe bumps for the transitive CVEs the comprehensive Trivy gate
+      # flags (all minor/patch within the same major -- API-compatible, resolved
+      # through the module graph via GOFLAGS=-mod=mod; not forks/forces):
+      #   golang.org/x/crypto  0.50.0 -> 0.52.0  (ssh DoS et al, HIGH)
+      #   golang.org/x/net     0.53.0 -> 0.55.0  (html/http2/idna, HIGH)
+      #   sigstore/fulcio      1.8.5  -> 1.8.6   (CVE-2026-49478 SSRF, HIGH)
+      #   sigstore/rekor       1.5.1  -> 1.5.2   (CVE-2026-48702, HIGH)
+      #   sigstore/timestamp-authority/v2 2.0.6 -> 2.1.0 (CVE-2026-49835)
+      #   go-git/go-git/v5     5.18.0 -> 5.19.1  (path/ref handling, HIGH)
+      #   go-git/go-billy/v5   5.8.0  -> 5.9.0   (CVE-2026-44740/44973)
+      #   in-toto-golang       0.10.0 -> 0.11.0  (GHSA-pmwq-pjrm-6p5r)
+      #   Azure/go-ntlmssp     -> 0.1.1          (CVE-2026-32952)
+      #   oras.land/oras-go/v2 2.6.0  -> 2.6.1   (CVE-2026-48978 et al, HIGH)
+      go get \
+        golang.org/x/crypto@v0.52.0 \
+        golang.org/x/net@v0.55.0 \
+        github.com/sigstore/fulcio@v1.8.6 \
+        github.com/sigstore/rekor@v1.5.2 \
+        github.com/sigstore/timestamp-authority/v2@v2.1.0 \
+        github.com/go-git/go-git/v5@v5.19.1 \
+        github.com/go-git/go-billy/v5@v5.9.0 \
+        github.com/in-toto/in-toto-golang@v0.11.0 \
+        github.com/Azure/go-ntlmssp@v0.1.1 \
+        oras.land/oras-go/v2@v2.6.1
+      go mod tidy
+      LDF="-s -w -X github.com/kyverno/kyverno/pkg/version.BuildVersion=v${{package.version}}"
+      bindir="${{targets.destdir}}/usr/bin"
+      mkdir -p "$bindir"
+      # main admission controller + the other controllers
+      go build -trimpath -ldflags "$LDF" -o "$bindir/kyverno"                ./cmd/kyverno
+      go build -trimpath -ldflags "$LDF" -o "$bindir/background-controller"  ./cmd/background-controller
+      go build -trimpath -ldflags "$LDF" -o "$bindir/cleanup-controller"     ./cmd/cleanup-controller
+      go build -trimpath -ldflags "$LDF" -o "$bindir/reports-controller"     ./cmd/reports-controller
+      go build -trimpath -ldflags "$LDF" -o "$bindir/readiness-checker"      ./cmd/readiness-checker
+      # kyverno-init produces the "kyvernopre" init binary (upstream KYVERNOPRE_BIN)
+      go build -trimpath -ldflags "$LDF" -o "$bindir/kyvernopre"             ./cmd/kyverno-init
+      # the kubectl plugin / standalone CLI (upstream CLI_BIN = kubectl-kyverno)
+      go build -trimpath -ldflags "$LDF" -o "$bindir/kubectl-kyverno"        ./cmd/cli/kubectl-kyverno

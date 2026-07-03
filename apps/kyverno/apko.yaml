@@ -1,0 +1,43 @@
+# Assembles the Kyverno runtime image. Minimal, nonroot (uid 1001), multi-arch,
+# SBOM by apko, read-only-rootfs friendly (the controllers write nothing to the
+# filesystem; certs/config come from mounted secrets and the API server). All
+# core binaries are on PATH under /usr/bin: kyverno (the admission controller,
+# the default entrypoint), background-controller, cleanup-controller,
+# reports-controller, kyvernopre (init), readiness-checker, and the
+# kubectl-kyverno CLI. A deployment selects its binary via the container command.
+# ca-certificates-bundle is included for TLS to the API server and registries.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-kyverno@local
+
+accounts:
+  groups:
+    - groupname: kyverno
+      gid: 1001
+  users:
+    - username: kyverno
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/kyverno
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-kyverno"
+  org.opencontainers.image.licenses: "Apache-2.0"
