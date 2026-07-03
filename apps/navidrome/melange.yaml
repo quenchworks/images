@@ -1,0 +1,100 @@
+# Builds Navidrome (navidrome/navidrome) from source onto Wolfi. Navidrome is a
+# self-hosted music server and streamer: a Go backend that go:embeds a React web
+# UI. Output is a signed APK in Quenchworks' own repo. No upstream distro
+# binaries. Image-only (a server, no chart). GPL-3.0-only.
+#
+# TWO-STAGE build, both stages run ONLY in the sandbox so no JS/C toolchain
+# leaks into the runtime scan surface:
+#   1. Web UI: `ui/embed.go` embeds `build/*` (`//go:embed build/*`), but the tag
+#      ships no pre-built UI, so we reproduce upstream's `make buildjs`:
+#      `npm ci` (which runs the postinstall workbox step) + `vite build` ->
+#      ui/build/index.html. Node/npm live ONLY in the build sandbox.
+#   2. Go binary: the SQLite driver is mattn/go-sqlite3 (CGO), so CGO_ENABLED=1
+#      and the C SQLite amalgamation is compiled in and STATICALLY linked against
+#      musl (build-base) via -extldflags "-static -latomic" -- a self-contained
+#      static binary, so the runtime image carries no libc (mirrors upstream's
+#      "standalone distribution" build in their Dockerfile). Build tags
+#      netgo,sqlite_fts5 match upstream (netgo = pure-Go resolver, sqlite_fts5 =
+#      full-text search). zlib is linked in (upstream pulls zlib-dev), so
+#      zlib-dev + zlib-static are present for the static link.
+#
+# go.mod declares go 1.26; we build with go-1.26 and GOTOOLCHAIN=local so no
+# toolchain is fetched. Version is stamped via -X on consts.gitTag (kept with the
+# "v" prefix; upstream trims it at runtime) and consts.gitSha (non-empty, else
+# the reported version is "dev"). The GitHub archive is not a git checkout, so
+# gitSha falls back to "release".
+package:
+  name: quench-navidrome
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Navidrome (self-hosted music server and streamer), built from source on Wolfi"
+  copyright:
+    - license: GPL-3.0-only
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - bash
+      - ca-certificates-bundle
+      - go-1.26
+      # CGO SQLite (mattn/go-sqlite3) is statically linked; zlib is pulled in by
+      # the upstream build, so ship the dev headers + static archive for the link.
+      - zlib-dev
+      - zlib-static
+      # UI toolchain: the React frontend is built with Vite. .nvmrc pins node v24.
+      - nodejs-24
+      - npm
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/navidrome/navidrome/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Build the web UI from source (npm + vite)
+    runs: |
+      set -eu
+      # Writable caches/HOME for npm inside the sandbox.
+      export npm_config_cache="$(mktemp -d)"
+      export HOME="$(mktemp -d)"
+      (
+        cd ui
+        # npm ci runs the postinstall workbox step (bin/update-workbox.sh),
+        # which needs the workbox-cli devDependency it just installed.
+        npm ci
+        # `npm run build` == `vite build`; emits ui/build/** picked up by go:embed.
+        npm run build
+      )
+      # ui/embed.go embeds build/*; assert vite produced the UI entrypoint.
+      test -f ui/build/index.html
+
+  - name: Build the navidrome binary (CGO SQLite, static musl)
+    runs: |
+      set -eu
+      export CGO_ENABLED=1
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch a toolchain
+      export GO111MODULE=on
+      GIT_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo release)"
+      VERPKG="github.com/navidrome/navidrome/consts"
+      # Bump golang.org/x/image the comprehensive gate flags: v0.41.0 carries
+      # CVE-2026-33813 + CVE-2026-46601 (webp/VP8 DoS), fixed in 0.43.0. Minor,
+      # API-compatible bump within the module graph -- not a fork/force.
+      go get golang.org/x/image@v0.43.0
+      go mod tidy
+      # netgo,sqlite_fts5 match upstream GO_BUILD_TAGS. Static link like the
+      # upstream "standalone distribution" build (-extldflags '-static -latomic').
+      go build -trimpath -tags=netgo,sqlite_fts5 \
+        -ldflags "-s -w -extldflags '-static -latomic' \
+          -X ${VERPKG}.gitTag=v${{package.version}} \
+          -X ${VERPKG}.gitSha=${GIT_SHA}" \
+        -o "${{targets.destdir}}/usr/bin/navidrome" .

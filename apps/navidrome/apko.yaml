@@ -1,0 +1,69 @@
+# Assembles the Navidrome runtime image. Minimal, nonroot, multi-arch, SBOM by
+# apko. Navidrome is a self-hosted music server: the entrypoint is the binary,
+# which reads all settings from ND_-prefixed env vars, so no wrapper is needed.
+# ca-certificates-bundle is included for outbound TLS (e.g. Last.fm/Spotify
+# metadata agents, ListenBrainz). ffmpeg is NOT baked in: it is optional and only
+# used for on-the-fly transcoding; native WebP is likewise skipped (static build).
+#
+# Read-only rootfs friendly. Navidrome needs TWO writable paths, both created
+# here owned by the nonroot uid 1001 and meant to be mounted as volumes:
+#   /data  -> ND_DATAFOLDER: the SQLite DB, cache, plugins, backups. Written on
+#             every scan/play; auto-populated on first run.
+#   /music -> ND_MUSICFOLDER: the music library (mount read-only if desired).
+# Everything else (the binary, embedded UI) is read-only. The server binds
+# 0.0.0.0:4533 (ND_ADDRESS/ND_PORT); 4533 is >1024, so the nonroot user can
+# bind it. Upstream defaults datafolder to "." and musicfolder to "./music",
+# which are not container-appropriate, so we point them at the volumes.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-navidrome@local
+
+accounts:
+  groups:
+    - groupname: navidrome
+      gid: 1001
+  users:
+    - username: navidrome
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  ND_DATAFOLDER: /data
+  ND_MUSICFOLDER: /music
+  ND_ADDRESS: 0.0.0.0
+  ND_PORT: "4533"
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /music
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /usr/bin/navidrome
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-navidrome"
+  org.opencontainers.image.licenses: "GPL-3.0-only"
