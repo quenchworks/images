@@ -1,0 +1,111 @@
+# Builds Vikunja (code.vikunja.io/vikunja) from source onto Wolfi. One Go binary
+# that serves the REST API AND the go:embed'd Vue 3 web UI. Output is a signed APK
+# in Quenchworks' own repo. No upstream distro binaries. Image-only (no chart).
+#
+# Two-stage in-sandbox build, mirroring upstream's own Dockerfile pipeline:
+#   1. frontend/  -> pnpm install --frozen-lockfile + `pnpm run build` (vite build
+#      + workbox copyLibraries) writes frontend/dist/**. The source tag ships
+#      frontend/dist gitignored (absent), and frontend/embed.go does
+#      `//go:embed dist`, which FAILS if the dir is missing -- so the UI MUST be
+#      built here before the Go compile.
+#   2. go build -> code.vikunja.io/api/frontend embeds dist/* into the binary.
+# Node/pnpm live ONLY in the build sandbox; the runtime image carries just the Go
+# binary, so the JS toolchain never enters the Trivy scan surface.
+#
+# CGO: Vikunja's DB layer (xorm) uses github.com/mattn/go-sqlite3 for the default
+# sqlite backend, which is a CGO driver -- so this is a CGO build (CGO_ENABLED=1),
+# matching upstream's release build. We keep the driver Vikunja ships (no fork to
+# a pure-Go sqlite). The netgo+osusergo build tags keep DNS and os/user pure-Go
+# (no NSS at runtime); the binary dynamically links glibc, which melange's SO
+# scanner turns into a runtime dep so apko pulls glibc into the image.
+#
+# go.mod declares go 1.25.7; we build with go-1.26 (newest, clears stdlib CVE
+# advisories) and GOTOOLCHAIN=local so go.mod's directive does not fetch a
+# toolchain. GOFLAGS=-mod=mod lets the module graph resolve patched deps.
+package:
+  name: quench-vikunja
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Vikunja (to-do / project management), built from source on Wolfi"
+  copyright:
+    - license: AGPL-3.0-or-later
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - bash
+      - ca-certificates-bundle
+      - go-1.26
+      # UI toolchain: the Vue 3 frontend is built with vite. package.json requires
+      # node >=24 and pnpm@10 (corepack); pnpm is installed locally via npm below.
+      - nodejs-24
+      - npm
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/go-vikunja/vikunja/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Build the web UI from source (pnpm + vite)
+    runs: |
+      set -eu
+      # Writable caches/HOME for npm + pnpm inside the sandbox.
+      export npm_config_cache="$(mktemp -d)"
+      export HOME="$(mktemp -d)"
+      export PUPPETEER_SKIP_DOWNLOAD=true
+      export CYPRESS_INSTALL_BINARY=0
+      # Install pnpm@10 (frontend/package.json pins pnpm@10) into a private prefix
+      # on PATH -- avoids writing to the global node prefix.
+      export PNPM_PREFIX="$(mktemp -d)"
+      npm install -g --prefix "$PNPM_PREFIX" pnpm@10
+      export PATH="$PNPM_PREFIX/bin:${PATH}"
+      pnpm --version
+      (
+        cd frontend
+        # Stamp the real version into the UI's About page (upstream Dockerfile does
+        # the same); the file already exists in the tag, we just overwrite its value.
+        echo "{\"VERSION\": \"${{package.version}}\"}" > src/version.json
+        pnpm install --frozen-lockfile
+        pnpm run build
+      )
+      # frontend/embed.go does `//go:embed dist`; assert vite produced the UI.
+      test -f frontend/dist/index.html
+
+  - name: Build the vikunja binary (CGO on, dynamic glibc, netgo/osusergo)
+    runs: |
+      set -eu
+      export CGO_ENABLED=1
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's 1.25
+      export GO111MODULE=on
+      VERPKG="code.vikunja.io/api/pkg/version"
+      # Minimal safe dep bumps the comprehensive Trivy gate flags on v2.3.0's module
+      # graph. All are same-major minor/patch bumps (no API break, no fork), resolved
+      # via GOFLAGS=-mod=mod:
+      #   golang.org/x/net    v0.50.0 -> 0.55.0 (html XSS, http2 DoS, idna, CVE-2026-25681/27136/27141/33814/39821/42502/42506/25680)
+      #   golang.org/x/crypto v0.48.0 -> 0.52.0 (ssh channel-open DoS, CVE-2026-39827)
+      #   golang.org/x/image  v0.38.0 -> 0.43.0 (webp/tiff/vp8 DoS, CVE-2026-33812/33813/46599/46601)
+      #   github.com/go-chi/chi/v5     v5.2.2 -> v5.2.4 (open redirect, CVE-2025-69725)
+      #   github.com/Azure/go-ntlmssp  -> v0.1.1 (NTLM parse DoS, CVE-2026-32952)
+      go get golang.org/x/net@v0.55.0
+      go get golang.org/x/crypto@v0.52.0
+      go get golang.org/x/image@v0.43.0
+      go get github.com/go-chi/chi/v5@v5.2.4
+      go get github.com/Azure/go-ntlmssp@v0.1.1
+      go mod tidy
+      # Mirror upstream's release ldflags/tags so `vikunja version` reports the real
+      # release. netgo+osusergo keep DNS/os-user pure-Go; sqlite stays CGO (mattn).
+      go build -trimpath \
+        -tags "netgo osusergo" \
+        -ldflags "-s -w -X ${VERPKG}.Version=${{package.version}}" \
+        -o "${{targets.destdir}}/usr/bin/vikunja" .

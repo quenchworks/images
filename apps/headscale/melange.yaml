@@ -1,0 +1,60 @@
+# Builds headscale (juanfont/headscale, an open-source Tailscale control server)
+# from source onto Wolfi. Single static Go binary, no CGO (matches upstream
+# .goreleaser.yml CGO_ENABLED=0). Output is a signed APK in Quenchworks' own
+# repo. No upstream distro binaries. Image-only (a server, no chart).
+#
+# Version stamping: headscale reads its own version from the Go build-info main
+# module version (hscontrol/types.GetVersionInfo -> debug.ReadBuildInfo().
+# Main.Version), NOT from an -X ldflag -- upstream's `-X main.version` is dead
+# code against a variable that no longer exists. A plain build of the release
+# tarball has no VCS metadata, so it reports "dev". We recreate a one-commit git
+# repo tagged with the release so Go 1.24+ VCS stamping records
+# Main.Version = v<ver> -- the exact mechanism upstream's release binaries use.
+#
+# go.mod declares go 1.26.4; we build with go-1.26 (newest, clears stdlib CVE
+# advisories) and GOTOOLCHAIN=local so go.mod's directive does not trigger a
+# toolchain download. GOFLAGS=-mod=mod lets the module graph resolve patched deps.
+package:
+  name: quench-headscale
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened headscale (Tailscale control server), built from source on Wolfi"
+  copyright:
+    - license: BSD-3-Clause
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - git
+      - go-1.26
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/juanfont/headscale/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local
+      export HOME="$(mktemp -d)"
+      # Tag a throwaway one-commit repo so Go's VCS stamping sets Main.Version.
+      git config --global --add safe.directory '*'
+      git init -q
+      git config user.email build@quench-works.com
+      git config user.name quenchworks
+      git add -A
+      git commit -qm "v${{package.version}}"
+      git tag "v${{package.version}}"
+      go build -trimpath -ldflags "-s -w" \
+        -o "${{targets.destdir}}/usr/bin/headscale" ./cmd/headscale

@@ -1,0 +1,67 @@
+# Assembles the headscale runtime image. Minimal, nonroot, multi-arch, SBOM by
+# apko. headscale is a server; the entrypoint is the bare binary, so
+# `docker run ...headscale <subcmd>` works (e.g. `version`, `serve`). The chart
+# passes `serve` and mounts a config file.
+#
+# Read-only-rootfs friendly: the only writable state lives in three volumes
+# owned by the nonroot user (uid 1001), so the rootfs can be mounted read-only:
+#   /etc/headscale     config (config.yaml; chart/user mounts it here)
+#   /var/lib/headscale data dir + SQLite DB + noise private key (work-dir)
+#   /var/run/headscale runtime dir for the CLI<->server unix socket
+# Server ports (bind via config, exposed by the chart's Service): 8080 (HTTP
+# API/UI) and 9090 (Prometheus metrics). apko has no OCI EXPOSE field; ports are
+# a runtime concern handled by the chart.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-headscale@local
+
+accounts:
+  groups:
+    - groupname: headscale
+      gid: 1001
+  users:
+    - username: headscale
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/headscale
+
+work-dir: /var/lib/headscale
+
+paths:
+  - path: /etc/headscale
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/lib/headscale
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+  - path: /var/run/headscale
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-headscale"
+  org.opencontainers.image.licenses: "BSD-3-Clause"

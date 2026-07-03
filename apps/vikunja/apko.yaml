@@ -1,0 +1,83 @@
+# Assembles the Vikunja runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Vikunja is a single binary that serves the REST API + the embedded Vue 3 web UI;
+# `vikunja` is on PATH (/usr/bin), so `docker run ...vikunja <cmd>` works (e.g.
+# `version`) and the default entrypoint runs the server. ca-certificates-bundle is
+# included for outbound TLS (SMTP, OIDC, S3 attachments). glibc is pulled in
+# automatically as a runtime dep of the CGO (sqlite) binary.
+#
+# Read-only rootfs friendly. Vikunja needs TWO writable paths, both created here
+# owned by the nonroot uid 1001 and meant to be mounted as volumes:
+#   /db    -> the sqlite DB + its WAL/journal (VIKUNJA_DATABASE_PATH=/db/vikunja.db);
+#            auto-created and migrated on first run.
+#   /files -> uploaded task attachments (VIKUNJA_FILES_BASEPATH=/files).
+# /app/vikunja is the service rootpath (config-file lookup location); it stays
+# read-only and empty by default -- mount a config.yml there to override defaults.
+# Everything else (the binary, embedded UI) is read-only. The server binds
+# :3456 on all interfaces (VIKUNJA_SERVICE_INTERFACE, upstream default); 3456 is
+# >1024, so the nonroot user can bind it.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-vikunja@local
+
+accounts:
+  groups:
+    - groupname: vikunja
+      gid: 1001
+  users:
+    - username: vikunja
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  VIKUNJA_SERVICE_ROOTPATH: /app/vikunja
+  VIKUNJA_SERVICE_INTERFACE: ":3456"
+  VIKUNJA_DATABASE_TYPE: sqlite
+  VIKUNJA_DATABASE_PATH: /db/vikunja.db
+  VIKUNJA_FILES_BASEPATH: /files
+  # API and the embedded web UI are served from the same origin (one binary), so
+  # CORS is off by default -- upstream defaults it ON, which then HARD-FAILS
+  # startup unless service.publicurl is set. A deployment that fronts the API on a
+  # different origin can re-enable CORS and set VIKUNJA_SERVICE_PUBLICURL.
+  VIKUNJA_CORS_ENABLE: "false"
+
+paths:
+  - path: /app/vikunja
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /db
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /files
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+work-dir: /app/vikunja
+
+entrypoint:
+  command: /usr/bin/vikunja
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-vikunja"
+  org.opencontainers.image.licenses: "AGPL-3.0-or-later"

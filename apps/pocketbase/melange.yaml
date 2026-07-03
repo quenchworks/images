@@ -1,0 +1,66 @@
+# Builds PocketBase (pocketbase/pocketbase) from source onto Wolfi. Single static
+# Go binary (CGO disabled, matching upstream .goreleaser.yaml), multi-arch. Output
+# is a signed APK in Quenchworks' own repo. No upstream distro binaries.
+#
+# PocketBase is an open-source backend in one file (SQLite + auth + admin UI +
+# REST). It is normally consumed as a Go framework; the standalone server is the
+# example CLI at examples/base, which upstream's goreleaser builds as `pocketbase`.
+# The Superuser admin UI is a Vite/Svelte app whose COMPILED output ships in the
+# tag at ui/dist and is embedded through `//go:embed all:dist` (ui/embed.go). So a
+# plain `go build ./examples/base` produces the full server with the UI baked in --
+# NO Node/JS toolchain is needed, and none enters the runtime image or Trivy scan.
+#
+# The SQLite driver is the pure-Go modernc.org/sqlite (no cgo), so CGO_ENABLED=0
+# yields a fully static binary with no libc dependency.
+#
+# go.mod declares go 1.25.0; we build with go-1.26 (newest, clears stdlib CVE
+# advisories) and GOTOOLCHAIN=local so go.mod's 1.25 directive does not trigger a
+# toolchain download. GOFLAGS=-mod=mod lets the module graph resolve patched deps.
+# Version is stamped via -X github.com/pocketbase/pocketbase.Version (per upstream
+# ldflags) so `pocketbase --version` reports the real release.
+package:
+  name: quench-pocketbase
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened PocketBase (open-source backend in one file), built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go-1.26
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/pocketbase/pocketbase/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Build the pocketbase server binary (static, CGO off)
+    runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's 1.25
+      export GO111MODULE=on
+      # Bump the one transitive dep the comprehensive Trivy gate flags: golang.org/x/image
+      # v0.41.0 carries CVE-2026-33813 + CVE-2026-46601 (webp/VP8 DoS), both fixed by 0.43.0.
+      # Same minor API, so this is a safe patch bump within the module graph
+      # (GOFLAGS=-mod=mod), not a fork/force.
+      go get golang.org/x/image@v0.43.0
+      go mod tidy
+      # Mirror upstream ldflags so `pocketbase --version` reports the real release.
+      go build -trimpath \
+        -ldflags "-s -w -X github.com/pocketbase/pocketbase.Version=${{package.version}}" \
+        -o "${{targets.destdir}}/usr/bin/pocketbase" ./examples/base

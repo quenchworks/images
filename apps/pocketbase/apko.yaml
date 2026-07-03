@@ -1,0 +1,57 @@
+# Assembles the PocketBase runtime image. Minimal, nonroot, multi-arch, SBOM by
+# apko. PocketBase is a single static Go binary that serves the REST API + the
+# embedded Superuser admin UI on one HTTP port.
+#
+# The default entrypoint runs `pocketbase serve` bound on 0.0.0.0:8080 with the
+# data directory pinned to /pb_data. PocketBase's built-in default data dir is
+# next to the executable (/usr/bin/pb_data), which is not writable on a read-only
+# rootfs -- so we point --dir at /pb_data, a dedicated writable volume owned by the
+# nonroot uid (1001). Mount a PVC/emptyDir there; the rest of the rootfs stays
+# read-only. ca-certificates-bundle is included for outbound TLS (OAuth providers,
+# SMTP, S3 backups, GitHub self-update checks).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-pocketbase@local
+
+accounts:
+  groups:
+    - groupname: pocketbase
+      gid: 1001
+  users:
+    - username: pocketbase
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/pocketbase serve --http 0.0.0.0:8080 --dir /pb_data
+
+work-dir: /pb_data
+
+# /pb_data holds the SQLite database, uploaded files and backups. It is the single
+# writable path, owned by the nonroot uid so the image runs on a read-only rootfs.
+paths:
+  - path: /pb_data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-pocketbase"
+  org.opencontainers.image.licenses: "MIT"
