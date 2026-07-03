@@ -1,0 +1,51 @@
+# Assembles the Grafana Pyroscope runtime image. Minimal, nonroot, multi-arch,
+# SBOM by apko. Pyroscope is a continuous-profiling server: the entrypoint runs
+# it with the bundled (all-defaults) config, listening on HTTP :4040. The web UI
+# is embedded in the binary. Profiling data is written under ./data -> resolved
+# against the / working dir -> the writable /data volume, so the container runs
+# happily with a read-only root filesystem. ca-certificates-bundle is included so
+# it can reach object storage / remote endpoints over TLS.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-pyroscope@local
+
+accounts:
+  groups:
+    - groupname: pyroscope
+      gid: 1001
+  users:
+    - username: pyroscope
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# Writable data volume for a read-only rootfs. Pyroscope's defaults write WAL,
+# raft state and block data under ./data (relative to the / workdir).
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /usr/bin/pyroscope -config.file=/etc/pyroscope/config.yaml
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-pyroscope"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"

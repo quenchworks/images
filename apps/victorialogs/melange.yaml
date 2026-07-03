@@ -1,0 +1,83 @@
+# Builds VictoriaLogs single-node from source onto Wolfi. Single static Go
+# binary, no CGO. Output is a signed APK in Quenchworks' own repo. No upstream
+# distro binaries.
+#
+# VictoriaLogs is a fast, cost-effective logs database. This package is the
+# single-node `victoria-logs` server binary (not the cluster components, not
+# enterprise). It ships from its own repo (github.com/VictoriaMetrics/
+# VictoriaLogs) under app/victoria-logs and vendors the VictoriaMetrics module,
+# which is where lib/buildinfo (the version stamp target) lives.
+package:
+  name: quench-victorialogs
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened VictoriaLogs (single-node logs DB), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      # go.mod requires go >= 1.26.4; pin the matching toolchain rather than the
+      # bare `go` meta (which can lag a major behind). Building on the current Go
+      # major is also what keeps the compiled-in stdlib free of fixable CVEs
+      # (the older Go lines no longer receive those security backports).
+      # GOTOOLCHAIN=local then keeps the build offline on this exact toolchain.
+      - go-1.26
+
+pipeline:
+  # git-checkout, not fetch: building from the pinned git tag avoids the
+  # codeload.github.com CDN entirely (some upstream CDNs 403 GitHub Actions IPs),
+  # and is the robust source for a repo this size. expected-commit is the commit
+  # the annotated release tag dereferences to.
+  - uses: git-checkout
+    with:
+      repository: https://github.com/VictoriaMetrics/VictoriaLogs
+      tag: v${{package.version}}
+      expected-commit: __COMMIT__
+  - runs: |
+      export CGO_ENABLED=0
+      # The repo vendors all deps, so build from vendor/ -- hermetic and offline,
+      # no module downloads.
+      export GOFLAGS=-mod=vendor
+      export GOTOOLCHAIN=local
+      # buildinfo.Version (in the vendored VictoriaMetrics module) is consumed by
+      # `-version` and the HTTP UI. Mirror upstream's "<app>-<date>-<tag>" shape
+      # so `victoria-logs -version` reports the real release token.
+      LDFLAGS="-s -w -X github.com/VictoriaMetrics/VictoriaMetrics/lib/buildinfo.Version=victoria-logs-quench-v${{package.version}}"
+      go build -trimpath -ldflags "${LDFLAGS}" \
+        -o "${{targets.destdir}}/usr/bin/victoria-logs" ./app/victoria-logs
+  - runs: |
+      # Thin entrypoint. VictoriaLogs writes to -storageDataPath (default
+      # ./victoria-logs-data in CWD), which fails on a read-only rootfs.
+      # Pin it to a writable mount (VL_STORAGE, default /victoria-logs-data) and
+      # the HTTP API to :9428. Ensure the dir exists, then exec the server so it
+      # is PID 1 and receives signals directly. Extra flags pass through via "$@".
+      install -d "${{targets.destdir}}/usr/local/bin"
+      cat > "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh" <<'SCRIPT'
+      #!/bin/sh
+      set -eu
+      VL_STORAGE="${VL_STORAGE:-/victoria-logs-data}"
+      VL_HTTP_LISTEN="${VL_HTTP_LISTEN:-:9428}"
+      mkdir -p "${VL_STORAGE}"
+      exec /usr/bin/victoria-logs \
+        -storageDataPath="${VL_STORAGE}" \
+        -httpListenAddr="${VL_HTTP_LISTEN}" \
+        "$@"
+      SCRIPT
+      chmod 0755 "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        victoria-logs -version

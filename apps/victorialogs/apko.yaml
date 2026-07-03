@@ -1,0 +1,57 @@
+# Assembles the VictoriaLogs single-node runtime image. Minimal, nonroot,
+# multi-arch, SBOM by apko.
+#
+# VictoriaLogs is configured by flags. The thin entrypoint pins the storage path
+# to a writable mount (VL_STORAGE, default /victoria-logs-data) so the image runs
+# on a read-only rootfs, and the HTTP API to :9428. There is no auth by default
+# -- the NetworkPolicy is the security boundary, consistent with the catalog
+# posture.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - busybox                       # the thin entrypoint needs a tiny shell
+    - ca-certificates-bundle
+    - quench-victorialogs@local
+
+accounts:
+  groups:
+    - groupname: victorialogs
+      gid: 1001
+  users:
+    - username: victorialogs
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/local/bin/docker-entrypoint.sh
+
+environment:
+  VL_STORAGE: /victoria-logs-data
+  VL_HTTP_LISTEN: ":9428"
+
+work-dir: /victoria-logs-data
+
+paths:
+  - path: /victoria-logs-data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-victorialogs"
+  org.opencontainers.image.licenses: "Apache-2.0"

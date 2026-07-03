@@ -1,0 +1,69 @@
+# Builds Grafana Mimir from source onto Wolfi. Single static Go binary
+# (CGO disabled, netgo), multi-arch. Output is a signed APK in Quenchworks'
+# own repo. No upstream distro binaries.
+#
+# Mimir is a horizontally-scalable, highly-available, multi-tenant long-term
+# store for Prometheus (the same Grafana family as the shipped Loki/Tempo
+# images). It has NO bundled JS web UI build step -- the small status/admin
+# pages are committed Go-embedded assets in the tree -- so there is no Node
+# toolchain or asset-embedding step. We build from the git tag source tarball,
+# which vendors all Go dependencies (vendor/), so the build is fully offline
+# with -mod=vendor.
+#
+# We build the server `mimir` binary (cmd/mimir, the deliverable) using the exact
+# version ldflags from upstream's Makefile (MIMIR_VERSION = pkg/util/version,
+# GO_TAGS = netgo,stringlabels, static extldflags, CGO off) so `mimir -version`
+# reports the pinned release. Upstream's VERSION file carries NO leading "v", so
+# Version=${version}. AGPL-3.0-only (same license tier as grafana/loki/tempo).
+package:
+  name: quench-mimir
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Grafana Mimir (horizontally-scalable Prometheus long-term store), built from source on Wolfi"
+  copyright:
+    - license: AGPL-3.0-only
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      # go.mod declares go 1.25.9. Use the newest go-1.26 toolchain (latest stdlib
+      # CVE fixes, clears the Trivy gate without bumps) with GOTOOLCHAIN=local so
+      # go.mod's 1.25.9 directive does not trigger a toolchain download.
+      - go-1.26
+
+pipeline:
+  # Build from the git tag source tarball. Mimir vendors all deps under vendor/,
+  # so the build needs no network. Tag is `mimir-X.Y.Z`; verified by sha256.
+  - uses: fetch
+    with:
+      uri: https://github.com/grafana/mimir/archive/refs/tags/mimir-${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=vendor
+      export GOTOOLCHAIN=local
+      # Stamp version exactly like upstream's Makefile GO_FLAGS: it sets the
+      # pkg/util/version package vars (MIMIR_VERSION), so `mimir -version` and the
+      # build_info metric report the pinned release. GO_TAGS = netgo,stringlabels.
+      VERPKG=github.com/grafana/mimir/pkg/util/version
+      go build -trimpath -tags "netgo,stringlabels" \
+        -ldflags "-s -w -extldflags \"-static\" \
+          -X ${VERPKG}.Version=${{package.version}} \
+          -X ${VERPKG}.Branch=HEAD \
+          -X ${VERPKG}.Revision=mimir-${{package.version}}" \
+        -o "${{targets.destdir}}/usr/bin/mimir" ./cmd/mimir
+
+test:
+  pipeline:
+    - runs: |
+        mimir -version

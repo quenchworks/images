@@ -1,0 +1,52 @@
+# Assembles the k6 runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# k6 is a CLI: the entrypoint is the binary, so `docker run ...k6 run script.js`
+# works. Test scripts are supplied by mounting them into the container (k6 reads
+# them from the given path), so the image needs no writable rootfs -- it runs
+# fine with a read-only root filesystem. `k6 run --address 0.0.0.0:6565` (or the
+# default 127.0.0.1:6565) serves the REST API on 6565. ca-certificates-bundle is
+# included so k6 can drive HTTPS targets and push results to TLS endpoints.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-k6@local
+
+accounts:
+  groups:
+    - groupname: k6
+      gid: 1001
+  users:
+    - username: k6
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/k6
+
+# k6's REST API (--address) listens on 6565 when `k6 run` is invoked.
+paths:
+  - path: /home/k6
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+work-dir: /home/k6
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-k6"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"

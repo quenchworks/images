@@ -1,0 +1,110 @@
+# Builds Grafana Pyroscope (grafana/pyroscope) from source onto Wolfi. Single
+# static Go binary (CGO disabled, netgo, matching upstream's Makefile go/bin
+# target), multi-arch. Output is a signed APK in Quenchworks' own repo. No
+# upstream distro binaries. Image-only (a continuous-profiling server, no chart).
+#
+# Pyroscope is a Go server that go:embeds a Vite/React web UI. The backend embeds
+# the compiled UI via `//go:embed dist` in ui/assets_embedded.go, gated behind the
+# `embedassets` build tag (upstream's `EMBEDASSETS ?= embedassets`). The source
+# tree ships NO ui/dist -- the UI is NOT pre-built in the tag (only the server's
+# static admin assets under pkg/api/static are prebuilt). So we reproduce upstream's
+# own asset pipeline here (cmd/pyroscope/frontend.Dockerfile):
+#   frontend: corepack yarn@4 install --immutable + vite build -> ui/dist/**
+#   go build -tags embedassets -> ui/assets_embedded.go's `//go:embed dist` picks
+#   up the compiled UI. Without embedassets the binary serves a "not available in
+#   dev mode" stub, so the tag is required for a real UI.
+# Node/yarn live ONLY in the build sandbox; the runtime image is a static Go binary
+# with no JS toolchain, so Node never enters the Trivy scan surface.
+#
+# go.mod declares go 1.25.8 (toolchain go1.25.11); we build with go-1.26 (newest,
+# clears stdlib CVE advisories) and GOTOOLCHAIN=local so go.mod's toolchain
+# directive does not trigger a download. GOFLAGS=-mod=mod lets the module graph
+# resolve patched deps if the CVE gate flags any. Version is stamped via -X on
+# pkg/util/build to mirror upstream's ldflags so `pyroscope -version` reports the
+# real release.
+package:
+  name: quench-pyroscope
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Grafana Pyroscope (continuous profiling database), built from source on Wolfi"
+  copyright:
+    - license: AGPL-3.0-only
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - bash
+      - ca-certificates-bundle
+      - git
+      - go-1.26
+      # UI toolchain: frontend is built with vite (React). ui/package.json requires
+      # node >=24 and pins yarn@4.13.0 via packageManager (Corepack).
+      - nodejs-24
+      - npm
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/grafana/pyroscope/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Build the web UI from source (corepack yarn@4 + vite)
+    runs: |
+      set -eu
+      # Writable caches/HOME for npm + Corepack + yarn inside the sandbox.
+      export HOME="$(mktemp -d)"
+      export npm_config_cache="$(mktemp -d)"
+      export COREPACK_HOME="$(mktemp -d)"
+      export YARN_ENABLE_TELEMETRY=0
+      # Wolfi's nodejs-24 apk does not ship corepack on PATH, so install it via npm
+      # into a private prefix, then use its shim dir to activate the yarn version
+      # pinned in ui/package.json (packageManager: yarn@4.13.0). The yarn shim
+      # auto-provisions 4.13.0 on first run.
+      NPM_PREFIX="$(mktemp -d)"
+      npm install -g --prefix "$NPM_PREFIX" corepack@latest
+      export PATH="$NPM_PREFIX/bin:${PATH}"
+      SHIM_DIR="$(mktemp -d)"
+      corepack enable --install-directory "$SHIM_DIR"
+      export PATH="$SHIM_DIR:${PATH}"
+      (
+        cd ui
+        # .yarnrc.yml sets enableScripts:false + nodeLinker:node-modules already.
+        yarn install --immutable
+        # `yarn build` == `tsc -b && vite build`; run vite directly to emit dist
+        # and skip the dev-only typecheck gate (identical assets).
+        yarn exec vite build
+      )
+      # ui/assets_embedded.go embeds ui/dist; assert vite produced the UI entrypoint.
+      test -f ui/dist/index.html
+
+  - name: Build the pyroscope binary (static, CGO off, UI embedded)
+    runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's toolchain
+      export GO111MODULE=on
+      export GOWORK=off             # tarball ships a go.work (., ./api, ./lidia); build the
+                                    # main module standalone (go.mod already replaces api=>./api,
+                                    # lidia v0.0.2 is a published module) so -mod=mod is allowed
+      COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+      VPREFIX="github.com/grafana/pyroscope/v2/pkg/util/build"
+      # Mirror upstream ldflags (Makefile go/bin) so `pyroscope -version` reports the
+      # real release. netgo + static extldflags = a fully static, CGO-free binary.
+      go build -trimpath -tags "netgo embedassets" \
+        -ldflags "-s -w -extldflags '-static' -X ${VPREFIX}.Version=${{package.version}} -X ${VPREFIX}.Revision=${COMMIT} -X ${VPREFIX}.Branch=quenchworks" \
+        -o "${{targets.destdir}}/usr/bin/pyroscope" ./cmd/pyroscope
+      # Ship upstream's reference config (fully commented -> code defaults). The
+      # runtime writes profiling data under ./data (resolved against the / workdir
+      # -> the writable /data volume), keeping the rootfs read-only friendly.
+      mkdir -p "${{targets.destdir}}/etc/pyroscope"
+      install -m 0644 cmd/pyroscope/pyroscope.yaml "${{targets.destdir}}/etc/pyroscope/config.yaml"

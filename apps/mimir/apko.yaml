@@ -1,0 +1,53 @@
+# Assembles the Mimir runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+#
+# Mimir is configured by a YAML config file (-config.file=...) supplied by the
+# chart, plus a -target=... selecting the component(s) to run (all|ingester|
+# querier|distributor|store-gateway|compactor|ruler|...). The entrypoint is the
+# binary directly (/usr/bin/mimir) -- no shell wrapper needed; Mimir exposes a
+# /ready readiness endpoint and /metrics on its HTTP port for probes, so health
+# checks do not require a shell. busybox is included only to give operators a
+# minimal debug shell; it is not on the entrypoint path. Mimir has NO bundled
+# web UI (Grafana is its frontend) so no JS assets ship.
+#
+# Read-only rootfs friendly: Mimir writes nothing to the rootfs. It needs a
+# writable data path (blocks_storage / tsdb / bucket-store sync dir, and the
+# activity-tracker log) plus /tmp; the chart mounts those as writable volumes.
+# The base image presumes no persistent state.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - busybox
+    - ca-certificates-bundle
+    - quench-mimir@local
+
+accounts:
+  groups:
+    - groupname: mimir
+      gid: 1001
+  users:
+    - username: mimir
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/mimir
+
+# Default ports: 8080 HTTP (API, /ready, /metrics), 9095 gRPC.
+# Advisory only -- the chart sets the actual server.http_listen_port / grpc.
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-mimir"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"
