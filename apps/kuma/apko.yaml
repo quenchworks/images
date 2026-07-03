@@ -1,0 +1,53 @@
+# Assembles the Kuma control-plane runtime image. Minimal, nonroot, multi-arch,
+# SBOM by apko. The entrypoint runs `kuma-cp run`, which starts the control plane
+# with the default in-memory store (KUMA_STORE_TYPE=memory) -- no external
+# database is required, so the image runs standalone and read-only-rootfs
+# friendly (the in-memory CA and config are held in RAM). kumactl is also on PATH
+# for `docker run ...kumactl ...` administration. ca-certificates-bundle is
+# included for outbound TLS.
+#
+# The bundled Kuma GUI is served by the API server on 5681. Default control-plane
+# ports (all bind 0.0.0.0, all >1024 so the nonroot user can bind them):
+#   5678  DP server   -- data planes & zone proxies connect here (xDS/KDS, mTLS)
+#   5680  diagnostics -- /healthy and /ready probes (also pprof/metrics)
+#   5681  API server (HTTP) + the embedded GUI
+#   5682  API server (HTTPS)
+#   5685  multizone global KDS (gRPC)
+#   5676  monitoring assignment server (Prometheus MADS SD)
+#   5683  inter-CP server
+# apko has no EXPOSE field; the chart/consumer publishes whichever it needs.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-kuma@local
+
+accounts:
+  groups:
+    - groupname: kuma
+      gid: 1001
+  users:
+    - username: kuma
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/kuma-cp run
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-kuma"
+  org.opencontainers.image.licenses: "Apache-2.0"

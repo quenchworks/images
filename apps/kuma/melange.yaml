@@ -1,0 +1,72 @@
+# Builds Kuma (kumahq/kuma) from source onto Wolfi. Kuma is a CNCF service-mesh
+# control plane. We build two static Go binaries with CGO disabled (matching
+# upstream mk/build.mk GOENV=CGO_ENABLED=0, GOFLAGS=-trimpath):
+#   kuma-cp   -- the control plane. It go:embeds the Kuma GUI, which is already
+#                PRE-BUILT and vendored in the release tarball at
+#                app/kuma-ui/pkg/resources/data/** (see fs.go: `//go:embed
+#                data/* data/assets/*`, no build tag). So NO Node/pnpm toolchain
+#                is needed -- a plain `go build ./app/kuma-cp` bakes in the UI.
+#   kumactl   -- the CLI.
+# kuma-dp is intentionally NOT shipped: it is the data-plane sidecar and only
+# does anything paired with an Envoy binary (fetched at runtime by upstream from
+# kumahq/envoy-builds), which this control-plane image does not bundle. A
+# data-plane image is a separate concern.
+#
+# Version is stamped via -X on github.com/kumahq/kuma/v2/pkg/version so
+# `kuma-cp version` / `kumactl version` report the real release (mirrors upstream
+# mk/build.mk LD_FLAGS). Envoy compat version is a plain string constant from
+# mk/dev.mk (ENVOY_VERSION 1.38.2); it only affects the reported build info.
+#
+# go.mod declares `go 1.26.4`; we build with go-1.26 (Wolfi ships 1.26.4, clears
+# stdlib CVE advisories) and GOTOOLCHAIN=local so the go.mod toolchain directive
+# does not trigger a download. GOFLAGS=-mod=mod lets the module graph resolve any
+# patched transitive deps. Output is a signed APK in Quenchworks' own repo; no
+# upstream distro binaries. Image-only (no chart). Upstream tags carry a "v"
+# prefix; the stamped version is the bare X.Y.Z.
+package:
+  name: quench-kuma
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Kuma (CNCF service-mesh control plane), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go-1.26
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/kumahq/kuma/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Build kuma-cp and kumactl (static, CGO off; GUI embedded from the tarball)
+    runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's toolchain
+      export GO111MODULE=on
+      VERPKG="github.com/kumahq/kuma/v2/pkg/version"
+      ENVOY_VERSION="1.38.2"        # mk/dev.mk: build-info string only
+      LDFLAGS="-s -w \
+        -X ${VERPKG}.version=${{package.version}} \
+        -X ${VERPKG}.gitTag=v${{package.version}} \
+        -X ${VERPKG}.buildDate=released \
+        -X ${VERPKG}.Envoy=${ENVOY_VERSION}"
+      go build -trimpath -ldflags "${LDFLAGS}" \
+        -o "${{targets.destdir}}/usr/bin/kuma-cp" ./app/kuma-cp
+      go build -trimpath -ldflags "${LDFLAGS}" \
+        -o "${{targets.destdir}}/usr/bin/kumactl" ./app/kumactl

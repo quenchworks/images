@@ -1,0 +1,42 @@
+# Assembles the Tekton Pipelines runtime image. Minimal, nonroot (uid 1001),
+# read-only-rootfs friendly, multi-arch, SBOM by apko. Bundles the core Tekton
+# command set on PATH (/usr/bin): controller, webhook, resolvers, events plus the
+# pod-injected helpers entrypoint, nop, sidecarlogresults, workingdirinit. The
+# default entrypoint is the controller; a deployment overrides the command to pick
+# the component it runs (e.g. `webhook`, `resolvers`), and the controller is told
+# which helper images to inject via its -entrypoint-image / -nop-image flags.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-tekton@local
+
+accounts:
+  groups:
+    - groupname: tekton
+      gid: 1001
+  users:
+    - username: tekton
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/controller
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-tekton"
+  org.opencontainers.image.licenses: "Apache-2.0"

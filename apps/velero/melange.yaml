@@ -1,0 +1,47 @@
+# Builds Velero (VMware Tanzu, CNCF) from source onto Wolfi. Velero's `./cmd/velero`
+# is the combined server + CLI, so a single static Go binary (CGO disabled, matching
+# upstream hack/build.sh) is both the `velero` CLI and the server that runs in-cluster.
+# Version is stamped via the go linker's -X flags on pkg/buildinfo (Version + a clean
+# GitTreeState) so `velero version` reports the real release. Output is a signed APK
+# in Quenchworks' own repo. No upstream distro binaries. Image-only (no chart).
+#
+# go.mod requires go 1.25.8; we pin the go-1.25 toolchain package and force
+# GOTOOLCHAIN=local so the build never downloads a toolchain over the network.
+package:
+  name: quench-velero
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Velero (Kubernetes backup/restore), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go-1.25
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/vmware-tanzu/velero/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      export CGO_ENABLED=0
+      export GOTOOLCHAIN=local
+      export GOFLAGS=-mod=mod
+      PKG=github.com/vmware-tanzu/velero
+      go build -trimpath -installsuffix static \
+        -ldflags "-s -w \
+          -X ${PKG}/pkg/buildinfo.Version=v${{package.version}} \
+          -X ${PKG}/pkg/buildinfo.GitTreeState=clean" \
+        -o "${{targets.destdir}}/usr/bin/velero" ./cmd/velero

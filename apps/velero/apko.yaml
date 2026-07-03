@@ -1,0 +1,42 @@
+# Assembles the Velero runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Velero is a single binary that is both the CLI and the in-cluster server, so the
+# entrypoint is the binary: `docker run ...velero <args>` (e.g. `version --client-only`,
+# `backup ...`). ca-certificates-bundle is included so it can reach the Kubernetes API
+# and object storage (S3/GCS/Azure) over TLS. Runs as nonroot uid 1001 and needs no
+# writes to the root filesystem, so it is read-only-rootfs friendly (the chart mounts
+# emptyDir volumes for /tmp and the plugins scratch dir).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-velero@local
+
+accounts:
+  groups:
+    - groupname: velero
+      gid: 1001
+  users:
+    - username: velero
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/velero
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-velero"
+  org.opencontainers.image.licenses: "Apache-2.0"
