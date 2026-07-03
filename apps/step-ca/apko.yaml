@@ -1,0 +1,60 @@
+# Assembles the step-ca runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# step-ca is the smallstep online certificate authority: it serves an ACME/step
+# CA over HTTPS on :9000 (the address is set in ca.json; 9000 is the smallstep
+# convention). The entrypoint is the binary; with no argument it reads its config
+# from $STEPPATH/config/ca.json.
+#
+# State + config live under STEPPATH (/home/step): ca.json, the CA certs/keys and
+# the badger/bolt db. That directory is the ONE writable path, created here owned
+# by the nonroot uid 1001. Everything else is read-only: the image runs happily
+# with a read-only rootfs as long as /home/step (and /tmp) are writable mounts.
+# Bootstrap a CA into that volume once with `step ca init` (from the step CLI),
+# then run this image against it.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-step-ca@local
+
+accounts:
+  groups:
+    - groupname: step
+      gid: 1001
+  users:
+    - username: step
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/step-ca
+
+environment:
+  STEPPATH: /home/step
+  HOME: /home/step
+
+work-dir: /home/step
+
+paths:
+  - path: /home/step
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-step-ca"
+  org.opencontainers.image.licenses: "Apache-2.0"

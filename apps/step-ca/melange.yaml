@@ -1,0 +1,67 @@
+# Builds step-ca (smallstep/certificates), an online certificate authority, from
+# source onto Wolfi. Single static Go binary, no CGO (the pure-Go build; PKCS#11/
+# HSM support is the only thing that needs CGO, so it is intentionally omitted for
+# the hardened default). Output is a signed APK in Quenchworks' own repo. No
+# upstream distro binaries. Image-only (a server, no chart).
+#
+# Version stamping mirrors upstream's Makefile
+#   LDFLAGS := -ldflags='-w -X "main.Version=$(VERSION)" -X "main.BuildTime=$(DATE)"'
+# so `step-ca version` reports the real release. Upstream tags carry a "v" prefix;
+# the Makefile stamps the bare version.
+#
+# go.mod declares go 1.24 (0.29) / go 1.25 (0.30). We build with the newest
+# available toolchain (go-1.26, clears stdlib CVE advisories) and GOTOOLCHAIN=local
+# so the go.mod directive never triggers a toolchain download; 1.26 satisfies both.
+package:
+  name: quench-step-ca
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened step-ca (smallstep online certificate authority), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go-1.26
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/smallstep/certificates/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local
+      # Bump the transitive deps the comprehensive Trivy gate flags (all minor/patch,
+      # API-compatible -- not a fork/force): x/net<=0.52 (CVE-2026-25681 et al),
+      # x/crypto (CVE-2026-39827), go-jose (CVE-2026-34986 -- step-ca links BOTH
+      # major lines, so bump v3->3.0.5 AND v4->4.1.4), jackc/pgx/v5 (CVE-2026-33815
+      # CRITICAL, ->5.9.2), and the go.opentelemetry.io/otel family (CVE-2026-29181
+      # HIGH, ->v1.41.0).
+      go get golang.org/x/net@v0.55.0 golang.org/x/crypto@latest \
+        github.com/go-jose/go-jose/v3@v3.0.5 github.com/go-jose/go-jose/v4@v4.1.4 \
+        github.com/jackc/pgx/v5@v5.9.2 \
+        go.opentelemetry.io/otel@v1.41.0 go.opentelemetry.io/otel/sdk@v1.41.0 \
+        go.opentelemetry.io/otel/trace@v1.41.0 go.opentelemetry.io/otel/metric@v1.41.0
+      go mod tidy
+      go build -trimpath \
+        -ldflags "-s -w -X main.Version=${{package.version}}" \
+        -o "${{targets.destdir}}/usr/bin/step-ca" ./cmd/step-ca
+
+test:
+  pipeline:
+    - runs: |
+        step-ca version
