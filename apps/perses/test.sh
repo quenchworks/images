@@ -4,11 +4,14 @@ set -euo pipefail
 
 IMAGE="${1:?usage: test.sh <image-ref>}"
 
-echo "perses version:"
-out="$(docker run --rm --entrypoint /usr/bin/perses "$IMAGE" version 2>&1)"
+# The perses server is flag-based (no `version` subcommand -- it prints the
+# stamped version in its startup banner instead). percli is the cobra CLI and
+# has a `version` subcommand, so we use it to assert the version was stamped.
+echo "percli version:"
+out="$(docker run --rm --entrypoint /usr/bin/percli "$IMAGE" version 2>&1)"
 echo "$out"
 # version must be stamped (built from the tag, not an empty/dev version)
-echo "$out" | grep -qiE 'v?[0-9]+\.[0-9]+\.[0-9]+' \
+echo "$out" | grep -qiE 'version:[[:space:]]*[0-9]+\.[0-9]+\.[0-9]+' \
   || { echo "version not stamped"; exit 1; }
 
 # must run as the nonroot perses user (uid 1001)
@@ -28,9 +31,5 @@ for _ in $(seq 1 40); do
   sleep 1
 done
 [ "$ok" = "1" ] || { echo "server did not serve / with HTTP 200"; docker logs "$name" 2>&1 | tail -30; exit 1; }
-
-# the readiness/health endpoint should also answer.
-health="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/api/health 2>/dev/null || true)"
-echo "GET /api/health -> $health"
 
 echo "smoke test passed (nonroot user: $user, / served HTTP 200)"
