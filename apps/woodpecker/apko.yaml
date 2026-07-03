@@ -1,0 +1,69 @@
+# Assembles the Woodpecker CI runtime image. Minimal, nonroot, multi-arch, SBOM by
+# apko. Ships all three binaries (woodpecker-server, woodpecker-agent,
+# woodpecker-cli). The default entrypoint is the SERVER; the agent and cli are
+# separate processes (run them as their own containers/commands):
+#   server : /usr/bin/woodpecker-server   (default entrypoint)
+#   agent  : docker run ... woodpecker-agent   (connects to server grpc :9000)
+#   cli    : docker run ... woodpecker-cli <cmd>
+#
+# Ports (server): 8000 HTTP (WOODPECKER_SERVER_ADDR, web UI + API) and 9000 gRPC
+# (WOODPECKER_GRPC_ADDR, where agents connect). Both are >1024, so the nonroot uid
+# 1001 binds them with no capabilities. ca-certificates-bundle is included for
+# outbound TLS (git forge OAuth, webhooks). glibc + libgcc back the CGO server.
+#
+# Database: the server defaults to SQLite. WOODPECKER_IN_CONTAINER=true (set below)
+# makes the default datasource /var/lib/woodpecker/woodpecker.sqlite -- a writable
+# volume created here, owned by uid 1001. Operators may instead point
+# WOODPECKER_DATABASE_DRIVER/DATASOURCE at external postgres or mysql.
+#
+# Read-only rootfs friendly: the only writable path the server needs by default is
+# the SQLite data dir (/var/lib/woodpecker), mounted as a volume. Everything else
+# (the binaries, embedded UI) is read-only.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - glibc
+    - libgcc
+    - quench-woodpecker@local
+
+accounts:
+  groups:
+    - groupname: woodpecker
+      gid: 1001
+  users:
+    - username: woodpecker
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  # Switches the default SQLite datasource to /var/lib/woodpecker/woodpecker.sqlite.
+  WOODPECKER_IN_CONTAINER: "true"
+
+paths:
+  - path: /var/lib/woodpecker
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /usr/bin/woodpecker-server
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-woodpecker"
+  org.opencontainers.image.licenses: "Apache-2.0"

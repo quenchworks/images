@@ -1,0 +1,63 @@
+# Assembles the Perses runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Perses is a web server: the entrypoint is the perses binary started with the
+# baked-in filesystem-backend config. The server binds 0.0.0.0:8080 by default
+# (>1024, so the nonroot user can bind it). percli is also on PATH.
+#
+# Read-only rootfs friendly. TWO writable paths, created here owned by the
+# nonroot uid 1001 and meant to be mounted as volumes (emptyDir is enough):
+#   /perses          -> the JSON database dir (config.docker.yaml: database.file.folder).
+#                       Also the working directory. Written on every change.
+#   /etc/perses/plugins -> Perses extracts the shipped plugin archives here on
+#                       start (from /etc/perses/plugins-archive, read-only, baked
+#                       into the image). Must be writable.
+# Everything else (the binary, embedded UI, plugin archives, config) is read-only.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - mailcap
+    - quench-perses@local
+
+accounts:
+  groups:
+    - groupname: perses
+      gid: 1001
+  users:
+    - username: perses
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  - path: /perses
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /etc/perses/plugins
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+work-dir: /perses
+
+entrypoint:
+  command: /usr/bin/perses --config=/etc/perses/config.yaml
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-perses"
+  org.opencontainers.image.licenses: "Apache-2.0"

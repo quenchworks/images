@@ -1,0 +1,45 @@
+# Assembles the Argo Workflows runtime image. Minimal, nonroot, multi-arch,
+# read-only-rootfs friendly, SBOM by apko. Ships both static Go binaries on PATH:
+#   * workflow-controller -- the default entrypoint (the workflow controller)
+#   * argo                -- the multi-call CLI + API/UI server (`argo server`)
+# The argo-server serves the embedded UI/API over 2746 when run as `argo server`;
+# a chart/deployment overrides the command for that role. Runs as nonroot uid 1001
+# with no writable state required on disk (read-only rootfs compatible).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-argo-workflows@local
+
+accounts:
+  groups:
+    - groupname: argo
+      gid: 1001
+  users:
+    - username: argo
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/workflow-controller
+
+# The argo-server (`argo server`) listens on 2746/https for the API + UI; it is a
+# runtime concern (no apko EXPOSE), documented here and surfaced by the chart.
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-argo-workflows"
+  org.opencontainers.image.licenses: "Apache-2.0"

@@ -1,0 +1,90 @@
+# Builds Argo Workflows (argoproj/argo-workflows) from source onto Wolfi.
+# Image-only (no chart). Two static Go binaries, CGO disabled (matches upstream
+# Makefile: CGO_ENABLED=0 ... -extldflags -static):
+#   * workflow-controller  (./cmd/workflow-controller) -- the controller
+#   * argo                 (./cmd/argo) -- the multi-call CLI *and* API server
+#                          (`argo server` binds the UI/API on 2746)
+# Output is a signed APK in Quenchworks' own repo. No upstream distro binaries.
+#
+# The `argo` binary embeds the React UI via `//go:embed dist/app` (ui/embed.go),
+# and the source tag does NOT ship ui/dist -- so a plain `go build ./cmd/argo`
+# fails on the missing embed target. We reproduce upstream's own asset pipeline
+# (Makefile ui/dist/app/index.html target: STATIC_FILES=true -> yarn install +
+# yarn build) in the sandbox with yarn/webpack, producing a real, functional UI.
+# Node/yarn live ONLY in the build sandbox; the runtime image is just the two
+# static Go binaries with no JS toolchain, so Node never enters the Trivy scan
+# surface.
+#
+# go.mod declares go 1.24 (3.6.x) / 1.25 (3.7.x); we build with go-1.26 (newest,
+# clears stdlib CVE advisories) and GOTOOLCHAIN=local so go.mod's directive does
+# not trigger a toolchain download. GOFLAGS=-mod=mod lets the module graph
+# resolve patched deps for the 0-CVE gate.
+package:
+  name: quench-argo-workflows
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Argo Workflows (workflow-controller + argo CLI/server), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - bash
+      - git                # yarn resolves a few deps from git refs
+      - ca-certificates-bundle
+      - go-1.26
+      # UI toolchain: the React UI is built with yarn (classic) + webpack.
+      # package.json requires node >=20; nodejs-24 satisfies it. Build-only.
+      - nodejs-24
+      - yarn
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/argoproj/argo-workflows/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Build the React UI from source (yarn + webpack)
+    runs: |
+      set -eu
+      # Writable caches/HOME for yarn inside the sandbox.
+      export HOME="$(mktemp -d)"
+      export YARN_CACHE_FOLDER="$(mktemp -d)"
+      # Mirror upstream's STATIC_FILES=true path (Makefile ui/dist/app/index.html):
+      #   yarn --cwd ui install  (frozen lockfile per ui/.yarnrc)
+      #   yarn --cwd ui build    (NODE_ENV=production webpack --mode production)
+      yarn --cwd ui install --frozen-lockfile --non-interactive
+      yarn --cwd ui build
+      # ui/embed.go embeds dist/app; assert webpack produced the UI entrypoint.
+      test -f ui/dist/app/index.html
+
+  - name: Build the argo-workflows binaries (static, CGO off)
+    runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's directive
+      export GO111MODULE=on
+      # Match upstream Makefile LDFLAGS so `argo version` reports the real release.
+      # No git metadata in the tarball; stamp version + clean tree + tag.
+      VERPKG="github.com/argoproj/argo-workflows/v3"
+      BUILD_DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+      LDFLAGS="-s -w \
+        -X ${VERPKG}.version=v${{package.version}} \
+        -X ${VERPKG}.buildDate=${BUILD_DATE} \
+        -X ${VERPKG}.gitTag=v${{package.version}} \
+        -X ${VERPKG}.gitTreeState=clean"
+      go build -trimpath -ldflags "${LDFLAGS}" \
+        -o "${{targets.destdir}}/usr/bin/workflow-controller" ./cmd/workflow-controller
+      go build -trimpath -ldflags "${LDFLAGS}" \
+        -o "${{targets.destdir}}/usr/bin/argo" ./cmd/argo

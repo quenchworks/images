@@ -1,0 +1,123 @@
+# Builds Woodpecker CI (woodpecker-ci/woodpecker) from source onto Wolfi. Ships
+# three binaries: woodpecker-server, woodpecker-agent, woodpecker-cli. Output is a
+# signed APK in Quenchworks' own repo. No upstream distro binaries. Image-only
+# (a CI engine, no chart).
+#
+# Woodpecker is a Go backend with a Vite/Vue 3 web UI that the SERVER embeds via
+# go:embed (`//go:embed all:dist/*` in web/web.go). The source tag does NOT ship
+# web/dist -- the UI must be built first. So we reproduce upstream's own asset
+# pipeline (Makefile `build-ui`): pnpm install --frozen-lockfile + pnpm build in
+# web/, which emits web/dist/** that the go build then embeds. `pnpm build` runs
+# `vite build --base=/BASE_PATH`; that /BASE_PATH placeholder is REQUIRED -- the
+# server rewrites it at serve time for sub-path deployments -- so we run the real
+# `pnpm build`, not a bare `vite build`. Node/pnpm live ONLY in the build sandbox;
+# the runtime image carries no JS toolchain, so Node never enters the Trivy scan.
+#
+# CGO: the SERVER is built with CGO_ENABLED=1. Woodpecker's default database is
+# SQLite via mattn/go-sqlite3, whose driver is registered only under the `cgo`
+# build tag (server/store/datastore/init_cgo.go); a CGO_ENABLED=0 server drops
+# SQLite entirely (init.go keeps only mysql+postgres). gcc comes from build-base;
+# the server is glibc-linked (runtime deps glibc + libgcc, mirroring apps/dex).
+# The AGENT and CLI need no cgo, so they are built CGO_ENABLED=0 (fully static).
+#
+# go.mod declares go 1.26.0; we build with go-1.26 (newest, clears stdlib CVE
+# advisories) and GOTOOLCHAIN=local so the go.mod directive triggers no toolchain
+# download. GOFLAGS=-mod=mod lets the module graph resolve any patched deps.
+# The generated openapi package (cmd/server/openapi/docs.go) and grpc proto stubs
+# already ship in the tag, so no `go generate`/swag/protoc is needed.
+package:
+  name: quench-woodpecker
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Woodpecker CI (server + agent + cli), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      # The server is a CGO (glibc-linked) binary; agent/cli are static.
+      - glibc
+      - libgcc
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - bash
+      - ca-certificates-bundle
+      - git
+      - go-1.26
+      # UI toolchain: web/ is a Vite (Vue 3) app. package.json requires node >=20
+      # and pnpm@11; pnpm is installed locally via npm below. Build-sandbox only.
+      - nodejs-24
+      - npm
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/woodpecker-ci/woodpecker/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Build the web UI from source (pnpm + vite)
+    runs: |
+      set -eu
+      # Writable caches/HOME for npm + pnpm inside the sandbox.
+      export npm_config_cache="$(mktemp -d)"
+      export HOME="$(mktemp -d)"
+      # Install pnpm@11 (required by web/package.json packageManager) into a private
+      # prefix on PATH -- avoids writing to the global node prefix.
+      export PNPM_PREFIX="$(mktemp -d)"
+      npm install -g --prefix "$PNPM_PREFIX" pnpm@11
+      export PATH="$PNPM_PREFIX/bin:${PATH}"
+      pnpm --version
+      (
+        cd web
+        pnpm install --frozen-lockfile
+        # `pnpm build` == `vite build --base=/BASE_PATH` (server rewrites BASE_PATH
+        # at serve time). Emits web/dist, which web/web.go embeds.
+        pnpm build
+      )
+      # web/web.go embeds dist/*; assert vite produced the UI entrypoint.
+      test -f web/dist/index.html
+
+  - name: Build woodpecker-server (CGO on for SQLite), agent + cli (static)
+    runs: |
+      set -eu
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's 1.26.0
+      export GO111MODULE=on
+      VERPKG="go.woodpecker-ci.org/woodpecker/v3/version"
+      LDFLAGS="-s -w -X ${VERPKG}.Version=${{package.version}}"
+      install -d "${{targets.destdir}}/usr/bin"
+
+      # Server: CGO on so the mattn/go-sqlite3 driver compiles in (default DB).
+      CGO_ENABLED=1 go build -trimpath -ldflags "${LDFLAGS}" \
+        -o "${{targets.destdir}}/usr/bin/woodpecker-server" \
+        go.woodpecker-ci.org/woodpecker/v3/cmd/server
+
+      # Agent + CLI: no cgo, fully static.
+      CGO_ENABLED=0 go build -trimpath -ldflags "${LDFLAGS}" \
+        -o "${{targets.destdir}}/usr/bin/woodpecker-agent" \
+        go.woodpecker-ci.org/woodpecker/v3/cmd/agent
+      CGO_ENABLED=0 go build -trimpath -ldflags "${LDFLAGS}" \
+        -o "${{targets.destdir}}/usr/bin/woodpecker-cli" \
+        go.woodpecker-ci.org/woodpecker/v3/cmd/cli
+
+      # license marker for provenance
+      install -d "${{targets.destdir}}/usr/share/doc/woodpecker"
+      cp LICENSE "${{targets.destdir}}/usr/share/doc/woodpecker/" 2>/dev/null || true
+
+test:
+  pipeline:
+    - runs: |
+        woodpecker-server --version
+        woodpecker-agent --version
+        woodpecker-cli --version
+        test -x /usr/bin/woodpecker-server
+        test -x /usr/bin/woodpecker-agent
+        test -x /usr/bin/woodpecker-cli

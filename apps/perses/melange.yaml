@@ -1,0 +1,135 @@
+# Builds Perses (perses/perses) from source onto Wolfi. Perses is a CNCF
+# dashboards / observability visualization tool: a Go backend that go:embeds a
+# React UI and ships the default panel/datasource plugin archives. We reproduce
+# upstream's own release pipeline (see Makefile: build-ui + assets-compress +
+# install-default-plugins + build-api/build-cli):
+#
+#   1. UI:     cd ui && npm install && npm run build (turbo -> rspack) -> ui/app/dist
+#   2. embed:  scripts/compress_assets.sh gzips ui/app/dist/** and writes ui/embed.go
+#              (from embed.go.tmpl) with the //go:embed directives, so the Go
+#              binary embeds the compiled UI.
+#   3. plugins: `go run ./scripts/plugin/install_plugin.go` downloads the default
+#              plugin archives (perses/perses-plugins releases) into plugins-archive/.
+#              Perses extracts these into its plugin folder on first start.
+#   4. build:  go build ./cmd/perses (server) and ./cmd/percli (CLI).
+#
+# Node/npm live ONLY in the build sandbox; the runtime image is a static Go
+# binary (CGO off) with the UI baked in, so no JS toolchain enters the Trivy
+# scan surface. The plugin archives are shipped as opaque .tar.gz (not scanned
+# for language deps). `go generate ./internal/api` is a no-op on a release
+# tarball (its templates only emit files that don't already exist, and the
+# generated endpoints are checked in), so it is skipped.
+#
+# go.mod declares go 1.25.x; we build with go-1.26 (newest, clears stdlib CVE
+# advisories) and GOTOOLCHAIN=local so the go.mod directive does not trigger a
+# toolchain download. GOFLAGS=-mod=mod lets the module graph resolve patched deps.
+# Version is stamped via -X on github.com/prometheus/common/version.* (the same
+# ldflags package upstream's Makefile uses), so `perses version` reports the real
+# release.
+package:
+  name: quench-perses
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Perses (CNCF dashboards / observability visualization), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      # provides /etc/mime.types so the embedded UI's static assets are served
+      # with correct content types (upstream Dockerfile copies this in too).
+      - mailcap
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - bash
+      - ca-certificates-bundle
+      - go-1.26
+      # UI toolchain: the React monorepo builds with npm workspaces + turbo +
+      # rspack. ui/.nvmrc pins node 22; npm@10 ships with it.
+      - nodejs-22
+      - npm
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/perses/perses/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Build the React UI from source (npm + turbo + rspack)
+    runs: |
+      set -eu
+      # Writable caches/HOME for npm inside the sandbox.
+      export npm_config_cache="$(mktemp -d)"
+      export HOME="$(mktemp -d)"
+      (
+        cd ui
+        npm install --no-audit --no-fund
+        npm run build
+      )
+      # scripts/compress_assets.sh (cd ui) gzips app/dist/** and regenerates
+      # ui/embed.go from embed.go.tmpl with the //go:embed directives.
+      bash scripts/compress_assets.sh
+      # assert the UI was actually produced and embedded.
+      test -f ui/app/dist/index.html.gz
+
+  - name: Download the default plugin archives
+    runs: |
+      set -eu
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local
+      export HOME="$(mktemp -d)"
+      go run ./scripts/plugin/install_plugin.go
+      # sanity: at least the core Prometheus plugin archive must be present.
+      ls plugins-archive/Prometheus-*.tar.gz >/dev/null
+
+  - name: Build the perses server and percli (static, CGO off)
+    runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local
+      export GO111MODULE=on
+      # Minimal safe bumps for the transitive CVEs the comprehensive Trivy gate
+      # flags (same major/minor API lines, resolved within the module graph via
+      # GOFLAGS=-mod=mod -- not forks/forces):
+      #   golang.org/x/crypto  0.48.0 -> 0.52.0   (multiple, incl. ssh DoS)
+      #   golang.org/x/net     0.49.0 -> 0.55.0   (html XSS / http2 DoS / idna)
+      #   google.golang.org/grpc 1.75 -> 1.79.3   (CVE-2026-33186 authz bypass, CRITICAL)
+      #   github.com/jackc/pgx/v5 5.8.0 -> 5.9.2  (CVE-2026-33815/33816 mem-safety CRITICAL + SQLi)
+      #   github.com/go-jose/go-jose/v4 -> 4.1.4  (CVE-2026-34986 DoS)
+      #   filippo.io/edwards25519 -> 1.1.1        (CVE-2026-26958)
+      #   go.opentelemetry.io/otel{,/sdk,/trace,/metric} 1.40 -> 1.43.0 (otel CVEs)
+      go get \
+        golang.org/x/crypto@v0.52.0 \
+        golang.org/x/net@v0.55.0 \
+        google.golang.org/grpc@v1.79.3 \
+        github.com/jackc/pgx/v5@v5.9.2 \
+        github.com/go-jose/go-jose/v4@v4.1.4 \
+        filippo.io/edwards25519@v1.1.1 \
+        go.opentelemetry.io/otel@v1.43.0 \
+        go.opentelemetry.io/otel/sdk@v1.43.0 \
+        go.opentelemetry.io/otel/trace@v1.43.0 \
+        go.opentelemetry.io/otel/metric@v1.43.0
+      go mod tidy
+      VERPKG="github.com/prometheus/common/version"
+      DATE="$(date -u +%Y-%m-%d)"
+      LDFLAGS="-s -w -X ${VERPKG}.Version=${{package.version}} -X ${VERPKG}.BuildDate=${DATE}"
+      go build -trimpath -ldflags "${LDFLAGS}" -o "${{targets.destdir}}/usr/bin/perses" ./cmd/perses
+      go build -trimpath -ldflags "${LDFLAGS}" -o "${{targets.destdir}}/usr/bin/percli" ./cmd/percli
+
+  - name: Install runtime config and plugin archives
+    runs: |
+      set -eu
+      install -d "${{targets.destdir}}/etc/perses/plugins-archive"
+      cp plugins-archive/*.tar.gz "${{targets.destdir}}/etc/perses/plugins-archive/"
+      # Minimal filesystem-backend config: JSON database under the /perses data
+      # volume (matches upstream docs/examples/config.docker.yaml).
+      install -Dm0644 docs/examples/config.docker.yaml "${{targets.destdir}}/etc/perses/config.yaml"
