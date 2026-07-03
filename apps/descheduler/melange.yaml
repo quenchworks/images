@@ -1,0 +1,77 @@
+# Builds the Kubernetes descheduler (kubernetes-sigs/descheduler) from source
+# onto Wolfi. Image-only (no chart). Single static Go binary, CGO disabled
+# (matches upstream Makefile: CGO_ENABLED=0 go build ... ./cmd/descheduler):
+#   * descheduler  (./cmd/descheduler) -- the descheduler control loop / CLI
+# Output is a signed APK in Quenchworks' own repo. No upstream distro binaries.
+#
+# go.mod declares `go 1.26.0` (with `godebug default=go1.26`); we build with the
+# matching go-1.26 toolchain and GOTOOLCHAIN=local so go.mod's directive does not
+# trigger a toolchain download. GOFLAGS=-mod=mod lets the module graph resolve
+# patched deps for the 0-CVE gate.
+#
+# Version is stamped exactly like upstream (Makefile LDFLAGS), via -X on the
+# k8s component-base-style version package sigs.k8s.io/descheduler/pkg/version,
+# so `descheduler version` reports the real release instead of an empty build.
+package:
+  name: quench-descheduler
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Kubernetes descheduler, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go-1.26
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/kubernetes-sigs/descheduler/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Bump vulnerable transitive deps to their fixed releases (0-CVE gate)
+    runs: |
+      set -eu
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local
+      export GO111MODULE=on
+      # Upstream v0.36.0 pins golang.org/x/crypto v0.49.0 and golang.org/x/net
+      # v0.52.0 (both indirect), which carry fixable CVEs (x/crypto/ssh advisories
+      # + x/net/html + x/net/idna XSS/DoS). Bump to the fixed releases; a patch of
+      # indirect utility libs, no descheduler API change. `go mod tidy` reconciles
+      # the module graph so the build stays reproducible.
+      go get golang.org/x/crypto@v0.53.0
+      go get golang.org/x/net@v0.56.0
+      go mod tidy
+
+  - name: Build the descheduler binary (static, CGO off)
+    runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's directive
+      export GO111MODULE=on
+      # Match upstream Makefile LDFLAGS (LDFLAG_LOCATION=sigs.k8s.io/descheduler/pkg/version)
+      # so `descheduler version` reports the real release. No git metadata in the
+      # tarball; stamp version + build date + clean-tree markers.
+      VERPKG="sigs.k8s.io/descheduler/pkg/version"
+      BUILD_DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+      LDFLAGS="-s -w \
+        -X ${VERPKG}.version=v${{package.version}} \
+        -X ${VERPKG}.buildDate=${BUILD_DATE} \
+        -X ${VERPKG}.gitbranch=HEAD \
+        -X ${VERPKG}.gitsha1=v${{package.version}}"
+      go build -trimpath -ldflags "${LDFLAGS}" \
+        -o "${{targets.destdir}}/usr/bin/descheduler" ./cmd/descheduler

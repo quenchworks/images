@@ -1,0 +1,41 @@
+# Assembles the descheduler runtime image. Minimal, nonroot, multi-arch, SBOM by
+# apko. The descheduler is a control-loop / CLI: the entrypoint is the binary, so
+# `docker run ...descheduler <args>` works (e.g. `version`, `--policy-config-file`,
+# `--kubeconfig`). It only reads config/kubeconfig and talks to the apiserver over
+# TLS (ca-certificates-bundle), never writing to the filesystem, so it runs as the
+# nonroot user 1001 under a read-only root filesystem with no capabilities.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-descheduler@local
+
+accounts:
+  groups:
+    - groupname: descheduler
+      gid: 1001
+  users:
+    - username: descheduler
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/descheduler
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-descheduler"
+  org.opencontainers.image.licenses: "Apache-2.0"

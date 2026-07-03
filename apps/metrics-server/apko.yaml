@@ -1,0 +1,42 @@
+# Assembles the metrics-server runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# metrics-server is a long-running aggregated API server: the entrypoint is the binary, so
+# `docker run ...metrics-server <flags>` works (and `--version` reports the build).
+# It serves HTTPS; run with --secure-port=4443 so the nonroot user (uid 1001) can bind the
+# unprivileged port with no added capabilities and a read-only root filesystem (it needs no
+# writable paths at runtime). ca-certificates-bundle is included so it can reach the
+# kube-apiserver and kubelets over TLS. The chart supplies TLS/auth flags and probes.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-metrics-server@local
+
+accounts:
+  groups:
+    - groupname: metrics-server
+      gid: 1001
+  users:
+    - username: metrics-server
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/metrics-server
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-metrics-server"
+  org.opencontainers.image.licenses: "Apache-2.0"

@@ -1,0 +1,129 @@
+# Builds Coroot (coroot/coroot) from source onto Wolfi. Output is a signed APK in
+# Quenchworks' own repo. No upstream distro binaries. Image-only (an observability
+# / APM server, no chart).
+#
+# Coroot is a Go backend that go:embeds its Vue web UI (`//go:embed static` in
+# main.go). The source tree gitignores /static (the UI is NOT pre-built in the
+# tag), so we reproduce upstream's own asset pipeline here first:
+#   frontend: npm ci + `vue-cli-service build --dest=../static`  ->  static/**
+#   go build -> main.go's `//go:embed static` picks up the compiled UI.
+# We run the build via `npm run build-prod` (the exact upstream script). Node/npm
+# live ONLY in this build sandbox; the runtime image is a Go binary with no JS
+# toolchain, so Node never enters the Trivy scan surface. vue-cli-service is
+# webpack-based; NODE_OPTIONS=--openssl-legacy-provider keeps its md4 chunk
+# hashing working on modern Node (OpenSSL 3).
+#
+# CGO is REQUIRED: coroot imports github.com/DataDog/golz4 (a cgo wrapper around
+# liblz4, `#cgo pkg-config: liblz4`) in cache/chunk, so we build with
+# CGO_ENABLED=1 and link dynamically against Wolfi's lz4 + glibc. A fully-static
+# cgo/glibc binary is deliberately avoided: it would disable getaddrinfo and break
+# hostname resolution, and coroot dials Prometheus/ClickHouse by name. pkgconf +
+# lz4-dev satisfy the cgo pkg-config lookup at build time; the runtime image pulls
+# the lz4 shared library (auto-detected by melange, and pinned in runtime deps).
+#
+# go.mod declares go 1.25.5; we build with go-1.26 (newest, clears stdlib CVE
+# advisories) and GOTOOLCHAIN=local so go.mod's directive does not trigger a
+# toolchain download. GOFLAGS=-mod=mod lets the module graph resolve patched deps.
+package:
+  name: quench-coroot
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Coroot (observability / APM), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - lz4
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - bash
+      - ca-certificates-bundle
+      - go-1.26
+      - pkgconf
+      - lz4-dev
+      # UI toolchain: front/ is built with vue-cli-service (webpack). Node/npm
+      # are build-sandbox only and never reach the runtime image.
+      - nodejs-20
+      - npm
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/coroot/coroot/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Build the web UI from source (npm + vue-cli-service)
+    runs: |
+      set -eu
+      # Writable caches/HOME for npm inside the sandbox.
+      export npm_config_cache="$(mktemp -d)"
+      export HOME="$(mktemp -d)"
+      # vue-cli-service (webpack) uses md4 for chunk hashing; enable the OpenSSL 3
+      # legacy provider so it works on modern Node.
+      export NODE_OPTIONS=--openssl-legacy-provider
+      (
+        cd front
+        npm ci
+        # Upstream's exact production build; --dest=../static writes to the repo
+        # root's static/ dir, which main.go embeds via //go:embed static.
+        npm run build-prod
+      )
+      # //go:embed static requires the dir to exist and be non-empty at build time.
+      test -f static/index.html
+
+  - name: Build the coroot binary (CGO on, dynamic link to lz4 + glibc)
+    runs: |
+      set -eu
+      export CGO_ENABLED=1
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's 1.25.5
+      export GO111MODULE=on
+      # --- safe CVE bumps (verified to still compile; same minor/API) ----------
+      # These clear the fixable advisories the comprehensive Trivy gate flags on
+      # the pinned dep graph, including the CRITICAL grpc authz bypass:
+      #   grpc     v1.67.1 -> v1.79.3  CVE-2026-33186 (CRITICAL, HTTP/2 authz bypass)
+      #   x/crypto v0.36.0 -> v0.52.0  CVE-2026-39831/39833/39834/46598 (ssh) + more
+      #   x/net    v0.38.0 -> v0.55.0  CVE-2026-25680/25681/27136/33814/39821/42502/42506
+      #   otel     v1.31.x pulled to v1.39.0 by the above, which carries
+      #            CVE-2026-29181 (HIGH); bump to v1.41.0 to keep the set clean
+      #   jsonparser v1.1.1 -> v1.1.2  CVE (HIGH)
+      #   slack-go v0.11.3 -> v0.23.1  CVE (MEDIUM)
+      go get golang.org/x/crypto@v0.52.0
+      go get golang.org/x/net@v0.55.0
+      go get google.golang.org/grpc@v1.79.3
+      go get go.opentelemetry.io/otel@v1.41.0
+      go get go.opentelemetry.io/otel/metric@v1.41.0
+      go get go.opentelemetry.io/otel/trace@v1.41.0
+      go get github.com/buger/jsonparser@v1.1.2
+      go get github.com/slack-go/slack@v0.23.1
+      go mod tidy
+      # --- KNOWN-BLOCKED, do NOT force ------------------------------------------
+      # After the safe bumps above the gate still fails on two upstream pins that
+      # CANNOT be advanced without an API-breaking source port (a fork), so this
+      # image is BLOCKED and must not be published:
+      #   github.com/prometheus/prometheus v0.300.0
+      #     CVE-2026-42151 (HIGH), CVE-2026-42154 (HIGH), CVE-2026-44903 (MEDIUM),
+      #     CVE-2026-40179 (MEDIUM) -- all fixed only in >=0.311.3. Bumping there
+      #     breaks coroot's prom/ package: labels.Labels became a struct (was a
+      #     slice), the promql parser became an interface (ParseMetricSelector /
+      #     ParseExpr / ParseMetricSelectors are no longer package funcs),
+      #     chunks.Sample gained ST(), and storage.NewMergeSeriesSet changed
+      #     signature. Adapting is a multi-file port of coroot, i.e. a fork.
+      #   github.com/ClickHouse/ch-go v0.62.0
+      #     CVE-2025-1386 (MEDIUM) -- fixed in 0.65.0, whose compress API is
+      #     incompatible with coroot's pinned clickhouse-go/v2 v2.8.3; the
+      #     matching clickhouse-go is v2.47.x (needs ch-go 0.73), a ~39-minor jump
+      #     that breaks coroot's clickhouse/ driver usage. Also a fork.
+      # Mirror upstream ldflags so coroot reports the real release at startup.
+      go build -trimpath \
+        -ldflags "-s -w -X main.version=${{package.version}}" \
+        -o "${{targets.destdir}}/usr/bin/coroot" .

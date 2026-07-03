@@ -1,0 +1,41 @@
+# Assembles the KEDA runtime image. Minimal, nonroot (uid 1001), multi-arch,
+# read-only-rootfs friendly (no startup writes), SBOM by apko. Ships both
+# first-party binaries on PATH: the operator (/usr/bin/keda, the default
+# entrypoint) and the metrics adapter (/usr/bin/keda-adapter). A chart selects
+# the adapter by overriding the command. ca-certificates-bundle is included so
+# scalers and the k8s API can be reached over TLS.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-keda@local
+
+accounts:
+  groups:
+    - groupname: keda
+      gid: 1001
+  users:
+    - username: keda
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/keda
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-keda"
+  org.opencontainers.image.licenses: "Apache-2.0"

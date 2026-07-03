@@ -1,0 +1,67 @@
+# Builds KEDA (Kubernetes event-driven autoscaler) from source onto Wolfi. Ships
+# BOTH first-party binaries: the operator (./cmd/operator -> keda) and the
+# metrics adapter (./cmd/adapter -> keda-adapter). Static builds, CGO disabled.
+# The release tarball vendors all modules, so the build runs `-mod=vendor` with
+# no network. go.mod declares go 1.26.x; we use the Wolfi go-1.26 toolchain with
+# GOTOOLCHAIN=local so no toolchain is fetched. The version is stamped via the
+# upstream ldflags (version.Version / version.GitCommit, per the Makefile
+# GO_LDFLAGS) so the operator logs the real release at startup. Output is a
+# signed APK in Quenchworks' own repo. No upstream distro binaries. Image-only.
+package:
+  name: quench-keda
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened KEDA (operator + metrics adapter), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      # go.mod declares go 1.26.x; use the newest go-1.26 toolchain (latest
+      # stdlib CVE fixes) with GOTOOLCHAIN=local so the directive triggers no
+      # toolchain download.
+      - go-1.26
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/kedacore/keda/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's directive
+      export GO111MODULE=on
+      export GOFLAGS=-mod=mod       # build off go.mod (see the CVE bump below)
+
+      # --- 0-CVE bump: github.com/prometheus/prometheus ---------------------
+      # KEDA v2.20.1 pins prometheus to v0.304.2 (via a `replace` directive),
+      # which carries fixable HIGH/MEDIUM CVEs (CVE-2026-42151, -42154, -40179,
+      # -44903). v0.311.3 fixes all four. Bump the require + the replace pin, and
+      # adapt the one call site that hit the renamed promql parser API
+      # (parser.ParseMetricSelector became a Parser-interface method).
+      sed -i 's#github.com/prometheus/prometheus => github.com/prometheus/prometheus v0.304.2#github.com/prometheus/prometheus => github.com/prometheus/prometheus v0.311.3#' go.mod
+      sed -i 's#matchers, err := parser.ParseMetricSelector(valueLocation)#matchers, err := parser.NewParser(parser.Options{}).ParseMetricSelector(valueLocation)#' pkg/scalers/metrics_api_scaler.go
+      go get github.com/prometheus/prometheus@v0.311.3
+      go mod tidy
+
+      VERPKG="github.com/kedacore/keda/v2/version"
+      LDFLAGS="-s -w \
+        -X=${VERPKG}.Version=${{package.version}} \
+        -X=${VERPKG}.GitCommit=v${{package.version}}"
+      # operator -> keda ; metrics adapter -> keda-adapter
+      go build -trimpath -ldflags "${LDFLAGS}" \
+        -o "${{targets.destdir}}/usr/bin/keda" ./cmd/operator
+      go build -trimpath -ldflags "${LDFLAGS}" \
+        -o "${{targets.destdir}}/usr/bin/keda-adapter" ./cmd/adapter
