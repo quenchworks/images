@@ -1,0 +1,62 @@
+# Assembles the Quickwit runtime image (search engine for logs & traces).
+# Minimal, nonroot, multi-arch, read-only-rootfs friendly, SBOM by apko.
+#
+# Quickwit serves the REST API (Elasticsearch-compatible) + bundled admin UI on :7280
+# and gRPC on :7281. The thin entrypoint ensures the writable data dir exists
+# (QW_DATA_DIR, default /quickwit/qwdata) and defaults to the `run` subcommand, then
+# execs quickwit. QW_LISTEN_ADDRESS=0.0.0.0 binds all interfaces; QW_CONFIG points at
+# the shipped default config. All mutable state lives under /quickwit/qwdata (a
+# writable mount / PVC) so the image runs on a read-only rootfs.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - bash                          # the entrypoint is a shell script
+    - busybox
+    - ca-certificates-bundle
+    - quench-quickwit@local
+
+accounts:
+  groups:
+    - groupname: quickwit
+      gid: 1001
+  users:
+    - username: quickwit
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/local/bin/docker-entrypoint.sh
+
+environment:
+  QW_CONFIG: /quickwit/config/quickwit.yaml
+  QW_DATA_DIR: /quickwit/qwdata
+  QW_LISTEN_ADDRESS: 0.0.0.0
+
+work-dir: /quickwit
+
+paths:
+  # Writable data dir (REST :7280, gRPC :7281 are network ports, not paths). Owned by
+  # the nonroot quickwit user; a read-only rootfs mounts a volume/tmpfs here.
+  - path: /quickwit/qwdata
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-quickwit"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"

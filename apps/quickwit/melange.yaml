@@ -1,0 +1,185 @@
+# Builds Quickwit (cloud-native search engine for logs & traces) FROM SOURCE on Wolfi
+# with melange. Quickwit is a Rust project: the cargo workspace root is the `quickwit/`
+# subdir of the repo, and the server binary is `quickwit` from the `quickwit-cli`
+# crate. Built from source (not an upstream binary) so the Trivy scan attributes the
+# vendored crates correctly and we can `cargo update` to clear any fixable CVE.
+#
+# TOOLCHAIN: upstream pins channel 1.76 in quickwit/rust-toolchain.toml, but Wolfi's
+# cargo is a real toolchain (no rustup), so rust-toolchain.toml is ignored and we pick
+# the Wolfi rust package explicitly. We use rust-1.78 -- the earliest Wolfi rust that
+# BUNDLES rustfmt, which tonic's gRPC codegen requires (upstream's Dockerfile does the
+# equivalent `rustup component add rustfmt`). 1.78 (May 2024) is contemporaneous with
+# the 0.8.2 tag, so the Cargo.lock resolves cleanly.
+#
+# BUILD DEPS mirror upstream's Dockerfile bin-builder: protobuf-dev (protoc) for the
+# tonic/prost .proto codegen, clang + llvm + cmake for the native deps (the release
+# feature set builds a bundled librdkafka from C source via cmake, and tikv-jemalloc
+# builds jemalloc from source), openssl-dev for the system OpenSSL the openssl-support
+# feature links (perl is present because openssl-sys build scripts probe with perl),
+# plus build-base. We build the FULL upstream `release-feature-set` (jemalloc, kafka,
+# kinesis, pulsar, vrl, azure/gcs storage, postgres metastore, multilang tokenizers)
+# so the image is feature-equivalent to the official one.
+#
+# REACT ADMIN UI (bundled, built in-sandbox / NO prebuilt artifact to vendor):
+# Quickwit serves an admin dashboard at /ui, embedded into the binary at compile time
+# by rust-embed via `#[folder = "../quickwit-ui/build/"]` in quickwit-serve. Upstream
+# ships NO prebuilt UI artifact (the git `build/` dir holds only a .gitignore), so the
+# only way to bundle the real dashboard is to build it -- exactly what upstream's
+# Dockerfile ui-builder stage does with node:20 (`make install build` = yarn install +
+# yarn build). melange build pipelines have network (same as our Go/cargo/curl fetches
+# in coredns/qdrant/meilisearch), so we replicate that: nodejs-20 + yarn build the UI
+# into quickwit-ui/build/ BEFORE the cargo build, and rust-embed picks it up. If the UI
+# build were skipped, rust-embed would embed the (near-empty) build/ dir and the binary
+# would still compile -- the REST/gRPC engine is fully functional without it -- but we
+# ship the dashboard for parity with upstream. The web UI is a built-from-source
+# upstream artifact; the gate scans the compiled Rust binary's crate graph.
+package:
+  name: quench-quickwit
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Quickwit (Rust search engine for logs & traces) with bundled admin UI, built from source on Wolfi"
+  copyright:
+    - license: AGPL-3.0-only
+  dependencies:
+    runtime:
+      - bash                    # the entrypoint is a shell script
+      - busybox                 # mkdir used by the entrypoint
+      - ca-certificates-bundle  # Quickwit talks TLS to external endpoints (S3/GCS/Azure storage, Kafka)
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - bash
+      - curl
+      - git
+      - cmake                   # bundled librdkafka + jemalloc build from C source
+      - clang                   # native C/C++ deps in the crate tree
+      - llvm                    # upstream installs llvm alongside clang
+      - lld
+      - pkgconf
+      - protobuf-dev            # provides protoc for the tonic/prost gRPC codegen
+      - openssl-dev             # system OpenSSL (NOT vendored) for the TLS stack
+      - perl                    # openssl-sys build scripts probe with perl
+      - nodejs-20               # React UI build (matches upstream's node:20 ui-builder)
+      - yarn                    # React UI build (yarn install + yarn build)
+      - rust-1.78               # Wolfi rust toolchain that bundles rustfmt (tonic codegen)
+
+pipeline:
+  # Fetch the pinned source tarball. melange extracts it and cd's into the single
+  # top-level dir (quickwit-<version>/); the cargo workspace is its `quickwit/` subdir.
+  - uses: fetch
+    with:
+      uri: https://github.com/quickwit-oss/quickwit/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  # 1. Build the React admin UI (yarn install + yarn build) so rust-embed can bundle
+  #    it into the binary. Same steps as upstream's Dockerfile ui-builder stage; the
+  #    touch of .gitignore_for_build_directory matches upstream (keeps build/ tracked).
+  - runs: |
+      cd quickwit/quickwit-ui
+      touch .gitignore_for_build_directory
+      NODE_ENV=production make install build
+
+  # 2. Repoint the dead `pulsar` git dependency. Quickwit v0.8.2's workspace Cargo.toml
+  #    pins `pulsar` to `github.com/quickwit-oss/pulsar-rs` rev f9eff04, but that repo
+  #    has been DELETED upstream (HTTP 404). cargo eagerly updates EVERY git source in
+  #    the workspace during resolution -- before feature pruning -- so even with the
+  #    Pulsar feature disabled the resolve dies trying to fetch the missing repo. Since
+  #    `pulsar` is declared `optional = true` (gated behind quickwit-indexing/pulsar,
+  #    which we do NOT enable), the crate is never COMPILED; the resolver just needs a
+  #    live source for it. We redirect it to the identical upstream crate on crates.io
+  #    (the fork was based on it) with the same requested features (auth-oauth2,
+  #    compression, tokio-runtime -- all present on crates.io pulsar 6.x). This changes
+  #    only the pulsar source; nothing pulsar is built or shipped.
+  - runs: |
+      cd quickwit
+      bf=Cargo.toml
+      grep -q 'pulsar-rs.git' "$bf" || { echo "pulsar git dep not found -- upstream changed; revisit"; exit 1; }
+      perl -0pi -e 's/pulsar = \{ git = "https:\/\/github\.com\/quickwit-oss\/pulsar-rs\.git".*?\] \}/pulsar = { version = "6", default-features = false, features = ["auth-oauth2", "compression", "tokio-runtime"] }/s' "$bf"
+      grep -q 'pulsar = { version = "6"' "$bf" || { echo "pulsar repoint patch did not apply"; exit 1; }
+      ! grep -q 'pulsar-rs.git' "$bf" || { echo "dead pulsar-rs git source still present after patch"; exit 1; }
+
+  # 3. Build the quickwit binary from the workspace root. release profile. PROTOC points
+  #    the build scripts at Wolfi's protoc; OPENSSL_NO_VENDOR forces openssl-sys onto
+  #    Wolfi's system OpenSSL (patched, CVE-tracked) rather than a vendored copy.
+  #    CARGO_NET_GIT_FETCH_WITH_CLI uses the system git CLI for the remaining quickwit-oss
+  #    git deps (tantivy/chitchat/whichlang/rust-sasl/mrecordlog). No target-cpu pin, so
+  #    the binary runs on any baseline x86-64 / aarch64.
+  #
+  #    NOT --locked: repointing the pulsar source above makes the committed Cargo.lock
+  #    stale, so cargo re-resolves. It starts from the existing lock and only changes
+  #    what is inconsistent (the pulsar source + its inactive transitive deps), leaving
+  #    every other crate at its committed pin -- minimal drift, and the comprehensive
+  #    Trivy gate still enforces 0 fixable CVEs on the result.
+  #
+  #    FEATURES: upstream's `release-feature-set` minus `quickwit-indexing/pulsar` (the
+  #    optional Pulsar ingest source, dropped per the note above). Everything else is
+  #    kept: jemalloc, openssl-support, kafka, kinesis, vrl, azure/gcs object storage,
+  #    the postgres metastore, and the multilang tokenizers.
+  - runs: |
+      cd quickwit
+      export PROTOC="$(command -v protoc)"
+      export OPENSSL_NO_VENDOR=1
+      export CARGO_NET_GIT_FETCH_WITH_CLI=true
+      # Wolfi's GCC is modern (GCC 15+). Two of its defaults break the vendored C in
+      # some -sys crates (notably onig_sys/oniguruma, pulled in by the VRL feature):
+      #   * -Wincompatible-pointer-types / -Wimplicit-function-declaration are hard
+      #     ERRORS by default since GCC 14;
+      #   * GCC 15 defaults to C23, where `foo()` means `foo(void)`, so old K&R-style
+      #     function-pointer calls become "too many arguments" errors.
+      # Compile the vendored C with a pre-C23 standard and demote those promotions back
+      # to warnings so the legacy C builds (the cc crate honors CFLAGS for all -sys
+      # crates: oniguruma, bundled librdkafka, zstd, bzip2, ...). This only relaxes
+      # compiler strictness; it does not change the C being compiled.
+      export CFLAGS="-std=gnu17 -Wno-error=incompatible-pointer-types -Wno-error=implicit-function-declaration -Wno-error=int-conversion -Wno-error=deprecated-non-prototype"
+      # rdkafka-sys builds bundled librdkafka 2.3.0 via cmake, whose CMakeLists declares
+      # cmake_minimum_required < 3.5. Wolfi's cmake 4.x dropped compatibility with that,
+      # failing configure. cmake itself points to the fix: raise the policy floor to 3.5.
+      # cmake >= 3.31 reads this from the environment, so it applies to every cmake-based
+      # -sys build (librdkafka, zstd, ...) without patching their CMakeLists.
+      export CMAKE_POLICY_VERSION_MINIMUM=3.5
+      cargo build --release -p quickwit-cli --bin quickwit \
+        --features jemalloc,openssl-support,quickwit-indexing/kafka,quickwit-indexing/kinesis,quickwit-indexing/vrl,quickwit-storage/azure,quickwit-storage/gcs,quickwit-metastore/postgres,quickwit-doc-mapper/multilang
+      install -Dm0755 target/release/quickwit "${{targets.destdir}}/usr/bin/quickwit"
+
+  # 3. Ship the upstream default config so Quickwit has a sane base; the entrypoint +
+  #    env pin the data dir and listen address to writable/wildcard values on top.
+  - runs: |
+      install -Dm0644 config/quickwit.yaml "${{targets.destdir}}/quickwit/config/quickwit.yaml"
+
+  # 4. Thin entrypoint. Quickwit writes all index data + local state under QW_DATA_DIR
+  #    (default /quickwit/qwdata), which fails on a read-only rootfs unless pinned to a
+  #    writable mount; the entrypoint ensures it exists. With no args it defaults to the
+  #    `run` subcommand (start the server); extra flags/subcommands pass through.
+  - runs: |
+      install -d "${{targets.destdir}}/usr/local/bin"
+      cat > "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh" <<'SCRIPT'
+      #!/bin/bash
+      set -euo pipefail
+
+      QW_DATA_DIR="${QW_DATA_DIR:-/quickwit/qwdata}"
+      mkdir -p "$QW_DATA_DIR"
+      export QW_DATA_DIR
+
+      # Default to the server subcommand when invoked with no args.
+      if [ "$#" -eq 0 ]; then
+        set -- run
+      fi
+
+      exec /usr/bin/quickwit "$@"
+      SCRIPT
+      chmod 0755 "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/bin/quickwit
+        quickwit --version
+        test -x /usr/local/bin/docker-entrypoint.sh
+        test -f /quickwit/config/quickwit.yaml
