@@ -46,8 +46,18 @@ pipeline:
       expected-sha256: __SHA256__
   - runs: |
       export CGO_ENABLED=0
-      export GOFLAGS=-mod=vendor
+      # Drop -mod=vendor: we need to bump a transitive dep past the vendored
+      # tree, so build in module mode and let go resolve the module graph.
+      export GOFLAGS=-mod=mod
+      export GO111MODULE=on
       export GOTOOLCHAIN=local
+      # 0-CVE gate bump (minor, same major, no API break):
+      #   github.com/apache/thrift v0.22.0 -> v0.23.0
+      #     (CVE-2026-41602: integer overflow in TFramedTransport Go impl)
+      # thrift is an indirect dep (jaeger/otel export path); go mod tidy keeps
+      # it in the graph at the bumped version.
+      go get github.com/apache/thrift@v0.23.0
+      go mod tidy
       # Stamp version exactly like upstream's Makefile (VPREFIX = the stable
       # Loki build package, which forwards into prometheus/common/version) so
       # `loki -version` reports the pinned release.
