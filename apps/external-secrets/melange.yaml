@@ -37,6 +37,16 @@ pipeline:
   - runs: |
       export CGO_ENABLED=0
       export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's directive
+      export GO111MODULE=on
+      # 0-CVE gate: minimal same-major bumps of indirect modules pulled in via the
+      # replaced provider/generator submodules.
+      #   go-ntlmssp   v0.0.0-2022... -> v0.1.1   clears CVE-2026-32952 (NTLM DoS).
+      #   mongo-driver v1.17.6        -> v1.17.7  clears CVE-2026-2303.
+      # Both are indirect utility libs; `go mod tidy` reconciles the workspace graph.
+      go get github.com/Azure/go-ntlmssp@v0.1.1
+      go get go.mongodb.org/mongo-driver@v1.17.7
+      go mod tidy
       go build -trimpath -tags all_providers \
         -ldflags "-s -w" \
         -o "${{targets.destdir}}/usr/bin/external-secrets" .
