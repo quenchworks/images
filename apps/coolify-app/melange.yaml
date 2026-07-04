@@ -188,6 +188,22 @@ pipeline:
       composer install --no-dev --no-interaction --no-plugins --no-scripts --prefer-dist
       test -f vendor/autoload.php
 
+      # 0-CVE gate: coolify v4.1.2's composer.lock pins several packages at versions with
+      # MEDIUM CVEs. Bump them (and their deps) to the fixed releases WITHIN the SAME MAJOR
+      # allowed by composer.json -- no API break:
+      #   guzzlehttp/guzzle       7.10.3 -> >=7.12.1  (CVE-2026-55568, CVE-2026-55767)   [^7.10.0]
+      #   guzzlehttp/psr7         2.10.1 -> >=2.12.1  (CVE-2026-48998/49214/55766)       [transitive]
+      #   laravel/framework       12.60.2-> >=12.61.1 (GHSA-crmm-hgp2-wgrp)              [^12.49.0]
+      #   phpseclib/phpseclib     3.0.52 -> >=3.0.54  (GHSA-m557-wrgg-6rp4)              [^3.0.49]
+      #   symfony/http-foundation 7.4.8  -> >=7.4.13  (CVE-2026-48736)                   [transitive]
+      #   symfony/routing         7.4.12 -> >=7.4.13  (CVE-2026-48784)                   [transitive]
+      # --with-all-dependencies lets the transitive symfony/* + psr7 move to their fixes.
+      composer update --no-dev --no-interaction --no-plugins --no-scripts --prefer-dist \
+        --with-all-dependencies \
+        guzzlehttp/guzzle guzzlehttp/psr7 laravel/framework phpseclib/phpseclib \
+        symfony/http-foundation symfony/routing
+      test -f vendor/autoload.php
+
   - name: Build the Vite frontend assets (Node 24)
     runs: |
       set -eu
