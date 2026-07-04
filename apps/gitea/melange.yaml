@@ -68,14 +68,23 @@ pipeline:
       TAGS="bindata"
       LDFLAGS="-s -w -X main.Version=${{package.version}} -X 'main.Tags=${TAGS}'"
 
-      # 0-CVE gate: the upstream go.mod pins two modules with fixable advisories that
-      # the OS-layer image scan misses (the 115MB binary exceeds Trivy's per-file cap
-      # when read back from the image tar, so a gobinary scan is needed to see them).
-      # Bump them to their fixed patch releases -- drop-in, no API changes:
-      #   github.com/Azure/go-ntlmssp  v0.1.0 -> v0.1.1 (CVE-2026-32952, DoS)
+      # 0-CVE gate: the upstream go.mod pins modules with fixable advisories that the
+      # OS-layer image scan misses (the 115MB binary exceeds Trivy's per-file cap when
+      # read back from the image tar, so a gobinary scan is needed to see them). Bump
+      # them to their fixed patch/minor releases -- drop-in, no API changes:
+      #   github.com/Azure/go-ntlmssp  v0.1.0  -> v0.1.1  (CVE-2026-32952, DoS)
       #   github.com/go-git/go-git/v5  v5.19.0 -> v5.19.1 (CVE-2026-45571/45570, panic/DoS)
-      go get github.com/Azure/go-ntlmssp@v0.1.1
-      go get github.com/go-git/go-git/v5@v5.19.1
+      #   golang.org/x/crypto                  -> v0.53.0 (min required by go-mail v0.8.0)
+      #   golang.org/x/net                     -> v0.55.0
+      #   golang.org/x/image           v0.40.0 -> v0.43.0 (CVE-2026-33813/46599/46601, DoS)
+      #   google.golang.org/grpc               -> v1.79.3
+      #   github.com/go-chi/chi/v5             -> v5.2.4
+      #   github.com/wneessen/go-mail          -> latest
+      go get github.com/Azure/go-ntlmssp@v0.1.1 github.com/go-git/go-git/v5@v5.19.1 \
+        golang.org/x/crypto@v0.53.0 golang.org/x/net@v0.55.0 golang.org/x/image@v0.43.0 \
+        google.golang.org/grpc@v1.79.3 github.com/go-chi/chi/v5@v5.2.4 \
+        github.com/wneessen/go-mail@latest
+      go mod tidy
 
       install -d "${{targets.destdir}}/usr/bin"
       go build -trimpath -tags "${TAGS}" -ldflags "${LDFLAGS}" \
