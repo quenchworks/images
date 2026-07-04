@@ -31,11 +31,17 @@ pipeline:
   - runs: |
       export CGO_ENABLED=0
       export GOWORK=off          # build each module via its own go.mod
-      # repo is multi-module: server -> etcd, plus etcdctl and etcdutl
+      # repo is multi-module: server -> etcd, plus etcdctl and etcdutl.
+      # 0-CVE: bump golang.org/x/net v0.54.0 -> v0.55.0 (MINOR, same major)
+      # in every module to clear the x/net/html + x/net/idna CVE cluster
+      # (CVE-2026-25680/25681/27136/39821/42502/42506).
       for pair in server:etcd etcdctl:etcdctl etcdutl:etcdutl; do
         dir="${pair%%:*}"; bin="${pair##*:}"
-        ( cd "$dir" && go build -trimpath -ldflags "-s -w" \
-            -o "${{targets.destdir}}/usr/bin/${bin}" . )
+        ( cd "$dir" \
+            && go get golang.org/x/net@v0.55.0 \
+            && go mod tidy \
+            && go build -trimpath -ldflags "-s -w" \
+                -o "${{targets.destdir}}/usr/bin/${bin}" . )
       done
 
 test:
