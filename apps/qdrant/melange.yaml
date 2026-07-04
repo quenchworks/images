@@ -86,6 +86,19 @@ pipeline:
       install -d "${{targets.destdir}}/opt/qdrant/static"
       unzip -o dist-qdrant.zip -d webui
       cp -r webui/dist/* "${{targets.destdir}}/opt/qdrant/static/"
+      # Strip build metadata upstream leaves in dist/. The key one is
+      # qdrant-web-ui.spdx.json: an SBOM enumerating the web UI's entire build
+      # dep tree (vitest, @babel/core, @tootallnate/once, ...). Trivy ingests any
+      # SBOM it finds in the image and reports every listed component as a
+      # node-pkg CVE, yet none of that dev tooling exists at runtime -- the
+      # dashboard is served as compiled index.html + assets. Also drop any
+      # package.json/lockfiles for good measure. Removing them clears the
+      # false-positive findings without touching a single runtime asset.
+      find "${{targets.destdir}}/opt/qdrant/static" \
+        \( -name '*.spdx.json' -o -name '*.cdx.json' -o -name 'sbom*.json' \
+           -o -name 'package.json' -o -name 'package-lock.json' -o -name 'yarn.lock' \
+           -o -name 'pnpm-lock.yaml' -o -name '.npmrc' \) -type f -delete
+      find "${{targets.destdir}}/opt/qdrant/static" -name node_modules -type d -prune -exec rm -rf {} +
 
   # Ship the upstream default config (production.yaml) so Qdrant has a sane base
   # config; the entrypoint + env overrides pin storage/snapshots/static to writable
