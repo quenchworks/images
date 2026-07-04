@@ -85,18 +85,21 @@ pipeline:
       export GOTOOLCHAIN=local   # use the installed go-1.26, don't fetch go.mod's 1.23
       # Minimum fixed versions per Trivy advisories against the influxd binary.
       # Versions chosen to satisfy each advisory AND grpc 1.79.3's own transitive
-      # minimums (it pulls x/oauth2 >= 0.34.0 and x/crypto >= 0.46.0); both exceed
-      # their advisory fix versions (0.27.0 / 0.45.0), so the gate stays clean.
+      # minimums (it pulls x/oauth2 >= 0.34.0); x/crypto/x/net/go-jose/otel are
+      # pinned to their latest advisory fix versions.
       go get \
         google.golang.org/grpc@v1.79.3 \
         golang.org/x/oauth2@v0.34.0 \
-        golang.org/x/crypto@v0.46.0 \
+        golang.org/x/crypto@v0.52.0 \
+        golang.org/x/net@v0.55.0 \
+        github.com/go-jose/go-jose/v4@v4.1.4 \
         github.com/buger/jsonparser@v1.1.2 \
         github.com/aws/aws-sdk-go-v2/service/s3@v1.97.3 \
         github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream@v1.7.8 \
         github.com/eclipse/paho.mqtt.golang@v1.5.1 \
         github.com/hashicorp/go-retryablehttp@v0.7.7 \
-        go.opentelemetry.io/otel@v1.41.0
+        go.opentelemetry.io/otel@v1.43.0 \
+        go.opentelemetry.io/otel/sdk@v1.43.0
       go mod tidy
 
   - name: Build libflux (Rust, from the flux module) + influxd (cgo)
