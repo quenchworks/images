@@ -33,6 +33,10 @@ pipeline:
   - runs: |
       export CGO_ENABLED=0
       export GOFLAGS=-mod=mod
+      # 0-CVE gate: bump golang.org/x/image past the WebP/VP8 DoS CVEs
+      # (CVE-2026-33813, CVE-2026-46601). Minor bump within v0, same major.
+      go get golang.org/x/image@v0.43.0
+      go mod tidy
       go build -trimpath \
         -ldflags "-s -w -X github.com/rclone/rclone/fs.Version=v${{package.version}}" \
         -o "${{targets.destdir}}/usr/bin/rclone" .
