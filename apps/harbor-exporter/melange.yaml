@@ -66,6 +66,14 @@ pipeline:
       # those missing generated dirs; `go get` + `go build ./cmd/exporter` only
       # resolves what the exporter actually imports.)
       go get helm.sh/helm/v3@v3.20.2
+      # Comprehensive 0-CVE gate: three FIXABLE transitive deps flagged for the
+      # exporter binary (all minor/patch, API-compatible, same major -- not a
+      # fork/force). Plain `go get` (NO `go mod tidy`) to avoid walking the
+      # ungenerated swagger restapi dirs the exporter main does not import:
+      #   golang.org/x/crypto        v0.49.0 -> v0.52.0 (x/crypto/ssh* CVEs)
+      #   golang.org/x/net           v0.52.0 -> v0.55.0 (x/net html/http2/idna CVEs)
+      #   go.mongodb.org/mongo-driver v1.17.6 -> v1.17.7 (CVE-2026-2303)
+      go get golang.org/x/crypto@v0.52.0 golang.org/x/net@v0.55.0 go.mongodb.org/mongo-driver@v1.17.7
       GITCOMMIT="v${{package.version}}"
       LDFLAGS="-w -s \
         -X github.com/goharbor/harbor/src/pkg/version.GitCommit=${GITCOMMIT} \

@@ -60,6 +60,14 @@ pipeline:
       # bump the two laggards to v1.43.0 (the fixed version) to clear the gate.
       go get go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.43.0
       go get go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.43.0
+      # Comprehensive 0-CVE gate: three FIXABLE transitive deps flagged for the
+      # registryctl binary (all minor/patch, API-compatible, same major -- not a
+      # fork/force). Plain `go get` (NO `go mod tidy`) so we don't walk the
+      # ungenerated swagger restapi dirs the registryctl main does not import:
+      #   golang.org/x/crypto        v0.49.0 -> v0.52.0 (x/crypto/ssh* CVEs)
+      #   golang.org/x/net           v0.52.0 -> v0.55.0 (x/net html/http2/idna CVEs)
+      #   go.mongodb.org/mongo-driver v1.17.6 -> v1.17.7 (CVE-2026-2303)
+      go get golang.org/x/crypto@v0.52.0 golang.org/x/net@v0.55.0 go.mongodb.org/mongo-driver@v1.17.7
       GITCOMMIT="v${{package.version}}"
       LDFLAGS="-w -s \
         -X github.com/goharbor/harbor/src/pkg/version.GitCommit=${GITCOMMIT} \
