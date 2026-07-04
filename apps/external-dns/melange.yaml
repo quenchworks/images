@@ -30,9 +30,32 @@ pipeline:
     with:
       uri: https://github.com/kubernetes-sigs/external-dns/archive/refs/tags/v${{package.version}}.tar.gz
       expected-sha256: __SHA256__
-  - runs: |
+
+  - name: Bump vulnerable transitive deps to their fixed releases (0-CVE gate)
+    runs: |
+      set -eu
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local
+      export GO111MODULE=on
+      # Upstream v0.21.0 pins deps that carry fixable gobinary CVEs. All bumps are
+      # same-major MINOR/PATCH within the line the app already targets:
+      #   golang.org/x/crypto v0.49.0 -> v0.52.0  (x/crypto/ssh + ssh/agent + knownhosts advisories)
+      #   golang.org/x/net    v0.52.0 -> v0.55.0  (x/net/html XSS/RCE/DoS, idna, http2)
+      #   github.com/projectcontour/contour v1.33.3 -> v1.33.5
+      #     (CVE-2026-41246 fixed 1.33.4, CVE-2026-50149 fixed 1.33.5; used only
+      #      for its HTTPProxy CRD types, patch within the same 1.33 minor line).
+      # go mod tidy reconciles the module graph so the build stays reproducible.
+      go get golang.org/x/crypto@v0.52.0
+      go get golang.org/x/net@v0.55.0
+      go get github.com/projectcontour/contour@v1.33.5
+      go mod tidy
+
+  - name: Build the external-dns binary (static, CGO off)
+    runs: |
+      set -eu
       export CGO_ENABLED=0
       export GOFLAGS=-mod=mod
-      go build -trimpath \
+      export GOTOOLCHAIN=local
+      go build -trimpath -buildvcs=false \
         -ldflags "-s -w -X sigs.k8s.io/external-dns/pkg/apis/externaldns.Version=v${{package.version}}" \
         -o "${{targets.destdir}}/usr/bin/external-dns" .
