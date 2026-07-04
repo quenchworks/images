@@ -1,14 +1,20 @@
-# Packages Ollama onto Wolfi. Ollama is NOT built from source here: it is Go + a
-# bundled llama.cpp/GGML C++ inference engine whose CPU runner is compiled with
-# cmake (`cmake --build --preset Default`) over the full llama.cpp tree. A plain
-# `go build .` produces a working CLI/server (it boots and answers /api/version)
-# but CANNOT run inference — it looks for a `llama-server` runner the Go build does
-# not produce. Compiling that runner takes tens of CPU-minutes and OOMs/timeouts on
-# a 2-core GitHub runner. So, like clickhouse/kafka, we ship Ollama's OWN official
-# per-arch linux tarball, which bundles BOTH the `ollama` binary and the prebuilt
-# CPU GGML runner libs, then harden it on a minimal apko base and gate it 0-CVE with
-# Trivy. Clean-room-consistent: it is upstream's published artifact, not a Bitnami
-# chart, and the scan still fully applies.
+# Packages Ollama onto Wolfi with a HYBRID from-source build. Ollama is Go + a
+# bundled llama.cpp/GGML C++ inference engine. We build the Go `ollama` binary
+# FROM SOURCE (that is where every Trivy-flagged CVE lives -- buger/jsonparser,
+# golang.org/x/{crypto,image,net} and the compiled-in Go stdlib) and reuse
+# upstream's OFFICIAL prebuilt CPU GGML runner libs for actual inference.
+#
+# Why hybrid: the GGML CPU runner is compiled with cmake over the full llama.cpp
+# tree (FetchContent-pulled at build time) -- tens of CPU-minutes -- and its
+# output is C++ .so payloads that carry NO Go-module vulnerabilities. A plain
+# `go build .` produces a working CLI/server (boots, answers /api/version) but
+# CANNOT run inference: it looks for a `llama-server` runner the Go build does
+# not produce. So we compile only the Go binary (cheap, and where the CVEs are)
+# and drop upstream's prebuilt runner tree into /usr/lib/ollama, exactly where
+# the binary probes ("/lib/ollama" and relative-to-exe "../lib/ollama"). This
+# clears the comprehensive 0-CVE gate the prebuilt upstream binary failed, while
+# keeping inference intact. Clean-room-consistent: upstream's own published
+# source + runner artifact, not a Bitnami chart, and the scan still fully applies.
 package:
   name: quench-ollama
   version: __VER__
@@ -30,18 +36,58 @@ environment:
       - https://packages.wolfi.dev/os
     packages:
       - busybox
+      - build-base         # gcc/g++ for CGO (github.com/mattn/go-sqlite3)
       - curl
-      - zstd               # the official tarballs are .tar.zst
+      - git                # module fetches for go get / go mod tidy
+      - go-1.26            # go.mod requires go 1.26.0
+      - zstd               # the official runner tarballs are .tar.zst
       - ca-certificates-bundle
 
 pipeline:
-  # Ollama publishes separate amd64/arm64 linux tarballs, so fetch the one matching
-  # the build arch by uname -m (x86_64->amd64, aarch64->arm64) with the arch-matching
-  # sha256 — the wrong arch yields a non-executable / wrong-arch binary. The tarball
-  # lays out ./bin/ollama (the multi-call binary) and ./lib/ollama/* (the prebuilt
-  # CPU GGML runner libs + llama-server). We install bin/ollama to /usr/bin and the
-  # whole lib/ollama tree to /usr/lib/ollama, which is exactly where ollama looks for
-  # its runner ("/lib/ollama" and relative-to-exe "../lib/ollama" are both probed).
+  # 1) Fetch + sha256-verify the ollama SOURCE (arch-independent), then build the
+  #    Go binary from source with the flagged deps bumped. Trivy's comprehensive
+  #    gate scans the Go module graph embedded in the binary; upstream's own
+  #    prebuilt binary ships vulnerable deps + an older stdlib, so we recompile.
+  - uses: fetch
+    with:
+      uri: https://github.com/ollama/ollama/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SRC_SHA__
+  - runs: |
+      export CGO_ENABLED=1        # github.com/mattn/go-sqlite3 needs cgo
+      export GOTOOLCHAIN=local    # use the installed go-1.26, don't fetch go1.26.0
+      export GOFLAGS=-mod=mod
+      export GOBUILDVCS=false
+
+      # Comprehensive 0-CVE gate: FIXABLE Go-module deps flagged by Trivy (all
+      # minor/patch, same major, API-compatible -- no fork/force):
+      #   github.com/buger/jsonparser v1.1.1  -> v1.1.2  (CVE-2026-32285)
+      #   golang.org/x/crypto         v0.43.0 -> v0.52.0 (x/crypto/ssh* DoS/bypass)
+      #   golang.org/x/image          v0.22.0 -> v0.43.0 (tiff/webp DoS)
+      #   golang.org/x/net            v0.46.0 -> v0.55.0 (net/html + idna DoS/XSS)
+      # The Go stdlib CVEs (net/http, html/template, crypto/x509, net/textproto,
+      # os) are cleared by compiling with the go-1.26 Wolfi toolchain (latest
+      # patched stdlib) instead of upstream's older go1.26.0.
+      go get github.com/buger/jsonparser@v1.1.2 \
+             golang.org/x/crypto@v0.52.0 \
+             golang.org/x/image@v0.43.0 \
+             golang.org/x/net@v0.55.0
+      go mod tidy
+
+      # Build the ollama binary with upstream's version-stamp ldflags
+      # (scripts/env.sh): the source default is "0.0.0", so stamp the real release
+      # so `ollama --version` reports it. buildmode=pie matches upstream's Dockerfile.
+      LDFLAGS="-w -s -X=github.com/ollama/ollama/version.Version=${{package.version}} -X=github.com/ollama/ollama/server.mode=release"
+      install -d "${{targets.destdir}}/usr/bin"
+      go build -trimpath -buildmode=pie -ldflags "${LDFLAGS}" \
+        -o "${{targets.destdir}}/usr/bin/ollama" .
+
+  # 2) CPU GGML runner libs from upstream's official per-arch linux tarball.
+  #    Fetch the arch matching the build arch by uname -m (x86_64->amd64,
+  #    aarch64->arm64) with the arch-matching sha256. The tarball lays out
+  #    ./bin/ollama (ignored -- we ship our from-source binary) and ./lib/ollama/*
+  #    (the prebuilt CPU GGML runner libs + llama-server), which we install to
+  #    /usr/lib/ollama -- exactly where our binary at /usr/bin/ollama probes
+  #    ("../lib/ollama"). These are C++ .so payloads: no gobinary CVEs.
   - runs: |
       VER="${{package.version}}"
       case "$(uname -m)" in
@@ -59,9 +105,6 @@ pipeline:
       mkdir -p extracted
       zstd -d -c ollama.tar.zst | tar -x -C extracted
 
-      # the binary -> /usr/bin/ollama
-      install -Dm0755 extracted/bin/ollama "${{targets.destdir}}/usr/bin/ollama"
-
       # the bundled CPU runner libs -> /usr/lib/ollama (preserve the tree)
       install -d "${{targets.destdir}}/usr/lib/ollama"
       cp -a extracted/lib/ollama/. "${{targets.destdir}}/usr/lib/ollama/"
@@ -71,5 +114,8 @@ test:
   pipeline:
     - runs: |
         test -x /usr/bin/ollama
-        ollama --version 2>&1 | grep -i "client version is"
+        # No server running in the sandbox, so `ollama --version` prints the
+        # client line "Warning: client version is <ver>" (cmd/cmd.go). Assert it
+        # reports our stamped release, not the "0.0.0" source default.
+        ollama --version 2>&1 | grep -i "client version is __VER__"
         test -d /usr/lib/ollama
