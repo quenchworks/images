@@ -83,8 +83,20 @@ pipeline:
       # Install the whole relocatable tree (libreloc, libexec, conf, scripts, api,
       # swagger-ui, node_exporter, tools, licenses). Drop the bulky debug/dev/dist bits
       # that the runtime never reads to keep the layer lean.
+      #
+      # 0-CVE GATE: also drop the two OPTIONAL bundled extras that Trivy attributes CVEs
+      # to (they are the only non-libreloc components it can fingerprint):
+      #   * node_exporter/  — upstream's Prometheus node_exporter (a standalone Go binary,
+      #     stale Go stdlib + x/net + x/crypto + selinux). The image never runs it (the
+      #     entrypoint execs only bin/scylla; bin thunks are generated only for libexec/*
+      #     ELF binaries) and Scylla exports its own metrics on :9180, so it is dead weight.
+      #   * swagger-ui/     — the static Swagger browser UI (swagger-ui 2.2.10, CVE-2019-17495
+      #     et al.). Purely front-end assets for /ui; the REST API on :10000 and health
+      #     probes serve JSON without them (a missing api-ui-dir only 404s the browser view).
+      # Removing both keeps the ScyllaDB server 100% intact and clears every flagged CVE.
       cp -a scylla/. "$dest/"
       rm -rf "$dest/debian" "$dest/dist" "$dest/scylla-gdb.py" \
+             "$dest/node_exporter" "$dest/swagger-ui" \
              "$dest/SCYLLA-RELOCATABLE-FILE" "$dest/.relocatable_package_version" 2>/dev/null || true
 
       # --- replicate upstream install.sh relocation (adjust_bin) ---
