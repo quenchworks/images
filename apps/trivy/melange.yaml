@@ -37,6 +37,22 @@ pipeline:
       # Trivy 0.7x uses Go's experimental encoding/json/v2, which is gated behind
       # this GOEXPERIMENT (matches trivy's own goreleaser build).
       export GOEXPERIMENT=jsonv2
+      # Controlled CVE bumps -- v0.72.0's pinned deps carry FIXABLE gobinary CVEs
+      # (the workflow's gobinary scan is the hard gate). Bump only the affected
+      # modules to a fixed release (MINOR/PATCH, same major):
+      #   sigstore/timestamp-authority/v2 CVE-2026-49835 (metric OOM)   -> 2.1.0
+      #   oras.land/oras-go/v2  CVE-2026-50151/50162/48978 +            -> 2.6.1
+      #                         GHSA-vh4v-2xq2-g5cg (credential forwarding)
+      go get github.com/sigstore/timestamp-authority/v2@v2.1.0
+      go get oras.land/oras-go/v2@v2.6.1
+      # tidy over trivy's very large module graph occasionally trips a transient
+      # DNS timeout on the sandbox resolver mid-download; the module cache
+      # persists across retries, so a bounded retry loop converges.
+      for i in 1 2 3 4 5 6 7 8; do
+        go mod tidy && break
+        echo "go mod tidy attempt $i failed (transient net); retrying" >&2
+        sleep 5
+      done
       go build -trimpath \
         -ldflags "-s -w -X github.com/aquasecurity/trivy/pkg/version/app.ver=${{package.version}}" \
         -o "${{targets.destdir}}/usr/bin/trivy" ./cmd/trivy
