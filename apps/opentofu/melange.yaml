@@ -34,7 +34,21 @@ pipeline:
       expected-sha256: __SHA256__
   - runs: |
       export CGO_ENABLED=0
-      export GOFLAGS=-mod=readonly
+      export GOTOOLCHAIN=local
+      export GOFLAGS=-mod=mod
+      # 0-CVE gate: minor/patch dep bumps (same major) to clear Trivy findings
+      # in the tofu binary, then tidy. All leaf/transitive bumps -- no forks,
+      # no major bumps, no `replace`.
+      go get github.com/Azure/go-ntlmssp@v0.1.1
+      go get github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream@v1.7.8
+      go get github.com/aws/aws-sdk-go-v2/service/s3@v1.97.3
+      go get go.opentelemetry.io/otel/sdk@v1.43.0
+      go get go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.43.0
+      go get go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp@v1.43.0
+      go get go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp@v0.19.0
+      go get golang.org/x/net@v0.55.0
+      go get oras.land/oras-go/v2@v2.6.1
+      go mod tidy
       go build -trimpath \
         -ldflags "-s -w -X github.com/opentofu/opentofu/version.dev=no" \
         -o "${{targets.destdir}}/usr/bin/tofu" ./cmd/tofu
