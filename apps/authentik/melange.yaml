@@ -121,6 +121,12 @@ pipeline:
       export GOFLAGS="-buildvcs=false"
       export CGO_ENABLED=1
       export GOTOOLCHAIN=local
+      # 0-CVE GATE: upstream go.mod pins golang.org/x/net v0.52.0 (indirect), which the
+      # Trivy gobinary scan flags for 7 fixable CVEs (CVE-2026-25680/25681/27136/33814/
+      # 39821/42502/42506) — all fixed in v0.55.0. Bump the module (minor, no API break)
+      # before building so the from-source authentik-server binary links the fixed x/net.
+      go get golang.org/x/net@v0.55.0
+      go mod tidy
       go build -o /usr/bin-stage/authentik-server ./cmd/server
 
   # ---------------------------------------------------------------------------
@@ -168,8 +174,41 @@ pipeline:
       # libxml2/xmlsec). Trivy still scans the wheel contents. cryptography + python-kadmin-rs
       # + psycopg-c + gssapi still build from source against Wolfi's OpenSSL / krb5 / libpq.
       # (Python -c, not sed: the pin is a multi-line TOML array a line regex can't match.)
-      python3.14 -c "import re,pathlib; p=pathlib.Path('pyproject.toml'); p.write_text(re.sub(r'no-binary-package\s*=\s*\[[^\]]*\]','no-binary-package = []', p.read_text(), flags=re.S))"
-      grep -n "no-binary-package" pyproject.toml || true
+      # Two pyproject rewrites in one pass (Python, not sed: multi-line TOML arrays):
+      #  (1) clear the no-binary-package pin (see above);
+      #  (2) 0-CVE GATE: force fixed versions of every Trivy-flagged python-pkg.
+      #      authentik pins cryptography/pyjwt EXACTLY and locks the transitives
+      #      (aiohttp/idna/msgpack/urllib3) in uv.lock; uv keeps the locked versions on
+      #      re-resolve, so a plain rebuild would ship the vulnerable ones. `[tool.uv]
+      #      override-dependencies` wins over both the `==` pins and the lock. All are
+      #      forward patch/minor bumps within the same major (no API break):
+      #        cryptography 48.0.0 -> 48.0.1  GHSA-537c-gmf6-5ccf
+      #        pyjwt        2.11.0 -> 2.13.0  CVE-2026-32597/48522/48523/48524/48525/48526
+      #        aiohttp      3.13.5 -> 3.14.1  CVE-2026-34993/47265/50269/54273..54280
+      #        idna         3.13   -> 3.15    CVE-2026-45409
+      #        msgpack      1.1.2  -> 1.2.1   GHSA-6v7p-g79w-8964
+      #        urllib3      2.6.3  -> 2.7.0   CVE-2026-44431/44432
+      python3.14 - <<'PYFIX'
+      import re, pathlib
+      p = pathlib.Path('pyproject.toml')
+      t = p.read_text()
+      t = re.sub(r'no-binary-package\s*=\s*\[[^\]]*\]', 'no-binary-package = []', t, flags=re.S)
+      overrides = (
+          '[tool.uv]\n'
+          'override-dependencies = [\n'
+          '  "cryptography==48.0.1",\n'
+          '  "pyjwt==2.13.0",\n'
+          '  "aiohttp==3.14.1",\n'
+          '  "idna==3.15",\n'
+          '  "msgpack==1.2.1",\n'
+          '  "urllib3==2.7.0",\n'
+          ']\n'
+      )
+      t, n = re.subn(r'(?m)^\[tool\.uv\]\s*$', overrides, t, count=1)
+      assert n == 1, "did not find a [tool.uv] table to extend with override-dependencies"
+      p.write_text(t)
+      PYFIX
+      grep -n "no-binary-package\|override-dependencies\|cryptography==\|pyjwt==\|aiohttp==\|idna==\|msgpack==\|urllib3==" pyproject.toml || true
       # Clearing the pin makes uv re-resolve, so we don't pass --locked.
       uv venv --python "$UV_PYTHON" "$VENV_PATH"
       # --no-editable: authentik is a uv WORKSPACE with local path members under
@@ -223,6 +262,25 @@ pipeline:
       install -d "${dest}/ak-root"
       cp -a packages "${dest}/ak-root/packages"
       ln -sf /ak-root/packages "${dest}/packages"
+      # 0-CVE GATE + de-bloat: only the 4 PYTHON workspace members are runtime
+      # (ak-guardian, django-channels-postgres, django-dramatiq-postgres,
+      # django-postgres-cache) — and uv --no-editable already materialized them into
+      # the venv, so even these are only carried for reference. The JS/TS build-tooling
+      # packages (client-ts, *-config, logger-js, tsconfig, docusaurus-config, esbuild-
+      # plugin-live-reload) and the Go/Rust client stubs (client-go, client-rust,
+      # ak-axum, ak-common) are pure build artifacts. Their package.json files make
+      # Trivy's node-pkg analyzer flag build-only deps (e.g. @goauthentik/api@0.0.0 ->
+      # the stale goauthentik server advisory CVE-2023-39522). Drop everything that
+      # isn't a Python member, plus any node_modules and SBOM sidecars, so the runtime
+      # image ships only what it actually runs.
+      for d in "${dest}/ak-root/packages"/*/; do
+        case "$(basename "$d")" in
+          ak-guardian|django-channels-postgres|django-dramatiq-postgres|django-postgres-cache) ;;
+          *) rm -rf "$d" ;;
+        esac
+      done
+      find "${dest}/ak-root/packages" -type d -name node_modules -prune -exec rm -rf {} + 2>/dev/null || true
+      find "${dest}/ak-root/packages" -type f -name '*.spdx.json' -delete 2>/dev/null || true
       # NOTE: we deliberately do NOT ship /etc/krb5.conf — the Wolfi `krb5-conf`
       # runtime dep already provides it, and shipping our own collides at apko
       # assembly ("conflicting file: etc/krb5.conf"). authentik reads the system
