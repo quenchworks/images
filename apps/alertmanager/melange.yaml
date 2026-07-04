@@ -108,6 +108,14 @@ pipeline:
       export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's 1.25
       export GO111MODULE=on
 
+      # Bump the one transitive dep the comprehensive Trivy gate flags (minor/patch,
+      # API-compatible -- not a fork/force). golang.org/x/crypto resolves to v0.51.0
+      # in 0.33.0's module graph; 0.52.0 clears the x/crypto/ssh advisories
+      # (CVE-2026-39827..39835 / 42508 / 46595 / 46597 / 46598). grpc, x/net and the
+      # otel family already resolve to their fixed versions here, so no further bumps.
+      go get golang.org/x/crypto@v0.52.0
+      go mod tidy
+
       REVISION="$(git rev-parse HEAD)"
       DATE="$(date -u +'%Y%m%d-%H:%M:%S')"
       VERPKG="github.com/prometheus/common/version"
