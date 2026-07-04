@@ -112,13 +112,69 @@ pipeline:
       export PYTHONUNBUFFERED=1
 
       cd soketi
-      # Reproduce soketi's Dockerfile build: install full deps, compile TS -> dist/,
-      # then reinstall production-only deps (ignore-scripts: soketi's prod deps need
-      # no native build, and this avoids any node-gyp surprise on arm64).
+      # soketi 1.6.1's production dependency tree (its optional cloud/DB/queue drivers:
+      # aws-sdk -> axios/uuid/ip/follow-redirects/form-data, the SQL app managers ->
+      # mysql2, pm2 -> systeminformation, etc.) ships a large set of known-vulnerable
+      # transitives. Coolify only ever uses soketi as an in-memory Pusher broker (local
+      # adapter, memory app manager, sync queue), so none of those drivers run -- but
+      # soketi statically imports the adapter modules at load time, so the packages must
+      # stay resolvable. We therefore do NOT prune them; instead we pin every flagged
+      # dependency to its fixed release via npm `overrides` (same-major where one exists;
+      # uuid/pm2 need a major bump but are off the default runtime path, and only their
+      # module *load* -- not their API -- matters, while uuid's named `v4` export that
+      # soketi itself uses is unchanged).
+      #
+      # Build FIRST against soketi's original dependency versions, THEN inject the pins:
+      # soketi's own tsc build (TypeScript 4.5.4) type-checks the .d.ts of its imported
+      # deps, and e.g. uuid 11's modern declaration syntax makes that tsc pass fail
+      # (TS1383). The pins only need to reach the SHIPPED prod tree -- dist/ is already
+      # compiled to plain JS that resolves the bumped packages fine at runtime.
       npm ci
       npm run build
-      npm ci --omit=dev --ignore-scripts
-      npm prune --production
+
+      # Now stamp the real 1.6.1 version (the git tree self-reports "0.0.0-dev", which
+      # Trivy reads as < 0.26.1 / < 1.6.0 and flags advisories this code already fixes)
+      # and inject the fixed-version overrides, then re-solve a production-only tree.
+      node -e '
+        const fs = require("fs"), p = "package.json", j = JSON.parse(fs.readFileSync(p));
+        j.version = "1.6.1";
+        const pins = {
+          "axios": "0.33.0",
+          "uuid": "11.1.1",
+          "pm2": "7.0.3",
+          "systeminformation": "5.31.12",
+          "form-data": "4.0.6",
+          "basic-ftp": "5.3.1",
+          "follow-redirects": "1.16.0",
+          "msgpackr": "1.10.1",
+          "picomatch": "2.3.2",
+          "semver": "7.8.5",
+          "ws": "7.5.11",
+          "mysql2": "3.9.8",
+          "ip": "1.1.9",
+          "brace-expansion": "1.1.13",
+          "minimatch": "3.1.5",
+          "braces": "3.0.3",
+          "lodash": "4.18.1"
+        };
+        j.overrides = Object.assign({}, j.overrides, pins);
+        // glob (pulled by pm2 7) needs minimatch ^5, which the global 3.1.5 pin does not
+        // satisfy, so npm keeps a vulnerable 5.1.0 nested under glob. A scoped override
+        // forces it to the fixed 5.1.8 (both 3.1.5 and 5.1.8 patch the same CVEs).
+        j.overrides.glob = Object.assign({}, j.overrides.glob, { "minimatch": "5.1.8" });
+        // npm refuses a global override that conflicts with a direct dependency range
+        // (EOVERRIDE); realign each direct dep (axios/uuid/pm2/mysql2/...) to its pin.
+        for (const k of Object.keys(pins)) {
+          if (j.dependencies && j.dependencies[k]) j.dependencies[k] = pins[k];
+          if (j.devDependencies && j.devDependencies[k]) j.devDependencies[k] = pins[k];
+        }
+        fs.writeFileSync(p, JSON.stringify(j, null, 2));
+      '
+      # `npm install` (not `npm ci`): the injected overrides diverge from the committed
+      # package-lock.json, which npm ci rejects; npm install re-solves with the pins.
+      # (ignore-scripts on the prod pass: soketi's prod deps need no native build.)
+      npm install --omit=dev --ignore-scripts --no-audit --no-fund
+      npm prune --omit=dev
 
       # Strip uWebSockets.js prebuilts that don't match this build's linux/<arch>, so
       # (a) melange's dep scanner doesn't emit a cross-arch SO dependency that breaks
@@ -161,12 +217,43 @@ pipeline:
       export NPM_CONFIG_REGISTRY="https://registry.npmjs.org"
       export PYTHONUNBUFFERED=1
 
+      export PYTHON="$(command -v python3.13 || command -v python3)"
+      export npm_config_python="$PYTHON"
+
       cd coolify/docker/coolify-realtime
-      # Reproduce the realtime Dockerfile: npm ci against the committed lockfile, then
-      # rebuild the node-pty native addon for THIS build arch (amd64/arm64 native
-      # runners, no emulation). build-base + python3 supply the toolchain.
-      npm ci
-      npm rebuild node-pty --update-binary
+      # Bump ws to its fixed release (upstream pins 8.20.1; 8.21.0 fixes CVE-2026-48779)
+      # via an override, so the terminal server ships no fixable CVE. This diverges from
+      # the committed package-lock.json, so we use `npm install` (not `npm ci`) below.
+      node -e '
+        const fs = require("fs"), p = "package.json", j = JSON.parse(fs.readFileSync(p));
+        const pins = { "ws": "8.21.0" };
+        j.overrides = Object.assign({}, j.overrides, pins);
+        for (const k of Object.keys(pins)) {
+          if (j.dependencies && j.dependencies[k]) j.dependencies[k] = pins[k];
+          if (j.devDependencies && j.devDependencies[k]) j.devDependencies[k] = pins[k];
+        }
+        fs.writeFileSync(p, JSON.stringify(j, null, 2));
+      '
+      # Reproduce the realtime Dockerfile: install deps, then rebuild the node-pty native
+      # addon for THIS build arch (amd64/arm64 native runners, no emulation). build-base +
+      # python3 supply the toolchain.
+      # Wolfi's system node-gyp (13.x, /usr/bin/node-gyp) bundles undici 6/7, which
+      # references the `File` global (added in Node 20) at *module load* time -- so it
+      # throws "ReferenceError: File is not defined" the moment it is required under our
+      # pinned Node 18. node-pty's `install` lifecycle script (`node scripts/prebuild.js
+      # || node-gyp rebuild`) calls that node-gyp straight from PATH and runs during a
+      # plain install, so it aborts before we can intervene. Install deps with scripts
+      # OFF, then compile node-pty by invoking a Node-18-compatible node-gyp (10.x,
+      # minipass-fetch stack, no undici) directly -- bypassing npm's script-driven
+      # node-gyp lookup entirely.
+      npm install --ignore-scripts --no-audit --no-fund
+      npm install --no-save --no-audit --no-fund --ignore-scripts node-gyp@10
+      nodegyp="$PWD/node_modules/node-gyp/bin/node-gyp.js"
+      test -f "$nodegyp"
+      ( cd node_modules/node-pty && node "$nodegyp" rebuild )
+      # Drop the build-only node-gyp tree (and its deps) so it never reaches the runtime
+      # image / SBOM; node-pty's compiled build/Release/*.node stays.
+      npm prune --no-audit --no-fund
 
       termdir="${{targets.destdir}}/terminal"
       install -d "$termdir"
