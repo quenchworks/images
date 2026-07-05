@@ -35,8 +35,7 @@ jobs:
         run: |
           set -euo pipefail
           source "apps/${APP}/build.conf"
-          blocked=false; grep -qE '^#[[:space:]]*STATUS:[[:space:]]*BLOCKED' "apps/${APP}/build.conf" && blocked=true
-          echo "blocked=$blocked" >> "$GITHUB_OUTPUT"
+          echo "blocked=$([ "${BLOCKED:-0}" = "1" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
           n=${#VERSIONS[@]}; start=$(( n > 3 ? n - 3 : 0 ))
           latest3=("${VERSIONS[@]:start}")
           echo "building: ${latest3[*]}"
