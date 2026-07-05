@@ -27,6 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       vers: ${{ steps.v.outputs.vers }}
+      blocked: ${{ steps.v.outputs.blocked }}
     steps:
       - uses: actions/checkout@v5
       - id: v
@@ -34,12 +35,15 @@ jobs:
         run: |
           set -euo pipefail
           source "apps/${APP}/build.conf"
+          blocked=false; grep -qE '^#[[:space:]]*STATUS:[[:space:]]*BLOCKED' "apps/${APP}/build.conf" && blocked=true
+          echo "blocked=$blocked" >> "$GITHUB_OUTPUT"
           n=${#VERSIONS[@]}; start=$(( n > 3 ? n - 3 : 0 )); latest3=("${VERSIONS[@]:start}")
           echo "building: ${latest3[*]}"
           echo "vers=$(printf '%s\n' "${latest3[@]}" | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
 
   build:
     needs: prep
+    if: ${{ needs.prep.outputs.blocked != 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -111,6 +115,7 @@ jobs:
 
   merge:
     needs: [prep, build]
+    if: ${{ needs.prep.outputs.blocked != 'true' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
