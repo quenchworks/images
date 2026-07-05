@@ -20,7 +20,7 @@
 # not import the generated restapi packages, so they need no codegen.)
 #
 # go.mod has no vendor/ dir, so the build fetches modules from the proxy
-# (GOFLAGS=-mod=mod). go.mod requires go 1.25.x; we use the go-1.25 Wolfi
+# (GOFLAGS=-mod=mod). go.mod requires go 1.25.x; we use the go-1.26 Wolfi
 # toolchain. Version is stamped via -ldflags into
 # src/pkg/version.{ReleaseVersion,GitCommit} exactly as the root Makefile's
 # CORE_LDFLAGS does (RELEASEVERSION = contents of the VERSION file = "v2.14.4").
@@ -47,9 +47,9 @@ environment:
       - busybox
       - ca-certificates-bundle
       - git
-      # go.mod requires go >= 1.25.x; use the go-1.25 toolchain to pick up the
+      # go.mod requires go >= 1.25.x; use the go-1.26 toolchain to pick up the
       # latest stdlib CVE fixes (helps clear the Trivy gate without manual bumps).
-      - go-1.25
+      - go-1.26
 
 pipeline:
   # Build from the git tag source tarball. Pinned to the tag; verified by sha256.
@@ -74,7 +74,7 @@ pipeline:
       install -d "${GOBIN}"
       # Build go-swagger from source (not `go install @ver`) so we can bump its
       # pinned golang.org/x/tools: go-swagger v0.31.0 (Harbor 2.13's SWAGGER_VERSION)
-      # ships x/tools v0.21.0, which fails to compile under our go-1.25
+      # ships x/tools v0.21.0, which fails to compile under our go-1.26
       # ("invalid array length -delta * delta" in tokeninternal). Harbor never hits
       # this because it runs go-swagger from a prebuilt container image; we compile
       # it here. The tools bump is a build-time dep of the generator only -- it does

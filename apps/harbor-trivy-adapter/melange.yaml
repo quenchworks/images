@@ -20,7 +20,7 @@
 # version (0.70.0) is stamped into the trivy binary via ldflags and reported by
 # `trivy --version`.
 #
-# Both go.mod files require go 1.25.x; we use the Wolfi go-1.25 toolchain for the
+# Both go.mod files require go 1.25.x; we use the Wolfi go-1.26 toolchain for the
 # latest stdlib CVE fixes. Neither repo vendors deps -> modules resolve from the
 # Go proxy at build time (GOFLAGS=-mod=mod). Trivy has a very large module graph;
 # CI/local builds set TMPDIR=/home/mkabumattar/.cache/melange-tmp.
@@ -48,8 +48,8 @@ environment:
       - busybox
       - ca-certificates-bundle
       - git
-      # both go.mod files require go >= 1.25.x; use the current go-1.25 toolchain.
-      - go-1.25
+      # both go.mod files require go >= 1.25.x; use the current go-1.26 toolchain.
+      - go-1.26
 
 pipeline:
   # ---- 1) Build the Trivy CLI (github.com/aquasecurity/trivy @ v0.70.0) ----
