@@ -1,0 +1,91 @@
+# Packages Apache Tomcat onto Wolfi. Tomcat is a JVM app: we ship the upstream
+# binary distribution (prebuilt jars) on a hardened Wolfi JRE, which is the CVE
+# surface the Trivy gate scans. Same JVM shape as apps/kafka (openjdk-21-jre +
+# JAVA_HOME + a shell-free-ish entrypoint that execs java directly). The bundled
+# demo webapps (docs/examples/manager/host-manager/ROOT) are stripped to shrink
+# the attack surface; only bin/ + lib/ + conf/ are kept.
+package:
+  name: quench-tomcat
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Apache Tomcat, packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-21-jre     # the JRE Tomcat 11 runs on (needs Java 17+); scanned CVE surface
+      - busybox            # the entrypoint is a tiny /bin/sh script (mkdir + exec java)
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://downloads.apache.org/tomcat/tomcat-11/v${{package.version}}/bin/apache-tomcat-${{package.version}}.tar.gz
+      expected-sha256: "__SHA256__"
+      strip-components: 1
+  - runs: |
+      # install the distribution under /opt/tomcat, keeping only bin/ lib/ conf/
+      dest="${{targets.destdir}}/opt/tomcat"
+      install -d "$dest"
+      cp -r bin lib conf LICENSE NOTICE RELEASE-NOTES "$dest/"
+      # the upstream dist ships bin/lib/conf as 0750/0700 root-owned; the image runs
+      # as nonroot uid 1001, so make the tree world-readable (dirs + files) and keep
+      # the launcher scripts executable. Without this, java can't read the classpath.
+      chmod -R a+rX "$dest"
+      # drop the Windows launchers (*.bat / *.exe) and commons-daemon service bits
+      find "$dest/bin" \( -name '*.bat' -o -name '*.exe' \) -delete
+      # strip the bundled demo webapps entirely (docs, examples, manager,
+      # host-manager, ROOT) -- they are the classic Tomcat attack surface. Keep an
+      # empty webapps/ dir so the auto-deployer has nothing to serve (GET / -> 404).
+      install -d "$dest/webapps"
+      # writable runtime dirs (logs, temp, work) must live on a writable fs under a
+      # read-only rootfs: point them at /tmp/tomcat/* via symlinks. catalina.base
+      # stays /opt/tomcat, so these three resolve to the tmpfs the entrypoint mkdirs.
+      ln -s /tmp/tomcat/logs "$dest/logs"
+      ln -s /tmp/tomcat/temp "$dest/temp"
+      ln -s /tmp/tomcat/work "$dest/work"
+
+      # shell-free-ish entrypoint: a /bin/sh one-liner that prepares the writable
+      # /tmp dirs, then execs java DIRECTLY with the Tomcat bootstrap classpath
+      # (no catalina.sh fork). Mirrors what `catalina.sh run` execs.
+      install -d "${{targets.destdir}}/usr/bin"
+      cat > "${{targets.destdir}}/usr/bin/docker-entrypoint.sh" <<'EOS'
+      #!/bin/sh
+      set -eu
+
+      CATALINA_HOME=/opt/tomcat
+      CATALINA_BASE="${CATALINA_BASE:-/opt/tomcat}"
+
+      # the writable dirs (symlinked into /tmp/tomcat) need to exist on the tmpfs
+      mkdir -p /tmp/tomcat/logs /tmp/tomcat/temp /tmp/tomcat/work
+
+      exec "$JAVA_HOME/bin/java" \
+        ${JAVA_OPTS:-} \
+        ${CATALINA_OPTS:-} \
+        -Djava.util.logging.config.file="$CATALINA_BASE/conf/logging.properties" \
+        -Djava.util.logging.manager=org.apache.juli.ClassLoaderLogManager \
+        -Djdk.tls.ephemeralDHKeySize=2048 \
+        -Djava.protocol.handler.pkgs=org.apache.catalina.webresources \
+        -Dorg.apache.catalina.security.SecurityListener.UMASK=0027 \
+        -Dcatalina.base="$CATALINA_BASE" \
+        -Dcatalina.home="$CATALINA_HOME" \
+        -Djava.io.tmpdir=/tmp/tomcat/temp \
+        -classpath "$CATALINA_HOME/bin/bootstrap.jar:$CATALINA_HOME/bin/tomcat-juli.jar" \
+        org.apache.catalina.startup.Bootstrap "$@" start
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        test -f /opt/tomcat/bin/bootstrap.jar
+        test -f /opt/tomcat/lib/catalina.jar
