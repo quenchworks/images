@@ -161,7 +161,7 @@ jobs:
           echo "trimmed SBOM size: $(wc -c < sbom.spdx.json) bytes"
 
       - name: Attest the SBOM (keyless, pushed to GHCR)
-        uses: actions/attest-sbom@v2
+        uses: actions/attest-sbom@v4
         with:
           subject-name: ${{ env.GHCR_IMAGE }}
           subject-digest: ${{ steps.merge.outputs.digest }}
@@ -169,7 +169,7 @@ jobs:
           push-to-registry: true
 
       - name: Attest build provenance (SLSA, pushed to GHCR)
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-name: ${{ env.GHCR_IMAGE }}
           subject-digest: ${{ steps.merge.outputs.digest }}
