@@ -183,6 +183,11 @@ def collect(with_meta: bool = False) -> dict:
     # Iterate catalog.yaml (the editorial source of truth) so EVERY app lands in
     # the lock -- including planned ones with no published versions yet.
     rows = yaml.safe_load(CURATED.read_text())["catalog"]
+    # status: blocked == delisted. The image may still exist in GHCR, but we do not
+    # advertise a known-unfixable (CVE-blocked) image in the published 0-CVE catalog.
+    # Reversible: clear the status and it re-lists. Keeps the app out of the lock,
+    # images.json, and the nightly security scan.
+    rows = [r for r in rows if r.get("status") != "blocked"]
     repo = lambda slug: f"ghcr.io/{ORG}/images/{slug}"
 
     # ponytail: the whole runtime is network wait. Parallelize it in two flat
