@@ -1,0 +1,201 @@
+# Builds Apache HTTP Server (httpd) from source onto Wolfi. Output is a signed APK
+# in Quenchworks' own repo. No upstream distro binaries. Configured for a nonroot
+# (uid 1001), read-only-rootfs runtime: listens on 8080 (nonroot can't bind <1024),
+# writes its pid + runtime scoreboard/mutex under /tmp, and logs to stdout/stderr.
+# All modules are compiled STATICALLY into the httpd binary (no --enable-mods-shared),
+# so the shipped config needs no LoadModule lines and the image needs no shell.
+package:
+  name: quench-httpd
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Apache HTTP Server, built from source on Wolfi (nonroot, read-only rootfs)"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - libapr
+      - apr-util
+      - pcre2
+      - openssl
+      - expat
+      - zlib
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - autoconf
+      - libtool
+      - libapr-dev
+      - apr-util-dev
+      - pcre2-dev
+      - openssl-dev
+      - expat-dev
+      - zlib-dev
+      - linux-headers
+      - pkgconf
+
+pipeline:
+  - uses: fetch
+    with:
+      # Official Apache httpd release tarball. sha256 is the value published at
+      # downloads.apache.org/httpd/httpd-<ver>.tar.bz2.sha256 (verified locally).
+      uri: https://downloads.apache.org/httpd/httpd-${{package.version}}.tar.bz2
+      expected-sha256: "__SHA256__"
+  - runs: |
+      # Lean, 0-CVE-friendly build. Layout chosen for the nonroot/read-only runtime:
+      #  - binary/config under standard FHS locations (read-only at runtime)
+      #  - pid, DefaultRuntimeDir (scoreboard/mutexes) default under /tmp; the shipped
+      #    httpd.conf also sets these explicitly.
+      # event MPM, mod_ssl, and common serving/proxy modules are compiled statically
+      # into the binary so no LoadModule lines (and no shell) are needed at runtime.
+      # httpd builds its modules as shared .so objects (DSO) on Wolfi; mpm_event, core,
+      # http and mod_so link statically into the binary, the rest land in
+      # /usr/modules/*.so and are pulled in by LoadModule lines in the shipped config.
+      # No shell is needed at runtime: the entrypoint execs the httpd binary directly.
+      ./configure \
+        --prefix=/usr \
+        --sysconfdir=/etc/httpd \
+        --datadir=/usr/share/httpd \
+        --localstatedir=/var \
+        --with-mpm=event \
+        --enable-so \
+        --enable-ssl \
+        --with-pcre \
+        --with-apr=/usr \
+        --with-apr-util=/usr \
+        --enable-rewrite \
+        --enable-headers \
+        --enable-deflate \
+        --enable-expires \
+        --enable-proxy \
+        --enable-proxy-http \
+        --enable-status
+      make -j"$(nproc)"
+      make DESTDIR="${{targets.destdir}}" install
+
+      destdir="${{targets.destdir}}"
+
+      # Default document root (shipped read-only; chart can mount over it).
+      install -d "$destdir/usr/share/httpd/htdocs"
+      cat > "$destdir/usr/share/httpd/htdocs/index.html" <<'EOF'
+      <!DOCTYPE html>
+      <html>
+      <head><title>Quenchworks httpd</title></head>
+      <body>
+      <h1>Quenchworks Apache HTTP Server</h1>
+      <p>Hardened, nonroot, read-only-rootfs httpd is running.</p>
+      </body>
+      </html>
+      EOF
+
+      # conf.d directory for drop-in config (chart mounts ConfigMaps here).
+      install -d "$destdir/etc/httpd/conf.d"
+
+      # The nonroot / read-only-rootfs main config: foreground is supplied by the
+      # entrypoint's -DFOREGROUND. No `User`/`Group` directive (we already run as uid
+      # 1001). PidFile + DefaultRuntimeDir under /tmp (writable tmpfs at runtime),
+      # logs to stdout/stderr, default vhost on 8080.
+      cat > "$destdir/etc/httpd/httpd.conf" <<'EOF'
+      # Quenchworks hardened Apache HTTP Server default config.
+      # Nonroot (uid 1001) + read-only rootfs: foreground via -DFOREGROUND, writes pid
+      # and runtime state under /tmp (mount a writable tmpfs there), logs to stdout/stderr.
+      ServerRoot "/usr"
+      Listen 8080
+      ServerName localhost:8080
+
+      # Modules (shared .so under ServerRoot/modules). mpm_event, core, http and mod_so
+      # are compiled statically into the binary; the rest are loaded here. Lean set:
+      # auth/authz basics, static-serving, logging, compression, rewrite, status,
+      # proxy, and TLS (mod_ssl + its shmcb session cache).
+      LoadModule authn_core_module modules/mod_authn_core.so
+      LoadModule authn_file_module modules/mod_authn_file.so
+      LoadModule authz_core_module modules/mod_authz_core.so
+      LoadModule authz_host_module modules/mod_authz_host.so
+      LoadModule authz_user_module modules/mod_authz_user.so
+      LoadModule authz_groupfile_module modules/mod_authz_groupfile.so
+      LoadModule access_compat_module modules/mod_access_compat.so
+      LoadModule auth_basic_module modules/mod_auth_basic.so
+      LoadModule reqtimeout_module modules/mod_reqtimeout.so
+      LoadModule filter_module modules/mod_filter.so
+      LoadModule mime_module modules/mod_mime.so
+      LoadModule log_config_module modules/mod_log_config.so
+      LoadModule env_module modules/mod_env.so
+      LoadModule headers_module modules/mod_headers.so
+      LoadModule setenvif_module modules/mod_setenvif.so
+      LoadModule version_module modules/mod_version.so
+      LoadModule unixd_module modules/mod_unixd.so
+      LoadModule status_module modules/mod_status.so
+      LoadModule autoindex_module modules/mod_autoindex.so
+      LoadModule dir_module modules/mod_dir.so
+      LoadModule alias_module modules/mod_alias.so
+      LoadModule rewrite_module modules/mod_rewrite.so
+      LoadModule deflate_module modules/mod_deflate.so
+      LoadModule expires_module modules/mod_expires.so
+      LoadModule socache_shmcb_module modules/mod_socache_shmcb.so
+      LoadModule ssl_module modules/mod_ssl.so
+      LoadModule proxy_module modules/mod_proxy.so
+      LoadModule proxy_http_module modules/mod_proxy_http.so
+
+      PidFile /tmp/httpd.pid
+      DefaultRuntimeDir /tmp
+      Mutex file:/tmp default
+
+      ErrorLog "/proc/self/fd/2"
+      LogLevel warn
+
+      <Directory />
+          AllowOverride none
+          Require all denied
+      </Directory>
+
+      DocumentRoot "/usr/share/httpd/htdocs"
+      <Directory "/usr/share/httpd/htdocs">
+          Options Indexes FollowSymLinks
+          AllowOverride None
+          Require all granted
+      </Directory>
+
+      <IfModule dir_module>
+          DirectoryIndex index.html
+      </IfModule>
+
+      <Files ".ht*">
+          Require all denied
+      </Files>
+
+      <IfModule log_config_module>
+          LogFormat "%h %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-Agent}i\"" combined
+          CustomLog "/proc/self/fd/1" combined
+      </IfModule>
+
+      <IfModule mime_module>
+          TypesConfig /etc/httpd/mime.types
+          AddType application/x-compress .Z
+          AddType application/x-gzip .gz .tgz
+      </IfModule>
+
+      # Lightweight liveness/readiness endpoint.
+      <IfModule status_module>
+          <Location /server-status>
+              SetHandler server-status
+              Require all granted
+          </Location>
+      </IfModule>
+
+      # Drop-in config (the chart mounts ConfigMaps into /etc/httpd/conf.d).
+      IncludeOptional /etc/httpd/conf.d/*.conf
+      EOF
+
+test:
+  pipeline:
+    - runs: |
+        httpd -v
+        httpd -t -f /etc/httpd/httpd.conf
