@@ -32,6 +32,7 @@ environment:
       - openjdk-25-default-jvm
       - maven-3.9
       - git                 # quarkus git-info build step reads the checkout metadata
+      - python-3.13         # build-env only (not in the apko runtime) — runs the jackson CVE pin patch below
 
 pipeline:
   - uses: fetch
@@ -45,6 +46,43 @@ pipeline:
       export PATH="${JAVA_HOME}/bin:${PATH}"
       # Local, hermetic maven repo inside the build workspace (no global writes).
       export MAVEN_OPTS="-Dmaven.repo.local=$(pwd)/.m2repo -Duser.home=$(pwd)"
+      # --- QuenchWorks CVE pin: jackson-databind -> 2.21.5 -------------------
+      # The Quarkus fast-jar bundles com.fasterxml.jackson.core:jackson-databind,
+      # flagged CVE-2026-54515 (MEDIUM, fixed in 2.21.5 — a same-major, in-policy
+      # patch). floci's root pom declares a <jackson.version> property that feeds
+      # a jackson-bom import declared BEFORE the quarkus-bom import, so bumping
+      # that property makes jackson-bom win and manages every jackson artifact
+      # (incl. jackson-databind) to 2.21.5. For any version whose pom lacks the
+      # property we also inject a first-declared jackson-databind pin (first
+      # declaration wins over BOM-imported management). If neither lands 2.21.5
+      # the 0-CVE gate below still blocks — the gate is never weakened.
+      PY="$(command -v python3 || command -v python3.13)"
+      "$PY" - pom.xml <<'PYEOF'
+      import re, sys
+      path = sys.argv[1]
+      src = open(path, encoding="utf-8").read()
+      # 1) Bump the jackson.version property (jackson-bom import feeds off it).
+      src, n = re.subn(r'(<jackson\.version>)[^<]*(</jackson\.version>)',
+                       r'\g<1>2.21.5\g<2>', src)
+      # 2) Robustness: force jackson-databind as the first-declared managed dep.
+      pin = ('\n            <dependency>\n'
+             '                <!-- QuenchWorks CVE-2026-54515 pin: first-declared wins over imported BOMs -->\n'
+             '                <groupId>com.fasterxml.jackson.core</groupId>\n'
+             '                <artifactId>jackson-databind</artifactId>\n'
+             '                <version>2.21.5</version>\n'
+             '            </dependency>')
+      m = re.search(r'<dependencyManagement>\s*<dependencies>', src)
+      if m:
+          src = src[:m.end()] + pin + src[m.end():]
+      else:
+          block = ('    <dependencyManagement>\n        <dependencies>' + pin +
+                   '\n        </dependencies>\n    </dependencyManagement>\n')
+          src = src.replace('</project>', block + '</project>', 1)
+      open(path, "w", encoding="utf-8").write(src)
+      print(f"jackson pin applied (property bumped x{n}, databind pinned to 2.21.5)")
+      PYEOF
+      grep -n '2.21.5' pom.xml || { echo "jackson pin FAILED to apply"; exit 1; }
+      # -----------------------------------------------------------------------
       # Build the Quarkus fast-jar. Skip tests (they need Docker + network); the
       # released bytecode is identical to upstream's `mvn clean package`.
       mvn -B -ntp clean package -DskipTests
