@@ -87,6 +87,24 @@ pipeline:
       go build -trimpath -ldflags "$LDFLAGS" \
         -o "${{targets.destdir}}/usr/bin/cadence" ./cmd/tools/cli
 
+      # cadence-cassandra-tool: root module, package at cmd/tools/cassandra.
+      # Installs the Cassandra schema tool so a chart can bootstrap the datastore
+      # in an init container (create-Keyspace / setup-schema -v / update-schema
+      # -d <schema-dir>); cadence-server refuses to start until the versioned
+      # schema is installed and stamped in the schema_version table.
+      go build -trimpath -ldflags "$LDFLAGS" \
+        -o "${{targets.destdir}}/usr/bin/cadence-cassandra-tool" ./cmd/tools/cassandra
+
+      # Cassandra schema CQL tree. The CLI's update-schema needs a real on-disk
+      # --schema-dir and setup-schema needs a --schema-file (the binary's embedded
+      # //go:embed FS is only reachable from the server, not the CLI). Ship the
+      # whole schema/cassandra/** tree at the upstream-canonical path so the chart
+      # can point at /etc/cadence/schema/cassandra/{cadence,visibility}/versioned
+      # (matches upstream docker/setup-multiclusters-schema.sh) plus the base
+      # schema.cql / keyspace.cql files.
+      mkdir -p "${{targets.destdir}}/etc/cadence/schema"
+      cp -r schema/cassandra "${{targets.destdir}}/etc/cadence/schema/cassandra"
+
       # empty config dir for the operator to mount their own config into
       # (read-only-rootfs friendly: nothing is written to it at build time)
       mkdir -p "${{targets.destdir}}/etc/cadence/config"
