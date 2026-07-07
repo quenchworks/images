@@ -101,6 +101,11 @@ pipeline:
         github.com/hashicorp/go-retryablehttp@v0.7.7 \
         go.opentelemetry.io/otel@v1.43.0 \
         go.opentelemetry.io/otel/sdk@v1.43.0
+      # `go get` only bumps the DIRECT require; a transitive dep still pinned
+      # golang.org/x/sys v0.7.0, which Trivy flags as CVE-2026-39824 (fixed in
+      # 0.44.0). Force ALL x/sys (direct + transitive) to the fixed version with
+      # a module `replace`, so the final influxd binary embeds only >= 0.44.0.
+      go mod edit -replace golang.org/x/sys=golang.org/x/sys@v0.45.0
       go mod tidy
 
   - name: Build libflux (Rust, from the flux module) + influxd (cgo)
