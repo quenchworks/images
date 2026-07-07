@@ -1,17 +1,22 @@
-# Builds step-ca (smallstep/certificates), an online certificate authority, from
-# source onto Wolfi. Single static Go binary, no CGO (the pure-Go build; PKCS#11/
-# HSM support is the only thing that needs CGO, so it is intentionally omitted for
-# the hardened default). Output is a signed APK in Quenchworks' own repo. No
-# upstream distro binaries. Image-only (a server, no chart).
+# Builds step-ca (smallstep/certificates), an online certificate authority, AND
+# the step CLI (smallstep/cli) from source onto Wolfi. Both are single static Go
+# binaries, no CGO (the pure-Go build; PKCS#11/HSM support is the only thing that
+# needs CGO, so it is intentionally omitted for the hardened default). Output is a
+# signed APK in Quenchworks' own repo. No upstream distro binaries. Image-only.
 #
-# Version stamping mirrors upstream's Makefile
+# The step CLI is required because the step-ca Helm chart bootstraps the PKI on
+# first boot with `step ca init` (an init container). smallstep's own official
+# image ships both binaries; this hardened build matches that. The two live in
+# separate repos with their own version lines (step-ca 0.30.2 / step CLI 0.30.6).
+#
+# Version stamping mirrors upstream's Makefiles
 #   LDFLAGS := -ldflags='-w -X "main.Version=$(VERSION)" -X "main.BuildTime=$(DATE)"'
-# so `step-ca version` reports the real release. Upstream tags carry a "v" prefix;
-# the Makefile stamps the bare version.
+# so `step-ca version` / `step version` report the real release. Upstream tags
+# carry a "v" prefix; the Makefiles stamp the bare version.
 #
-# go.mod declares go 1.24 (0.29) / go 1.25 (0.30). We build with the newest
-# available toolchain (go-1.26, clears stdlib CVE advisories) and GOTOOLCHAIN=local
-# so the go.mod directive never triggers a toolchain download; 1.26 satisfies both.
+# go.mod declares go 1.24/1.25. We build with the newest available toolchain
+# (go-1.26, clears stdlib CVE advisories) and GOTOOLCHAIN=local so the go.mod
+# directive never triggers a toolchain download; 1.26 satisfies both.
 package:
   name: quench-step-ca
   version: __VER__
@@ -36,12 +41,15 @@ environment:
       - go-1.26
 
 pipeline:
+  # 1) step-ca (smallstep/certificates) from the git tag source tarball.
   - uses: fetch
     with:
       uri: https://github.com/smallstep/certificates/archive/refs/tags/v${{package.version}}.tar.gz
       expected-sha256: __SHA256__
+      strip-components: 0
   - runs: |
       set -eu
+      cd certificates-${{package.version}}
       export CGO_ENABLED=0
       export GOFLAGS=-mod=mod
       export GOTOOLCHAIN=local
@@ -61,7 +69,25 @@ pipeline:
         -ldflags "-s -w -X main.Version=${{package.version}}" \
         -o "${{targets.destdir}}/usr/bin/step-ca" ./cmd/step-ca
 
+  # 2) step CLI (smallstep/cli) from its own git tag source tarball. Same
+  #    CGO-free build, same version-stamp convention (-X main.Version).
+  - uses: fetch
+    with:
+      uri: https://github.com/smallstep/cli/archive/refs/tags/v__STEPVER__.tar.gz
+      expected-sha256: __STEPSHA__
+      strip-components: 0
+  - runs: |
+      set -eu
+      cd cli-__STEPVER__
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local
+      go build -trimpath \
+        -ldflags "-s -w -X main.Version=__STEPVER__" \
+        -o "${{targets.destdir}}/usr/bin/step" ./cmd/step
+
 test:
   pipeline:
     - runs: |
         step-ca version
+        step version
