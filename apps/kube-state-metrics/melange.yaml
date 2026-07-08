@@ -35,6 +35,21 @@ pipeline:
   - runs: |
       export CGO_ENABLED=0
       export GOFLAGS=-mod=mod
+      # 0-CVE bump: the older tags built by the matrix (e.g. 2.17.0) pin several
+      # modules Trivy flags as FIXED advisories. Force them up to their patched
+      # releases before building -- x/net/x/crypto (incl. the x/crypto/ssh
+      # CVE-2026-39828..35 batch), grpc, otel/sdk and go-viper/mapstructure.
+      # The newest tag already ships >= these, so the bumps are no-ops there;
+      # behavior-preserving minor/patch lifts on the older tags. x/net >= 0.55.0,
+      # x/crypto >= 0.52.0.
+      go get \
+        golang.org/x/net@v0.56.0 \
+        golang.org/x/crypto@v0.53.0 \
+        google.golang.org/grpc@v1.79.3 \
+        go.opentelemetry.io/otel/sdk@v1.43.0 \
+        go.opentelemetry.io/otel@v1.43.0 \
+        github.com/go-viper/mapstructure/v2@v2.4.0
+      go mod tidy || true
       PKG=github.com/prometheus/common
       go build -trimpath \
         -ldflags "-s -w \

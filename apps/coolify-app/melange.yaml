@@ -199,11 +199,12 @@ pipeline:
       #   symfony/http-foundation 7.4.8  -> >=7.4.13  (CVE-2026-48736)                   [transitive]
       #   symfony/routing         7.4.12 -> >=7.4.13  (CVE-2026-48784)                   [transitive]
       #   mtdowling/jmespath.php  2.8.0  -> >=2.9.1   (CVE-2026-54133)                    [transitive]
-      # --with-all-dependencies lets the transitive symfony/* + psr7 + jmespath move to fixes.
+      #   web-auth/webauthn-lib   5.3.3  -> >=5.3.5   (GHSA-gq4g-fpc9-vjfq)               [transitive]
+      # --with-all-dependencies lets the transitive symfony/* + psr7 + jmespath + webauthn move to fixes.
       composer update --no-dev --no-interaction --no-plugins --no-scripts --prefer-dist \
         --with-all-dependencies \
         guzzlehttp/guzzle guzzlehttp/psr7 laravel/framework phpseclib/phpseclib \
-        symfony/http-foundation symfony/routing mtdowling/jmespath.php
+        symfony/http-foundation symfony/routing mtdowling/jmespath.php web-auth/webauthn-lib
       test -f vendor/autoload.php
 
   - name: Build the Vite frontend assets (Node 24)

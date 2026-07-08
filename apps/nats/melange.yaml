@@ -21,6 +21,7 @@ environment:
       - build-base
       - busybox
       - ca-certificates-bundle
+      - git              # `go get` resolves module versions via git
       - go
 
 pipeline:
@@ -28,6 +29,19 @@ pipeline:
     with:
       uri: https://github.com/nats-io/nats-server/archive/refs/tags/v${{package.version}}.tar.gz
       expected-sha256: __SHA256__
+  - name: Bump vulnerable Go modules to their fixed versions (0-CVE gate)
+    runs: |
+      set -eu
+      export GOFLAGS=-mod=mod
+      export GO111MODULE=on
+      export GOTOOLCHAIN=local   # use the installed go, don't fetch go.mod's toolchain
+      # Trivy flags x/net and x/crypto/ssh in the binary's module graph. Bump to
+      # the newest released versions (well past every advisory's fixed version),
+      # then `replace` to force every transitive use to the fixed version too.
+      go get golang.org/x/net@v0.56.0 golang.org/x/crypto@v0.53.0
+      go mod edit -replace golang.org/x/net=golang.org/x/net@v0.56.0
+      go mod edit -replace golang.org/x/crypto=golang.org/x/crypto@v0.53.0
+      go mod tidy || true
   - runs: |
       export CGO_ENABLED=0
       export GOFLAGS=-mod=mod

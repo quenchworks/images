@@ -34,7 +34,21 @@ pipeline:
   - runs: |
       export CGO_ENABLED=0
       export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local   # use the installed go-1.25, don't fetch a newer go.mod toolchain
       cd cmd/webhook
+      # 0-CVE gate: bump vulnerable Go modules to their Trivy-advised fixed versions
+      # before building. Older release lines (e.g. 1.18.x) pin x/net, x/crypto, grpc,
+      # go-jose, go-ntlmssp and otel below the fixed versions; newer lines already
+      # satisfy these, so the bump is a no-op there. cmd/<target> replaces the parent
+      # cert-manager module (../../), so bumping here (the main module) wins via MVS.
+      go get \
+        golang.org/x/net@v0.56.0 \
+        golang.org/x/crypto@v0.53.0 \
+        google.golang.org/grpc@v1.79.3 \
+        github.com/go-jose/go-jose/v4@v4.1.4 \
+        github.com/Azure/go-ntlmssp@v0.1.1 \
+        go.opentelemetry.io/otel/sdk@v1.43.0
+      go mod tidy || true
       go build -trimpath \
         -ldflags "-s -w -X github.com/cert-manager/cert-manager/pkg/util.AppVersion=v${{package.version}}" \
         -o "${{targets.destdir}}/usr/bin/webhook" .
