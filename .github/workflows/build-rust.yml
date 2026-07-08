@@ -1,19 +1,19 @@
 name: build-rust
 
-# LANGUAGE-RUNTIMES track. Hardened OpenJDK (JDK) base images, assembled
-# straight from Wolfi's versioned `openrust-N-default-rust` packages with apko --
-# NO melange/from-source step, since Wolfi already packages OpenJDK. A MATRIX
-# fans out over the latest 3 LTS lines; each one runs a NATIVE per-arch apko
-# build (no QEMU), the hard 0-CVE Trivy gate, then a per-version merge job that
+# LANGUAGE-RUNTIMES track. Hardened Rust toolchain (cargo + rustc) images,
+# assembled straight from Wolfi's versioned `rust-1.N` packages with apko --
+# NO melange/from-source step, since Wolfi already packages Rust. A MATRIX fans
+# out over the shipped stable lines; each one runs a NATIVE per-arch apko build
+# (no QEMU), the hard 0-CVE Trivy gate, then a per-version merge job that
 # assembles + signs + attests the multi-arch index.
 #
-# IMAGE-ONLY: the JDK is a base/runtime image with no Helm chart, so there is
-# NO charts-repo dispatch.
+# IMAGE-ONLY: the Rust toolchain is a build/SDK image with no Helm chart, so
+# there is NO charts-repo dispatch.
 #
-# TEMPLATE: to add another LTS (or another runtime), copy a matrix entry and
-# change `ver`; apps/rust/apko.yaml carries the `__VER__` placeholder that CI
-# substitutes per entry (it also feeds JAVA_HOME). No :latest tag is ever
-# published.
+# TEMPLATE: to add another line, copy a matrix entry and change `ver`;
+# apps/rust/apko.yaml carries the `__VER__` placeholder that CI substitutes per
+# entry (render maps the full version to the Wolfi rust-1.N minor). No :latest
+# tag is ever published.
 on:
   workflow_dispatch:
 permissions:
@@ -50,7 +50,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # latest 3 LTS Wolfi-packaged OpenJDK lines x both native arches,
+        # shipped Wolfi-packaged Rust lines x both native arches,
         # driven by apps/rust/build.conf VERSIONS (the single source of truth).
         ver: ${{ fromJson(needs.prep.outputs.vers) }}
         arch:
@@ -71,7 +71,7 @@ jobs:
             | sudo tar xz --strip-components=1 -C /usr/local/bin
           apko version | head -1
 
-      - name: Render apko config for OpenJDK ${{ matrix.ver }} (build.conf render)
+      - name: Render apko config for Rust ${{ matrix.ver }} (build.conf render)
         run: |
           set -euo pipefail
           source build.conf
@@ -163,4 +163,4 @@ jobs:
           subject-digest: ${{ steps.merge.outputs.digest }}
           push-to-registry: true
 
-      # IMAGE-ONLY: no charts-repo dispatch. The JDK is a base/runtime image.
+      # IMAGE-ONLY: no charts-repo dispatch. Rust is a build/SDK image.
