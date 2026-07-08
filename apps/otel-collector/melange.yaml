@@ -50,6 +50,9 @@ environment:
       - build-base
       - busybox
       - ca-certificates-bundle
+      # curl: fetch + sha256-verify the OBI source-generated tarball (see the OBI
+      # prep step in the pipeline), mirroring upstream's scripts/prepare-obi.sh.
+      - curl
       # ocb/components require go >= 1.24; upstream CI uses ~1.26. Use the current
       # go-1.26 toolchain to pick up the latest stdlib CVE fixes (helps clear the
       # Trivy gate without manual bumps).
@@ -63,6 +66,27 @@ pipeline:
       export GOPATH="${PWD}/.gopath"
       export GOBIN="${GOPATH}/bin"
       export PATH="${GOBIN}:${PATH}"
+
+      # OBI (OpenTelemetry eBPF Instrumentation), new in 0.156.0's contrib
+      # distribution: the manifest pulls go.opentelemetry.io/obi and pins it via a
+      # `replace => ../../../internal/obi-src`. The published obi module ships
+      # WITHOUT its pre-generated eBPF .go sources (they are gitignored/generated),
+      # so building it straight from the module proxy would require the BPF
+      # toolchain (clang/bpf2go). Upstream's release build instead runs
+      # scripts/prepare-obi.sh to fetch the "source-generated" release tarball
+      # (BPF sources pre-generated, no toolchain needed) and extract it into
+      # internal/obi-src. We replicate that verbatim here. ocb generates its module
+      # at ./_build, so the manifest's `../../../internal/obi-src` resolves to the
+      # absolute path /internal/obi-src inside the build sandbox — extract there so
+      # the vendored manifest can stay byte-for-byte identical to upstream's.
+      OBI_VERSION=v0.10.0
+      OBI_SHA256=151ef5d04bff9660743148ff20d5c833222b0b45ab15245a2968a3f7f4366dec
+      OBI_TARBALL="obi-${OBI_VERSION}-source-generated.tar.gz"
+      curl -fSL --retry 3 --retry-delay 1 -o "/tmp/${OBI_TARBALL}" \
+        "https://github.com/open-telemetry/opentelemetry-ebpf-instrumentation/releases/download/${OBI_VERSION}/${OBI_TARBALL}"
+      echo "${OBI_SHA256}  /tmp/${OBI_TARBALL}" | sha256sum -c -
+      mkdir -p /internal/obi-src
+      tar xzf "/tmp/${OBI_TARBALL}" --strip-components=1 -C /internal/obi-src
 
       # Install the OpenTelemetry Collector Builder (ocb) pinned to the exact
       # version used to cut the official otelcol-contrib 0.154.0 release.

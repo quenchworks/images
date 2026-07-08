@@ -50,6 +50,55 @@ pipeline:
       # There is no aarch64 sigar lib shipped at all, so sigar is already non-functional
       # on arm64 -- removing it keeps the image consistent across both arches.
       rm -rf "$dest/lib/sigar-bin"
+
+      # --- QuenchWorks CVE pin: swap standalone lib/ jars to patched versions ------
+      # Every finding below is a STANDALONE lib/ jar (NOT shaded in any uber-jar), so
+      # a direct same-major/minor jar swap clears it without an upstream fork. Cassandra
+      # loads lib/*.jar by glob, so replacing the file (new version filename) is safe.
+      #   jackson 2.19.2 -> 2.21.5  (CVE-2026-54512..54518; databind needs 2.21.5 for
+      #                              CVE-2026-54515) -- annotations ships bare "2.21".
+      #   logback 1.5.18 -> 1.5.33  (CVE-2025-11226, CVE-2026-1225, CVE-2026-9828)
+      #   netty   4.1.130 -> 4.1.135.Final (CVE-2026-42583/44249/45416/50010/45536/42578;
+      #                              stay on the 4.1.x line, no 4.2 major jump)
+      # SHA256-pinned from Maven Central (repo1.maven.org). netty-tcnative (2.0.70) is a
+      # separate artifact line, not flagged -- left as-is.
+      # Pinned filenames match the 5.0.8 bundle; guard so older lines (which bundle
+      # different jar versions) never get a mismatched swap.
+      if [ "${{package.version}}" = "5.0.8" ]; then
+      M=https://repo1.maven.org/maven2
+      swap() { # newfile sha256 url oldglob
+        local nf="$1" sha="$2" url="$3" oldglob="$4"
+        rm -f "$dest"/lib/$oldglob
+        wget -q -O "$dest/lib/$nf" "$url"
+        echo "$sha  $dest/lib/$nf" | sha256sum -c - >/dev/null
+      }
+      swap jackson-annotations-2.21.jar 53ca085f4a150f703f49e1aabd935bd03b43e1ea3d55d135438292af22cef56b "$M/com/fasterxml/jackson/core/jackson-annotations/2.21/jackson-annotations-2.21.jar" 'jackson-annotations-2.19.2.jar'
+      swap jackson-core-2.21.5.jar b64b5874162b503a0e58a8f7758266e8dd9f91bf49e3a59ae0b5f47589a231b7 "$M/com/fasterxml/jackson/core/jackson-core/2.21.5/jackson-core-2.21.5.jar" 'jackson-core-2.19.2.jar'
+      swap jackson-databind-2.21.5.jar 507418c0fafd38b2b2cfb704521630da613a8e4cc8381195a6f418017883e2c0 "$M/com/fasterxml/jackson/core/jackson-databind/2.21.5/jackson-databind-2.21.5.jar" 'jackson-databind-2.19.2.jar'
+      swap jackson-datatype-jsr310-2.21.5.jar e941f9718d16a649614cb06711de06da34722afff9cee0b7725fc5318638304c "$M/com/fasterxml/jackson/datatype/jackson-datatype-jsr310/2.21.5/jackson-datatype-jsr310-2.21.5.jar" 'jackson-datatype-jsr310-2.19.2.jar'
+      swap logback-classic-1.5.33.jar 6d9ab1406e884084105940fe71378b53d2fe3b4806d856945703a27216014c97 "$M/ch/qos/logback/logback-classic/1.5.33/logback-classic-1.5.33.jar" 'logback-classic-1.5.18.jar'
+      swap logback-core-1.5.33.jar 48b106f3abf3498eff7e59406a15226f351cf9c625017652e63c346a07011d81 "$M/ch/qos/logback/logback-core/1.5.33/logback-core-1.5.33.jar" 'logback-core-1.5.18.jar'
+      NV=4.1.135.Final
+      swap netty-all-$NV.jar 00d8db09beb96a6e556f56960edb3ebe558eb764f15a394d621f470c77e1114c "$M/io/netty/netty-all/$NV/netty-all-$NV.jar" 'netty-all-4.1.130.Final.jar'
+      swap netty-buffer-$NV.jar 2a194f99fc93d07c4d442d04ac71bd2dc56d3188cd0e4270cdc2a953d1956bf9 "$M/io/netty/netty-buffer/$NV/netty-buffer-$NV.jar" 'netty-buffer-4.1.130.Final.jar'
+      swap netty-codec-$NV.jar 7252171264dbb5bb8ed38e77f89643b31e3cabc96144ec27b6882435d718a61e "$M/io/netty/netty-codec/$NV/netty-codec-$NV.jar" 'netty-codec-4.1.130.Final.jar'
+      swap netty-common-$NV.jar 26775ca95820711403cf065fa2ec0134a0a04ff5417c688c0237aee68b55838d "$M/io/netty/netty-common/$NV/netty-common-$NV.jar" 'netty-common-4.1.130.Final.jar'
+      swap netty-handler-$NV.jar 245e74e04b6f4e8ef98853152412e3bf1499ce6fcf15329b798c8ce36c3537e2 "$M/io/netty/netty-handler/$NV/netty-handler-$NV.jar" 'netty-handler-4.1.130.Final.jar'
+      swap netty-handler-proxy-$NV.jar 75661010630a44468f0e85d7ed8be7779c0cb1369fe85d30799cedc52e9ed3b7 "$M/io/netty/netty-handler-proxy/$NV/netty-handler-proxy-$NV.jar" 'netty-handler-proxy-4.1.130.Final.jar'
+      swap netty-handler-ssl-ocsp-$NV.jar 003faa1a7720fe3481e46ba5266df23e65ebe5ca4678abb1ab9ce77afb9fc4d5 "$M/io/netty/netty-handler-ssl-ocsp/$NV/netty-handler-ssl-ocsp-$NV.jar" 'netty-handler-ssl-ocsp-4.1.130.Final.jar'
+      swap netty-resolver-$NV.jar 77dd03865965b6c12b9e521bddec82f035caeb33156e09c158289c5094318481 "$M/io/netty/netty-resolver/$NV/netty-resolver-$NV.jar" 'netty-resolver-4.1.130.Final.jar'
+      swap netty-transport-$NV.jar 6bde734d1ec073142eed31b1e68cd5d68fbf241e060b37f07a164e5ecb15631c "$M/io/netty/netty-transport/$NV/netty-transport-$NV.jar" 'netty-transport-4.1.130.Final.jar'
+      swap netty-transport-classes-epoll-$NV.jar 9d9537ab9e15164c9f0dc0748884c148814a18d78ac6dfa65cf4b3d06068ce01 "$M/io/netty/netty-transport-classes-epoll/$NV/netty-transport-classes-epoll-$NV.jar" 'netty-transport-classes-epoll-4.1.130.Final.jar'
+      swap netty-transport-classes-kqueue-$NV.jar b1f2c39d9bf7af4ecd1eb40b6bb92c5741460623aabf351de166beecbd06827d "$M/io/netty/netty-transport-classes-kqueue/$NV/netty-transport-classes-kqueue-$NV.jar" 'netty-transport-classes-kqueue-4.1.130.Final.jar'
+      swap netty-transport-native-unix-common-$NV.jar a7895075f112611d1640a596c2678a28aab92d5681c1c14755b109b8998f995e "$M/io/netty/netty-transport-native-unix-common/$NV/netty-transport-native-unix-common-$NV.jar" 'netty-transport-native-unix-common-4.1.130.Final.jar'
+      # netty-transport-native-epoll ships 3 files (no-classifier + 2 per-arch natives);
+      # remove all three old ones, then fetch each patched file.
+      rm -f "$dest"/lib/netty-transport-native-epoll-4.1.130.Final*.jar
+      swap netty-transport-native-epoll-$NV.jar 37b843fa20e80be3b0c97476fef013137f5d7487c85fdead3fe8cb3876f3aa0d "$M/io/netty/netty-transport-native-epoll/$NV/netty-transport-native-epoll-$NV.jar" 'netty-transport-native-epoll-4.1.130.Final.jar'
+      swap netty-transport-native-epoll-$NV-linux-x86_64.jar 18a40063da3364cffff81c6c2097fb6ebcb45c62264dabcce45aade4fdac3125 "$M/io/netty/netty-transport-native-epoll/$NV/netty-transport-native-epoll-$NV-linux-x86_64.jar" 'netty-transport-native-epoll-4.1.130.Final-linux-x86_64.jar'
+      swap netty-transport-native-epoll-$NV-linux-aarch_64.jar 6f92c8e6c63fa4af4e0f2d2428a1975005c136837c69ddd60e5b5346e57d5db8 "$M/io/netty/netty-transport-native-epoll/$NV/netty-transport-native-epoll-$NV-linux-aarch_64.jar" 'netty-transport-native-epoll-4.1.130.Final-linux-aarch_64.jar'
+      fi  # end 5.0.8-only jar swap
+
       # the dist ships conf/ and launchers with restrictive perms; the nonroot runtime
       # user must read the config (to seed the writable conf dir) and exec the launchers.
       chmod -R a+rX "$dest"
