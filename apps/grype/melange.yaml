@@ -31,9 +31,37 @@ pipeline:
     with:
       uri: https://github.com/anchore/grype/archive/refs/tags/v${{package.version}}.tar.gz
       expected-sha256: __SHA256__
+  - name: Drop the vulnerable github.com/docker/docker dep by moving its one caller to the split moby modules
+    runs: |
+      set -eu
+      # grype imports github.com/docker/docker ONLY in cmd/grype/cli/commands/completion.go
+      # (listing local docker images for shell completion). That module caps at
+      # v28.5.2+incompatible and carries CVE-2026-34040 / CVE-2026-33997 (Moby daemon
+      # authz + plugin-install-privilege bypass); the fix ships only on the renamed
+      # github.com/moby/moby/v2 path, with NO fix on the docker/docker import path.
+      # grype ALREADY depends on the split client (github.com/moby/moby/client) + api
+      # (github.com/moby/moby/api) modules, so we migrate that single file onto them
+      # (identical NewClientWithOpts/FromEnv/APIVersionNegotiation + ImageList API).
+      # docker/docker then drops out of the build graph entirely and the grype binary
+      # embeds only moby/moby/{client,api} — the CVE is gone at the source, gate unchanged.
+      F=cmd/grype/cli/commands/completion.go
+      sed -i \
+        -e '\#"github.com/docker/docker/api/types/filters"#d' \
+        -e '\#"github.com/docker/docker/api/types/image"#d' \
+        -e 's#"github.com/docker/docker/client"#"github.com/moby/moby/client"#' \
+        -e 's#imageListArgs := filters.NewArgs()#imageListArgs := make(client.Filters).Add("dangling", "false")#' \
+        -e '/^\timageListArgs.Add("dangling", "false")$/d' \
+        -e 's#image.ListOptions{All: false, Filters: imageListArgs}#client.ImageListOptions{All: false, Filters: imageListArgs}#' \
+        -e 's#for _, image := range images {#for _, img := range images.Items {#' \
+        -e 's#for _, tag := range image.RepoTags {#for _, tag := range img.RepoTags {#' \
+        "$F"
+      # Resolve the require graph after the import swap (moby/moby/client goes direct).
+      export GOFLAGS=-mod=mod GO111MODULE=on GOTOOLCHAIN=local
+      go mod tidy
   - runs: |
       export CGO_ENABLED=0
       export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local
       go build -trimpath \
         -ldflags "-s -w -X main.version=${{package.version}}" \
         -o "${{targets.destdir}}/usr/bin/grype" ./cmd/grype

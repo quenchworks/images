@@ -1,26 +1,28 @@
-# Packages Authelia onto Wolfi. Authelia is a Go authentication/authorization server
-# with an embedded React web portal baked into the binary (go:embed); a from-source
-# build needs a pnpm/Node toolchain and is infeasible in CI, so we ship Authelia's OWN
-# official prebuilt binary tarball from the GitHub release (the same upstream-artifact
-# pattern clickhouse/mattermost use), then harden it on a minimal apko base and gate it
-# 0-CVE with Trivy. This is clean-room-consistent: it is upstream's published artifact,
-# not a Bitnami chart, and the scan still fully applies.
+# Builds Authelia FROM SOURCE onto Wolfi. Authelia is a Go authentication/authorization
+# server with an embedded React web portal baked into the binary via go:embed
+# (internal/server/public_html). We control the toolchain + module graph here: the React
+# portal is built with pnpm/Node in the melange build env (vite emits straight into the
+# go:embed dir), then the Go server is built with go-1.26 so the stdlib is current and
+# every module resolves to its up-to-date, advisory-clean version. This replaces the old
+# prebuilt-tarball recipe, whose binary baked a stale Go stdlib + deps and could not pass
+# the 0-CVE gate. Output is a signed APK in Quenchworks' own repo — no upstream binaries.
 #
-# The (glibc) tarball is flat: it contains the binary `authelia` plus systemd/tmpfiles
-# unit files and a config.template.yml. We install ONLY the binary as /usr/bin/authelia.
-# The server binary is a dynamically-linked Go binary that links glibc (libc/libpthread/
-# libresolv/libdl), so the runtime surface is glibc + ca-certificates-bundle (TLS to the
-# external storage backend / SMTP / identity providers).
+# CGO is ENABLED: Authelia's sqlite storage backend uses github.com/mattn/go-sqlite3
+# (cgo). This is exactly why upstream ships separate glibc/musl binaries; we build the
+# glibc variant, so the runtime surface is glibc + ca-certificates-bundle (TLS to the
+# external storage backend / SMTP / OIDC providers). The version is stamped via the
+# internal/utils.BuildTag + BuildState ldflags so `authelia --version` reports the real
+# tag (BuildState "tagged clean" makes Version() emit the bare vX.Y.Z).
 package:
   name: quench-authelia
   version: __VER__
   epoch: 0
-  description: "Quenchworks hardened Authelia authentication & authorization server, packaged on Wolfi"
+  description: "Quenchworks hardened Authelia authentication & authorization server, built from source on Wolfi"
   copyright:
     - license: Apache-2.0
   dependencies:
     runtime:
-      - glibc                  # the Go binary links glibc (libc/libpthread/libresolv/libdl)
+      - glibc                  # cgo (sqlite) binary links glibc (libc/libpthread/libresolv/libdl)
       - ca-certificates-bundle # TLS to the external storage backend / SMTP / OIDC providers
 
 environment:
@@ -30,33 +32,50 @@ environment:
     repositories:
       - https://packages.wolfi.dev/os
     packages:
+      - build-base       # gcc/binutils for the cgo (sqlite) link
       - busybox
-      - curl
       - ca-certificates-bundle
+      - glibc-dev        # cgo headers
+      - go-1.26          # newer than upstream's go 1.26.3 toolchain: clears stdlib CVEs
+      - nodejs-24        # web portal build (package.json engines: node >=22.13.1)
+      - pnpm-11          # web portal package manager (package.json engines: pnpm 11)
 
 pipeline:
-  # Authelia publishes separate amd64/arm64 (glibc) binary tarballs, so fetch the one
-  # matching the build arch by uname -m (x86_64->amd64, aarch64->arm64) with the
-  # arch-matching sha256 — using the wrong arch yields a wrong-arch binary. The version
-  # IS part of the asset filename and the leading `v` is part of the release tag, so both
-  # the path segment and the filename carry `v${VER}`.
-  - runs: |
+  - uses: fetch
+    with:
+      uri: https://github.com/authelia/authelia/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SRC_SHA__
+      strip-components: 1
+
+  - name: Build the React web portal (populates the go:embed internal/server/public_html)
+    runs: |
+      set -eu
+      # A source tarball is not a git repo, so the `prepare` npm script (`lefthook install`,
+      # which installs git hooks) would fail `pnpm install`; drop it — it is dev-only.
+      sed -i '/"prepare": "lefthook install",/d' web/package.json
+      # Give pnpm a writable HOME (store + config) inside the build workspace.
+      export HOME="$(pwd)"
+      export CI=true
+      cd web
+      pnpm install --frozen-lockfile
+      # vite build writes to ../internal/server/public_html (see web/vite.config.ts outDir),
+      # which is the directory embedded by internal/server/asset.go via //go:embed.
+      pnpm build
+
+  - name: Build the Authelia server from source (cgo for the sqlite storage backend)
+    runs: |
+      set -eu
+      export CGO_ENABLED=1
+      export CC=gcc
+      export GOFLAGS=-mod=mod
+      export GO111MODULE=on
+      export GOTOOLCHAIN=local   # use the installed go-1.26, don't fetch go.mod's toolchain
       VER="${{package.version}}"
-      case "$(uname -m)" in
-        x86_64)  goarch=amd64; sha=__SHA_AMD__ ;;
-        aarch64) goarch=arm64; sha=__SHA_ARM__ ;;
-        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
-      esac
-
-      url="https://github.com/authelia/authelia/releases/download/v${VER}/authelia-v${VER}-linux-${goarch}.tar.gz"
-      curl -fsSL -o authelia.tar.gz "$url"
-      echo "${sha}  authelia.tar.gz" | sha256sum -c -
-      tar -xzf authelia.tar.gz   # flat: ./authelia + unit files + config.template.yml
-
-      # Install ONLY the server binary on PATH. The systemd/tmpfiles units and the config
-      # template are host-deployment scaffolding and have no place in a container image;
-      # the chart provides the configuration.yml.
-      install -Dm0755 authelia "${{targets.destdir}}/usr/bin/authelia"
+      # BuildTag = the release tag; BuildState "tagged clean" makes utils.Version() emit the
+      # bare vX.Y.Z (what `authelia --version` prints and the chart/test assert).
+      go build -trimpath \
+        -ldflags "-s -w -X 'github.com/authelia/authelia/v4/internal/utils.BuildTag=v${VER}' -X 'github.com/authelia/authelia/v4/internal/utils.BuildState=tagged clean'" \
+        -o "${{targets.destdir}}/usr/bin/authelia" ./cmd/authelia
 
 test:
   pipeline:
