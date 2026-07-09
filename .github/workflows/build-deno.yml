@@ -69,11 +69,12 @@ jobs:
           curl -fsSL "https://github.com/chainguard-dev/apko/releases/download/${APKO_VER}/apko_${APKO_VER#v}_linux_${{ matrix.arch.platform }}.tar.gz" \
             | sudo tar xz --strip-components=1 -C /usr/local/bin
           apko version | head -1
-          MELANGE_VER="$(gh api repos/chainguard-dev/melange/releases/latest --jq .tag_name 2>/dev/null || echo v0.34.6)"
+          MELANGE_VER=v0.53.0
           curl -fsSL "https://github.com/chainguard-dev/melange/releases/download/${MELANGE_VER}/melange_${MELANGE_VER#v}_linux_${{ matrix.arch.platform }}.tar.gz" \
             | sudo tar xz --strip-components=1 -C /usr/local/bin
           melange version | head -1
           sudo apt-get update -qq && sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
 
       - name: Render recipes for ${{ matrix.ver }} (build.conf render)
         run: |
