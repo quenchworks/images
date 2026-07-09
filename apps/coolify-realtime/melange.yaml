@@ -79,7 +79,11 @@ environment:
       - ca-certificates-bundle
       - git
       - nodejs-18
-      - npm
+      # Pin npm to the 10.x line: Wolfi's unversioned `npm` has advanced to 12.x,
+      # whose engines require Node >=22 (it aborts under our pinned Node 18 with
+      # "npm v12 does not support Node.js v18"). npm 10 is the newest line that
+      # still supports Node 18, so both build passes (soketi + terminal) run.
+      - npm=~10
       - python3                 # node-gyp (node-pty) build dependency
 
 pipeline:

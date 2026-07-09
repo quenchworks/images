@@ -60,14 +60,35 @@ pipeline:
              golang.org/x/crypto@v0.52.0 \
              golang.org/x/net@v0.55.0 \
              google.golang.org/grpc@v1.80.0
-      # --- KNOWN-BLOCKED, do NOT force -----------------------------------------
       # github.com/modelcontextprotocol/go-sdk v0.2.0 (DIRECT dep) is flagged by
-      #   CVE-2026-27896, CVE-2026-33252, CVE-2026-34742, GHSA-q382-vc8q-7jhj
-      #   (all HIGH). Every fix is v1.x
-      #   (>=1.3.1/1.4.0/1.4.1) -- a v0->v1 MAJOR bump. v1 removed the generic
-      #   mcp.CallToolParamsFor / mcp.CallToolResultFor types that FerretDB's own
-      #   internal/mcp/*.go imports directly, so the from-source build fails to
-      #   compile. Cannot fix without forking/patching FerretDB. See build.conf.
+      #   CVE-2026-27896, CVE-2026-33252, CVE-2026-34742, GHSA-q382-vc8q-7jhj (HIGH),
+      #   all fixed only in v1.x -- a v0->v1 MAJOR bump. v1 removed the generic
+      #   mcp.CallToolParamsFor / mcp.CallToolResultFor types that FerretDB's
+      #   internal/mcp/*.go uses. The bump is SAFE because the migration is tiny and
+      #   self-contained: go-sdk v1 replaced those generics with the ToolHandlerFor
+      #   shape `func(ctx, *CallToolRequest, In) (*CallToolResult, Out, error)`, and
+      #   only 3 tool handlers + one result literal reference the removed types. We
+      #   port them in-place below (no behavior change; MCP is a runtime-optional
+      #   listener, off unless --listen-mcp-addr is set). Verified 0-CVE.
+      go get github.com/modelcontextprotocol/go-sdk@v1.4.1
+      # --- MCP v0->v1 API port (modelcontextprotocol/go-sdk) --------------------
+      # v1 dropped mcp.CallToolResultFor[T]/CallToolParamsFor[T]; migrate the three
+      # tool handlers (find, listCollections, listDatabases) and handle() to v1's
+      # ToolHandlerFor signature. AddTool infers In/Out, so the addTools() calls are
+      # unchanged. Each handler returns the extra Out value (nil) alongside result+err.
+      sed -i 's#mcp\.CallToolResultFor\[any\]#mcp.CallToolResult#' internal/mcp/server.go
+      for pair in \
+        "find.go:findArgs" \
+        "listcollections.go:listCollectionsArgs" \
+        "listdatabases.go:any"; do
+        f="internal/mcp/${pair%%:*}"; in="${pair#*:}"
+        sed -i \
+          -e "s#_ \*mcp.ServerSession, params \*mcp.CallToolParamsFor\[${in}\]) (\*mcp.CallToolResult, error)#_ *mcp.CallToolRequest, args ${in}) (*mcp.CallToolResult, any, error)#" \
+          -e 's#slog.Any("params", params)#slog.Any("args", args)#' \
+          -e 's#params\.Arguments\.#args.#g' \
+          -e 's#^\treturn s.handle(ctx, req)#\tres, err := s.handle(ctx, req)\n\treturn res, nil, err#' \
+          "$f"
+      done
       # -------------------------------------------------------------------------
       go mod tidy
       go build -trimpath -ldflags "-s -w" \
