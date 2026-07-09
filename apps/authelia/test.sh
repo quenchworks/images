@@ -29,3 +29,58 @@ if [ -n "$EXPECT_VER" ]; then
 fi
 
 echo "PASS: authelia smoke test green"
+
+# Real boot check: the from-source binary must serve HTTP (this catches missing
+# go:embed assets — e.g. public_html/api/index.html — that --version never touches).
+echo "boot check: start with a minimal config and probe /api/health ..."
+TDIR="$(mktemp -d "$(pwd)/smoke.XXXXXX")"
+cat > "$TDIR/configuration.yml" <<'CFG'
+theme: light
+server:
+  address: tcp://0.0.0.0:9091
+log:
+  level: info
+identity_validation:
+  reset_password:
+    jwt_secret: insecure_jwt_secret_for_smoke_test_only_0123456789abcdef
+authentication_backend:
+  file:
+    path: /config/users.yml
+access_control:
+  default_policy: one_factor
+session:
+  secret: insecure_session_secret_for_smoke_test_only_0123456789
+  cookies:
+    - domain: example.com
+      authelia_url: https://auth.example.com
+storage:
+  encryption_key: insecure_storage_encryption_key_for_smoke_test_only
+  local:
+    path: /config/db.sqlite3
+notifier:
+  filesystem:
+    filename: /config/notification.txt
+CFG
+cat > "$TDIR/users.yml" <<'USR'
+users:
+  smoke:
+    disabled: false
+    displayname: Smoke Test
+    password: "$argon2id$v=19$m=65536,t=3,p=4$c21va2V0ZXN0c2FsdA$V1DVfUXlKV0KqmGmpsu4Ba1PjB47Vh4hTDqvbleyLE0"
+    email: smoke@example.com
+USR
+chmod -R a+rwX "$TDIR"
+CID="$(docker run -d --read-only -v "$TDIR:/config" "$IMAGE" --config /config/configuration.yml)"
+ok=0
+for i in $(seq 1 30); do
+  if docker exec "$CID" /usr/bin/authelia healthcheck 2>/dev/null; then ok=1; break; fi
+  # fallback probe if healthcheck subcommand unavailable
+  if docker logs "$CID" 2>&1 | grep -q "Startup complete"; then ok=1; break; fi
+  if [ "$(docker inspect -f '{{.State.Running}}' "$CID")" != "true" ]; then break; fi
+  sleep 2
+done
+docker logs "$CID" 2>&1 | tail -5
+docker rm -f "$CID" >/dev/null 2>&1 || true
+rm -rf "$TDIR"
+[ "$ok" = "1" ] || { echo "FAIL: authelia did not reach a healthy started state"; exit 1; }
+echo "  boot check passed (server started, assets loaded)"

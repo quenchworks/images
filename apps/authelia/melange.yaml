@@ -60,7 +60,14 @@ pipeline:
       pnpm install --frozen-lockfile
       # vite build writes to ../internal/server/public_html (see web/vite.config.ts outDir),
       # which is the directory embedded by internal/server/asset.go via //go:embed.
+      # It EMPTIES the outDir first, destroying the tarball's public_html/api/ placeholder
+      # files (index.html, openapi.yml) that the server requires at startup ("error occurred
+      # loading template 'assets/public_html/api/index.html'") — save and restore them.
+      cp -a ../internal/server/public_html/api /tmp/authelia-api-assets
       pnpm build
+      [ -e ../internal/server/public_html/api/index.html ] || cp -a /tmp/authelia-api-assets ../internal/server/public_html/api
+      test -f ../internal/server/public_html/api/index.html
+      test -f ../internal/server/public_html/api/openapi.yml
 
   - name: Build the Authelia server from source (cgo for the sqlite storage backend)
     runs: |
