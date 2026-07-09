@@ -19,9 +19,10 @@ docker run -d --name "$NAME" \
   -p 127.0.0.1:11434:11434 \
   "$IMAGE" >/dev/null
 
-# confirm nonroot uid 1001
-UID_OUT="$(docker exec "$NAME" id -u)"
-echo "runtime uid: $UID_OUT"
+# confirm nonroot uid 1001 (via inspect: the image is shell-less and ships no
+# `id` binary, so `docker exec id -u` can't run — same pattern as quench-renovate)
+UID_OUT="$(docker inspect "$IMAGE" --format '{{.Config.User}}')"
+echo "configured runtime uid: $UID_OUT"
 [ "$UID_OUT" = "1001" ] || { echo "FAIL: not running as uid 1001"; exit 1; }
 
 # wait for GET /api/version -> {"version":"..."}
@@ -48,7 +49,9 @@ curl -fsS http://127.0.0.1:11434/api/tags >/dev/null \
 
 # in-image CLI must report the stamped version too
 echo "in-image ollama --version check:"
-CLI_VER="$(docker exec "$NAME" ollama --version 2>&1 | sed -n 's/.*client version is \([0-9][^ ]*\).*/\1/p')"
+# with the server up the CLI prints "ollama version is X.Y.Z"; server-less it
+# warns "client version is X.Y.Z" — accept either wording, capture the semver
+CLI_VER="$(docker exec "$NAME" ollama --version 2>&1 | sed -n 's/.*version is \([0-9][^ ]*\).*/\1/p' | head -1)"
 echo "  cli -> $CLI_VER"
 [ "$CLI_VER" = "$ver" ] || { echo "FAIL: cli version '$CLI_VER' != server '$ver'"; exit 1; }
 

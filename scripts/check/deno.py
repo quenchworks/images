@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
-# deno: flat Wolfi apk 'deno' — latest patch stream.
-from _lib import wolfi, report
-report("deno", wolfi("deno"))
+# deno: the recipe ships the OFFICIAL upstream release binary (denoland/deno),
+# NOT the Wolfi apk (which lags upstream) — track GitHub releases, newest stable
+# only (github() already drops prereleases/drafts; keep= guards odd tags).
+from _lib import github, report
+report("deno", github("denoland/deno"),
+       keep=lambda t: all(p.isdigit() for p in t.split(".")))
