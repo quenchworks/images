@@ -16,14 +16,16 @@
 contents:
   keyring:
     - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
   repositories:
     - https://packages.wolfi.dev/os
+    - "@local ./packages"
   packages:
     - wolfi-baselayout
     - ca-certificates-bundle
     - busybox                            # /bin/sh + dirname/sed/tr/uname for the gradle launcher
     - openjdk-__JDKVER__-default-jdk     # full JDK (java + javac) that gradle drives
-    - __PKG__                      # the pinned Gradle line from Wolfi (/usr/bin/gradle)
+    - quench-gradle@local          # Wolfi gradle-9 repackaged with jackson 2.18.9 (see melange.yaml)
 
 accounts:
   groups:

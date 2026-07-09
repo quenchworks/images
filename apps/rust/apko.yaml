@@ -14,12 +14,15 @@
 contents:
   keyring:
     - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
   repositories:
     - https://packages.wolfi.dev/os
+    - "@local ./packages"
   packages:
     - wolfi-baselayout
     - ca-certificates-bundle
-    - rust-__VER__            # pinned Rust minor; provides cargo + rustc
+    - quench-rust@local           # Wolfi rust-<minor> repackaged w/o the stdlib
+                                  # source tree (see melange.yaml); provides cargo + rustc
     - build-base                  # gcc + binutils ld: the C toolchain cargo
                                   # shells out to for the final link step
 

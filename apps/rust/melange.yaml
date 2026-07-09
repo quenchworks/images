@@ -1,0 +1,62 @@
+# Repackages Wolfi's own `rust-1.X` apk MINUS the bundled Rust standard-library
+# SOURCE tree, so the 0-CVE gate passes without waiting on a Wolfi/upstream
+# rebuild. Wolfi's monolithic rust package bakes the stdlib source under
+# usr/lib/rustlib/src/rust/library/**, whose vendored *dev-dependency* Cargo.lock
+# files pin an old `rand` -> GHSA-cq8v-f236-94qc (LOW). Those lockfiles are only
+# ever used when recompiling std from source (-Z build-std / the rust-src
+# component); a normal `cargo build` links the PRECOMPILED std under
+# usr/lib/rustlib/<triple>/lib and never touches them. We therefore install
+# exactly the files Wolfi's rust apk owns, drop only usr/lib/rustlib/src/**, and
+# keep the precompiled toolchain intact. Clean-room-consistent: every shipped
+# byte is Wolfi's own rust apk content. The Trivy gate still applies in full.
+#
+# TEMPLATE NOTE: __FULLVER__ (rust X.Y.Z, the image tag / package version) and
+# __VER__ (the rust minor, e.g. 1.96) are substituted by build.conf render()
+# before the build. The env pulls `rust-__VER__` UNPINNED so the daily rebuild
+# always repackages the newest patch of that minor.
+package:
+  name: quench-rust
+  version: __FULLVER__
+  epoch: 0
+  description: "Quenchworks hardened Rust toolchain, repackaged from Wolfi rust-__VER__ without the stdlib source tree (GHSA-cq8v-f236-94qc cleared)"
+  copyright:
+    - license: MIT OR Apache-2.0
+  dependencies:
+    runtime:
+      - libLLVM-22             # librustc_driver links libLLVM.so.22.1
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox                # sh + grep + test for the pipeline
+      - apk-tools              # `apk info -L` to enumerate exactly the rust apk's files
+      - gnutar                 # GNU tar for the --no-recursion file-list copy (symlink-preserving)
+      - rust-__VER__           # the Wolfi rust toolchain we repackage
+
+pipeline:
+  - runs: |
+      set -eux
+      D="${{targets.destdir}}"
+      cd /
+      # Enumerate EXACTLY the files Wolfi's rust apk owns (relative paths), keep
+      # only real usr//etc entries (drop dir entries and the vulnerable stdlib
+      # SOURCE tree), then copy that exact set preserving symlinks + perms.
+      apk info --quiet -L rust-__VER__ \
+        | grep -E '^(usr|etc)/' \
+        | grep -v '/$' \
+        | grep -v '^usr/lib/rustlib/src/' \
+        > /tmp/rustfiles.txt
+      test -s /tmp/rustfiles.txt
+      tar -cf - --no-recursion -T /tmp/rustfiles.txt | tar -C "$D" -xf -
+
+      # Guards: the vulnerable stdlib source is gone, but the working toolchain
+      # (cargo + rustc + PRECOMPILED std) is fully present.
+      test ! -e "$D/usr/lib/rustlib/src"
+      test -x "$D/usr/bin/cargo"
+      test -x "$D/usr/bin/rustc"
+      ls "$D"/usr/lib/rustlib/*/lib/*.rlib >/dev/null   # precompiled std must remain
