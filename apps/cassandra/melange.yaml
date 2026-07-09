@@ -57,7 +57,8 @@ pipeline:
       # loads lib/*.jar by glob, so replacing the file (new version filename) is safe.
       #   jackson 2.19.2 -> 2.21.5  (CVE-2026-54512..54518; databind needs 2.21.5 for
       #                              CVE-2026-54515) -- annotations ships bare "2.21".
-      #   logback 1.5.18 -> 1.5.33  (CVE-2025-11226, CVE-2026-1225, CVE-2026-9828)
+      #   logback 1.5.18 -> 1.5.35  (CVE-2025-11226, CVE-2026-1225, CVE-2026-9828,
+      #                              CVE-2026-10532)
       #   netty   4.1.130 -> 4.1.135.Final (CVE-2026-42583/44249/45416/50010/45536/42578;
       #                              stay on the 4.1.x line, no 4.2 major jump)
       # SHA256-pinned from Maven Central (repo1.maven.org). netty-tcnative (2.0.70) is a
@@ -76,8 +77,8 @@ pipeline:
       swap jackson-core-2.21.5.jar b64b5874162b503a0e58a8f7758266e8dd9f91bf49e3a59ae0b5f47589a231b7 "$M/com/fasterxml/jackson/core/jackson-core/2.21.5/jackson-core-2.21.5.jar" 'jackson-core-2.19.2.jar'
       swap jackson-databind-2.21.5.jar 507418c0fafd38b2b2cfb704521630da613a8e4cc8381195a6f418017883e2c0 "$M/com/fasterxml/jackson/core/jackson-databind/2.21.5/jackson-databind-2.21.5.jar" 'jackson-databind-2.19.2.jar'
       swap jackson-datatype-jsr310-2.21.5.jar e941f9718d16a649614cb06711de06da34722afff9cee0b7725fc5318638304c "$M/com/fasterxml/jackson/datatype/jackson-datatype-jsr310/2.21.5/jackson-datatype-jsr310-2.21.5.jar" 'jackson-datatype-jsr310-2.19.2.jar'
-      swap logback-classic-1.5.33.jar 6d9ab1406e884084105940fe71378b53d2fe3b4806d856945703a27216014c97 "$M/ch/qos/logback/logback-classic/1.5.33/logback-classic-1.5.33.jar" 'logback-classic-1.5.18.jar'
-      swap logback-core-1.5.33.jar 48b106f3abf3498eff7e59406a15226f351cf9c625017652e63c346a07011d81 "$M/ch/qos/logback/logback-core/1.5.33/logback-core-1.5.33.jar" 'logback-core-1.5.18.jar'
+      swap logback-classic-1.5.35.jar 1a0ba277c4d177862731c820099913013255892c79e05b5371307f174f089878 "$M/ch/qos/logback/logback-classic/1.5.35/logback-classic-1.5.35.jar" 'logback-classic-1.5.18.jar'
+      swap logback-core-1.5.35.jar d8c38ea6871eefccf769f83e1afd07280e29fa0d1dd281092a77eb77c880ace6 "$M/ch/qos/logback/logback-core/1.5.35/logback-core-1.5.35.jar" 'logback-core-1.5.18.jar'
       NV=4.1.135.Final
       swap netty-all-$NV.jar 00d8db09beb96a6e556f56960edb3ebe558eb764f15a394d621f470c77e1114c "$M/io/netty/netty-all/$NV/netty-all-$NV.jar" 'netty-all-4.1.130.Final.jar'
       swap netty-buffer-$NV.jar 2a194f99fc93d07c4d442d04ac71bd2dc56d3188cd0e4270cdc2a953d1956bf9 "$M/io/netty/netty-buffer/$NV/netty-buffer-$NV.jar" 'netty-buffer-4.1.130.Final.jar'

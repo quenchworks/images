@@ -38,6 +38,43 @@ pipeline:
       cp -r bin config libs LICENSE NOTICE "$dest/"
       rm -rf "$dest/bin/windows"
       find "$dest/bin" -name '*.bat' -delete
+
+      # --- QuenchWorks CVE pin: swap standalone libs/ jars to patched versions ------
+      # Every finding below is a STANDALONE libs/ jar (NOT shaded), so a direct jar
+      # swap clears it without an upstream fork. Kafka loads libs/*.jar by glob, so
+      # replacing the file (new-version filename) is safe.
+      #   jackson 2.21.2 -> 2.21.5  (CVE-2026-54512..54518; databind needs 2.21.5 for
+      #                              CVE-2026-54515) -- same major.minor, patch bump.
+      #   jline   3.30.4 -> 4.2.1   (GHSA-2r2c-cx56-8933 / GHSA-47qp-hqvx-6r3f, JLine3
+      #                              telnet-server DoS). No jline 3.x patch exists; the
+      #                              telnet server is unused by kafka, and the broker +
+      #                              console/topic CLIs don't touch jline, so the 3->4
+      #                              bundle swap is safe for the shipped surface (smoke
+      #                              test verifies broker boot + produce/consume).
+      # SHA256-pinned from Maven Central (repo1.maven.org). Filenames match the 4.3.1
+      # bundle; guarded so older lines (which bundle different jar versions) never get a
+      # mismatched swap. VERSIONS is newest-only (4.3.1) -- older kafka lines bundle a
+      # different jackson AND the same-CVE jline 3.x, so they cannot pass as-is.
+      if [ "${{package.version}}" = "4.3.1" ]; then
+      M=https://repo1.maven.org/maven2
+      swap() { # newfile sha256 url oldglob
+        local nf="$1" sha="$2" url="$3" oldglob="$4"
+        rm -f "$dest"/libs/$oldglob
+        wget -q -O "$dest/libs/$nf" "$url"
+        echo "$sha  $dest/libs/$nf" | sha256sum -c - >/dev/null
+      }
+      swap jackson-core-2.21.5.jar b64b5874162b503a0e58a8f7758266e8dd9f91bf49e3a59ae0b5f47589a231b7 "$M/com/fasterxml/jackson/core/jackson-core/2.21.5/jackson-core-2.21.5.jar" 'jackson-core-2.21.2.jar'
+      swap jackson-databind-2.21.5.jar 507418c0fafd38b2b2cfb704521630da613a8e4cc8381195a6f418017883e2c0 "$M/com/fasterxml/jackson/core/jackson-databind/2.21.5/jackson-databind-2.21.5.jar" 'jackson-databind-2.21.2.jar'
+      swap jackson-dataformat-csv-2.21.5.jar b278bd22805093e1b3e31c9ad7fa2773d3ac9e250da8cb566bd914334cc51a96 "$M/com/fasterxml/jackson/dataformat/jackson-dataformat-csv/2.21.5/jackson-dataformat-csv-2.21.5.jar" 'jackson-dataformat-csv-2.21.2.jar'
+      swap jackson-dataformat-yaml-2.21.5.jar c26143ac5503fd545bd5e9063f45a2499be89971559875e47cc868ef9359d10b "$M/com/fasterxml/jackson/dataformat/jackson-dataformat-yaml/2.21.5/jackson-dataformat-yaml-2.21.5.jar" 'jackson-dataformat-yaml-2.21.2.jar'
+      swap jackson-datatype-jdk8-2.21.5.jar c8b1a0d14ffb3f8f8a1f182856c8803a3ee1d7c1aeb68dfee08f22d934ce108f "$M/com/fasterxml/jackson/datatype/jackson-datatype-jdk8/2.21.5/jackson-datatype-jdk8-2.21.5.jar" 'jackson-datatype-jdk8-2.21.2.jar'
+      swap jackson-jakarta-rs-base-2.21.5.jar 07f11f2e46153b3e8d27bf6ff8f874b31bf781bf46bef69434355623a67cac5d "$M/com/fasterxml/jackson/jakarta/rs/jackson-jakarta-rs-base/2.21.5/jackson-jakarta-rs-base-2.21.5.jar" 'jackson-jakarta-rs-base-2.21.2.jar'
+      swap jackson-jakarta-rs-json-provider-2.21.5.jar c176333dd1edb820698fd3376e6f376919e3b6a208b37d112ce32192e9e787d6 "$M/com/fasterxml/jackson/jakarta/rs/jackson-jakarta-rs-json-provider/2.21.5/jackson-jakarta-rs-json-provider-2.21.5.jar" 'jackson-jakarta-rs-json-provider-2.21.2.jar'
+      swap jackson-module-blackbird-2.21.5.jar 6e1aac3aed140a3defec385083bba339d52eebb3f940582f03f64ad43ef3c433 "$M/com/fasterxml/jackson/module/jackson-module-blackbird/2.21.5/jackson-module-blackbird-2.21.5.jar" 'jackson-module-blackbird-2.21.2.jar'
+      swap jackson-module-jakarta-xmlbind-annotations-2.21.5.jar 5cb2cc2bf59faccf412ed6cba8588724b23c6145e5bda8d5ebee26db6d4dd12a "$M/com/fasterxml/jackson/module/jackson-module-jakarta-xmlbind-annotations/2.21.5/jackson-module-jakarta-xmlbind-annotations-2.21.5.jar" 'jackson-module-jakarta-xmlbind-annotations-2.21.2.jar'
+      swap jline-4.2.1.jar bdbe3b7b276ee609c28f11f704be11fdebe7375eb1a7d10a489086225cdbc535 "$M/org/jline/jline/4.2.1/jline-4.2.1.jar" 'jline-3.30.4.jar'
+      fi  # end 4.3.1-only jar swap
+
       # bake a KRaft single-node entrypoint. A read-only rootfs means the config and
       # storage live under the writable data dir; env vars override every default.
       install -d "${{targets.destdir}}/usr/bin"

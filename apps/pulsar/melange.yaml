@@ -38,6 +38,7 @@ environment:
     packages:
       - busybox
       - ca-certificates-bundle
+      - curl                # build-only: fetch same-major patched jars for the 0-CVE gate
 
 pipeline:
   - uses: fetch
@@ -65,6 +66,39 @@ pipeline:
 
       # The dist ships restrictive perms; the nonroot runtime user must read the conf
       # (to seed the writable mount) and exec the launchers.
+      chmod -R a+rX "$dest"
+
+      # ---- 0-CVE jar remediation (same-major standalone swaps + drop unused shaded jar) ----
+      # Swap vulnerable STANDALONE lib/ jars for their same-major Trivy-fixed versions
+      # from Maven Central (ABI-safe), and DROP the Java Functions runtime uber-jar
+      # (java-instance.jar) which SHADES a vulnerable jackson-databind and is never
+      # loaded by `bin/pulsar standalone --no-functions-worker` (the mode this image runs).
+      MC="https://repo1.maven.org/maven2"
+      swap() { # <maven-group-path> <artifact> <oldver> <newver>
+        grp="$1"; art="$2"; old="$3"; new="$4"
+        dg="$(printf '%s' "$grp" | tr '/' '.')"
+        rm -f "$dest/lib/${dg}-${art}-${old}.jar"
+        curl -fsSL "$MC/${grp}/${art}/${new}/${art}-${new}.jar" -o "$dest/lib/${dg}-${art}-${new}.jar"
+        test -s "$dest/lib/${dg}-${art}-${new}.jar"
+      }
+      # jackson core trio: 2.18.8 -> 2.18.9 (clears CVE-2026-54515 on the standalone databind)
+      swap com/fasterxml/jackson/core jackson-databind  2.18.8 2.18.9
+      swap com/fasterxml/jackson/core jackson-core       2.18.8 2.18.9
+      swap com/fasterxml/jackson/core jackson-annotations 2.18.8 2.18.9
+      # OpenTelemetry core set: 1.56.0 -> 1.62.0 (clears CVE-2026-45292 on opentelemetry-api);
+      # bumped as a consistent set so the OTel API/SDK/exporters stay in lockstep (ABI-safe within 1.x).
+      for a in opentelemetry-api opentelemetry-common opentelemetry-context \
+               opentelemetry-exporter-common opentelemetry-exporter-otlp \
+               opentelemetry-exporter-otlp-common opentelemetry-exporter-sender-okhttp \
+               opentelemetry-sdk opentelemetry-sdk-common \
+               opentelemetry-sdk-extension-autoconfigure opentelemetry-sdk-extension-autoconfigure-spi \
+               opentelemetry-sdk-logs opentelemetry-sdk-metrics opentelemetry-sdk-trace; do
+        swap io/opentelemetry "$a" 1.56.0 1.62.0
+      done
+      swap io/opentelemetry opentelemetry-api-incubator      1.56.0-alpha 1.62.0-alpha
+      swap io/opentelemetry opentelemetry-exporter-prometheus 1.56.0-alpha 1.62.0-alpha
+      # Drop the shaded functions-runtime uber-jar (unused in --no-functions-worker standalone).
+      rm -f "$dest/instances/java-instance.jar"
       chmod -R a+rX "$dest"
 
       # Bake a config-from-env entrypoint. A read-only rootfs means ALL of standalone's

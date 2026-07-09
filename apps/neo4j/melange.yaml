@@ -37,6 +37,7 @@ environment:
     packages:
       - busybox
       - ca-certificates-bundle
+      - curl                # build-only: fetch same-major patched jars for the 0-CVE gate
 
 pipeline:
   - uses: fetch
@@ -64,6 +65,61 @@ pipeline:
       #
       # the dist ships configs/launchers with restrictive perms; the nonroot runtime user
       # must read the default conf (to seed the writable mount) and exec the launchers.
+      chmod -R a+rX "$dest"
+
+      # ---- 0-CVE jar remediation (same-major standalone swaps) + drop shaded parquet-jackson ----
+      # Swap vulnerable STANDALONE lib/ jars for their same-major Trivy-fixed versions
+      # from Maven Central (ABI-safe), then DROP the one shaded uber-jar that cannot take
+      # a standalone swap. netty (Bolt) and shiro (auth) are exercised end-to-end by test.sh.
+      cd "$dest/lib"
+      MC="https://repo1.maven.org/maven2"
+      swap() { # <group-path> <artifact> <oldver> <newver> [classifier]
+        grp="$1"; art="$2"; old="$3"; new="$4"; cls="${5:-}"
+        if [ -n "$cls" ]; then
+          rm -f "${art}-${old}-${cls}.jar"
+          curl -fsSL "$MC/${grp}/${art}/${new}/${art}-${new}-${cls}.jar" -o "${art}-${new}-${cls}.jar"
+          test -s "${art}-${new}-${cls}.jar"
+        else
+          rm -f "${art}-${old}.jar"
+          curl -fsSL "$MC/${grp}/${art}/${new}/${art}-${new}.jar" -o "${art}-${new}.jar"
+          test -s "${art}-${new}.jar"
+        fi
+      }
+      # jackson 2.21.2 -> 2.21.5 (CVE-2026-54512/54513 HIGH + -54514..-54518 cluster).
+      # jackson-annotations stays 2.21 (line version, no CVE, matches databind 2.21.x).
+      swap com/fasterxml/jackson/core     jackson-databind             2.21.2 2.21.5
+      swap com/fasterxml/jackson/core     jackson-core                 2.21.2 2.21.5
+      swap com/fasterxml/jackson/datatype jackson-datatype-jsr310      2.21.2 2.21.5
+      swap com/fasterxml/jackson/jaxrs    jackson-jaxrs-base           2.21.2 2.21.5
+      swap com/fasterxml/jackson/jaxrs    jackson-jaxrs-json-provider  2.21.2 2.21.5
+      swap com/fasterxml/jackson/module   jackson-module-jaxb-annotations 2.21.2 2.21.5
+      # netty 4.2.14.Final -> 4.2.15.Final (CVE-2026-44893/48059/44249/45416/50010/50020/45536).
+      for a in netty-buffer netty-codec-base netty-codec-compression netty-codec-haproxy \
+               netty-codec-http netty-common netty-handler netty-resolver netty-transport \
+               netty-transport-classes-epoll netty-transport-classes-kqueue \
+               netty-transport-native-unix-common; do
+        swap io/netty "$a" 4.2.14.Final 4.2.15.Final
+      done
+      swap io/netty netty-transport-native-epoll  4.2.14.Final 4.2.15.Final linux-aarch_64
+      swap io/netty netty-transport-native-epoll  4.2.14.Final 4.2.15.Final linux-x86_64
+      swap io/netty netty-transport-native-kqueue 4.2.14.Final 4.2.15.Final osx-aarch_64
+      swap io/netty netty-transport-native-kqueue 4.2.14.Final 4.2.15.Final osx-x86_64
+      # shiro 2.1.0 -> 2.2.1 (CVE-2026-49268 HIGH LDAP injection + CVE-2026-43827 session
+      # fixation); whole module set bumped in lockstep (shiro pins ${project.version}).
+      for a in shiro-core shiro-cache shiro-config-core shiro-lang shiro-event \
+               shiro-crypto-cipher shiro-crypto-core shiro-crypto-hash; do
+        swap org/apache/shiro "$a" 2.1.0 2.2.1
+      done
+      # In shiro 2.2.x the argon2/bcrypt hash providers moved to group org.apache.shiro.crypto.
+      swap org/apache/shiro/crypto shiro-hashes-argon2 2.1.0 2.2.1
+      swap org/apache/shiro/crypto shiro-hashes-bcrypt 2.1.0 2.2.1
+      # DROP the shaded parquet-jackson uber-jar: it SHADES jackson-databind 2.21.3
+      # (CVE-2026-54512..54518) as relocated classes, so a standalone swap cannot reach it,
+      # and no newer parquet-jackson shades a fixed jackson. It is used ONLY by the niche
+      # Parquet import/export format; the core graph DB + Bolt do not load it at boot, so
+      # removing it does not affect normal operation (Parquet I/O format is disabled).
+      rm -f parquet-jackson-1.17.1.jar
+      cd - >/dev/null
       chmod -R a+rX "$dest"
 
       # bake a config-from-env entrypoint. A read-only rootfs means data/, logs/, run/
