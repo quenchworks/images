@@ -24,7 +24,9 @@ contents:
     - ca-certificates-bundle
     - nodejs-18                     # runs soketi + the terminal server (uWebSockets.js 20.10.0 caps at Node 18)
     - openssh-client                # the terminal server spawns `ssh`
-    - cloudflared                   # ProxyCommand for Cloudflare-tunneled hosts (CVE-tracked)
+    # cloudflared (the `cloudflared access ssh` ProxyCommand for tunneled hosts) is BUILT
+    # FROM SOURCE inside quench-coolify-realtime at its newest release tag -- Wolfi's apk
+    # lags upstream and still carries 2 fixable CVEs (see melange.yaml).
     - quench-coolify-realtime@local
 
 accounts:

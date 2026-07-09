@@ -23,11 +23,15 @@
 #                    committed package-lock.json. node-pty 1.1.0 is a NATIVE addon, so
 #                    build-base + python3 are present and we `npm rebuild node-pty`
 #                    exactly as upstream does to compile it for the build arch.
-#   * cloudflared -> NOT vendored as an upstream binary blob. The terminal server only
-#                    shells out to `cloudflared access ssh` as an ssh ProxyCommand when
-#                    a target host sits behind a Cloudflare tunnel; we satisfy that at
-#                    RUNTIME with Wolfi's CVE-tracked `cloudflared` package (apko.yaml),
-#                    instead of curl-ing a frozen GitHub release.
+#   * cloudflared -> BUILT FROM SOURCE here (Go), at its newest upstream release tag.
+#                    The terminal server only shells out to `cloudflared access ssh` as an
+#                    ssh ProxyCommand when a target host sits behind a Cloudflare tunnel.
+#                    We used to take Wolfi's cloudflared apk, but Wolfi's newest published
+#                    apk (2026.5.2-r2) lags upstream and still bundles OTel-Go
+#                    CVE-2026-41178 + go-chi CVE-2025-69725 (both fixed upstream); building
+#                    the current release (2026.7.1: otel 1.43.0, go-chi 5.3.1) from source
+#                    on go-1.26 scans 0-CVE with NO module bumps. Installed at
+#                    /usr/bin/cloudflared (the exact path the Wolfi apk used).
 #
 # Node toolchain -- pinned to nodejs-18 for BOTH build and runtime, and here's why it
 # is NOT a free choice: soketi 1.6.1 depends on uWebSockets.js 20.10.0, which ships
@@ -60,11 +64,15 @@ package:
       - ca-certificates-bundle  # TLS to external endpoints
       - nodejs-18               # runs both soketi (/app/bin/server.js) and the terminal server
       - openssh-client          # the terminal server spawns `ssh` to reach target hosts
-      - cloudflared             # `cloudflared access ssh` ProxyCommand for tunneled hosts (CVE-tracked)
+      # (cloudflared is BUILT INTO this package from source -- see the pipeline below --
+      #  so it is intentionally NOT a runtime dep on the lagging Wolfi apk.)
 
 vars:
   # soketi release that the upstream realtime Dockerfile's 1.6-16-alpine tag tracks.
   soketi-version: 1.6.1
+  # newest cloudflared release tag (Wolfi's apk lags at 2026.5.2 with 2 fixable CVEs;
+  # this tag's module graph -- otel 1.43.0, go-chi 5.3.1 -- is already advisory-clean).
+  cloudflared-version: 2026.7.1
 
 environment:
   contents:
@@ -85,6 +93,7 @@ environment:
       # still supports Node 18, so both build passes (soketi + terminal) run.
       - npm=~10
       - python3                 # node-gyp (node-pty) build dependency
+      - go-1.26                 # cloudflared from-source build (go.mod requires go 1.26)
 
 pipeline:
   # Coolify repo at tag v4.1.2 carries the realtime sources under
@@ -106,6 +115,36 @@ pipeline:
       tag: ${{vars.soketi-version}}
       expected-commit: 5d188786beaf683aca2115a6247dcdc15c29ac77
       destination: soketi
+
+  # cloudflared at its newest release tag, built from source so we are not blocked on
+  # Wolfi's apk lag (2026.5.2-r2 still bundles OTel-Go CVE-2026-41178 + go-chi
+  # CVE-2025-69725; both are fixed in this release's module graph -- verified 0-CVE,
+  # no `go get` bumps needed).
+  - uses: git-checkout
+    with:
+      repository: https://github.com/cloudflare/cloudflared
+      tag: ${{vars.cloudflared-version}}
+      expected-commit: ecb88678f1368581964ca2bb55615502a2ed2dbe
+      destination: cloudflared-src
+
+  - name: Build cloudflared from source (Go, static)
+    runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local   # use the installed go-1.26, never fetch a toolchain
+      export GOPATH="$(mktemp -d)"
+      export GOCACHE="$(mktemp -d)"
+      cd cloudflared-src
+      # Mirror the upstream Makefile's VERSION_FLAGS (-X main.Version=...); also stamp
+      # BuiltForPackageManager so cloudflared's self-updater refuses to overwrite the
+      # managed binary inside the immutable image. -buildvcs=false keeps the main module
+      # unmatchable ((devel)) so Trivy never mis-sorts a git pseudo-version below the
+      # release (provenance stays via expected-commit + the Version ldflag).
+      go build -trimpath -buildvcs=false \
+        -ldflags "-s -w -X 'main.Version=${{vars.cloudflared-version}}' -X 'github.com/cloudflare/cloudflared/cmd/cloudflared/updater.BuiltForPackageManager=quenchworks'" \
+        -o "${{targets.destdir}}/usr/bin/cloudflared" ./cmd/cloudflared
+      "${{targets.destdir}}/usr/bin/cloudflared" --version | grep -F "${{vars.cloudflared-version}}"
 
   - name: Build soketi from source and install it under /app
     runs: |
@@ -289,4 +328,6 @@ test:
         test -f /terminal/terminal-utils.js
         find /terminal/node_modules/node-pty -name '*.node' | grep -q .
         test -x /soketi-entrypoint.sh
+        test -x /usr/bin/cloudflared
+        cloudflared --version
         node --version

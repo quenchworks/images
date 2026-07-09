@@ -47,6 +47,92 @@ pipeline:
       export PATH="${JAVA_HOME}/bin:${PATH}"
       # Local, hermetic maven repo inside the build workspace (no global writes).
       export MAVEN_OPTS="-Dmaven.repo.local=$(pwd)/.m2repo -Duser.home=$(pwd)"
+
+      # === CVE port: apicurio-registry 2.6.9.Final -> 3.3.0 (wire-runtime fix) ===
+      # The flagged com.squareup.wire:wire-runtime 4.9.11 (CVE-2026-45799 HIGH,
+      # fixed only in 6.3.0+; CVE-2024-58103 MEDIUM, fixed only in 5.2.0+) is a
+      # transitive of io.apicurio:apicurio-registry-schema-util-* 2.6.9.Final.
+      # apicurio 3.3.0 is the first release compiled against a fixed wire (6.4.0),
+      # so bumping apicurio fixes wire AND keeps apicurio's own wire-consuming
+      # bytecode (FileDescriptorUtils calls two ctors -- ProtoFileElement /
+      # ExtensionsElement -- whose signatures CHANGED in wire 5/6) binary-safe.
+      # A wire-only dependencyManagement pin was verified UNSAFE (javap over all
+      # 144 wire symbol refs): it would NoSuchMethodError on the Glue protobuf
+      # path. Floci's own wire surface (SchemaToColumnsConverter: ProtoParser,
+      # ProtoFileElement, MessageElement, FieldElement, TypeElement, Field.Label,
+      # Location) is byte-identical between 4.9.11 and 6.4.0 -- no change needed.
+      #
+      # Runtime-verified OUTSIDE the smoke-test blind spot (Glue protobuf paths
+      # are not exercised by the image health check): a 21-assertion harness ran
+      # validate/canonicalize/testCompatibility for AVRO+JSON+PROTOBUF plus the
+      # ProtoParser column conversion against apicurio 3.3.0 + wire 6.4.0 +
+      # protobuf-java 4.35.0 -- all passed, including BACKWARD-incompat detection.
+      sed -i 's|<apicurio.version>2.6.9.Final</apicurio.version>|<apicurio.version>3.3.0</apicurio.version>|' pom.xml
+      grep -q '<apicurio.version>3.3.0</apicurio.version>' pom.xml
+
+      # apicurio 3.3.0 is compiled against protobuf-java 4.x (its
+      # FileDescriptorUtils references com.google.protobuf.GeneratedFile, which
+      # does not exist in 3.25.x -- verified NoClassDefFoundError otherwise), so
+      # the existing 3.25.5 pins must follow to apicurio's own 4.35.0, and
+      # proto-google-common-protos to its protobuf4-compiled 2.72.0. protobuf is
+      # only reachable via the apicurio Glue path -- floci's source never imports
+      # com.google.protobuf.
+      sed -i 's|<version>3.25.5</version>|<version>4.35.0</version>|g; s|<version>2.49.0</version>|<version>2.72.0</version>|' pom.xml
+      grep -q '<version>4.35.0</version>' pom.xml
+      if grep -q '<version>3.25.5</version>' pom.xml; then echo "protobuf pin not bumped"; exit 1; fi
+
+      # Same-major CVE pins on quarkus-bom-managed deps (jackson-databind 2.21.3,
+      # netty 4.1.133.Final are flagged with clean same-major fixes). Direct
+      # dependencyManagement entries take precedence over the imported quarkus-bom;
+      # the WHOLE bundled netty family is pinned so io.netty stays version-aligned.
+      {
+        echo '            <dependency><groupId>com.fasterxml.jackson.core</groupId><artifactId>jackson-databind</artifactId><version>2.21.5</version></dependency>'
+        for a in buffer codec codec-dns codec-haproxy codec-http codec-http2 codec-mqtt codec-socks common handler handler-proxy resolver resolver-dns transport transport-native-unix-common; do
+          echo "            <dependency><groupId>io.netty</groupId><artifactId>netty-$a</artifactId><version>4.1.136.Final</version></dependency>"
+        done
+      } > /tmp/dm-pins.xml
+      # Insert before the FIRST </dependencies> in the pom -- that is the closer
+      # of <dependencyManagement><dependencies> (it precedes the main deps list).
+      awk '/<\/dependencies>/ && !done { while ((getline l < "/tmp/dm-pins.xml") > 0) print l; done=1 } { print }' pom.xml > pom.xml.new
+      mv pom.xml.new pom.xml
+      grep -q 'netty-codec-haproxy' pom.xml
+
+      # apicurio 3.x API port of floci's single apicurio consumer (the Glue
+      # schema-registry adapter). Three deltas, all mechanical:
+      #   1. the 9 format-specific classes moved into per-format packages
+      #      (io.apicurio.registry.{avro,json,protobuf}.rules... / .content...)
+      #   2. validate/testCompatibility/canonicalize now take TypedContent
+      #      (TypedContent.create(ContentHandle, contentType)); canonicalize
+      #      returns TypedContent (unwrap via .getContent().content())
+      #   3. RuleViolationException still extends RuntimeException, so the
+      #      existing catch blocks are unchanged.
+      SCC=src/main/java/io/github/hectorvent/floci/services/glue/schemaregistry/SchemaCompatibilityChecker.java
+      sed -i \
+        -e 's|io\.apicurio\.registry\.content\.canon\.AvroContentCanonicalizer|io.apicurio.registry.avro.content.canon.AvroContentCanonicalizer|' \
+        -e 's|io\.apicurio\.registry\.content\.canon\.JsonContentCanonicalizer|io.apicurio.registry.json.content.canon.JsonContentCanonicalizer|' \
+        -e 's|io\.apicurio\.registry\.content\.canon\.ProtobufContentCanonicalizer|io.apicurio.registry.protobuf.content.canon.ProtobufContentCanonicalizer|' \
+        -e 's|io\.apicurio\.registry\.rules\.compatibility\.AvroCompatibilityChecker|io.apicurio.registry.avro.rules.compatibility.AvroCompatibilityChecker|' \
+        -e 's|io\.apicurio\.registry\.rules\.compatibility\.JsonSchemaCompatibilityChecker|io.apicurio.registry.json.rules.compatibility.JsonSchemaCompatibilityChecker|' \
+        -e 's|io\.apicurio\.registry\.rules\.compatibility\.ProtobufCompatibilityChecker|io.apicurio.registry.protobuf.rules.compatibility.ProtobufCompatibilityChecker|' \
+        -e 's|io\.apicurio\.registry\.rules\.validity\.AvroContentValidator|io.apicurio.registry.avro.rules.validity.AvroContentValidator|' \
+        -e 's|io\.apicurio\.registry\.rules\.validity\.JsonSchemaContentValidator|io.apicurio.registry.json.rules.validity.JsonSchemaContentValidator|' \
+        -e 's|io\.apicurio\.registry\.rules\.validity\.ProtobufContentValidator|io.apicurio.registry.protobuf.rules.validity.ProtobufContentValidator|' \
+        -e 's|^import io.apicurio.registry.content.ContentHandle;$|import io.apicurio.registry.content.ContentHandle;\nimport io.apicurio.registry.content.TypedContent;\nimport io.apicurio.registry.types.ContentTypes;|' \
+        -e 's|List<ContentHandle> existing = existingDefinitions.stream()|List<TypedContent> existing = existingDefinitions.stream()|' \
+        -e 's|\.map(ContentHandle::create)|.map(d -> TypedContent.create(ContentHandle.create(d), contentTypeFor(dataFormat)))|' \
+        -e 's|ContentHandle proposed = ContentHandle.create(newDefinition);|TypedContent proposed = TypedContent.create(ContentHandle.create(newDefinition), contentTypeFor(dataFormat));|' \
+        -e 's|ContentHandle handle = ContentHandle.create(definition);|TypedContent handle = TypedContent.create(ContentHandle.create(definition), contentTypeFor(dataFormat));|' \
+        -e 's|return canon.canonicalize(handle, Map.of()).content();|return canon.canonicalize(handle, Map.of()).getContent().content();|' \
+        -e 's|validator.validate(ValidityLevel.SYNTAX_ONLY, ContentHandle.create(definition), Map.of());|validator.validate(ValidityLevel.SYNTAX_ONLY, TypedContent.create(ContentHandle.create(definition), contentTypeFor(dataFormat)), Map.of());|' \
+        -e 's|    private SchemaCompatibilityChecker() {}|    private SchemaCompatibilityChecker() {}\n\n    // Apicurio 3.x TypedContent carries a content type: Avro + JSON Schema definitions are JSON documents; protobuf is .proto text.\n    private static String contentTypeFor(String dataFormat) { return "PROTOBUF".equals(dataFormat) ? ContentTypes.APPLICATION_PROTOBUF : ContentTypes.APPLICATION_JSON; }|' \
+        "$SCC"
+      # Fail fast if any sed anchor drifts in a future floci release.
+      grep -q 'import io.apicurio.registry.content.TypedContent;' "$SCC"
+      grep -q 'contentTypeFor(dataFormat)' "$SCC"
+      grep -q 'ContentTypes.APPLICATION_PROTOBUF' "$SCC"
+      if grep -q 'io.apicurio.registry.rules.compatibility.ProtobufCompatibilityChecker' "$SCC"; then echo "apicurio import port incomplete"; exit 1; fi
+      # === end CVE port =========================================================
+
       # Build the Quarkus fast-jar. Skip tests (they need Docker + network); the
       # released bytecode is identical to upstream's `mvn clean package`.
       mvn -B -ntp clean package -DskipTests
