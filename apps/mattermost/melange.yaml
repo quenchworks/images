@@ -1,21 +1,29 @@
-# Packages Mattermost (Team Edition) onto Wolfi. Mattermost is a Go server + a
-# webpacked React frontend in a large monorepo; a from-source build in CI is
-# infeasible, so we ship Mattermost's OWN official prebuilt server tarball from
-# releases.mattermost.com (the same upstream-artifact pattern clickhouse/postgrest
-# use), then harden it on a minimal apko base and gate it 0-CVE with Trivy. This is
-# clean-room-consistent: it is upstream's published artifact, not a Bitnami chart,
-# and the scan still fully applies.
+# Packages Mattermost (Team Edition) onto Wolfi with a SERVER-ONLY from-source build.
 #
-# The tarball unpacks to a single `mattermost/` dir containing bin/mattermost plus the
-# client/ webapp, config/, templates/, i18n/, fonts/ and prepackaged_plugins/. We
-# install the whole tree under /opt/mattermost and symlink /usr/bin/mattermost. The
-# server binary is a dynamically-linked Go binary that links only glibc, so the runtime
-# surface is glibc + ca-certificates-bundle (TLS to the external Postgres/SMTP).
+# Mattermost is a Go server + a webpacked React frontend in a large monorepo. A FULL
+# from-source build would also have to rebuild the huge React webapp (Node/yarn), which
+# is heavy and out of scope for the scan surface. So we split it exactly the way the
+# 0-CVE gate needs:
+#   * SERVER  -> built FROM SOURCE here on go-1.26 with the vulnerable Go modules bumped
+#                to their fixed versions (x/net, x/crypto, x/image). This is what makes
+#                the image 0-CVE: upstream's OWN prebuilt server binary bakes stale
+#                x/net/x/crypto/x/image + an older Go stdlib that Trivy flags.
+#   * WEBAPP  -> we REUSE upstream's OWN official prebuilt client bundle (and the
+#                config/, templates/, i18n/, fonts/, prepackaged_plugins/ assets) from
+#                the released mattermost-team tarball — NOT rebuilt. The compiled React
+#                webapp has no gobinary/language module graph Trivy scans, so reusing it
+#                is safe for the gate and avoids a multi-GB Node build.
+#
+# Net result: the only executable we ship that Trivy inspects (bin/mattermost) is our
+# own from-source, dependency-bumped binary; every static asset is upstream's published
+# artifact, byte-for-byte. Clean-room-consistent: upstream source + upstream assets, no
+# Bitnami chart. The server binary links only glibc, so the runtime surface is glibc +
+# ca-certificates-bundle (TLS to the external Postgres/SMTP).
 package:
   name: quench-mattermost
   version: __VER__
   epoch: 0
-  description: "Quenchworks hardened Mattermost (Team Edition), packaged on Wolfi"
+  description: "Quenchworks hardened Mattermost (Team Edition), server built from source on Wolfi"
   copyright:
     - license: AGPL-3.0-only
   dependencies:
@@ -30,34 +38,109 @@ environment:
     repositories:
       - https://packages.wolfi.dev/os
     packages:
+      - build-base
       - busybox
-      - curl
       - ca-certificates-bundle
+      - curl
+      - git              # go workspace / module tooling
+      - go-1.26          # newer than upstream's go 1.26.3: clears the flagged stdlib advisories
 
 pipeline:
-  # Mattermost publishes separate amd64/arm64 Team-Edition server tarballs, so fetch
-  # the one matching the build arch by uname -m (x86_64->amd64, aarch64->arm64) with the
-  # arch-matching sha256 — using the wrong arch yields a wrong-arch binary. The bare
-  # version (no leading `v`) is used directly in both the path and the filename.
-  - runs: |
+  # 1) Fetch the upstream monorepo source at the release tag. strip-components:1 lays the
+  #    repo root into the work dir, so the server module lives under ./server (with its
+  #    sibling ./server/public module). Only ./server is built; the React webapp is NOT.
+  - uses: fetch
+    with:
+      uri: https://github.com/mattermost/mattermost/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SRC_SHA__
+      strip-components: 1
+
+  # 2) Fetch Mattermost's OWN official prebuilt Team-Edition release tarball for the
+  #    compiled webapp client/ bundle + config/, templates/, i18n/, fonts/ and
+  #    prepackaged_plugins/. Separate amd64/arm64 tarballs, each with its own sha256.
+  - name: Fetch the upstream prebuilt release tree (reuse the compiled webapp client/ assets)
+    runs: |
+      set -eu
       VER="${{package.version}}"
       case "$(uname -m)" in
         x86_64)  mmarch=amd64; sha=__SHA_AMD__ ;;
         aarch64) mmarch=arm64; sha=__SHA_ARM__ ;;
         *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
       esac
-
       url="https://releases.mattermost.com/${VER}/mattermost-team-${VER}-linux-${mmarch}.tar.gz"
-      curl -fsSL -o mattermost.tar.gz "$url"
-      echo "${sha}  mattermost.tar.gz" | sha256sum -c -
-      tar -xzf mattermost.tar.gz   # unpacks to ./mattermost/
+      curl -fsSL -o /tmp/mm-release.tar.gz "$url"
+      echo "${sha}  /tmp/mm-release.tar.gz" | sha256sum -c -
+      mkdir -p /tmp/mmrel
+      tar -xzf /tmp/mm-release.tar.gz -C /tmp/mmrel   # -> /tmp/mmrel/mattermost/...
 
-      # Install the whole install tree read-only under /opt/mattermost. The server must
-      # run from its install dir to resolve client/, templates/, i18n/ and fonts/.
+  # 3) Build BOTH binaries in bin/ FROM SOURCE with the flagged Go modules bumped to fixed
+  #    versions. The release tarball ships two prebuilt Go binaries — bin/mattermost (the
+  #    server) AND bin/mmctl (the admin CLI) — both baking the same stale deps that Trivy
+  #    flags against the prebuilt 11.8.2 binaries (all fixable):
+  #      golang.org/x/crypto v0.51.0 -> 0.52.0+ (9x ssh CVEs, HIGH)
+  #      golang.org/x/net    v0.54.0 -> 0.55.0+ (html/idna CVEs, HIGH+MEDIUM)
+  #      golang.org/x/image  v0.40.0 -> 0.43.0  (tiff/webp/bmp DoS, MEDIUM)
+  #      Go stdlib           1.26.3  -> 1.26.4+ (crypto/x509 + mime DoS) -> fixed by go-1.26
+  #    mmctl lives in the SAME server/v8 module (server/cmd/mmctl), so one workspace + one
+  #    set of bumps produces both 0-CVE. go's MVS carries the higher version across the
+  #    workspace so the emitted binaries embed only the fixed modules.
+  - name: Build the mattermost server + mmctl from source (0-CVE) with fixed x/net, x/crypto, x/image
+    runs: |
+      set -eu
+      export GOTOOLCHAIN=local      # use the installed go-1.26, don't fetch go.mod's 1.26.3
+      export GO111MODULE=on
+      export GOFLAGS=-buildvcs=false # upstream sets this too (avoids VCS-stamp scan noise)
+
+      cd server
+      # Team Edition workspace: the server module (.) + its public module (./public) only;
+      # NO enterprise dir -> BuildEnterpriseReady stays false (this is the free edition).
+      rm -f go.work
+      go work init
+      go work use .
+      go work use ./public
+
+      # Bump the vulnerable modules to (>=) their Trivy fix versions.
+      go get \
+        golang.org/x/net@v0.56.0 \
+        golang.org/x/crypto@v0.53.0 \
+        golang.org/x/image@v0.43.0
+
+      VER="${{package.version}}"
+
+      # Server: version stamp mirrors upstream's server Makefile LDFLAGS (Team Edition):
+      #   BuildNumber/BuildHash = the release version, BuildEnterpriseReady=false.
+      MODEL="github.com/mattermost/mattermost/server/public/model"
+      SRV_LDFLAGS="-s -w \
+        -X ${MODEL}.BuildNumber=${VER} \
+        -X ${MODEL}.BuildDate=n/a \
+        -X ${MODEL}.BuildHash=v${VER} \
+        -X ${MODEL}.BuildHashEnterprise=none \
+        -X ${MODEL}.BuildEnterpriseReady=false"
+      # -p 4 bounds compiler parallelism so the build stays within a small CI runner's RAM.
+      go build -p 4 -trimpath -ldflags "$SRV_LDFLAGS" -o /tmp/mmserver ./cmd/mattermost
+
+      # mmctl: version defaults to model.CurrentVersion; stamp the build metadata vars.
+      MMCTL="github.com/mattermost/mattermost/server/v8/cmd/mmctl/commands"
+      MMCTL_LDFLAGS="-s -w \
+        -X ${MMCTL}.buildDate=n/a \
+        -X ${MMCTL}.gitCommit=v${VER} \
+        -X ${MMCTL}.gitTreeState=clean"
+      go build -p 4 -trimpath -ldflags "$MMCTL_LDFLAGS" -o /tmp/mmctl ./cmd/mmctl
+      cd ..
+
+  # 4) Assemble the install tree: lay down upstream's prebuilt tree read-only under
+  #    /opt/mattermost, then SWAP IN our from-source, 0-CVE binaries. The server must run
+  #    from its install dir to resolve client/, templates/, i18n/ and fonts/.
+  - name: Assemble /opt/mattermost (upstream assets + from-source server + mmctl binaries)
+    runs: |
+      set -eu
       dest="${{targets.destdir}}/opt/mattermost"
       install -d "$dest"
-      cp -a mattermost/. "$dest/"
-      chmod 0755 "$dest/bin/mattermost"
+      cp -a /tmp/mmrel/mattermost/. "$dest/"
+
+      # Replace upstream's prebuilt (vulnerable) Go binaries with ours.
+      install -Dm0755 /tmp/mmserver "$dest/bin/mattermost"
+      install -Dm0755 /tmp/mmctl "$dest/bin/mmctl"
       chmod -R a+rX "$dest"
 
       # Convenience symlink on PATH (the image still sets work-dir=/opt/mattermost).
