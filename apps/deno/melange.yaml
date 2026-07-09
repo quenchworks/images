@@ -1,0 +1,54 @@
+# Packages Deno onto Wolfi from the OFFICIAL UPSTREAM prebuilt binary, NOT the
+# Wolfi `deno` apk. Wolfi lags at 2.8.2 (CVE-2026-50185, vulnerable rustls-webpki
+# baked into the binary; fixed only in Deno 2.9.1), so we fetch Deno's own
+# per-arch release zip (byte-identical to what `denoland/deno` ships), sha256-verify
+# it, and harden it on a minimal apko base — the same upstream-artifact pattern
+# clickhouse/kafka/mattermost use. Clean-room-consistent: it is upstream's published
+# artifact, and the Trivy gate still fully applies (comprehensive mode scans the
+# binary's embedded Rust/Cargo module graph).
+#
+# The prebuilt `deno` is a single dynamically-linked binary (verified via
+# `readelf -d`): it needs glibc (libc/libm/libdl/librt/libpthread + ld-linux) and
+# libgcc_s, so those are the only runtime deps.
+package:
+  name: quench-deno
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Deno runtime, packaged on Wolfi from the official upstream binary"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - glibc                    # libc/libm/libdl/librt/libpthread + ld-linux
+      - libgcc                   # provides libgcc_s.so.1 (NEEDED by the deno binary)
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - curl
+      - unzip
+      - ca-certificates-bundle
+
+pipeline:
+  # Deno publishes separate x86_64/aarch64 release zips (each with its own sha256),
+  # so fetch the one matching the build arch by `uname -m` with the arch-matching
+  # checksum — using the wrong arch would yield a non-executable / wrong-arch binary.
+  # Each zip contains a single self-contained `deno` binary.
+  - runs: |
+      VER="${{package.version}}"
+      case "$(uname -m)" in
+        x86_64)  triple=x86_64-unknown-linux-gnu;  sha=__SHA_AMD__ ;;
+        aarch64) triple=aarch64-unknown-linux-gnu; sha=__SHA_ARM__ ;;
+        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+      esac
+      url="https://github.com/denoland/deno/releases/download/v${VER}/deno-${triple}.zip"
+      curl -fsSL -o deno.zip "$url"
+      echo "${sha}  deno.zip" | sha256sum -c -
+      unzip -q deno.zip
+      install -Dm0755 deno "${{targets.destdir}}/usr/bin/deno"

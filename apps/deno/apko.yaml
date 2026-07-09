@@ -1,26 +1,27 @@
-# Assembles a hardened Deno runtime/base image directly from Wolfi's own `deno`
-# package. No Dockerfile, NO melange build -- apko pulls the prebuilt `deno`
-# package straight from the Wolfi `os` repository. Deno is a large Rust/V8
-# build, but Wolfi ALREADY packages it (0-CVE), so this is a pure
-# package-assembly -- we never compile Deno from source.
+# Assembles a hardened Deno runtime/base image from the melange package
+# `quench-deno`, which repackages the OFFICIAL UPSTREAM prebuilt `deno` binary
+# (see melange.yaml). We do NOT use the Wolfi `deno` apk: it lags at 2.8.2 with
+# CVE-2026-50185 (vulnerable rustls-webpki baked into the binary; fixed only in
+# Deno 2.9.1). Fetching upstream's own per-arch release zip lets us ship 2.9.1
+# ahead of Wolfi while keeping the 0-CVE gate honest.
 #
 # IMAGE-ONLY -- no Helm chart. This is a LANGUAGE/BASE image: the 0-CVE, signed,
 # nonroot, multi-arch answer to `denoland/deno`. Developers `FROM` it (like
 # Chainguard's language images) or `docker run <img> run script.ts` directly.
 #
-# VERSIONING: Wolfi ships a SINGLE floating `deno` package (not per-minor
-# packages), so there is nothing to fan a matrix over. We publish ONE tag -- the
-# `2` major line -- tracking whatever 2.x Wolfi has packaged; the DAILY rebuild
-# keeps it current and re-runs the 0-CVE gate.
+# VERSIONING: one tag -- the `2` major line -- tracking the newest stable Deno
+# upstream ships; the DAILY rebuild keeps it current and re-runs the 0-CVE gate.
 contents:
   keyring:
     - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
   repositories:
     - https://packages.wolfi.dev/os
+    - "@local ./packages"
   packages:
     - wolfi-baselayout
     - ca-certificates-bundle
-    - __PKG__                      # prebuilt Deno runtime from Wolfi (0-CVE); __PKG__ = deno
+    - quench-deno@local            # upstream prebuilt Deno runtime, repackaged via melange (0-CVE)
 
 accounts:
   groups:
