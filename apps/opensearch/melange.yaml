@@ -48,6 +48,32 @@ pipeline:
       cp -r bin config lib modules plugins agent LICENSE.txt NOTICE.txt "$dest/"
       rm -rf "$dest/jdk"
       find "$dest/bin" -name '*.bat' -delete
+
+      # --- 0-CVE remediation (all findings are the Jul-2026 jackson-databind cluster
+      # CVE-2026-54512..54518, plus netty CVEs) --------------------------------------
+      # (1) DROP two OPTIONAL plugins whose vulnerable jackson/netty is SHADED inside a
+      #     vendor uber-jar we cannot patch:
+      #       * opensearch-security       -> opensaml-3.7.0.0-all.jar shades jackson-databind
+      #       * opensearch-security-analytics -> security-analytics-commons shades netty
+      #     Core OpenSearch (index/search/cluster) runs without either; security is off by
+      #     construction (see the entrypoint note). Trade-off documented in build.conf.
+      rm -rf "$dest/plugins/opensearch-security" \
+             "$dest/plugins/opensearch-security-analytics"
+      # (2) The remaining vulnerable jackson-databind copies are STANDALONE plugin/module
+      #     jars -> same-minor drop-in swap (2.21.3 -> 2.21.5 for the com.fasterxml line;
+      #     3.1.3 -> 3.1.4 for the tools.jackson 3.x line; 2.21.5 needed for CVE-2026-54515).
+      #     Sha256-pinned Maven Central. Replace content in place (keep filename); the
+      #     OpenSearch plugin classloader scans the dir and Trivy reads the jar's internal
+      #     pom.properties (= the fixed version).
+      MC="https://repo1.maven.org/maven2"
+      jd2=$(mktemp); jd3=$(mktemp)
+      curl -fsSL -o "$jd2" "$MC/com/fasterxml/jackson/core/jackson-databind/2.21.5/jackson-databind-2.21.5.jar"
+      echo "507418c0fafd38b2b2cfb704521630da613a8e4cc8381195a6f418017883e2c0  $jd2" | sha256sum -c -
+      curl -fsSL -o "$jd3" "$MC/tools/jackson/core/jackson-databind/3.1.4/jackson-databind-3.1.4.jar"
+      echo "14034bfdf392b6ebec1b4bb6c1de29d604f0aa97251259a19d5f19af8719bb20  $jd3" | sha256sum -c -
+      find "$dest" -name 'jackson-databind-2.21.3.jar' -exec cp "$jd2" {} \;
+      find "$dest" -name 'jackson-databind-3.1.3.jar'  -exec cp "$jd3" {} \;
+      rm -f "$jd2" "$jd3"
       # OpenSearch ships config/ with restrictive perms; the nonroot runtime user must
       # be able to read them to seed the writable conf dir (and execute the launchers).
       chmod -R a+rX "$dest"
@@ -96,7 +122,10 @@ pipeline:
         echo "discovery.type: ${OPENSEARCH_DISCOVERY_TYPE:-single-node}"
         echo "path.data: $DATA"
         echo "path.logs: $LOGS"
-        echo "plugins.security.disabled: ${OPENSEARCH_SECURITY_DISABLED:-true}"
+        # NOTE: the opensearch-security plugin is NOT bundled in this hardened image
+        # (its opensaml uber-jar shades a vulnerable jackson we cannot patch), so we must
+        # NOT emit plugins.security.* settings -- OpenSearch rejects unknown settings at
+        # boot when the owning plugin is absent. Security is therefore off by construction.
         if [ -n "${OPENSEARCH_CONFIG_EXTRA:-}" ]; then printf '%s\n' "${OPENSEARCH_CONFIG_EXTRA}"; fi
       } > "$CONF/opensearch.yml"
 

@@ -48,6 +48,8 @@ environment:
       - busybox
       - curl
       - ca-certificates-bundle
+      - unzip   # build-time only: explode elasticsearch-x-content for IMPL-JARS surgery
+      - zip     # build-time only: repackage the patched x-content jar
 
 pipeline:
   # Elasticsearch ships ARCH-SPECIFIC distributions (they bundle a native JDK + native
@@ -72,6 +74,80 @@ pipeline:
       rm -rf "$dest/jdk"
       # the linux tarball ships POSIX launchers only (no Windows .bat), but be defensive.
       find "$dest/bin" -name '*.bat' -delete
+
+      # ========================================================================
+      # 0-CVE remediation. Findings = Jul-2026 jackson cluster (CVE-2026-54512..
+      # 54518 / GHSA-72hv-8253-57qq) plus reactor-netty CVE-2025-22227,
+      # opentelemetry CVE-2026-45292, commons-lang3 CVE-2025-48924. Mix of DROP
+      # (optional modules whose vuln is shaded/entangled) + standalone jar SWAP +
+      # nested SURGERY on Elastic's own core x-content jar. Sha256-pinned Maven
+      # Central. Scratch under the on-disk workspace (not the tmpfs /tmp).
+      MC="https://repo1.maven.org/maven2"
+      PW="$(pwd)/.pw"; DL="$PW/dl"; mkdir -p "$DL"
+      getj() { curl -fsSL -o "$DL/$2" "$1"; echo "$3  $DL/$2" | sha256sum -c -; }
+
+      # --- (a) DROP optional pieces carrying un-fixable shaded / transitively-locked deps
+      #   * bin sql-cli client: shaded jackson-core (a CLI, not used by the server)
+      rm -f "$dest"/bin/elasticsearch-sql-cli "$dest"/bin/elasticsearch-sql-cli-*.jar
+      #   * esql-datasource-{iceberg,parquet,azure,gcs}: optional ESQL external datasources.
+      #     iceberg/parquet embed parquet-hadoop-bundle (SHADES jackson 2.19.2); azure/gcs
+      #     pull reactor-netty / opentelemetry. Nothing core depends on them (their
+      #     extended.plugins point AT x-pack-esql, not the reverse).
+      rm -rf "$dest"/modules/esql-datasource-iceberg "$dest"/modules/esql-datasource-parquet \
+             "$dest"/modules/esql-datasource-azure   "$dest"/modules/esql-datasource-gcs
+      #   * repository-azure: optional Azure snapshot repo; ships reactor-netty 1.0.45 on the
+      #     OLD reactor-core 3.4.38, incompatible with the fixed reactor-netty 1.2.8 (which
+      #     needs reactor-core >= 3.6), so it cannot be cleanly swapped. Drop it.
+      rm -rf "$dest"/modules/repository-azure
+
+      # --- (b) standalone jackson 2.15.0 -> 2.18.9 (core+databind+annotations, consistent
+      #     set; databind fix = 2.18.9 (for -54515), core fix >= 2.18.6). Backward-compatible within 2.x.
+      getj "$MC/com/fasterxml/jackson/core/jackson-core/2.18.9/jackson-core-2.18.9.jar" jackson-core-2.18.9.jar e03144f48c8d5307da2894570b4972aab8c72f22440f8dcdb745be2485ce2024
+      getj "$MC/com/fasterxml/jackson/core/jackson-databind/2.18.9/jackson-databind-2.18.9.jar" jackson-databind-2.18.9.jar 71595a3f7ff58344ec0496a9f9ec9f623ef7b85b45402d88f1ca261f1bc4b42c
+      getj "$MC/com/fasterxml/jackson/core/jackson-annotations/2.18.9/jackson-annotations-2.18.9.jar" jackson-annotations-2.18.9.jar 798c85b86e7420d0b4eb91e7b3e37d4bee673c61de37a616ba51a7539631e6b7
+      find "$dest/modules" -name 'jackson-core-2.15.0.jar'        -exec sh -c 'cp "$1" "$(dirname "$2")/jackson-core-2.18.9.jar";        rm -f "$2"' _ "$DL/jackson-core-2.18.9.jar" {} \;
+      find "$dest/modules" -name 'jackson-databind-2.15.0.jar'    -exec sh -c 'cp "$1" "$(dirname "$2")/jackson-databind-2.18.9.jar";    rm -f "$2"' _ "$DL/jackson-databind-2.18.9.jar" {} \;
+      find "$dest/modules" -name 'jackson-annotations-2.15.0.jar' -exec sh -c 'cp "$1" "$(dirname "$2")/jackson-annotations-2.18.9.jar"; rm -f "$2"' _ "$DL/jackson-annotations-2.18.9.jar" {} \;
+
+      # --- (c) commons-lang3 3.9 -> 3.18.0 (x-pack-ent-search; other modules already 3.18+)
+      getj "$MC/org/apache/commons/commons-lang3/3.18.0/commons-lang3-3.18.0.jar" commons-lang3-3.18.0.jar 4eeeae8d20c078abb64b015ec158add383ac581571cddc45c68f0c9ae0230720
+      find "$dest/modules" -name 'commons-lang3-3.9.jar' -exec sh -c 'cp "$1" "$(dirname "$2")/commons-lang3-3.18.0.jar"; rm -f "$2"' _ "$DL/commons-lang3-3.18.0.jar" {} \;
+
+      # --- (d) opentelemetry-api 1.47.0 -> 1.62.0 (repository-gcs; modules/apm already ships
+      #     1.62.0, so 1.62.0 is proven compatible with ES's OTel usage)
+      getj "$MC/io/opentelemetry/opentelemetry-api/1.62.0/opentelemetry-api-1.62.0.jar" opentelemetry-api-1.62.0.jar d58143928c049233653e6bf1282ff8a767ebdd5e6a82b3f336158c30e40b431d
+      find "$dest/modules" -name 'opentelemetry-api-1.47.0.jar' -exec sh -c 'cp "$1" "$(dirname "$2")/opentelemetry-api-1.62.0.jar"; rm -f "$2"' _ "$DL/opentelemetry-api-1.62.0.jar" {} \;
+
+      # --- (e) reactor-netty 1.0.45 -> 1.2.8 in x-pack-inference ONLY (it bundles the newer
+      #     reactor-core 3.7.5 that 1.2.8 requires; core+http bumped as a pair)
+      getj "$MC/io/projectreactor/netty/reactor-netty-core/1.2.8/reactor-netty-core-1.2.8.jar" reactor-netty-core-1.2.8.jar 108e2bd0db4f23da1d4ee8ec149e40bdef717b652c63540f2705843f66c99f66
+      getj "$MC/io/projectreactor/netty/reactor-netty-http/1.2.8/reactor-netty-http-1.2.8.jar" reactor-netty-http-1.2.8.jar 2e3306ef24ca39077971bafd2f21c1e890f8703f01e8d1741013642413530692
+      infd="$dest/modules/x-pack-inference"
+      rm -f "$infd"/reactor-netty-core-1.0.45.jar "$infd"/reactor-netty-http-1.0.45.jar
+      cp "$DL/reactor-netty-core-1.2.8.jar" "$infd/reactor-netty-core-1.2.8.jar"
+      cp "$DL/reactor-netty-http-1.2.8.jar" "$infd/reactor-netty-http-1.2.8.jar"
+
+      # --- (f) SURGERY on Elastic's OWN core x-content uber-jar (un-droppable). It embeds
+      #     jackson-core 2.17.2 as an EXPLODED, UN-RELOCATED impl dir under IMPL-JARS/, read
+      #     by Elastic's EmbeddedImplClassLoader via a plain-text LISTING.TXT (no checksum /
+      #     per-class manifest). Rebuild that impl dir from jackson-core 2.18.9 and update
+      #     LISTING.TXT so the embedded loader finds the renamed dir. Two copies (server lib
+      #     + plugin-cli tool).
+      xc_surgery() {
+        jarp="$1"; w="$PW/xc"; rm -rf "$w"; mkdir -p "$w"
+        ( cd "$w" && unzip -qo "$jarp" )
+        imp="$w/IMPL-JARS/x-content"
+        rm -rf "$imp/jackson-core-2.17.2.jar"
+        mkdir -p "$imp/jackson-core-2.18.9.jar"
+        ( cd "$imp/jackson-core-2.18.9.jar" && unzip -qo "$DL/jackson-core-2.18.9.jar" )
+        sed -i 's/jackson-core-2\.17\.2\.jar/jackson-core-2.18.9.jar/' "$imp/LISTING.TXT"
+        rm -f "$jarp"; ( cd "$w" && zip -qrX "$jarp" . )
+      }
+      xc_surgery "$dest/lib/elasticsearch-x-content-9.4.3.jar"
+      xc_surgery "$dest/lib/tools/plugin-cli/elasticsearch-x-content-9.4.3.jar"
+      rm -rf "$PW"
+      # ========================================================================
+
       # Elasticsearch ships config/ with restrictive perms; the nonroot runtime user must
       # be able to read them to seed the writable conf dir (and execute the launchers).
       chmod -R a+rX "$dest"

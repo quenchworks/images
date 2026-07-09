@@ -28,6 +28,9 @@ environment:
     packages:
       - busybox
       - ca-certificates-bundle
+      - curl    # build-time only: fetch sha256-pinned patched jars from Maven Central
+      - unzip   # build-time only: explode the uber-jars for class-level surgery
+      - zip     # build-time only: repackage the patched uber-jars
 
 pipeline:
   - uses: fetch
@@ -36,6 +39,70 @@ pipeline:
       uri: https://packages.graylog2.org/releases/graylog/graylog-${{package.version}}.tgz
       expected-sha256: "__SHA256__"
       strip-components: 1
+  - runs: |
+      # ============================================================================
+      # 0-CVE remediation via CLASS-LEVEL SURGERY inside the shaded uber-jars.
+      # graylog.jar (a Multi-Release fat jar) and plugin/graylog-storage-opensearch3
+      # bundle vulnerable libraries as LOOSE, UN-RELOCATED classes (plain package
+      # paths com/fasterxml/jackson/**, org/apache/shiro/**, com/sun/mail|javax/mail),
+      # so we overlay the patched upstream classes (+ their META-INF/maven pom.properties
+      # that Trivy reads for the version) and repackage. Not relocated => swappable.
+      #   * jackson-core + jackson-databind 2.21.2 -> 2.21.5 (CVE-2026-54512..54518;
+      #     2.21.5 required for -54515; core bumped in lockstep to match databind ABI)
+      #   * org.apache.shiro:shiro-* 2.1.0 -> 2.2.1 IN LOCKSTEP across all 9 bundled
+      #     modules (CVE-2026-49268 LDAP injection, CVE-2026-43827 session fixation;
+      #     only shiro-core is flagged but the family is bumped together to keep the
+      #     minor consistent)
+      #   * com.sun.mail:jakarta.mail 1.6.7 -> 1.6.8 (CVE-2025-7962 SMTP injection)
+      # All fetches are sha256-pinned Maven Central. Scratch lives under the on-disk
+      # build workspace (NOT /tmp, which is a small tmpfs in the sandbox).
+      set -eu
+      ROOT="$(pwd)"
+      MC="https://repo1.maven.org/maven2"
+      PW="$ROOT/.patchwork"; DL="$PW/dl"; ST="$PW/stage"
+      mkdir -p "$DL" "$ST/jackson" "$ST/shiro" "$ST/mail"
+      getj() { curl -fsSL -o "$DL/$2" "$1"; echo "$3  $DL/$2" | sha256sum -c -; }
+
+      # --- jackson (databind + core) 2.21.5: overlay class trees + maven metadata ---
+      getj "$MC/com/fasterxml/jackson/core/jackson-databind/2.21.5/jackson-databind-2.21.5.jar" jackson-databind-2.21.5.jar 507418c0fafd38b2b2cfb704521630da613a8e4cc8381195a6f418017883e2c0
+      getj "$MC/com/fasterxml/jackson/core/jackson-core/2.21.5/jackson-core-2.21.5.jar" jackson-core-2.21.5.jar b64b5874162b503a0e58a8f7758266e8dd9f91bf49e3a59ae0b5f47589a231b7
+      ( cd "$ST/jackson" \
+          && unzip -qo "$DL/jackson-databind-2.21.5.jar" 'com/fasterxml/jackson/databind/*' 'META-INF/maven/com.fasterxml.jackson.core/jackson-databind/*' \
+          && unzip -qo "$DL/jackson-core-2.21.5.jar"     'com/fasterxml/jackson/core/*'     'META-INF/maven/com.fasterxml.jackson.core/jackson-core/*' )
+
+      # --- shiro family 2.2.1 (all 9 bundled modules, in lockstep) ---
+      for row in \
+        "shiro-core:688489d58e00d40476e67be2cae8f349a6d51a21c0d16e4d856bcc6f6c9c2001" \
+        "shiro-cache:cf5bb8a3349165b34773abb17cc0e2e926cc292ce0a2f9b26af095ee2d376c8e" \
+        "shiro-config-core:7f64fe07e75d3afb48222d1020c6ab0e91445aa918fa852dd744802e3da2c72d" \
+        "shiro-config-ogdl:411b983dee3c7b7256c5140a1a4cd86b1004966e62029ec6e4a7795418bdb31a" \
+        "shiro-crypto-cipher:f2c083d03eef731772b97728718d5ffeb71107ac0850c79b78283f8b1f29a193" \
+        "shiro-crypto-core:e8ac7be2365397dbc5f2b9dfad2a98941670202c612fd7e535afcefa7a503feb" \
+        "shiro-crypto-hash:2ae3b681f6618ba56ff928255091d3ba72a364acdf0deebd55d4c4e093c3d7e8" \
+        "shiro-event:739446ee8581e13e670b8a27310e35902b8b8258e363e7bdd5f37758abbd86d7" \
+        "shiro-lang:a803f62e597b05d9550f0fd11943738442e4aa0d3f8432a430cd9bf3aef39ea9" ; do
+        m="${row%%:*}"; sh="${row#*:}"
+        getj "$MC/org/apache/shiro/$m/2.2.1/$m-2.2.1.jar" "$m-2.2.1.jar" "$sh"
+        ( cd "$ST/shiro" && unzip -qo "$DL/$m-2.2.1.jar" 'org/apache/shiro/*' 'META-INF/maven/org.apache.shiro/*' )
+      done
+
+      # --- jakarta.mail 1.6.8 ---
+      getj "$MC/com/sun/mail/jakarta.mail/1.6.8/jakarta.mail-1.6.8.jar" jakarta.mail-1.6.8.jar c83f1a1ed580a35878957de7367071be27026d02d34ace6267d0c3da23e193c2
+      ( cd "$ST/mail" && unzip -qo "$DL/jakarta.mail-1.6.8.jar" 'com/sun/mail/*' 'javax/mail/*' 'META-INF/maven/com.sun.mail/*' )
+
+      # --- apply: explode each uber-jar, overlay the patched trees, repackage ---
+      apply() {
+        jarp="$1"; shift
+        w="$PW/exploded"; rm -rf "$w"; mkdir -p "$w"
+        ( cd "$w" && unzip -qo "$jarp" )
+        for s in "$@"; do cp -a "$s/." "$w/"; done
+        rm -f "$jarp"
+        ( cd "$w" && zip -qrX "$jarp" . )
+        rm -rf "$w"
+      }
+      apply "$ROOT/graylog.jar" "$ST/jackson" "$ST/shiro" "$ST/mail"
+      apply "$ROOT/plugin/graylog-storage-opensearch3-${{package.version}}.jar" "$ST/jackson"
+      rm -rf "$PW"
   - runs: |
       # install the server jar, launcher, plugins and config example under /opt/graylog
       dest="${{targets.destdir}}/opt/graylog"
