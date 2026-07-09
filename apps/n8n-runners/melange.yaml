@@ -115,7 +115,25 @@ pipeline:
       # packages under devDependencies; delete them so npm's arborist doesn't 404 while
       # resolving the tree even under --omit=dev (same issue/fix as the n8n recipe).
       npm pkg delete devDependencies
-      npm install --omit=dev --no-audit --no-fund --legacy-peer-deps
+      # --- npm dependency overrides (0-CVE gate) ------------------------------------------
+      # The JS runner's transitive tree pins two CVE-flagged deps; pin every copy to its Trivy
+      # "Fixed version" (both are TRANSITIVE, not direct deps of @n8n/task-runner, so a plain
+      # override does not trip npm's EOVERRIDE direct-dependency guard):
+      #   * fast-xml-parser 4.4.1 -> 5.7.0 (CVE-2026-25896 CRITICAL + 5 more; 5.7.0 is the only
+      #     version clearing all, incl. CVE-2026-41650 which has no 4.x fix)
+      #   * uuid 8.3.2 -> 11.1.1 (CVE-2026-41907; fix only in the 11.x major)
+      node -e '
+        const fs=require("fs");const p=JSON.parse(fs.readFileSync("package.json","utf8"));
+        p.overrides=Object.assign(p.overrides||{},{
+          "fast-xml-parser":"5.7.0",
+          "uuid":"11.1.1"
+        });
+        fs.writeFileSync("package.json",JSON.stringify(p,null,2));
+      '
+      # --dangerously-allow-all-scripts: npm >=12 blocks dependency install/postinstall scripts
+      # by default (allowScripts gating) and only WARNS, so native bindings in the JS runner tree
+      # would be silently skipped. This hermetic, sha-pinned build wants the pre-npm-12 behavior.
+      npm install --omit=dev --no-audit --no-fund --legacy-peer-deps --dangerously-allow-all-scripts
 
       # Strip foreign-arch + musl prebuilt native binaries (the JS runner pulls n8n-core /
       # n8n-workflow, whose deps vendor multi-arch .node files: @sentry/node-*, isolated-vm,

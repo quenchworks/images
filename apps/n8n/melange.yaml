@@ -72,12 +72,72 @@ pipeline:
       # resolution; they are never needed to RUN n8n. (Mirrors upstream's own runners
       # Dockerfile, which deletes devDependencies before installing.)
       npm pkg delete devDependencies
+      # --- npm dependency overrides (0-CVE gate + build fixes) ----------------------------
+      # Injected into the top-level package.json before install so npm's arborist pins every
+      # copy of each flagged transitive dep to a PATCHED version. Merged via node (not
+      # `npm pkg set`) so scoped names (@scope/x) and version-scoped keys (name@<range>) are
+      # written verbatim without npm's dot-path/quoting mangling.
+      #
+      #  * xlsx -> @e965/xlsx registry mirror: n8n-nodes-base pins xlsx to a SheetJS CDN tarball
+      #    (cdn.sheetjs.com/...); npm >=12 hard-refuses "remote" URL deps (EALLOWREMOTE) and the
+      #    registry `xlsx` maxes at the CVE-laden 0.18.5. @e965/xlsx is the registry mirror of the
+      #    current SheetJS (aliased back to the xlsx folder so require('xlsx') works) — unblocks
+      #    the install AND ships patched 0.20.3.
+      #  * every other entry pins a Trivy-flagged transitive npm dep to its "Fixed version".
+      #    Scoped keys keep the blast radius minimal: `semver@<5.7.2` bumps only the vulnerable
+      #    5.x copy (leaving the tree's 6.x/7.x copies untouched, so nothing is downgraded);
+      #    `ajv@7` bumps only the 7.x copy. tar is NOT used by sqlite3's binding extraction
+      #    (sqlite3 uses prebuild-install -> tar-fs, not `tar`), so bumping tar to 7.x is safe
+      #    for the native driver.
+      # npm forbids an `overrides` entry that conflicts with a package's OWN direct dependency
+      # spec (EOVERRIDE), so flagged deps that n8n declares directly are bumped in `dependencies`
+      # instead, and only the TRANSITIVE copies are pinned via `overrides` (scoped with name@range
+      # so a direct/newer copy in the tree is never downgraded).
+      node -e '
+        const fs=require("fs");
+        const p=JSON.parse(fs.readFileSync("package.json","utf8"));
+        // vulnerable DIRECT deps -> bump the declaration to the Trivy fixed version
+        Object.assign(p.dependencies,{
+          "@opentelemetry/core":"2.8.0",  // direct 2.7.1 < 2.8.0 (fix)
+          "nodemailer":"9.0.1",           // direct 8.0.10 (fix = 9.0.1, major)
+          "ws":"8.21.0"                   // direct 8.20.1 < 8.21.0 (fix)
+        });
+        // transitive copies (+ direct deps already AT the fix: langsmith/uuid/@azure/identity/tar)
+        p.overrides=Object.assign(p.overrides||{},{
+          "xlsx":"npm:@e965/xlsx@0.20.3",
+          "@anthropic-ai/sdk":"0.91.1",
+          "@azure/identity@3":"4.2.1",    // only the transitive 3.4.2 (direct is 4.13.0, safe)
+          "@opentelemetry/core":"2.8.0",
+          "@opentelemetry/exporter-prometheus":"0.217.0",
+          "@opentelemetry/sdk-node@<0.217.0":"0.217.0",  // only the transitive 0.204.0 (direct is ^0.217.0)
+          "@tootallnate/once":"2.0.1",
+          "ajv@7":"8.18.0",               // only the 7.x copy
+          "axios":"1.16.0",
+          "fast-xml-parser":"5.7.0",
+          "form-data":"4.0.6",
+          "langsmith":"0.6.0",
+          "linkify-it":"5.0.1",
+          "nodemailer":"9.0.1",
+          "protobufjs":"8.6.0",
+          "qs":"6.15.2",
+          "semver@<5.7.2":"5.7.2",        // only the vulnerable 5.x (tree keeps its 6.x/7.x)
+          "tar@6":"7.5.16",               // only the transitive 6.2.1 (direct is ^7.5.16)
+          "uuid":"11.1.1",
+          "ws":"8.21.0"
+        });
+        fs.writeFileSync("package.json",JSON.stringify(p,null,2));
+      '
       # --legacy-peer-deps: n8n publishes with exact-pinned deps but ships NO lockfile in the
       # tarball; its real install resolves against the monorepo pnpm-lock (where e.g. zod is
       # pinned at 3.25.67). Some newly-floated transitive peers (e.g. @ai-sdk/* wanting a newer
       # zod) then fail npm's strict peer check even though n8n runs fine on the pinned set.
       # Legacy peer resolution reproduces the intended (lockfile) tree instead of erroring.
-      npm install --omit=dev --no-audit --no-fund --legacy-peer-deps
+      # --dangerously-allow-all-scripts: npm >=12 blocks dependency install/postinstall scripts
+      # by default (allowScripts gating) and only WARNS, so the sqlite3 native binding
+      # (prebuild-install/node-gyp postinstall) is silently skipped and the app has no DB driver.
+      # This build is hermetic (sha-pinned tarball, no network mutation of the pinned tree), so
+      # running the pinned deps' install scripts is exactly the pre-npm-12 behavior we need.
+      npm install --omit=dev --no-audit --no-fund --legacy-peer-deps --dangerously-allow-all-scripts
 
       # --- strip foreign-arch + musl prebuilt native binaries ---------------------------
       # n8n's tree VENDORS prebuilt .node/.so binaries for every platform/arch/libc inside

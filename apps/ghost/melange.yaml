@@ -68,6 +68,41 @@ pipeline:
       # native sqlite3 build doesn't fail probing for a bare `python3`/`python`.
       export PYTHON="$(command -v python3.13 || command -v python3)"
       export npm_config_python="$PYTHON"
+      # --- 0-CVE gate: inject pnpm dependency overrides -----------------------------------
+      # Ghost 6.51.0's prod tree still pins nine CVE-flagged deps. pnpm reads dependency
+      # overrides from the `overrides:` map in pnpm-workspace.yaml (Ghost already uses this to
+      # patch e.g. fast-xml-parser/axios/tar). We append our own entries to that map so every
+      # copy is pinned to its Trivy "Fixed version"; scoped `name@<range` keys keep the blast
+      # radius minimal (matching Ghost's own convention). None of these are exercised on the
+      # boot path except `validator` (Ghost's admin app already runs on validator 13, and
+      # @tryghost/validator@3.2.1 uses 13.15.35, so validator 13 is API-compatible).
+      #   babel-traverse@6 CVE-2023-45133 is a package RENAME -> alias to @babel/traverse@7.
+      #   jsonwebtoken 8->9 matches what express-jwt@8.5.1 already wants (jsonwebtoken ^9).
+      python3.13 - <<'PYEOF'
+      f="pnpm-workspace.yaml"
+      lines=open(f).read().splitlines()
+      add=[
+        # NOTE: @tryghost/members-csv CVE-2024-34448 is NOT overridable — Trivy's fixed
+        # version 5.82.0 is an unpublished Ghost-monorepo-internal number; the standalone npm
+        # package tops out at 2.0.7 (what Ghost 6.51.0 already ships). No installable fix.
+        "  babel-traverse: 'npm:@babel/traverse@7.23.2'",  # CVE-2023-45133 rename fix
+        "  'esbuild@<0.28.1': 0.28.1",           # GHSA-g7r4-m6w7-qqqr
+        "  'jsonwebtoken@<9.0.0': 9.0.3",        # CVE-2022-23539/23540/23541
+        "  'multer@<2.2.0': 2.2.0",              # CVE-2026-5079/5038
+        "  'nodemailer@<9.0.1': 9.0.1",          # GHSA-p6gq-j5cr-w38f
+        "  'uuid@<11': 11.1.1",                  # CVE-2026-41907 (3.x + 9.x copies)
+        "  'validator@<13.15.20': 13.15.35",     # CVE-2025-12758/56200/2021-3765 (7.x + 13.12 copies)
+        "  'vite@<7.3.5': 7.3.5",                # CVE-2026-53571/53632
+      ]
+      out=[]
+      done=False
+      for ln in lines:
+          out.append(ln)
+          if not done and ln=="overrides:":
+              out.extend(add); done=True
+      assert done, "overrides: block not found in pnpm-workspace.yaml"
+      open(f,"w").write("\n".join(out)+"\n")
+      PYEOF
       pnpm install --prod --no-frozen-lockfile
 
       # Trim build-time cruft that bloats the image and the CVE surface but is never run:
