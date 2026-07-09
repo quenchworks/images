@@ -77,6 +77,7 @@ jobs:
           curl -fsSL "https://github.com/chainguard-dev/melange/releases/download/${MELANGE_VER}/melange_${MELANGE_VER#v}_linux_${{ matrix.arch.platform }}.tar.gz" \
             | sudo tar xz --strip-components=1 -C /usr/local/bin
           melange version | head -1
+          sudo apt-get update -qq && sudo apt-get install -y bubblewrap
 
       - name: Render recipes for ${{ matrix.ver }} (build.conf render)
         run: |
