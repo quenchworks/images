@@ -2,6 +2,13 @@
 # binary distribution (prebuilt, arch-independent jars) on a hardened Wolfi JRE,
 # which is the CVE surface the Trivy gate scans. Mirrors the kafka JVM pattern:
 # openjdk-21-jre at runtime + the distribution under /opt/apache-jmeter.
+#
+# CVE remediation (2026-07-09): the stock 5.6.3 lib/ ships jars that trip the
+# 0-CVE gate. We (a) DROP three optional major-bump-only jars that back only
+# optional samplers, and (b) SWAP the rest for same-major (binary-compatible)
+# patched jars pinned by sha256 from Maven Central. Verified: `jmeter --version`
+# plus a headless `-n -t` run (thread group + JSR223 + JSON extractor, save to
+# JTL) both succeed with the swapped set. See the pipeline comments for details.
 package:
   name: quench-jmeter
   version: __VER__
@@ -24,6 +31,7 @@ environment:
     packages:
       - busybox
       - ca-certificates-bundle
+      - curl               # build-time only: pull sha256-pinned CVE-fix jars
 
 pipeline:
   - uses: fetch
@@ -32,6 +40,7 @@ pipeline:
       expected-sha256: "__SHA256__"
       strip-components: 1
   - runs: |
+      set -eu
       # install the distribution under /opt/apache-jmeter, dropping the Windows
       # launchers. The jars are arch-independent; the JRE is per-arch from Wolfi.
       dest="${{targets.destdir}}/opt/apache-jmeter"
@@ -39,6 +48,86 @@ pipeline:
       cp -r bin lib licenses LICENSE NOTICE README.md "$dest/"
       find "$dest/bin" -name '*.bat' -delete
       find "$dest/bin" -name '*.cmd' -delete
+      lib="$dest/lib"
+
+      # --- (a) DROP optional jars whose only fix is a prohibited MAJOR bump -----
+      # tika-core/tika-parsers 1.28.5 (CVE-2025-66516 CRITICAL, CVE-2025-54988;
+      #   fixed only in tika 2.x/3.x), dnsjava 2.1.9 (CVE-2024-25638 HIGH; fixed
+      #   only in dnsjava 3.6.0), and neo4j-java-driver 4.4.13 (bundles/shades a
+      #   vulnerable netty 4.1.104 -> 8 CVEs incl. CVE-2025-24970 HIGH; no
+      #   standalone fix without rebuilding the driver). These back ONLY optional
+      #   samplers/managers -- Tika response parsing, the DNS Cache Manager, and
+      #   the Bolt/Neo4j sampler (ApacheJMeter_bolt.jar, the driver's only
+      #   consumer) -- none of which core HTTP load testing uses. Dropped.
+      rm -f "$lib"/tika-core-1.28.5.jar "$lib"/tika-parsers-1.28.5.jar \
+            "$lib"/dnsjava-2.1.9.jar "$lib"/neo4j-java-driver-4.4.13.jar \
+            "$dest"/lib/ext/ApacheJMeter_bolt.jar
+
+      # --- (b) SWAP the remaining flagged jars for same-major patched builds ----
+      # All swaps stay within the bundled major version (binary-compatible):
+      #   jackson core/databind/annotations 2.16.1 -> 2.18.9
+      #   log4j api/core/1.2-api/slf4j-impl     2.22.1 -> 2.25.5
+      #   commons-lang3 3.14.0 -> 3.18.0   xstream 1.4.20 -> 1.4.21
+      #   json-path 2.8.0 -> 2.9.0   json-smart+accessors-smart 2.5.0 -> 2.5.2
+      #   rhino 1.7.14 -> 1.7.14.1   batik (18 jars) 1.16 -> 1.17
+      # Remove the vulnerable originals, then fetch the replacements pinned by
+      # sha256 from Maven Central (xmlgraphics-commons 2.9 / xml-apis stay put --
+      # batik 1.17 is compatible with them).
+      rm -f "$lib"/jackson-core-2.16.1.jar "$lib"/jackson-databind-2.16.1.jar \
+            "$lib"/jackson-annotations-2.16.1.jar \
+            "$lib"/log4j-api-2.22.1.jar "$lib"/log4j-core-2.22.1.jar \
+            "$lib"/log4j-1.2-api-2.22.1.jar "$lib"/log4j-slf4j-impl-2.22.1.jar \
+            "$lib"/commons-lang3-3.14.0.jar "$lib"/xstream-1.4.20.jar \
+            "$lib"/json-path-2.8.0.jar "$lib"/json-smart-2.5.0.jar \
+            "$lib"/accessors-smart-2.5.0.jar "$lib"/rhino-1.7.14.jar \
+            "$lib"/batik-anim-1.16.jar "$lib"/batik-awt-util-1.16.jar \
+            "$lib"/batik-bridge-1.16.jar "$lib"/batik-codec-1.16.jar \
+            "$lib"/batik-constants-1.16.jar "$lib"/batik-css-1.16.jar \
+            "$lib"/batik-dom-1.16.jar "$lib"/batik-ext-1.16.jar \
+            "$lib"/batik-gvt-1.16.jar "$lib"/batik-i18n-1.16.jar \
+            "$lib"/batik-parser-1.16.jar "$lib"/batik-script-1.16.jar \
+            "$lib"/batik-shared-resources-1.16.jar "$lib"/batik-svg-dom-1.16.jar \
+            "$lib"/batik-svggen-1.16.jar "$lib"/batik-transcoder-1.16.jar \
+            "$lib"/batik-util-1.16.jar "$lib"/batik-xml-1.16.jar
+
+      base="https://repo1.maven.org/maven2"
+      MANIFEST="e03144f48c8d5307da2894570b4972aab8c72f22440f8dcdb745be2485ce2024  com/fasterxml/jackson/core/jackson-core/2.18.9/jackson-core-2.18.9.jar
+      71595a3f7ff58344ec0496a9f9ec9f623ef7b85b45402d88f1ca261f1bc4b42c  com/fasterxml/jackson/core/jackson-databind/2.18.9/jackson-databind-2.18.9.jar
+      798c85b86e7420d0b4eb91e7b3e37d4bee673c61de37a616ba51a7539631e6b7  com/fasterxml/jackson/core/jackson-annotations/2.18.9/jackson-annotations-2.18.9.jar
+      64777f73ea0b3104c04eb82befbdccc30a425a19e83ad06cb2f93aa303511863  org/apache/logging/log4j/log4j-api/2.25.5/log4j-api-2.25.5.jar
+      050c4f85deb48b055e9c041ac39043fbb79ce477841a11a1eb2969c86c6a0072  org/apache/logging/log4j/log4j-core/2.25.5/log4j-core-2.25.5.jar
+      4dd812dc5a6343f542a9e0046b1ec78ecf10bdd5a8c15745101cdd8b9aa24974  org/apache/logging/log4j/log4j-1.2-api/2.25.5/log4j-1.2-api-2.25.5.jar
+      3d25b926bc6025c47ec010459749c12aa66b9d5537ba1922d67d89a098a66607  org/apache/logging/log4j/log4j-slf4j-impl/2.25.5/log4j-slf4j-impl-2.25.5.jar
+      4eeeae8d20c078abb64b015ec158add383ac581571cddc45c68f0c9ae0230720  org/apache/commons/commons-lang3/3.18.0/commons-lang3-3.18.0.jar
+      f56586f3de59ae2a49430acbc9f27942b8c5cebec9245c869fae7136733333ec  com/thoughtworks/xstream/xstream/1.4.21/xstream-1.4.21.jar
+      11a9ee6f88bb31f1450108d1cf6441377dec84aca075eb6bb2343be157575bea  com/jayway/jsonpath/json-path/2.9.0/json-path-2.9.0.jar
+      4fbdedb0105cedc7f766b95c297d2e88fb6a560da48f3bbaa0cc538ea8b7bf71  net/minidev/json-smart/2.5.2/json-smart-2.5.2.jar
+      9b8a7bc43861d6156c021166d941fb7dddbe4463e2fa5ee88077e4b01452a836  net/minidev/accessors-smart/2.5.2/accessors-smart-2.5.2.jar
+      407d4af6521494061d86b208e99804e0bf5c2fa38449c48f24b2f5a7154b4d8d  org/mozilla/rhino/1.7.14.1/rhino-1.7.14.1.jar
+      67d9d691ecec857ac3628fbd2167c201940d3c4b65ab7386484ac730cb8cf9ea  org/apache/xmlgraphics/batik-anim/1.17/batik-anim-1.17.jar
+      7fe38f9451eb94575214323261c8192b63f1dfd2610659255fbbbbfde94a2a66  org/apache/xmlgraphics/batik-awt-util/1.17/batik-awt-util-1.17.jar
+      3bd027e19a0be2496c2c3950152525c91461a7d081edbd828bb3d2d269ec5870  org/apache/xmlgraphics/batik-bridge/1.17/batik-bridge-1.17.jar
+      6434a48717b69f05986866653e75d52840f812cd2bc27a5bf5d88aee95e4121f  org/apache/xmlgraphics/batik-codec/1.17/batik-codec-1.17.jar
+      75db00180bde4ef5caee3916d6f65e5045051d59cf51d57e673c03969d7bbbcd  org/apache/xmlgraphics/batik-constants/1.17/batik-constants-1.17.jar
+      dcf9a902bd0c4b1a84ac0561d7b66052bc93381c4923a5bc5602290c1c82b779  org/apache/xmlgraphics/batik-css/1.17/batik-css-1.17.jar
+      f242ddb05b268b15ff055d1d1aaf2dc9c3418e842ba806731408a984d4e3240c  org/apache/xmlgraphics/batik-dom/1.17/batik-dom-1.17.jar
+      8267fc60b4a5b0f2afa7dcfdad40beb0e723d6a19b66b8e24bc37c2ec6dc5450  org/apache/xmlgraphics/batik-ext/1.17/batik-ext-1.17.jar
+      93f4e4a844cafc5b3d5731a299bc00cf14404026ddcb1d749d29ca79486b4b90  org/apache/xmlgraphics/batik-gvt/1.17/batik-gvt-1.17.jar
+      d5a64680363e7b36b3f28c34a3a536d76e847f77cec0740aab7c799a67b52d8b  org/apache/xmlgraphics/batik-i18n/1.17/batik-i18n-1.17.jar
+      5e448bbfaf6127567f41f698ee25ad79b844363071c12d1175896c78891717d7  org/apache/xmlgraphics/batik-parser/1.17/batik-parser-1.17.jar
+      2ccbb4bd6d5a630fb7d26f0dd3118d4742f7bae0e972ee672130e803f672950c  org/apache/xmlgraphics/batik-script/1.17/batik-script-1.17.jar
+      5d74182b9ca19ecd8d4814f2ff4b42a4aeea6e18977e905cc84e8a6f81940c9f  org/apache/xmlgraphics/batik-shared-resources/1.17/batik-shared-resources-1.17.jar
+      19347218a490670c4b9d2cd15a45155c1af9f41e77f7eada99eb94dbb90be8e3  org/apache/xmlgraphics/batik-svg-dom/1.17/batik-svg-dom-1.17.jar
+      108f725ffe135dca566d925f3ace26a5f80399f288ca190561805dec28005d63  org/apache/xmlgraphics/batik-svggen/1.17/batik-svggen-1.17.jar
+      1f69e986b46e91f707cf13143f4e2e930b9f60a697858dbabdbab5cb86cd5a0f  org/apache/xmlgraphics/batik-transcoder/1.17/batik-transcoder-1.17.jar
+      a1e4f743c8b80ac682edd4b397faa4ac42de591343036324c80ee8f22973c976  org/apache/xmlgraphics/batik-util/1.17/batik-util-1.17.jar
+      fbcc2300066ac4042876c52c327acdf0b515962f1690400ed7a78ed2c0d4c1b4  org/apache/xmlgraphics/batik-xml/1.17/batik-xml-1.17.jar"
+      echo "$MANIFEST" | while read -r sum path; do
+        [ -z "$sum" ] && continue
+        f="${path##*/}"
+        curl -fsSL -o "$lib/$f" "$base/$path"
+        echo "$sum  $lib/$f" | sha256sum -c -
+      done
 
 test:
   pipeline:
