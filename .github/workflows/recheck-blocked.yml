@@ -1,0 +1,94 @@
+name: recheck-blocked
+# Weekly re-gate of every BLOCKED=1 app. Their blockers are all upstream/Wolfi-gated
+# (a new release or a Wolfi package rebuild clears them), so this rebuilds each on the
+# freshest sources + Trivy DB and records whether it now passes the 0-CVE gate. Any app
+# that flips to 0-CVE is surfaced (job summary + a tracking issue) so it can be unblocked
+# and published. Runs x86_64 only — that's where the CVE gate runs; a pass here means it's
+# worth a full multi-arch publish.
+on:
+  schedule:
+    - cron: "0 6 * * 1"   # Mondays 06:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  recheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install melange, apko, trivy
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update && sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          MELANGE_VER=v0.53.0
+          curl -fsSL "https://github.com/chainguard-dev/melange/releases/download/${MELANGE_VER}/melange_${MELANGE_VER#v}_linux_amd64.tar.gz" \
+            | sudo tar xz --strip-components=1 -C /usr/local/bin
+          APKO_VER="$(gh api repos/chainguard-dev/apko/releases/latest --jq .tag_name)"
+          curl -fsSL "https://github.com/chainguard-dev/apko/releases/download/${APKO_VER}/apko_${APKO_VER#v}_linux_amd64.tar.gz" \
+            | sudo tar xz --strip-components=1 -C /usr/local/bin
+          TRIVY_VER="$(gh api repos/aquasecurity/trivy/releases/latest --jq .tag_name)"
+          curl -fsSL "https://github.com/aquasecurity/trivy/releases/download/${TRIVY_VER}/trivy_${TRIVY_VER#v}_Linux-64bit.tar.gz" \
+            | sudo tar xz -C /usr/local/bin trivy
+          trivy image --download-db-only
+
+      - name: Re-gate every BLOCKED=1 app (x86_64)
+        id: gate
+        run: |
+          set -uo pipefail
+          echo "## Blocked-app re-check ($(date -u +%Y-%m-%d))" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| app | newest | 0-CVE gate |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          NEWLY_PASSING=""
+          for conf in apps/*/build.conf; do
+            grep -q 'BLOCKED=1' "$conf" || continue
+            app="$(basename "$(dirname "$conf")")"
+            ( cd "apps/$app" || exit 0
+              rm -rf packages image.tar melange.rendered.yaml apko.rendered.yaml
+              # shellcheck disable=SC1091
+              source build.conf
+              ver="${VERSIONS[$(( ${#VERSIONS[@]} - 1 ))]}"
+              prog="$(render "$ver" 2>/dev/null || echo '')"
+              [ -n "$prog" ] && { sed -e "$prog" melange.yaml > melange.rendered.yaml 2>/dev/null || cp melange.yaml melange.rendered.yaml; \
+                                  sed -e "$prog" apko.yaml    > apko.rendered.yaml    2>/dev/null || cp apko.yaml apko.rendered.yaml; } \
+                              || { cp melange.yaml melange.rendered.yaml 2>/dev/null || true; cp apko.yaml apko.rendered.yaml; }
+              melange keygen melange.rsa >/dev/null 2>&1
+              if [ -f melange.yaml ]; then
+                melange build melange.rendered.yaml --arch x86_64 --signing-key melange.rsa --out-dir ./packages >/dev/null 2>&1 || { echo "BUILD_FAIL"; exit 0; }
+              fi
+              apko build apko.rendered.yaml "recheck:${app}" image.tar --arch x86_64 >/dev/null 2>&1 || { echo "APKO_FAIL"; exit 0; }
+              if trivy image --input image.tar --exit-code 1 --ignore-unfixed --scanners vuln \
+                   --severity CRITICAL,HIGH,MEDIUM,LOW --detection-priority comprehensive --quiet >/dev/null 2>&1; then
+                echo "PASS"
+              else
+                echo "STILL_BLOCKED"
+              fi
+              rm -rf packages image.tar melange.rsa* ) > /tmp/res 2>&1
+            result="$(tail -1 /tmp/res)"
+            ver="$(cd "apps/$app" && source build.conf 2>/dev/null && echo "${VERSIONS[$(( ${#VERSIONS[@]} - 1 ))]}" 2>/dev/null || echo '?')"
+            case "$result" in
+              PASS) mark="✅ NOW 0-CVE — unblock + publish"; NEWLY_PASSING="$NEWLY_PASSING $app";;
+              *)    mark="⛔ $result";;
+            esac
+            echo "| $app | $ver | $mark |" >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo "newly_passing=$NEWLY_PASSING" >> "$GITHUB_OUTPUT"
+
+      - name: Open a tracking issue for any newly-passing app
+        if: ${{ steps.gate.outputs.newly_passing != '' && steps.gate.outputs.newly_passing != ' ' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          body="These previously-BLOCKED apps now pass the 0-CVE gate on the latest sources and should be unblocked (drop BLOCKED=1), published in a public window, and re-listed in catalog.yaml:\n\n"
+          for a in ${{ steps.gate.outputs.newly_passing }}; do body="${body}- \`${a}\`\n"; done
+          printf "%b" "$body" | gh issue create -R "${{ github.repository }}" \
+            --title "Unblock ready: $(echo '${{ steps.gate.outputs.newly_passing }}' | xargs)" \
+            --body-file - || echo "issue create skipped"
