@@ -84,6 +84,12 @@ jobs:
         uses: aquasecurity/trivy-action@master
         env:
           TRIVY_DETECTION_PRIORITY: comprehensive
+          # Documented VEX clearance: PROVEN false-positives (Wolfi jenkins-2
+          # origin advisories inherited from the controller libs, which are NOT
+          # present in this inbound-agent image) are suppressed via OpenVEX
+          # not_affected / vulnerable_code_not_present. Matches the local gate.
+          # trivy-action has no `vex:` input; pass it through the TRIVY_VEX env.
+          TRIVY_VEX: apps/jenkins-inbound-agent/vex.openvex.json
         with:
           input: apps/jenkins-inbound-agent/image.tar
           format: table
@@ -91,11 +97,6 @@ jobs:
           ignore-unfixed: true
           severity: CRITICAL,HIGH,MEDIUM,LOW
           scanners: vuln
-          # Documented VEX clearance: PROVEN false-positives (Wolfi jenkins-2
-          # origin advisories inherited from the controller libs, which are NOT
-          # present in this inbound-agent image) are suppressed via OpenVEX
-          # not_affected / vulnerable_code_not_present. Matches the local gate.
-          vex: apps/jenkins-inbound-agent/vex.openvex.json
 
       - name: Smoke test the single-arch image
         run: |

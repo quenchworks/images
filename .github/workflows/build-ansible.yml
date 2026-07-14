@@ -165,6 +165,14 @@ jobs:
           output-file: sbom.spdx.json
           upload-artifact: false
 
+      # actions/attest-sbom rejects SBOMs > 16 MB; the Ansible venv SBOM blows
+      # past that. Drop per-file records + relationships (packages-only is a
+      # valid SPDX doc and is what the attestation needs).
+      - name: Trim SBOM under the 16 MB attest ceiling
+        run: |
+          jq 'del(.files) | del(.relationships)' sbom.spdx.json > sbom.trimmed.json
+          mv sbom.trimmed.json sbom.spdx.json
+
       - name: Attest the SBOM (keyless, pushed to GHCR)
         uses: actions/attest-sbom@v4
         with:
