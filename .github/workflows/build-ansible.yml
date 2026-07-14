@@ -1,14 +1,15 @@
-name: build-zitadel
+name: build-ansible
 
-# From-source build (ZITADEL server built with melange on go-1.26, with its full codegen
-# pipeline + Angular console reproduced inside the sandbox; see apps/zitadel/melange.yaml).
-# build.conf is the SINGLE SOURCE OF TRUTH: prep emits the latest 3 versions (bare X.Y.Z,
-# as-is). The build matrix fans them x both NATIVE arches (amd64 + arm64, no QEMU). Recipes
-# render via build.conf render() (__VER__ + the arch-independent source __SRC_SHA__).
-# Per-version merge job assembles the multi-arch index, signs + attests it, and notifies
-# the charts repo for the newest version only (ZITADEL ships with a chart). Manual trigger
-# only. NOTE: the console `ng build` step is memory-hungry (~6 GB heap); if the default
-# runner OOMs, move the build job to a larger runner.
+# Pip-install build (Ansible control node: the PyPI `ansible` community meta-package,
+# which pulls ansible-core + the bundled collections). There is no single Wolfi
+# `ansible` apk for the whole control node, so the melange pipeline installs
+# `ansible==<VER>` from PyPI into a virtualenv on a Wolfi python-3.13 base, and apko
+# adds the control-node CLI tooling (openssh-client, sshpass, git, rsync). build.conf is
+# the SINGLE SOURCE OF TRUTH: prep emits the shipped versions (full X.Y.Z, as-is — PyPI
+# community versions, no `v` prefix). The build matrix fans them x both NATIVE arches
+# (amd64 + arm64, no QEMU). Recipes render via build.conf render() (__VER__ ->
+# ansible==<VER>). Per-version merge job assembles the multi-arch index, signs +
+# attests it. Image-only app: NO charts dispatch.
 on:
   workflow_dispatch:
 permissions:
@@ -18,8 +19,8 @@ permissions:
   attestations: write
 
 env:
-  APP: zitadel
-  GHCR_IMAGE: ghcr.io/quenchworks/images/zitadel
+  APP: ansible
+  GHCR_IMAGE: ghcr.io/quenchworks/images/ansible
 
 jobs:
   prep:
@@ -54,7 +55,7 @@ jobs:
     runs-on: ${{ matrix.arch.runner }}
     defaults:
       run:
-        working-directory: apps/zitadel
+        working-directory: apps/ansible
     steps:
       - uses: actions/checkout@v5
 
@@ -89,7 +90,7 @@ jobs:
           sed -e "$prog" melange.yaml > melange.rendered.yaml
           sed -e "$prog" apko.yaml    > apko.rendered.yaml
 
-      - name: Build package (native ${{ matrix.arch.name }})
+      - name: Build package (pip venv install, native ${{ matrix.arch.name }})
         run: |
           melange keygen melange.rsa
           melange build melange.rendered.yaml --arch ${{ matrix.arch.name }} --signing-key melange.rsa --out-dir ./packages
@@ -99,10 +100,16 @@ jobs:
 
       - name: Scan, the hard 0-CVE gate (before publish)
         uses: aquasecurity/trivy-action@master
+        # detection-priority=comprehensive is REQUIRED here: ansible ships as a pip venv
+        # under /opt/ansible/venv. In Trivy's default `precise` mode, the presence of the
+        # Wolfi python-3.13 apk in the image's apk DB suppresses ALL python-pkg
+        # (.dist-info) detections — so the venv's pip deps (ansible-core, jinja2,
+        # cryptography, PyYAML, ...) would silently evade the gate. `comprehensive` makes
+        # Trivy scan the venv's installed Python packages too. Do NOT drop this.
         env:
           TRIVY_DETECTION_PRIORITY: comprehensive
         with:
-          input: apps/zitadel/image.tar
+          input: apps/ansible/image.tar
           format: table
           exit-code: "1"
           ignore-unfixed: true
@@ -116,7 +123,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish the single-arch image (tag = bare X.Y.Z)
+      - name: Publish the single-arch image (tag = full X.Y.Z)
         run: apko publish apko.rendered.yaml "${GHCR_IMAGE}:${{ matrix.ver }}-${{ matrix.arch.platform }}" --arch ${{ matrix.arch.name }}
 
   merge:
@@ -138,7 +145,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Assemble the multi-arch index (tag = bare X.Y.Z)
+      - name: Assemble the multi-arch index (tag = full X.Y.Z)
         id: merge
         run: |
           docker buildx imagetools create -t "${GHCR_IMAGE}:${{ matrix.ver }}" \
@@ -172,14 +179,3 @@ jobs:
           subject-name: ${{ env.GHCR_IMAGE }}
           subject-digest: ${{ steps.merge.outputs.digest }}
           push-to-registry: true
-
-      - name: Notify the charts repo (newest version only)
-        if: ${{ matrix.ver == needs.prep.outputs.latest }}
-        env:
-          GH_TOKEN: ${{ secrets.CHARTS_DISPATCH_TOKEN }}
-        run: |
-          gh api repos/quenchworks/charts/dispatches \
-            -f event_type=image-published \
-            -F client_payload[app]=zitadel \
-            -F client_payload[repository]="${GHCR_IMAGE}" \
-            -F client_payload[digest]="${{ steps.merge.outputs.digest }}"

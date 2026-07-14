@@ -1,27 +1,32 @@
-# Assembles a hardened .NET SDK base image directly from Wolfi's own versioned
-# `dotnet-N-sdk` packages. No Dockerfile, NO melange build -- apko pulls the
-# pinned `dotnet-__VER__-sdk` package (which pulls its matching runtime +
-# targeting packs) straight from the Wolfi `os` repository, so each major band
-# is a pure package-assembly.
+# Assembles a hardened .NET SDK base image from Wolfi's own versioned
+# `dotnet-N-sdk` packages. No Dockerfile.
+#
+# The shipped band (10) renders `__PKG__` to `quench-dotnet@local`, the melange
+# repackage of Wolfi's dotnet-10-sdk with the bundled NuGet client patched to the
+# released 7.0.3 (see melange.yaml -- GHSA-g4vj-cjjj-v7hg). apko layers that local
+# package (+ its native-lib deps) over the Wolfi base; the `@local` repo + melange
+# keyring below carry it. (Bands 8 & 9 are held out -- see build.conf STATUS.)
 #
 # IMAGE-ONLY -- no Helm chart. This is a LANGUAGE/SDK image: the 0-CVE, signed,
 # nonroot, multi-arch developer answer to `mcr.microsoft.com/dotnet/sdk:N`.
 # Developers `FROM` it (like Chainguard's language images) or run `dotnet`
 # directly.
 #
-# TEMPLATE NOTE: `__VER__` is a build-time placeholder. CI substitutes the
-# major version (8 / 9 / 10) per matrix entry with `sed` before apko runs, so
-# this single file covers every shipped version. To roll this pattern to
-# another runtime, copy this file and swap the package names + entrypoint.
+# TEMPLATE NOTE: `__PKG__` is a build-time placeholder substituted by build.conf
+# render() before apko runs (to quench-dotnet@local for every shipped band), so
+# this single file covers every version. To roll this pattern to another runtime,
+# copy this file and swap the package names + entrypoint.
 contents:
   keyring:
     - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
   repositories:
     - https://packages.wolfi.dev/os
+    - "@local ./packages"
   packages:
     - wolfi-baselayout
     - ca-certificates-bundle
-    - __PKG__                     # the pinned .NET SDK band from Wolfi (dotnet-N-sdk; pulls runtime + aspnet + targeting packs)
+    - __PKG__                     # bands 8/9: Wolfi dotnet-N-sdk (pulls runtime + aspnet + targeting packs); band 10: quench-dotnet@local (NuGet-patched repackage, see melange.yaml)
 
 accounts:
   groups:

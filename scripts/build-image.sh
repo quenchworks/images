@@ -93,6 +93,12 @@ NATIVE="$(uname -m)"; [ "$NATIVE" = "arm64" ] && NATIVE="aarch64"
 echo "🔎 apko build (scan tar, $NATIVE) ..."
 apko build "$APKO" "$GHCR:scan" image.tar --arch "$NATIVE" >/dev/null
 echo "🛡  trivy 0-CVE gate ..."
+# Per-app documented VEX clearance (OpenVEX): if apps/<app>/vex.openvex.json
+# exists, feed it to Trivy so PROVEN false-positives (status: not_affected) are
+# suppressed with an auditable justification. Scoped per-app -- apps without a
+# vex file get an empty VEX_ARG and behave exactly as before.
+VEX_ARG=()
+[ -f "$APPDIR/vex.openvex.json" ] && VEX_ARG=(--vex "$APPDIR/vex.openvex.json")
 # --detection-priority comprehensive is REQUIRED, not optional: in the default
 # "precise" mode Trivy drops language files that are owned by an OS package, so a
 # from-source binary packaged into an apk (every Go/Rust/etc. app here) has its
@@ -102,7 +108,7 @@ echo "🛡  trivy 0-CVE gate ..."
 # workflows that already set TRIVY_DETECTION_PRIORITY=comprehensive.
 trivy image --input image.tar --exit-code 1 --ignore-unfixed \
   --severity CRITICAL,HIGH,MEDIUM,LOW --scanners vuln \
-  --detection-priority comprehensive --quiet
+  --detection-priority comprehensive --quiet "${VEX_ARG[@]}"
 echo "✅ 0 fixable CVEs"
 
 if [ "$PUSH" != "1" ]; then

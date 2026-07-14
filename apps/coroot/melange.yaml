@@ -87,16 +87,46 @@ pipeline:
       export GOFLAGS=-mod=mod
       export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's 1.25.5
       export GO111MODULE=on
-      # --- safe CVE bumps (verified to still compile; same minor/API) ----------
+      # --- source port: prometheus v0.300.0 -> v0.311.3 API break --------------
+      # The prometheus bump below is a real API break across coroot's prom/ pkg.
+      # We port the affected call sites in-tree (small, mechanical) rather than
+      # forking upstream; each edit maps 1:1 to an upstream API change:
+      #   * promql parser funcs became methods on a parser.Parser interface
+      #     (ParseExpr / ParseMetricSelector / ParseMetricSelectors are no longer
+      #     package-level). Construct one with parser.NewParser(parser.Options{})
+      #     and call the method. (parser.Inspect / VectorSelector / ValueType,
+      #     etc. are still package-level and untouched.)
+      #   * storage.NewMergeSeriesSet gained a `limit int` arg (0 = unlimited,
+      #     matching coroot's prior no-limit behaviour).
+      #   * tsdb/chunks.Sample gained ST() int64 (sample start/created ts); our
+      #     ClickHouse float samples have none, so ST() returns 0 (== unset, the
+      #     same value prometheus' own sample uses when no start ts is present).
+      #   * labels.Labels went struct-by-default; the slice representation coroot
+      #     relies on (make/append/index over labels.Label) is still supported
+      #     upstream behind the `slicelabels` build tag, which we pass to go build
+      #     below. This is a supported upstream build mode, not a gate weakening:
+      #     it changes only the in-memory label layout, never which CVEs are fixed.
+      sed -i 's/parser\.ParseMetricSelectors(/parser.NewParser(parser.Options{}).ParseMetricSelectors(/g' prom/clickhouse.go
+      sed -i 's/parser\.ParseMetricSelector(/parser.NewParser(parser.Options{}).ParseMetricSelector(/g' config/utils.go
+      sed -i -e 's/parser\.ParseMetricSelector(/parser.NewParser(parser.Options{}).ParseMetricSelector(/g' \
+             -e 's/parser\.ParseExpr(/parser.NewParser(parser.Options{}).ParseExpr(/g' prom/http.go
+      sed -i 's/parser\.ParseExpr(/parser.NewParser(parser.Options{}).ParseExpr(/g' api/forms/forms.go
+      sed -i 's/storage\.NewMergeSeriesSet(sets, storage\.ChainedSeriesMerge)/storage.NewMergeSeriesSet(sets, 0, storage.ChainedSeriesMerge)/' prom/clickhouse.go
+      printf '\nfunc (s sample) ST() int64 { return 0 }\n' >> prom/clickhouse_querier.go
+      # --- CVE bumps (all verified to compile against the ported source) --------
       # These clear the fixable advisories the comprehensive Trivy gate flags on
-      # the pinned dep graph, including the CRITICAL grpc authz bypass:
-      #   grpc     v1.67.1 -> v1.79.3  CVE-2026-33186 (CRITICAL, HTTP/2 authz bypass)
-      #   x/crypto v0.36.0 -> v0.52.0  CVE-2026-39831/39833/39834/46598 (ssh) + more
-      #   x/net    v0.38.0 -> v0.55.0  CVE-2026-25680/25681/27136/33814/39821/42502/42506
-      #   otel     v1.31.x pulled to v1.39.0 by the above, which carries
-      #            CVE-2026-29181 (HIGH); bump to v1.41.0 to keep the set clean
-      #   jsonparser v1.1.1 -> v1.1.2  CVE (HIGH)
-      #   slack-go v0.11.3 -> v0.23.1  CVE (MEDIUM)
+      # the pinned dep graph:
+      #   grpc       v1.67.1 -> v1.79.3  CVE-2026-33186 (CRITICAL, HTTP/2 authz bypass)
+      #   x/crypto   v0.36.0 -> v0.52.0  CVE-2026-39831/39833/39834/46598 (ssh) + more
+      #   x/net      v0.38.0 -> v0.55.0  CVE-2026-25680/25681/27136/33814/39821/42502/42506
+      #   otel       v1.31.x -> v1.41.0+ (prometheus 0.311.3 pulls 1.42.0) clears CVE-2026-29181 (HIGH)
+      #   jsonparser v1.1.1  -> v1.1.2   CVE (HIGH)
+      #   slack-go   v0.11.3 -> v0.23.1  CVE (MEDIUM)
+      #   prometheus v0.300.0 -> v0.311.3 CVE-2026-42151/42154 (HIGH), 44903/40179 (MEDIUM)
+      #   ch-go      v0.62.0 -> v0.65.0  CVE-2025-1386 (MEDIUM); its compress API
+      #              break is absorbed by moving clickhouse-go/v2 v2.8.3 -> v2.32.0
+      #              (the minimal clickhouse-go that pins ch-go 0.65.0). coroot's
+      #              ch/ + clickhouse/ driver usage compiles unchanged on this pair.
       go get golang.org/x/crypto@v0.52.0
       go get golang.org/x/net@v0.55.0
       go get google.golang.org/grpc@v1.79.3
@@ -105,25 +135,12 @@ pipeline:
       go get go.opentelemetry.io/otel/trace@v1.41.0
       go get github.com/buger/jsonparser@v1.1.2
       go get github.com/slack-go/slack@v0.23.1
+      go get github.com/prometheus/prometheus@v0.311.3
+      go get github.com/ClickHouse/clickhouse-go/v2@v2.32.0
+      go get github.com/ClickHouse/ch-go@v0.65.0
       go mod tidy
-      # --- KNOWN-BLOCKED, do NOT force ------------------------------------------
-      # After the safe bumps above the gate still fails on two upstream pins that
-      # CANNOT be advanced without an API-breaking source port (a fork), so this
-      # image is BLOCKED and must not be published:
-      #   github.com/prometheus/prometheus v0.300.0
-      #     CVE-2026-42151 (HIGH), CVE-2026-42154 (HIGH), CVE-2026-44903 (MEDIUM),
-      #     CVE-2026-40179 (MEDIUM) -- all fixed only in >=0.311.3. Bumping there
-      #     breaks coroot's prom/ package: labels.Labels became a struct (was a
-      #     slice), the promql parser became an interface (ParseMetricSelector /
-      #     ParseExpr / ParseMetricSelectors are no longer package funcs),
-      #     chunks.Sample gained ST(), and storage.NewMergeSeriesSet changed
-      #     signature. Adapting is a multi-file port of coroot, i.e. a fork.
-      #   github.com/ClickHouse/ch-go v0.62.0
-      #     CVE-2025-1386 (MEDIUM) -- fixed in 0.65.0, whose compress API is
-      #     incompatible with coroot's pinned clickhouse-go/v2 v2.8.3; the
-      #     matching clickhouse-go is v2.47.x (needs ch-go 0.73), a ~39-minor jump
-      #     that breaks coroot's clickhouse/ driver usage. Also a fork.
+      # Build with -tags slicelabels (keeps labels.Labels as a slice; see above).
       # Mirror upstream ldflags so coroot reports the real release at startup.
-      go build -trimpath \
+      go build -tags slicelabels -trimpath \
         -ldflags "-s -w -X main.version=${{package.version}}" \
         -o "${{targets.destdir}}/usr/bin/coroot" .

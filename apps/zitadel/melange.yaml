@@ -1,22 +1,43 @@
-# Packages ZITADEL onto Wolfi. ZITADEL is a Go IAM/OIDC server with an Angular
-# console embedded into the binary via go:embed; a from-source build needs a
-# Node/Angular toolchain and is infeasible in CI, so we ship ZITADEL's OWN official
-# prebuilt server binary from the GitHub release (the same upstream-artifact pattern
-# clickhouse/mattermost use), then harden it on a minimal apko base and gate it
-# 0-CVE with Trivy. This is clean-room-consistent: it is upstream's published
-# artifact, not a Bitnami chart, and the scan still fully applies.
+# Packages ZITADEL onto Wolfi with a FULL from-source build (server + embedded console).
 #
-# The tarball unpacks to a single `zitadel-linux-<arch>/` dir containing the
-# `zitadel` binary plus LICENSE/README.md. The binary is a fully static (CGO_ENABLED=0)
-# Go binary -- `file` reports "statically linked" and `ldd` says "not a dynamic
-# executable" -- so the only runtime dependency is ca-certificates-bundle for TLS to
-# the external Postgres and to upstream OIDC/SMTP endpoints. We install just the
-# binary as /usr/bin/zitadel.
+# ZITADEL is a Go IAM/OIDC server whose Angular management console is baked into the
+# binary via `//go:embed static` (internal/api/ui/console). Upstream's OWN prebuilt
+# release binary bakes a stale Go stdlib + gorilla/csrf that Trivy flags as fixable, so
+# to reach the 0-CVE gate we build the server FROM SOURCE on go-1.26 with those deps
+# bumped -- but the release *source* tarball GITIGNORES all generated code, so a naive
+# `go build .` fails (self-packages like pkg/grpc/*/v2beta don't exist). This recipe
+# therefore reproduces upstream's ENTIRE codegen pipeline (documented in apps/api/
+# project.json + console/project.json) inside the sandbox before building:
+#
+#   1. go install the pinned buf + protoc-gen-* toolchain (incl. ZITADEL's two in-repo
+#      plugins protoc-gen-authoption / protoc-gen-zitadel) into .artifacts/bin.
+#   2. `buf generate` -> the gRPC/OpenAPI Go stubs, copied into pkg/grpc + openapi/v2
+#      (buf pulls its BSR deps from buf.build via the committed proto/buf.lock).
+#   3. statik-embed the login-v1 static resources (after building their SCSS -> CSS with
+#      dart-sass) + notification templates, and generate the asset routes.
+#   4. Build the Angular console: generate the @zitadel/proto ESM package (buf v2 +
+#      protoc-gen-es), the console grpc-web stubs (protoc-gen-js/grpc-web/openapiv2 via
+#      console/scripts/install-proto-plugins.sh), the @zitadel/client TS lib (tsup), then
+#      `ng build --configuration production`; copy console/dist/console into the go:embed
+#      dir internal/api/ui/console/static.
+#   5. `go get` the flagged modules to their fixed versions and `go build` on go-1.26
+#      with GOTOOLCHAIN=local (so the newer stdlib clears the stdlib advisories too).
+#
+# CVEs cleared vs. upstream's v4.16.0 prebuilt binary (all fixable, confirmed in the
+# emitted binary via `go version -m`):
+#   github.com/gorilla/csrf  v1.7.2  -> v1.7.3   : CVE-2025-24358
+#   stdlib (Go toolchain)    go1.25.11 -> go1.26 : CVE-2026-39822 (HIGH), CVE-2026-42505
+# and we proactively carry the fixed x/net (v0.56.0) + x/crypto (v0.53.0) via go get.
+#
+# Clean-room-consistent: 100% upstream source + upstream's own codegen recipe, no Bitnami
+# chart. The server is built CGO_ENABLED=0 (fully static), so the only runtime dependency
+# is ca-certificates-bundle for TLS to the external Postgres and to OIDC/SMTP endpoints.
+# Installed as /usr/bin/zitadel; the console + login assets are embedded in the binary.
 package:
   name: quench-zitadel
   version: __VER__
   epoch: 0
-  description: "Quenchworks hardened ZITADEL (identity & access management / OIDC), packaged on Wolfi"
+  description: "Quenchworks hardened ZITADEL (identity & access management / OIDC), built from source on Wolfi"
   copyright:
     - license: AGPL-3.0-only
   dependencies:
@@ -30,33 +51,139 @@ environment:
     repositories:
       - https://packages.wolfi.dev/os
     packages:
+      - build-base
       - busybox
-      - curl
       - ca-certificates-bundle
+      - curl
+      - git            # go module tooling
+      - go-1.26        # newer than upstream's go1.25.11: clears the flagged stdlib advisories
+      - nodejs-20      # matches .nvmrc (lts/iron); Angular 21 console build
+      - npm            # bootstraps the pinned pnpm
+      - unzip          # protoc-gen-js is shipped as a zip by upstream's plugin installer
 
 pipeline:
-  # ZITADEL publishes separate amd64/arm64 release tarballs whose filename carries the
-  # arch but NOT the version, so fetch the one matching the build arch by uname -m
-  # (x86_64->amd64, aarch64->arm64) with the arch-matching sha256 -- using the wrong
-  # arch yields a wrong-arch binary. The bare version gets a leading `v` only in the
-  # release path/tag.
-  - runs: |
+  # 1) Upstream monorepo source at the release tag. strip-components:1 lays the repo root
+  #    into the work dir. The generated gRPC stubs + built console are absent here (both
+  #    gitignored) and are reproduced below.
+  - uses: fetch
+    with:
+      uri: https://github.com/zitadel/zitadel/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SRC_SHA__
+      strip-components: 1
+
+  # 2) Install the exact buf + protoc-gen-* codegen toolchain ZITADEL pins in
+  #    apps/api/project.json (generate-install), plus the two in-repo protoc plugins.
+  #    Everything lands in .artifacts/bin/linux/<goarch> (put on PATH for the gen steps).
+  - name: Install the pinned buf + protoc-gen codegen toolchain
+    runs: |
+      set -eu
+      export GOTOOLCHAIN=local
+      export GOFLAGS=-buildvcs=false
+      GOARCH="$(go env GOARCH)"
+      export GOBIN="${PWD}/.artifacts/bin/linux/${GOARCH}"
+      mkdir -p "$GOBIN"
+      go install github.com/rakyll/statik@v0.1.8
+      go install github.com/bufbuild/buf/cmd/buf@v1.67.0
+      go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+      go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.1
+      go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-grpc-gateway@v2.28.0
+      go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-openapiv2@v2.28.0
+      go install github.com/envoyproxy/protoc-gen-validate@v1.3.3
+      go install connectrpc.com/connect/cmd/protoc-gen-connect-go@v1.19.1
+      go install ./internal/protoc/protoc-gen-authoption
+      go install ./internal/protoc/protoc-gen-zitadel
+
+  # 3) Generate the gRPC/OpenAPI Go stubs and lay them where the server imports them
+  #    (pkg/grpc + openapi/v2/zitadel). buf resolves its BSR deps (grpc-gateway,
+  #    protoc-gen-validate, googleapis) from the committed proto/buf.lock. Mirrors the
+  #    generate-stubs target exactly. MUST run before step 5 (the console proto-plugin
+  #    installer overwrites protoc-gen-openapiv2 with an older console-specific build).
+  - name: Generate gRPC + OpenAPI Go stubs (buf generate)
+    runs: |
+      set -eu
+      export GOTOOLCHAIN=local
+      export PATH="${PWD}/.artifacts/bin/linux/$(go env GOARCH):$PATH"
+      buf generate
+      mkdir -p pkg/grpc openapi/v2/zitadel
+      cp -r .artifacts/grpc/github.com/zitadel/zitadel/pkg/grpc/** pkg/grpc/
+      cp -r .artifacts/grpc/zitadel/ openapi/v2/zitadel
+
+  # 4) Install the JS workspace (provides dart-sass, the node buf, protoc-gen-es and the
+  #    Angular toolchain). Use the pnpm version pinned in package.json for a lockfile
+  #    match. Keep the pnpm store on the build disk (work dir), not $HOME.
+  - name: Install the JS workspace (pnpm)
+    runs: |
+      set -eu
+      export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+      npm install -g pnpm@10.30.3 >/dev/null 2>&1
+      pnpm config set store-dir "${PWD}/.pnpm-store" >/dev/null 2>&1 || true
+      pnpm install --frozen-lockfile
+
+  # 5) Generate the login-v1 theme CSS (dart-sass), statik-embed the login + notification
+  #    static resources, and generate the asset routes. Mirrors generate-statik +
+  #    generate-assets. The sass step replaces upstream's `pnpm sass` //go:generate line
+  #    (which shells out to a non-existent script) with a direct `pnpm exec sass`.
+  - name: Generate login CSS, statik embeds and asset routes
+    runs: |
+      set -eu
+      export GOTOOLCHAIN=local
+      export PATH="${PWD}/.artifacts/bin/linux/$(go env GOARCH):$PATH"
+      ( cd internal/api/ui/login/static/resources && \
+        pnpm exec sass themes/scss/zitadel.scss themes/zitadel/css/zitadel.css )
+      go generate internal/api/ui/login/statik/generate.go
+      go generate internal/notification/statik/generate.go
+      go generate internal/statik/generate.go
+      mkdir -p apps/docs/content/apis/assets
+      go run internal/api/assets/generator/asset_generator.go \
+        -directory=internal/api/assets/generator/ \
+        -assets=apps/docs/content/apis/assets/assets.mdx
+
+  # 6) Build the Angular management console and copy it into the go:embed dir. Mirrors the
+  #    console generate + @zitadel/client build + console build + build-console targets.
+  - name: Build the Angular console and stage it for go:embed
+    runs: |
+      set -eu
+      export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+      export NODE_OPTIONS="--max-old-space-size=6144"
+      export PATH="${PWD}/.artifacts/bin/linux/$(go env GOARCH):$PATH"
+      # @zitadel/proto ESM package (buf v2 + protoc-gen-es from node_modules).
+      ( cd packages/zitadel-proto && pnpm exec buf generate ../../proto )
+      # console grpc-web stubs: download protoc-gen-js/grpc-web/openapiv2 (arch-matched,
+      # sha256-checked by the upstream script) then run the console's buf generate.
+      bash ./console/scripts/install-proto-plugins.sh
+      ( cd console && pnpm exec buf generate ../proto --include-imports --include-wkt )
+      # @zitadel/client TS library (tsup) -> consumed by the console.
+      pnpm --filter @zitadel/client build
+      # Production Angular build.
+      ( cd console && pnpm run build )
+      # Populate the go:embed target (internal/api/ui/console/static) from the build.
+      find internal/api/ui/console/static -mindepth 1 ! -name 'gitkeep' -delete
+      cp -r console/dist/console/* internal/api/ui/console/static/
+
+  # 7) Bump the flagged Go modules to their fixed versions and build the fully static
+  #    server on go-1.26 (GOTOOLCHAIN=local => the newer stdlib clears the stdlib
+  #    advisories). Version stamp mirrors upstream's pack-platform ldflags.
+  - name: Build the zitadel server from source (0-CVE)
+    runs: |
+      set -eu
+      export GOTOOLCHAIN=local
+      export GO111MODULE=on
+      export GOFLAGS=-buildvcs=false
       VER="${{package.version}}"
-      case "$(uname -m)" in
-        x86_64)  zarch=amd64; sha=__SHA_AMD__ ;;
-        aarch64) zarch=arm64; sha=__SHA_ARM__ ;;
-        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
-      esac
-
-      url="https://github.com/zitadel/zitadel/releases/download/v${VER}/zitadel-linux-${zarch}.tar.gz"
-      curl -fsSL -o zitadel.tar.gz "$url"
-      echo "${sha}  zitadel.tar.gz" | sha256sum -c -
-      tar -xzf zitadel.tar.gz   # unpacks to ./zitadel-linux-${zarch}/
-
-      # Install the single static server binary on PATH. The Angular console and all
-      # assets are embedded in the binary (go:embed), so there is nothing else to ship.
+      go get \
+        github.com/gorilla/csrf@v1.7.3 \
+        golang.org/x/net@v0.56.0 \
+        golang.org/x/crypto@v0.53.0
+      go mod tidy
+      BUILD="github.com/zitadel/zitadel/cmd/build"
+      CGO_ENABLED=0 go build -p 4 -trimpath \
+        -ldflags "-s -w \
+          -X ${BUILD}.version=${VER} \
+          -X ${BUILD}.commit=v${VER} \
+          -X ${BUILD}.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        -o zitadel .
       install -d -m 0755 "${{targets.destdir}}/usr/bin"
-      install -m 0755 "zitadel-linux-${zarch}/zitadel" "${{targets.destdir}}/usr/bin/zitadel"
+      install -m 0755 zitadel "${{targets.destdir}}/usr/bin/zitadel"
 
 test:
   pipeline:

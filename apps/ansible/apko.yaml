@@ -1,0 +1,83 @@
+# Assembles the Ansible control-node runtime image. Minimal, nonroot, multi-arch,
+# SBOM by apko. Ships the pip venv under /opt/ansible/venv with python-3.13 present at
+# runtime (the venv references the system interpreter), plus the control-node CLI
+# tooling docker-ansible ships so playbooks run out of the box:
+#   openssh-client  — Ansible's default connection transport (ssh)
+#   sshpass         — non-interactive SSH password auth (ansible_password / --ask-pass)
+#   git             — ansible-galaxy install of roles/collections from git sources
+#   rsync           — the ansible.posix.synchronize module
+#   busybox         — provides /bin/sh, which Ansible's shell plugin invokes on the
+#                     controller for the local connection (and is a handy exec shell)
+# The entrypoint is `ansible-playbook` (docker-ansible's default); override the
+# entrypoint to reach the other ansible-* CLIs. Mount your playbooks/inventory at the
+# work-dir (/opt/ansible) or any path and run e.g.:
+#   docker run --rm -v "$PWD:/runner" -w /runner quench-ansible site.yml -i inventory
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - busybox                  # /bin/sh for Ansible's local shell plugin + interactive exec
+    - glibc
+    - libgcc
+    - ca-certificates-bundle
+    - tzdata
+    - python-3.13              # the venv's interpreter
+    - openssh-client           # ssh transport (Ansible's default connection)
+    - sshpass                  # SSH password auth (--ask-pass / ansible_password)
+    - git                      # ansible-galaxy roles/collections from git
+    - rsync                    # the ansible.posix.synchronize module
+    - quench-ansible@local     # the ansible venv + /usr/bin/ansible* symlinks
+
+accounts:
+  groups:
+    - groupname: ansible
+      gid: 1001
+  users:
+    - username: ansible
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/ansible-playbook
+
+environment:
+  PATH: /opt/ansible/venv/bin:/usr/bin:/bin
+  # HOME holds ~/.ansible (Galaxy cache, control-persist sockets, the default
+  # remote_tmp ~/.ansible/tmp); it is writable by the run-as uid.
+  HOME: /opt/ansible
+  # Keep any scratch/temp under a writable dir on a read-only rootfs.
+  TMPDIR: /tmp
+  ANSIBLE_LOCAL_TEMP: /tmp/.ansible-tmp
+
+work-dir: /opt/ansible
+
+paths:
+  # HOME is writable by the control-node uid: ~/.ansible lands here. On a read-only
+  # rootfs mount a writable volume at this path.
+  - path: /opt/ansible
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /tmp
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o1777
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-ansible"
+  org.opencontainers.image.licenses: "GPL-3.0-or-later"

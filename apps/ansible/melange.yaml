@@ -1,0 +1,96 @@
+# Packages an Ansible control node onto Wolfi. Ansible is a pure-Python project
+# distributed as the PyPI meta-package `ansible` (the "community" package), which pulls
+# `ansible-core` plus a large curated set of bundled collections — not a binary, and
+# there is no single Wolfi apk for the whole control node. So we install
+# `ansible==<VER>` from PyPI into a virtualenv on a Wolfi python-3.13 base, then harden
+# it on a minimal apko base with the control-node CLI tooling (openssh-client, git,
+# sshpass, rsync — see apko.yaml) and gate it 0-CVE with Trivy (comprehensive mode,
+# which scans the venv's Python packages too).
+#
+# The venv lives at /opt/ansible/venv; `ansible` is pinned to the build version so the
+# install matches the catalog version exactly. The community package version (e.g.
+# 14.1.0) is NOT what `ansible --version` prints — that reports the ansible-CORE version
+# it pulls (e.g. 2.21.1). We assert the community version via `pip show ansible` and
+# also run `ansible --version` at build time.
+package:
+  name: quench-ansible
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Ansible control node, packaged on Wolfi"
+  copyright:
+    - license: GPL-3.0-or-later
+  dependencies:
+    runtime:
+      - python-3.13            # the venv references the system interpreter; it must be present at runtime
+      - ca-certificates-bundle # TLS to Galaxy / collection & role sources over HTTPS
+      - libgcc                 # C runtime for manylinux wheels (cryptography, cffi, PyYAML C ext)
+      - glibc
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - python-3.13
+      - py3.13-pip
+      - build-base             # fallback for any transitive dep that has no wheel (sdist build)
+
+pipeline:
+  # Create an isolated venv and install the ansible community meta-package (which pulls
+  # ansible-core + the bundled collections) from PyPI, pinned to the build version.
+  # --no-cache-dir keeps the layer small. All shebangs in the venv point at
+  # /opt/ansible/venv/bin/python.
+  - runs: |
+      VER="${{package.version}}"
+      dest="${{targets.destdir}}"
+
+      python3.13 -m venv /opt/ansible/venv
+      /opt/ansible/venv/bin/pip install --no-cache-dir --upgrade pip
+      /opt/ansible/venv/bin/pip install --no-cache-dir "ansible==${VER}"
+
+      # SECURITY BUMPS (only if the 0-CVE gate flags a transitive pip dep): bump the
+      # affected package to its patched release WITHOUT weakening the gate, then
+      # `pip check` to confirm the dependency graph is still satisfied. As of the pinned
+      # versions ansible-core's dep tree (jinja2, PyYAML, cryptography, packaging,
+      # resolvelib) scans clean, so there are no bumps here yet — add them like the
+      # airflow/vllm recipes if a future dep pulls a fixable CVE.
+      /opt/ansible/venv/bin/pip check
+
+      # Assert the COMMUNITY meta-package version matches the build version (via pip
+      # metadata), then confirm ansible-core + the bundled collections import cleanly and
+      # the CLIs report their real (core) version. (The functional `ansible -m ping`
+      # check runs in test.sh against the assembled image.) NOTE: capture pip's output
+      # into a var rather than piping into `grep -q` — grep -q exits on first match and
+      # SIGPIPEs pip, which fails the build under pipefail.
+      COMM_VER="$(/opt/ansible/venv/bin/python -c "import importlib.metadata as m; print(m.version('ansible'))")"
+      [ "$COMM_VER" = "$VER" ] || { echo "community version mismatch: $COMM_VER != $VER"; exit 1; }
+      /opt/ansible/venv/bin/ansible --version
+      /opt/ansible/venv/bin/ansible-playbook --version
+      /opt/ansible/venv/bin/ansible-galaxy --version
+      /opt/ansible/venv/bin/python -c "import ansible; from ansible.plugins.loader import module_loader; print('ansible', ansible.__version__)"
+
+      # Relocate the venv into the package tree under /opt/ansible.
+      install -d "${dest}/opt/ansible"
+      cp -a /opt/ansible/venv "${dest}/opt/ansible/venv"
+
+      # Convenience symlinks on PATH for the full control-node CLI surface.
+      install -d "${dest}/usr/bin"
+      for b in ansible ansible-playbook ansible-galaxy ansible-config ansible-vault \
+               ansible-doc ansible-inventory ansible-console ansible-pull \
+               ansible-connection; do
+        ln -sf "/opt/ansible/venv/bin/${b}" "${dest}/usr/bin/${b}"
+      done
+
+      chmod -R a+rX "${dest}/opt/ansible"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /opt/ansible/venv/bin/ansible-playbook
+        ansible --version
+        ansible-playbook --version

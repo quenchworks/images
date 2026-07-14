@@ -1,0 +1,127 @@
+# Repackages Wolfi's `dotnet-N-sdk` apk with the bundled NuGet client patched, so
+# the 0-CVE gate passes without waiting on a Wolfi rebuild. Wolfi's dotnet-8-sdk
+# and dotnet-10-sdk both bundle the NuGet client assemblies NuGet.Packaging +
+# NuGet.Protocol at a PRE-RELEASE stamp (8 -> 6.8.2-rc.32767, 10 -> 7.0.3-rc.65534).
+# OSV's affected range for each line is [.., <release>); the `-rc.NNNNN` builds
+# sort BELOW the final, so Trivy's dotnet-core analyzer (which reads the version
+# from the SDK's *.deps.json manifests) flags them under GHSA-g4vj-cjjj-v7hg
+# ("Defense in Depth update for NuGet Client", LOW).
+#
+# The released NuGet.Packaging / NuGet.Protocol (6.8.2 / 7.0.3, the fixes) are on
+# nuget.org, strong-named with the SAME NuGet public key (token 31bf3856ad364e35)
+# as the RC builds the SDKs bundle -- verified byte-for-byte. We install Wolfi's
+# .NET tree verbatim, overwrite every bundled copy of the two flagged assemblies
+# with the sha256-pinned released build from nuget.org, and rewrite exactly those
+# two packages' version keys in the SDK's *.deps.json from the `-rc` identity to
+# the released version so the manifest matches the assembly on disk. Clean-room-
+# consistent: the .NET bits are Wolfi's, the two swapped assemblies are
+# Microsoft/NuGet's official nuget.org artifacts. The Trivy gate still applies in
+# full (no ignore-list).
+#
+# TEMPLATE NOTE: build.conf render() substitutes, per band: __VER__ (the .NET
+# X.Y.Z -- image tag + package version), __MELENV__ (the exact Wolfi dotnet-N-sdk
+# apk pin to repackage), __RELVER__ (released NuGet version to swap in),
+# __NUGET_TFM__ (the nupkg lib/ TFM to extract -- net8.0 for the 7.0.3 line,
+# net5.0 for the 6.8.2 line, since 6.8.2 ships no net8.0 build), and the four
+# sha256 pins for the two nupkgs + their extracted DLLs.
+package:
+  name: quench-dotnet
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened .NET SDK, repackaged from Wolfi dotnet-N-sdk with NuGet.Packaging/Protocol patched to the released build (GHSA-g4vj-cjjj-v7hg)"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      # .NET native runtime + globalization + TLS. melange's SCA resolves the
+      # DT_NEEDED so: deps from the bundled native .so files; these are the
+      # dlopen'd / data packages SCA cannot see, mirroring Wolfi's own
+      # dotnet-N-runtime / dotnet-N / aspnet-N-runtime dependency set.
+      - glibc
+      - icu
+      - ca-certificates-bundle
+      - libgcc
+      - libstdc++
+      - libunwind
+      - lttng-ust
+      - libcrypto3
+      - libssl3
+      - zlib
+      - libbrotlidec1
+      - libexpat1
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox                          # sh + cp/sed/grep/find/sha256sum/unzip for the pipeline
+      - curl                             # fetch the fixed NuGet assemblies from nuget.org
+      - ca-certificates-bundle
+      - __MELENV__                       # the exact Wolfi dotnet-N-sdk apk pin to repackage
+
+pipeline:
+  - runs: |
+      set -eux
+      D="${{targets.destdir}}"
+      REL="__RELVER__"
+      TFM="__NUGET_TFM__"
+
+      # 1) Install Wolfi's .NET tree + the /usr/bin/dotnet launcher verbatim.
+      mkdir -p "$D/usr/share" "$D/usr/bin"
+      cp -a /usr/share/dotnet "$D/usr/share/dotnet"
+      cp -a /usr/bin/dotnet   "$D/usr/bin/dotnet"      # symlink -> /usr/share/dotnet/dotnet
+      DOTNET="$D/usr/share/dotnet"
+
+      # 2) Fetch the released assemblies (sha256-pinned nupkg + DLL) and swap
+      #    every bundled copy of the two flagged NuGet assemblies. The released
+      #    build shares the RC's strong-name public key, so it binds on the
+      #    runtime (net5.0/net8.0 builds are forward-compatible on net8.0/net10.0).
+      NF=https://api.nuget.org/v3-flatcontainer
+      work="$(mktemp -d)"
+      fetch() {  # <lower-id> <nupkg-sha256> <dll-name> <dll-sha256>
+        id="$1"; nsha="$2"; dll="$3"; dsha="$4"
+        curl -fsSL -o "$work/$id.nupkg" "$NF/$id/$REL/$id.$REL.nupkg"
+        echo "${nsha}  $work/$id.nupkg" | sha256sum -c -
+        (cd "$work" && unzip -o -q "$id.nupkg" "lib/$TFM/$dll")
+        echo "${dsha}  $work/lib/$TFM/$dll" | sha256sum -c -
+      }
+      fetch nuget.packaging __PKG_NUPKG_SHA__ NuGet.Packaging.dll __PKG_DLL_SHA__
+      fetch nuget.protocol  __PROTO_NUPKG_SHA__ NuGet.Protocol.dll __PROTO_DLL_SHA__
+
+      for dll in NuGet.Packaging.dll NuGet.Protocol.dll; do
+        n=0
+        for f in $(find "$DOTNET" -type f -name "$dll"); do
+          cp -f "$work/lib/$TFM/$dll" "$f"
+          n=$((n+1))
+        done
+        [ "$n" -ge 1 ] || { echo "FATAL: no $dll found to swap"; exit 1; }
+        echo "swapped $n copies of $dll"
+      done
+
+      # 3) Rewrite ONLY the two swapped packages' version keys in the SDK's
+      #    *.deps.json manifests (library keys + dependency references) from the
+      #    RC identity to the released version, so the manifest matches the
+      #    on-disk assembly. The regex matches any `<x.y.z>-rc.<n>` so it is
+      #    band-agnostic. The rest of the NuGet.* family (unflagged siblings) is
+      #    left untouched -- no misrepresentation, graph stays consistent.
+      for f in $(find "$DOTNET" -type f -name '*.deps.json' \
+                   -exec grep -lE 'NuGet\.(Packaging|Protocol)/[0-9.]+-rc\.[0-9]+' {} +); do
+        sed -i -E \
+          -e "s#\"NuGet.Packaging/[0-9.]+-rc\.[0-9]+\"#\"NuGet.Packaging/${REL}\"#g" \
+          -e "s#\"NuGet.Packaging\": \"[0-9.]+-rc\.[0-9]+\"#\"NuGet.Packaging\": \"${REL}\"#g" \
+          -e "s#\"NuGet.Protocol/[0-9.]+-rc\.[0-9]+\"#\"NuGet.Protocol/${REL}\"#g" \
+          -e "s#\"NuGet.Protocol\": \"[0-9.]+-rc\.[0-9]+\"#\"NuGet.Protocol\": \"${REL}\"#g" \
+          "$f"
+      done
+
+      # 4) Gate the swap itself: no Trivy-flaggable RC reference for the two
+      #    patched packages may survive anywhere in the tree.
+      if find "$DOTNET" -type f -name '*.deps.json' \
+            -exec grep -lE 'NuGet\.(Packaging|Protocol)/[0-9.]+-rc\.[0-9]+' {} + | grep -q .; then
+        echo "FATAL: a flagged NuGet.Packaging/Protocol -rc reference survived the rewrite"
+        exit 1
+      fi
+      rm -rf "$work"
