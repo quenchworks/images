@@ -64,27 +64,16 @@ pipeline:
       export GOTOOLCHAIN=local
       # Stamp main.Version + main.Tags exactly like upstream's Makefile so
       # `gitea --version` reports the pinned release. The release source ships a
-      # VERSION file (1.26.2); we pass the same value directly.
+      # VERSION file (1.27.0); we pass the same value directly.
       TAGS="bindata"
       LDFLAGS="-s -w -X main.Version=${{package.version}} -X 'main.Tags=${TAGS}'"
 
-      # 0-CVE gate: the upstream go.mod pins modules with fixable advisories that the
-      # OS-layer image scan misses (the 115MB binary exceeds Trivy's per-file cap when
-      # read back from the image tar, so a gobinary scan is needed to see them). Bump
-      # them to their fixed patch/minor releases -- drop-in, no API changes:
-      #   github.com/Azure/go-ntlmssp  v0.1.0  -> v0.1.1  (CVE-2026-32952, DoS)
-      #   github.com/go-git/go-git/v5  v5.19.0 -> v5.19.1 (CVE-2026-45571/45570, panic/DoS)
-      #   golang.org/x/crypto                  -> v0.53.0 (min required by go-mail v0.8.0)
-      #   golang.org/x/net                     -> v0.55.0
-      #   golang.org/x/image           v0.40.0 -> v0.43.0 (CVE-2026-33813/46599/46601, DoS)
-      #   google.golang.org/grpc               -> v1.79.3
-      #   github.com/go-chi/chi/v5             -> v5.2.4
-      #   github.com/wneessen/go-mail          -> latest
-      go get github.com/Azure/go-ntlmssp@v0.1.1 github.com/go-git/go-git/v5@v5.19.1 \
-        golang.org/x/crypto@v0.53.0 golang.org/x/net@v0.55.0 golang.org/x/image@v0.43.0 \
-        google.golang.org/grpc@v1.79.3 github.com/go-chi/chi/v5@v5.2.4 \
-        github.com/wneessen/go-mail@latest
-      go mod tidy
+      # 0-CVE gate: 1.27.0's go.mod already ships the fixed/newer versions of every
+      # module the previous release had to bump manually (go-ntlmssp v0.1.1,
+      # go-git v5.19.1, x/crypto v0.53.0, x/net v0.56.0, x/image v0.43.0,
+      # grpc v1.81.1, go-chi/chi v5.3.0), so no manual `go get` bumps are needed --
+      # building from go.mod as-is clears the gobinary scan. Re-add targeted bumps
+      # here only if Trivy flags a residual fixable advisory on a future bump.
 
       install -d "${{targets.destdir}}/usr/bin"
       go build -trimpath -tags "${TAGS}" -ldflags "${LDFLAGS}" \

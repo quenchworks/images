@@ -45,12 +45,14 @@ pipeline:
       export CGO_ENABLED=0
       export GOFLAGS=-mod=mod
       # 0-CVE dependency bumps (minor/patch, same-major -- no API break). We build the
-      # newest OpenBao tag (2.5.5), whose code already carries every openbao/openbao
-      # advisory fix (<=2.5.4), but two transitive deps still ship vulnerable:
-      #   go-ntlmssp   CVE-2026-32952 -> v0.1.1
-      #   jackc/pgx/v5 CVE-2026-41889 -> v5.9.2
+      # newest OpenBao tag (2.6.0), whose code already carries every openbao/openbao
+      # advisory fix and already ships jackc/pgx/v5 v5.10.0 (>=v5.9.2, CVE-2026-41889
+      # fixed upstream). One transitive dep still ships vulnerable:
+      #   go-ntlmssp   CVE-2026-32952 -> v0.1.1  (upstream pins v0.1.0)
+      # NOTE: do NOT force a pgx downgrade here -- pinning pgx below 2.6.0's own v5.10.0
+      # makes `go mod tidy` cascade-downgrade go-kms-wrapping/wrappers/transit/v2 to an
+      # old v2.1.0 that predates WrapperTypeTransit, breaking the build.
       go get github.com/Azure/go-ntlmssp@v0.1.1
-      go get github.com/jackc/pgx/v5@v5.9.2
       go mod tidy
       # The repo root is `package main` -> the `bao` binary (Vault-compatible CLI/API).
       # Stamp version.GitCommit/BuildDate like upstream's scripts/build.sh (no `ui` tag).
@@ -63,7 +65,7 @@ pipeline:
       go build -trimpath -buildvcs=false \
         -ldflags "-s -w \
           -X github.com/openbao/openbao/version.fullVersion=${{package.version}} \
-          -X github.com/openbao/openbao/version.GitCommit=4f6d47246a053375271a5fd8af85c3b75695aa46 \
+          -X github.com/openbao/openbao/version.GitCommit=03e3a243b6f07d17c60ce0a182adee7cf4c424eb \
           -X github.com/openbao/openbao/version.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         -o "${{targets.destdir}}/usr/bin/bao" .
 

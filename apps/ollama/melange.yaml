@@ -61,16 +61,16 @@ pipeline:
       # Comprehensive 0-CVE gate: FIXABLE Go-module deps flagged by Trivy (all
       # minor/patch, same major, API-compatible -- no fork/force):
       #   github.com/buger/jsonparser v1.1.1  -> v1.1.2  (CVE-2026-32285)
-      #   golang.org/x/crypto         v0.43.0 -> v0.52.0 (x/crypto/ssh* DoS/bypass)
+      #   golang.org/x/crypto         v0.43.0 -> v0.54.0 (x/crypto/ssh* DoS/bypass)
       #   golang.org/x/image          v0.22.0 -> v0.43.0 (tiff/webp DoS)
-      #   golang.org/x/net            v0.46.0 -> v0.55.0 (net/html + idna DoS/XSS)
+      #   golang.org/x/net            v0.46.0 -> v0.57.0 (net/html + idna DoS/XSS)
       # The Go stdlib CVEs (net/http, html/template, crypto/x509, net/textproto,
       # os) are cleared by compiling with the go-1.26 Wolfi toolchain (latest
       # patched stdlib) instead of upstream's older go1.26.0.
       go get github.com/buger/jsonparser@v1.1.2 \
-             golang.org/x/crypto@v0.52.0 \
+             golang.org/x/crypto@v0.54.0 \
              golang.org/x/image@v0.43.0 \
-             golang.org/x/net@v0.55.0
+             golang.org/x/net@v0.57.0
       go mod tidy
 
       # Build the ollama binary with upstream's version-stamp ldflags

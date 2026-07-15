@@ -35,9 +35,12 @@ pipeline:
   - runs: |
       export CGO_ENABLED=0
       export GOFLAGS=-mod=mod
-      # 0-CVE gate: minimal same-major bump of a vulnerable transitive module.
+      # 0-CVE gate: minimal same-major bumps of vulnerable transitive modules.
       # CVE-2026-2303 (MEDIUM) in go.mongodb.org/mongo-driver <v1.17.7.
+      # CVE-2026-46600 (UNKNOWN) in golang.org/x/net <v0.56.0 (dnsmessage panic).
+      # CVE-2026-56852 (UNKNOWN) in golang.org/x/text <v0.39.0 (infinite loop).
       go get go.mongodb.org/mongo-driver@v1.17.7
+      go get golang.org/x/net@v0.57.0 golang.org/x/crypto@v0.54.0 golang.org/x/text@v0.40.0
       go mod tidy
       go build -trimpath \
         -ldflags "-s -w -X github.com/weaviate/weaviate/usecases/build.Version=${{package.version}}" \

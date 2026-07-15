@@ -1,7 +1,8 @@
 # Builds Vector (high-performance observability data pipeline for logs/metrics) FROM
 # SOURCE on Wolfi with melange. Vector is a Rust project (large Cargo workspace);
-# upstream pins rust 1.92 in its rust-toolchain.toml, so we build with Wolfi's
-# rust-1.92 toolchain to match. Built from source (not an upstream binary) so the
+# upstream bumps its rust-toolchain.toml MSRV to 1.95 as of 0.57.0, so we build with
+# Wolfi's rust-1.95 toolchain (also satisfies the older 0.55/0.56 in the matrix). Built
+# from source (not an upstream binary) so the
 # Trivy scan attributes the vendored crates correctly and we can `cargo update` to
 # clear any fixable CVE.
 #
@@ -56,7 +57,7 @@ environment:
       - protobuf-dev            # provides protoc for the prost/tonic codegen
       - openssl-dev             # system OpenSSL (NOT vendored) for TLS-capable components
       - perl                    # openssl-sys build scripts probe with perl
-      - rust-1.92               # Wolfi rust toolchain (matches upstream rust-toolchain.toml 1.92)
+      - rust-1.95               # Wolfi rust toolchain (>= vector 0.57.0 MSRV 1.95; also builds 0.55/0.56)
 
 pipeline:
   - uses: git-checkout
