@@ -40,10 +40,13 @@ pipeline:
       # Controlled CVE bumps -- v0.72.0's pinned deps carry FIXABLE gobinary CVEs
       # (the workflow's gobinary scan is the hard gate). Bump only the affected
       # modules to a fixed release (MINOR/PATCH, same major):
-      #   sigstore/timestamp-authority/v2 CVE-2026-49835 (metric OOM)   -> 2.1.0
+      #   sigstore/sigstore-go            CVE-2026-49834 (multi-log bypass) -> 1.2.0
+      #   sigstore/timestamp-authority/v2 CVE-2026-49835 (metric OOM)   -> 2.1.2
+      #                         (2.1.2 is also the min required by sigstore-go 1.2.0)
       #   oras.land/oras-go/v2  CVE-2026-50151/50162/48978 +            -> 2.6.1
       #                         GHSA-vh4v-2xq2-g5cg (credential forwarding)
-      go get github.com/sigstore/timestamp-authority/v2@v2.1.0
+      go get github.com/sigstore/sigstore-go@v1.2.0
+      go get github.com/sigstore/timestamp-authority/v2@v2.1.2
       go get oras.land/oras-go/v2@v2.6.1
       # tidy over trivy's very large module graph occasionally trips a transient
       # DNS timeout on the sandbox resolver mid-download; the module cache
