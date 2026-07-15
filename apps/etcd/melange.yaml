@@ -38,7 +38,7 @@ pipeline:
       for pair in server:etcd etcdctl:etcdctl etcdutl:etcdutl; do
         dir="${pair%%:*}"; bin="${pair##*:}"
         ( cd "$dir" \
-            && go get golang.org/x/net@v0.57.0 \
+            && go get golang.org/x/net@v0.57.0 golang.org/x/text@v0.40.0 \
             && go mod tidy \
             && go build -trimpath -ldflags "-s -w" \
                 -o "${{targets.destdir}}/usr/bin/${bin}" . )
