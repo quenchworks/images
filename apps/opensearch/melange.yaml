@@ -74,26 +74,6 @@ pipeline:
       find "$dest" -name 'jackson-databind-2.21.3.jar' -exec cp "$jd2" {} \;
       find "$dest" -name 'jackson-databind-3.1.3.jar'  -exec cp "$jd3" {} \;
       rm -f "$jd2" "$jd3"
-      # (3) Apache Calcite 1.41.0 -> 1.42.0 drop-in for CVE-2026-46718 (MEDIUM,
-      #     unsafe-reflection): standalone calcite jars ship in BOTH the opensearch-sql
-      #     and opensearch-skills plugins (Trivy flags each calcite-core copy). Calcite
-      #     modules are versioned in lockstep, so swap core+linq4j+babel together to keep
-      #     them consistent. 1.42.0's documented API breaks do NOT affect opensearch-sql:
-      #     its RelShuttle subclasses extend RelShuttleImpl/RelHomogeneousShuttle (which
-      #     absorb the new visit() overloads) rather than implementing the interface, and
-      #     the renamed RelDecorrelator method is not referenced. Sha256-pinned Maven Central.
-      CAL="$MC/org/apache/calcite"
-      cc=$(mktemp); cl=$(mktemp); cb=$(mktemp)
-      curl -fsSL -o "$cc" "$CAL/calcite-core/1.42.0/calcite-core-1.42.0.jar"
-      echo "2ed5489201baab842001c95f939a0829849cf3cdaed9cdbf4b9078633c35792b  $cc" | sha256sum -c -
-      curl -fsSL -o "$cl" "$CAL/calcite-linq4j/1.42.0/calcite-linq4j-1.42.0.jar"
-      echo "6f54fa9f24a07ad961e0e1af499a58cfc2374a93ee280283beafe9035de3fa45  $cl" | sha256sum -c -
-      curl -fsSL -o "$cb" "$CAL/calcite-babel/1.42.0/calcite-babel-1.42.0.jar"
-      echo "8811dff2ddc33d2692f0e55d4ddbdc2cf3067312f0a5f3194573f15e9d463939  $cb" | sha256sum -c -
-      find "$dest" -name 'calcite-core-1.41.0.jar'   -exec cp "$cc" {} \;
-      find "$dest" -name 'calcite-linq4j-1.41.0.jar' -exec cp "$cl" {} \;
-      find "$dest" -name 'calcite-babel-1.41.0.jar'  -exec cp "$cb" {} \;
-      rm -f "$cc" "$cl" "$cb"
       # OpenSearch ships config/ with restrictive perms; the nonroot runtime user must
       # be able to read them to seed the writable conf dir (and execute the launchers).
       chmod -R a+rX "$dest"
