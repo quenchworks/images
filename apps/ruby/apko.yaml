@@ -1,28 +1,32 @@
-# Assembles a hardened Ruby runtime/base image directly from Wolfi's own
-# versioned ruby packages. No Dockerfile, NO melange build -- apko pulls the
-# pinned `ruby-__VER__` package (plus its matching `ruby__VER__-bundler`)
-# straight from the Wolfi `os` repository, so each minor version is a pure
-# package-assembly. `gem` ships inside the ruby package itself.
+# Assembles a hardened Ruby runtime/base image. Normally this would be a pure
+# apko package-assembly of Wolfi's `ruby-__VER__` (+ `ruby__VER__-bundler`), but
+# Wolfi's ruby apk bakes a VULNERABLE json DEFAULT gem (json < 2.19.9 ->
+# CVE-2026-54696, LOW) as `specifications/default/json-*.gemspec`. apko cannot
+# strip a file from an upstream apk, so melange.yaml repackages the ruby toolchain
+# MINUS that default json gem and pulls in Wolfi's fixed `ruby__VER__-json`
+# (>= 2.19.9) as the json provider. apko consumes `quench-ruby@local`.
+# Revert to the plain apko-only assembly if Wolfi ever bumps the bundled default
+# json to the fixed line.
 #
 # IMAGE-ONLY -- no Helm chart. This is a LANGUAGE/BASE image: the 0-CVE, signed,
 # nonroot, multi-arch answer to `ruby:3.x-slim`. Developers `FROM` it (like
 # Chainguard's language images) or run scripts directly.
 #
-# TEMPLATE NOTE: `__VER__` is a build-time placeholder. CI substitutes the
-# minor version (3.2 / 3.3 / 3.4) per matrix entry with `sed` before apko runs.
-# Note Wolfi names the bundler subpackage `ruby<minor>-bundler` (no dash before
-# the version), so the single `__VER__` token renders both `ruby-3.4` and
-# `ruby3.4-bundler` correctly.
+# TEMPLATE NOTE: `__VER__` is the Ruby minor (e.g. 3.4); melange also uses
+# `__FULLVER__` (the full patch, e.g. 3.4.10). CI/build.conf substitutes both.
 contents:
   keyring:
     - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
   repositories:
     - https://packages.wolfi.dev/os
+    - "@local ./packages"
   packages:
     - wolfi-baselayout
     - ca-certificates-bundle
-    - ruby-__VER__              # the pinned Ruby minor release from Wolfi (ships gem)
-    - ruby__VER__-bundler       # matching Bundler for this exact interpreter
+    - quench-ruby@local         # Wolfi ruby-__VER__ + bundler + FIXED json,
+                                # repackaged w/o the vulnerable default json gem
+                                # (see melange.yaml); provides ruby + gem + bundle
 
 accounts:
   groups:

@@ -1,0 +1,90 @@
+# Repackages Wolfi's `ruby-__VER__` toolchain (interpreter + gem + bundler) MINUS
+# the bundled VULNERABLE json DEFAULT gem, so the 0-CVE gate passes without
+# waiting on a Wolfi/upstream ruby rebuild. Wolfi's ruby apk ships json as a
+# DEFAULT gem at `specifications/default/json-<v>.gemspec` (v = 2.9.1 for Ruby
+# 3.4.x), and json < 2.19.9 is CVE-2026-54696 (LOW). apko cannot strip a file
+# from an upstream apk, so we install exactly the files Wolfi's ruby apks own,
+# drop ONLY the vulnerable default json gem (its gemspec + gem stub + stdlib lib
+# + C ext), and add Wolfi's own FIXED `ruby__VER__-json` (>= 2.19.9) whose
+# installed `json-<v>.gemspec` becomes the json `require "json"` resolves.
+# Clean-room-consistent: every shipped byte is Wolfi's own apk content.
+#
+# bundler + json are BUNDLED IN (not left as separate apko packages) because both
+# `ruby__VER__-bundler` and `ruby__VER__-json` carry `depend = ruby-3.4`; kept
+# separate, apk would re-pull Wolfi's monolithic ruby apk and reintroduce the
+# vulnerable default json. quench-ruby therefore also `provides: ruby-__VER__`.
+#
+# TEMPLATE NOTE: __FULLVER__ (ruby X.Y.Z, image tag / package version) and
+# __VER__ (the ruby minor, e.g. 3.4) are substituted by build.conf render()
+# before the build. The env pulls the ruby apks UNPINNED so the daily rebuild
+# always repackages the newest patch of that minor.
+package:
+  name: quench-ruby
+  version: __FULLVER__
+  epoch: 0
+  description: "Quenchworks hardened Ruby toolchain, repackaged from Wolfi ruby-__VER__ (+ bundler + fixed json) without the vulnerable json default gem (CVE-2026-54696 cleared)"
+  copyright:
+    - license: Ruby
+  dependencies:
+    provides:
+      - ruby-__VER__=${{package.version}}
+      - ruby=${{package.version}}
+    runtime:
+      - glibc
+      - gmp
+      - libgcc
+      - yaml
+      - zlib
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox                # sh + grep + sed + test for the pipeline
+      - apk-tools              # `apk info -L` to enumerate exactly the ruby apks' files
+      - gnutar                 # GNU tar for the --no-recursion file-list copy (symlink-preserving)
+      - ruby-__VER__           # the Wolfi ruby interpreter + gem we repackage
+      - ruby__VER__-bundler    # matching Bundler
+      - ruby__VER__-json       # FIXED json (>= 2.19.9) that replaces the default gem
+
+pipeline:
+  - runs: |
+      set -eux
+      D="${{targets.destdir}}"
+      cd /
+      # Union of files Wolfi's three ruby apks own (relative paths); keep only
+      # real usr//etc file entries (drop dir-only entries).
+      : > /tmp/all.txt
+      for p in ruby-__VER__ ruby__VER__-bundler ruby__VER__-json; do
+        apk info --quiet -L "$p"
+      done | grep -E '^(usr|etc)/' | grep -v '/$' | sort -u > /tmp/all.txt
+      test -s /tmp/all.txt
+
+      # The bundled DEFAULT json version baked into ruby-__VER__ (the vulnerable one).
+      DJV="$(grep -oE 'specifications/default/json-[0-9.]+\.gemspec' /tmp/all.txt \
+             | sed -E 's#.*/json-([0-9.]+)\.gemspec#\1#' | head -n1)"
+      test -n "$DJV"
+      echo "stripping vulnerable default json gem: $DJV"
+
+      # Drop ONLY the vulnerable default json gem: its default gemspec (the Trivy
+      # finding), its gem stub dir, and its stdlib lib + arch C ext. The FIXED json
+      # from ruby__VER__-json lives under specifications/json-*.gemspec + gems/json-*
+      # (NOT default/) and is kept, so `require "json"` resolves the patched version.
+      grep -vE "(specifications/default/json-${DJV}\.gemspec$|/gems/json-${DJV}(/|$)|/ruby/__VER__\.0/json(\.rb$|/)|/ruby/__VER__\.0/[^/]+-linux[^/]*/json/)" \
+        /tmp/all.txt > /tmp/keep.txt
+      test -s /tmp/keep.txt
+      tar -cf - --no-recursion -T /tmp/keep.txt | tar -C "$D" -xf -
+
+      # Guards: the vulnerable default json gem is gone, the FIXED json + the
+      # working toolchain (ruby + gem + bundle) are intact.
+      test ! -e "$D/usr/lib/ruby/gems/__VER__.0/specifications/default/json-${DJV}.gemspec"
+      test ! -e "$D/usr/lib/ruby/__VER__.0/json.rb"
+      ls "$D"/usr/lib/ruby/gems/__VER__.0/specifications/json-*.gemspec >/dev/null
+      ls -d "$D"/usr/lib/ruby/gems/__VER__.0/gems/json-* >/dev/null
+      test -x "$D/usr/bin/ruby"
+      test -x "$D/usr/bin/gem"
+      test -x "$D/usr/bin/bundle"
