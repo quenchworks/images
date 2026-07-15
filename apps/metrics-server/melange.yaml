@@ -39,17 +39,23 @@ pipeline:
       export CGO_ENABLED=0
       export GOFLAGS=-mod=mod
       export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's toolchain
-      # 0-CVE dep bumps: minimal safe upgrades over the versions the v0.8.1 go.mod
-      # pins, to clear fixable advisories the Trivy gate flags. These stay within the
-      # same major and do NOT disturb the k8s.io/* v0.33.7 lockstep, so metrics-server
-      # v0.8.1 compiles unchanged. (prometheus/prometheus is NOT bumped here: its only
-      # CVE fix, v0.311.3, requires k8s.io/apimachinery v0.35 AND changes the
-      # textparse.New signature that pkg/scraper/client/resource/decode.go calls, i.e.
-      # an upstream API break that cannot be taken without patching metrics-server.)
+      # 0-CVE dep bumps: safe upgrades over the versions the v0.8.1 go.mod pins, to
+      # clear fixable advisories the Trivy gate flags.
       go get golang.org/x/crypto@v0.54.0
       go get golang.org/x/net@v0.57.0 golang.org/x/text@v0.40.0
       go get google.golang.org/grpc@v1.79.3
       go get go.opentelemetry.io/otel/sdk@v1.43.0
+      # prometheus/prometheus v0.304.2 carries fixable CVEs (CVE-2026-42151/42154 HIGH,
+      # CVE-2026-40179/44903 MEDIUM); the only version fixing all four is v0.311.3. That
+      # bump pulls the k8s.io/* stack from v0.33.7 to v0.35.3, so the whole set is bumped
+      # in lockstep to keep k8s.io/apiserver consistent. v0.311.3 also changes the
+      # textparse.New signature (now (b, contentType, *SymbolTable, ParserOptions)), so
+      # the sole caller pkg/scraper/client/resource/decode.go is patched to match.
+      go get github.com/prometheus/prometheus@v0.311.3
+      go get k8s.io/apiserver@v0.35.3 k8s.io/component-base@v0.35.3 \
+        k8s.io/apimachinery@v0.35.3 k8s.io/api@v0.35.3 k8s.io/client-go@v0.35.3
+      sed -i 's#textparse.New(b, "text/plain", "", false, false, nil)#textparse.New(b, "text/plain", nil, textparse.ParserOptions{})#' \
+        pkg/scraper/client/resource/decode.go
       PKG=k8s.io/client-go/pkg
       go build -trimpath \
         -ldflags "-s -w \
