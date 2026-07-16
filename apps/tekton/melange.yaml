@@ -49,3 +49,15 @@ pipeline:
         go build -trimpath -ldflags "-s -w" \
           -o "${{targets.destdir}}/usr/bin/$b" "./cmd/$b"
       done
+      # Tekton's controller injects helper containers into every TaskRun pod that
+      # exec the upstream `ko` layout /ko-app/<helper> (paths are hardcoded in
+      # pkg/pod/pod.go, workingdir_init.go). Our binaries live in /usr/bin, so
+      # symlink the four injected helpers into /ko-app. Without this the
+      # controller/webhook come up Ready but the first PipelineRun dies at the
+      # prepare init container ("exec /ko-app/entrypoint: no such file or
+      # directory"). With it, this image also serves as the -entrypoint-image /
+      # -nop-image / -sidecarlogresults-image / -workingdirinit-image.
+      mkdir -p "${{targets.destdir}}/ko-app"
+      for h in entrypoint nop sidecarlogresults workingdirinit; do
+        ln -s "/usr/bin/$h" "${{targets.destdir}}/ko-app/$h"
+      done
