@@ -10,6 +10,10 @@ contents:
     - wolfi-baselayout
     - ca-certificates-bundle
     - busybox                      # the bootstrap entrypoint needs a tiny shell
+    - bash                         # wsrep_sst_mariabackup is a bash script
+    - socat                        # mariabackup SST streams the donor snapshot over socat
+    - procps                       # SST scripts need a real `ps -p` (busybox ps can't; parent-liveness check misfires)
+    - lsof                         # SST scripts' socket-information utility (detects when the transfer port is up)
     - quench-mariadb@local
 
 accounts:

@@ -29,6 +29,9 @@ environment:
       - libaio-dev
       - linux-headers
       - pkgconf
+      - boost-dev          # galera provider (libgalera_smm.so) build
+      - check-dev          # galera cmake probes for the check test framework
+      - git                # git-checkout of the galera source + wsrep-API submodule
 
 pipeline:
   - uses: fetch
@@ -47,7 +50,8 @@ pipeline:
         -DWITH_ZLIB=system \
         -DWITH_PCRE=bundled \
         -DWITH_UNIT_TESTS=OFF \
-        -DWITH_MARIABACKUP=OFF \
+        -DWITH_MARIABACKUP=ON \
+        -DWITH_WSREP=ON \
         -DSKIP_TESTS=ON \
         -DPLUGIN_MROONGA=NO \
         -DPLUGIN_ROCKSDB=NO \
@@ -61,7 +65,34 @@ pipeline:
       make -C build -j"$(nproc)"
       make -C build DESTDIR="${{targets.destdir}}" install
       # trim test/sql-bench/data baggage that the install drops in
-      rm -rf "${{targets.destdir}}/usr/mysql-test" "${{targets.destdir}}/usr/sql-bench" || true
+      rm -rf "${{targets.destdir}}/usr/mysql-test" "${{targets.destdir}}/usr/mariadb-test" \
+             "${{targets.destdir}}/usr/sql-bench" || true
+      # the server install ships the wsrep SST helpers + galera_new_cluster; fail
+      # loudly if a MariaDB build ever drops wsrep support (Galera HA depends on it)
+      test -x "${{targets.destdir}}/usr/bin/wsrep_sst_mariabackup" || { echo "wsrep_sst_mariabackup missing"; exit 1; }
+      test -x "${{targets.destdir}}/usr/bin/galera_new_cluster"    || { echo "galera_new_cluster missing"; exit 1; }
+      test -x "${{targets.destdir}}/usr/bin/mariadb-backup"        || { echo "mariadb-backup (mariabackup) missing"; exit 1; }
+  # Galera 4 wsrep provider (libgalera_smm.so). Wolfi ships no galera apk, so it's
+  # built from source here; the wsrep-API submodule must be checked out too.
+  - uses: git-checkout
+    with:
+      repository: https://github.com/codership/galera.git
+      tag: release_26.4.27
+      expected-commit: 2633b84e9aedec3678b9e06d6bc5c9230f466b40
+      recurse-submodules: "true"
+      destination: galera-src
+  - runs: |
+      # galera's CMakeLists declares cmake_minimum_required(2.8); modern CMake
+      # (>=3.31) refuses <3.5, so pin the policy floor to keep it configuring.
+      cmake -S galera-src -B galera-src/build -G "Unix Makefiles" \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DGALERA_WITH_SSL=ON
+      # build only the provider DSO — skips the garbd binary + check-based tests
+      cmake --build galera-src/build --target galera_smm -j"$(nproc)"
+      SO="$(find galera-src/build -name 'libgalera_smm.so' -print -quit)"
+      test -n "$SO" || { echo "libgalera_smm.so not produced"; exit 1; }
+      install -Dm0755 "$SO" "${{targets.destdir}}/usr/lib/galera/libgalera_smm.so"
   - runs: |
       install -d "${{targets.destdir}}/usr/local/bin"
       cat > "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh" <<'SCRIPT'
