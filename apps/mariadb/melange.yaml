@@ -67,10 +67,11 @@ pipeline:
       # trim test/sql-bench/data baggage that the install drops in
       rm -rf "${{targets.destdir}}/usr/mysql-test" "${{targets.destdir}}/usr/mariadb-test" \
              "${{targets.destdir}}/usr/sql-bench" || true
-      # the server install ships the wsrep SST helpers + galera_new_cluster; fail
-      # loudly if a MariaDB build ever drops wsrep support (Galera HA depends on it)
+      # Galera HA needs the wsrep SST donor tools; fail loudly if a MariaDB build
+      # ever drops them. (galera_new_cluster is only a convenience wrapper and isn't
+      # shipped on every line — e.g. 11.4 — and the chart bootstraps via
+      # `mariadbd --wsrep-new-cluster` directly, so it is not required.)
       test -x "${{targets.destdir}}/usr/bin/wsrep_sst_mariabackup" || { echo "wsrep_sst_mariabackup missing"; exit 1; }
-      test -x "${{targets.destdir}}/usr/bin/galera_new_cluster"    || { echo "galera_new_cluster missing"; exit 1; }
       test -x "${{targets.destdir}}/usr/bin/mariadb-backup"        || { echo "mariadb-backup (mariabackup) missing"; exit 1; }
   # Galera 4 wsrep provider (libgalera_smm.so). Wolfi ships no galera apk, so it's
   # built from source here; the wsrep-API submodule must be checked out too.
