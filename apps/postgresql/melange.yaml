@@ -11,6 +11,12 @@ package:
     runtime:
       - ca-certificates-bundle
       - tzdata           # postgres is built --with-system-tzdata and reads it at runtime
+      # Patroni HA add-on (venv under /opt/patroni). The venv references the system
+      # interpreter, so python must be present at runtime; libgcc/glibc back the
+      # psycopg + PyYAML C-extension manylinux wheels.
+      - python-3.13
+      - libgcc
+      - glibc
 
 environment:
   contents:
@@ -31,6 +37,8 @@ environment:
       - perl                # required by the build for some generated headers
       - bison               # parser generator (gram.y)
       - flex                # scanner generator (scan.l)
+      - python-3.13         # Patroni venv interpreter
+      - py3.13-pip          # installs Patroni + deps from PyPI into the venv
 
 pipeline:
   - uses: fetch
@@ -97,6 +105,55 @@ pipeline:
       exec postgres -D "$PGDATA" -k "$SOCKET_DIR"
       SCRIPT
       chmod 0755 "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh"
+  # --- Patroni HA add-on -----------------------------------------------------
+  # Patroni is a pure-Python supervisor that wraps postgres, elects a leader via a
+  # DCS, and drives streaming replication + pg_rewind rejoin. There is no Wolfi apk
+  # for it, so — mirroring the mlflow/ansible venv-on-Wolfi pattern — we install it
+  # from PyPI into an isolated venv on the build's python-3.13. `[kubernetes]` pulls
+  # the k8s client so Patroni can use the Kubernetes API as its DCS (no external
+  # etcd; leader election + cluster state live in k8s endpoints/configmaps, and it
+  # maintains a `role` pod label the chart's primary Service selects). psycopg[binary]
+  # is Patroni's Postgres driver (bundled libpq wheel, no system libpq dep). The
+  # postgres binaries Patroni shells out to (postgres, pg_ctl, pg_rewind, initdb) are
+  # already on PATH at /usr/bin from the install above. This is an ADDED capability:
+  # the default entrypoint still runs plain single-node postgres; the chart's HA mode
+  # runs `patroni /etc/patroni/patroni.yml` instead.
+  - runs: |
+      dest="${{targets.destdir}}"
+
+      python3.13 -m venv /opt/patroni/venv
+      /opt/patroni/venv/bin/pip install --no-cache-dir --upgrade pip
+      /opt/patroni/venv/bin/pip install --no-cache-dir \
+        "patroni[kubernetes]" \
+        "psycopg[binary]"
+
+      # SECURITY BUMPS: Patroni's transitive tree (via the kubernetes client) pulls
+      # urllib3 / requests / certifi / setuptools, which routinely lag a fixable CVE.
+      # Bump the affected packages to their patched releases so the 0-CVE gate passes,
+      # then `pip check` to confirm the dependency graph still resolves. Keep this list
+      # minimal — only what Trivy actually flags for the pinned build.
+      /opt/patroni/venv/bin/pip install --no-cache-dir --upgrade \
+        "urllib3>=2.5.0" \
+        "requests>=2.32.4" \
+        "certifi>=2025.1.31" \
+        "setuptools>=78.1.1"
+      /opt/patroni/venv/bin/pip check
+
+      # Assert the CLIs import + run without a DCS (full failover is exercised in the
+      # chart's kind gate).
+      /opt/patroni/venv/bin/patroni --version
+      /opt/patroni/venv/bin/patronictl version
+
+      # Relocate the venv into the package tree under /opt/patroni.
+      install -d "${dest}/opt/patroni"
+      cp -a /opt/patroni/venv "${dest}/opt/patroni/venv"
+
+      # Convenience symlinks on PATH so the chart can invoke `patroni` / `patronictl`.
+      install -d "${dest}/usr/bin"
+      ln -sf /opt/patroni/venv/bin/patroni    "${dest}/usr/bin/patroni"
+      ln -sf /opt/patroni/venv/bin/patronictl "${dest}/usr/bin/patronictl"
+
+      chmod -R a+rX "${dest}/opt/patroni"
 
 test:
   pipeline:
@@ -104,3 +161,7 @@ test:
         postgres --version
         initdb --version
         psql --version
+        pg_rewind --version
+        pg_ctl --version
+        patroni --version
+        patronictl version
