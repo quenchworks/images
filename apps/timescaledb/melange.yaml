@@ -19,6 +19,12 @@ package:
       - postgresql-17
       - postgresql-17-client
       - postgresql-17-contrib
+      # Patroni HA add-on (venv under /opt/patroni). The venv references the system
+      # interpreter, so python must be present at runtime; libgcc/glibc back the
+      # psycopg + PyYAML C-extension manylinux wheels.
+      - python-3.13
+      - libgcc
+      - glibc
 
 environment:
   contents:
@@ -42,6 +48,8 @@ environment:
       - zlib-dev
       - icu-dev
       - krb5-dev      # Wolfi's PG17 has GSSAPI, so libpq-be.h pulls gssapi/gssapi.h
+      - python-3.13   # Patroni venv interpreter
+      - py3.13-pip    # installs Patroni + deps from PyPI into the venv
 
 pipeline:
   # TimescaleDB (Apache-only) built via its cmake bootstrap against Wolfi's PG17.
@@ -110,8 +118,57 @@ pipeline:
       exec postgres -D "$PGDATA" -k "$SOCKET_DIR"
       SCRIPT
       chmod 0755 "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh"
+  # --- Patroni HA add-on -----------------------------------------------------
+  # Same Patroni venv-on-Wolfi pattern as the postgresql image. Patroni is a
+  # pure-Python supervisor that wraps postgres, elects a leader via a DCS, and
+  # drives streaming replication + pg_rewind rejoin. There is no Wolfi apk for it,
+  # so it is installed from PyPI into an isolated venv on python-3.13. `[kubernetes]`
+  # pulls the k8s client so Patroni can use the Kubernetes API as its DCS (no
+  # external etcd). psycopg[binary] is its Postgres driver (bundled libpq wheel).
+  # The postgres binaries Patroni shells out to (postgres, pg_ctl, pg_rewind,
+  # initdb) come from Wolfi's postgresql-17 already in the runtime. This is an
+  # ADDED capability: the default entrypoint still runs plain single-node
+  # postgres; the chart's HA mode runs `patroni /etc/patroni/patroni.yml`, which
+  # sets shared_preload_libraries=timescaledb so the extension loads there too.
+  - runs: |
+      dest="${{targets.destdir}}"
+
+      python3.13 -m venv /opt/patroni/venv
+      /opt/patroni/venv/bin/pip install --no-cache-dir --upgrade pip
+      /opt/patroni/venv/bin/pip install --no-cache-dir \
+        "patroni[kubernetes]" \
+        "psycopg[binary]"
+
+      # SECURITY BUMPS: Patroni's transitive tree (via the kubernetes client) pulls
+      # urllib3 / requests / certifi / setuptools, which routinely lag a fixable CVE.
+      # Bump the affected packages to their patched releases so the 0-CVE gate passes,
+      # then `pip check` to confirm the dependency graph still resolves.
+      /opt/patroni/venv/bin/pip install --no-cache-dir --upgrade \
+        "urllib3>=2.5.0" \
+        "requests>=2.32.4" \
+        "certifi>=2025.1.31" \
+        "setuptools>=78.1.1"
+      /opt/patroni/venv/bin/pip check
+
+      # Assert the CLIs import + run without a DCS (full failover is exercised in the
+      # chart's kind gate).
+      /opt/patroni/venv/bin/patroni --version
+      /opt/patroni/venv/bin/patronictl version
+
+      # Relocate the venv into the package tree under /opt/patroni.
+      install -d "${dest}/opt/patroni"
+      cp -a /opt/patroni/venv "${dest}/opt/patroni/venv"
+
+      # Convenience symlinks on PATH so the chart can invoke `patroni` / `patronictl`.
+      install -d "${dest}/usr/bin"
+      ln -sf /opt/patroni/venv/bin/patroni    "${dest}/usr/bin/patroni"
+      ln -sf /opt/patroni/venv/bin/patronictl "${dest}/usr/bin/patronictl"
+
+      chmod -R a+rX "${dest}/opt/patroni"
 
 test:
   pipeline:
     - runs: |
         test -f "/usr/lib/postgresql17/timescaledb.so" || ls -la /usr/lib/postgresql17/
+        patroni --version
+        patronictl version
