@@ -80,6 +80,12 @@ pipeline:
       make -C build DESTDIR="${{targets.destdir}}" install
       # trim test/debug baggage the install drops in
       rm -rf "${{targets.destdir}}/usr/mysql-test" "${{targets.destdir}}/usr/share/mysql-test" || true
+      # Group Replication HA needs the group_replication plugin. The community
+      # server builds group_replication.so by default (no extra cmake flag), but
+      # guard it so a future build that drops it fails loudly instead of shipping
+      # an image that cannot form a GR cluster. (Mirrors mariadb's wsrep guards.)
+      GR="$(find "${{targets.destdir}}" -name 'group_replication.so' -print -quit)"
+      test -n "$GR" || { echo "group_replication.so missing — Group Replication HA would be impossible"; exit 1; }
   - runs: |
       install -d "${{targets.destdir}}/usr/local/bin"
       cat > "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh" <<'SCRIPT'
