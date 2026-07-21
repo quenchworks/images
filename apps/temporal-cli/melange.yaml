@@ -66,14 +66,16 @@ pipeline:
       # these at/above the fix floor, so the bumps are no-ops there; the older
       # tags still built by the matrix (1.5.1, 1.6.2) pin vulnerable versions and
       # need the lift. All are behavior-preserving patch/minor bumps within the
-      # same major (grpc/x-net/x-crypto/otel/thrift/pgx/go-jose/edwards25519/
-      # gomarkdown) plus a same-minor patch of the bundled dev-server
+      # same major (grpc/x-net/x-text/x-crypto/otel/thrift/pgx/go-jose/
+      # edwards25519/gomarkdown) plus a same-minor patch of the bundled dev-server
       # (go.temporal.io/server 1.29.1 -> 1.29.6, clears CVE-2025-14987 +
       # CVE-2026-5724) and the AWS lambda leaf (GHSA-xmrv-pmrh-hhx2). tidy keeps
-      # go.sum consistent. x/net >= 0.57.0, x/crypto >= 0.52.0 per the batch.
+      # go.sum consistent. x/text v0.38.0 -> v0.39.0 clears CVE-2026-56852
+      # (infinite loop on invalid input).
       go get \
         github.com/aws/aws-sdk-go-v2/service/lambda@v1.88.5 \
         golang.org/x/net@v0.56.0 \
+        golang.org/x/text@v0.39.0 \
         golang.org/x/crypto@v0.53.0 \
         google.golang.org/grpc@v1.79.3 \
         github.com/jackc/pgx/v5@v5.9.2 \

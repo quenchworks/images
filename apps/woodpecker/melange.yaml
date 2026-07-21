@@ -91,6 +91,11 @@ pipeline:
       export GOFLAGS=-mod=mod
       export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's 1.26.0
       export GO111MODULE=on
+      # 0-CVE gate bump (patch, same major, no API break):
+      #   golang.org/x/text v0.38.0 -> v0.39.0 (CVE-2026-56852: infinite loop on
+      #                     invalid input). tidy keeps it in the graph at the bump.
+      go get golang.org/x/text@v0.39.0
+      go mod tidy
       VERPKG="go.woodpecker-ci.org/woodpecker/v3/version"
       LDFLAGS="-s -w -X ${VERPKG}.Version=${{package.version}}"
       install -d "${{targets.destdir}}/usr/bin"

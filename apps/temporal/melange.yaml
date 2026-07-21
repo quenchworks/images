@@ -64,12 +64,19 @@ pipeline:
       export CGO_ENABLED=0
       export GOTOOLCHAIN=local
       export GOFLAGS=-mod=mod
-      # 0-CVE gate bump (patch, same major, no API break):
+      # 0-CVE gate bumps (patch/minor, same major, no API break):
       #   github.com/aws/aws-sdk-go-v2/service/lambda v1.88.0 -> v1.88.5
       #     (GHSA-xmrv-pmrh-hhx2: DoS via panic in the AWS SDK for Go v2 Lambda
-      #      service client). Indirect dep (temporal's AWS auth/archival path);
-      #      go mod tidy keeps it in the graph at the bumped version.
-      go get github.com/aws/aws-sdk-go-v2/service/lambda@v1.88.5
+      #      service client). Indirect dep (temporal's AWS auth/archival path).
+      #   golang.org/x/net  v0.55.0 -> v0.56.0 (CVE-2026-46600: panic parsing an
+      #      invalid SVCB/HTTPS DNS resource record).
+      #   golang.org/x/text v0.37.0 -> v0.39.0 (CVE-2026-56852: infinite loop on
+      #      invalid input).
+      # All are indirect deps; go mod tidy keeps them in the graph at the bumps.
+      go get \
+        github.com/aws/aws-sdk-go-v2/service/lambda@v1.88.5 \
+        golang.org/x/net@v0.56.0 \
+        golang.org/x/text@v0.39.0
       go mod tidy
       # Match upstream's Makefile build: static CGO-free binaries with the
       # disable_grpc_modules build tag (the sqlite plugin uses pure-Go

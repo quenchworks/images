@@ -53,6 +53,13 @@ pipeline:
       export GOFLAGS=-mod=mod
       export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's 1.25.0
       export GO111MODULE=on
+      # 0-CVE gate bumps (patch/minor, same major, no API break):
+      #   golang.org/x/net  v0.55.0 -> v0.56.0 (CVE-2026-46600: panic parsing an
+      #                     invalid SVCB/HTTPS DNS resource record)
+      #   golang.org/x/text v0.38.0 -> v0.39.0 (CVE-2026-56852: infinite loop on
+      #                     invalid input)
+      go get golang.org/x/net@v0.56.0 golang.org/x/text@v0.39.0
+      go mod tidy
       # Stamp the version onto the same var goreleaser uses; keep the "v" prefix.
       go build -trimpath \
         -ldflags "-s -w -X github.com/TykTechnologies/tyk/internal/build.Version=v${{package.version}}" \

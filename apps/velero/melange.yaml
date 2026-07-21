@@ -39,6 +39,13 @@ pipeline:
       export CGO_ENABLED=0
       export GOTOOLCHAIN=local
       export GOFLAGS=-mod=mod
+      # 0-CVE gate bumps (patch/minor, same major, no API break):
+      #   golang.org/x/net  v0.55.0 -> v0.56.0 (CVE-2026-46600: panic parsing an
+      #                     invalid SVCB/HTTPS DNS resource record)
+      #   golang.org/x/text v0.38.0 -> v0.39.0 (CVE-2026-56852: infinite loop on
+      #                     invalid input)
+      go get golang.org/x/net@v0.56.0 golang.org/x/text@v0.39.0
+      go mod tidy
       PKG=github.com/vmware-tanzu/velero
       go build -trimpath -installsuffix static \
         -ldflags "-s -w \

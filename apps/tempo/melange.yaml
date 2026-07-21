@@ -47,6 +47,17 @@ pipeline:
       export CGO_ENABLED=0
       export GOFLAGS=-mod=vendor
       export GOTOOLCHAIN=local
+      # 0-CVE gate bumps (patch/minor, same major, no API break):
+      #   golang.org/x/net  v0.55.0 -> v0.56.0 (CVE-2026-46600: panic parsing an
+      #                     invalid SVCB/HTTPS DNS resource record)
+      #   golang.org/x/text v0.37.0 -> v0.39.0 (CVE-2026-56852: infinite loop on
+      #                     invalid input)
+      # Tempo vendors its deps and builds -mod=vendor (offline), so float the
+      # modules with the module proxy enabled, tidy, then re-populate vendor/ so
+      # the subsequent -mod=vendor build stays fully offline at the bumped versions.
+      GOFLAGS=-mod=mod go get golang.org/x/net@v0.56.0 golang.org/x/text@v0.39.0
+      GOFLAGS=-mod=mod go mod tidy
+      GOFLAGS=-mod=mod go mod vendor
       # Stamp version exactly like upstream's Makefile (LD_FLAGS sets main.{Version,
       # Branch,Revision}; cmd/tempo/main.go forwards them into prometheus/common/
       # version) so `tempo --version` reports the pinned release. Upstream's VERSION

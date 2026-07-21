@@ -39,6 +39,11 @@ pipeline:
       export CGO_ENABLED=0
       export GOEXPERIMENT=jsonv2
       export GOFLAGS=-mod=mod
+      # 0-CVE gate bump (patch, same major, no API break):
+      #   golang.org/x/text v0.38.0 -> v0.39.0 (CVE-2026-56852: infinite loop on
+      #                     invalid input). tidy keeps it in the graph at the bump.
+      go get golang.org/x/text@v0.39.0
+      go mod tidy
       GOVER="$(go env GOVERSION)"
       BI=zotregistry.dev/zot/v2/pkg/buildinfo
       go build -trimpath \
