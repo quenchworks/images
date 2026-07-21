@@ -44,8 +44,10 @@ pipeline:
       #   go-ntlmssp   v0.0.0-2022... -> v0.1.1   clears CVE-2026-32952 (NTLM DoS).
       #   mongo-driver v1.17.6        -> v1.17.7  clears CVE-2026-2303.
       # Both are indirect utility libs; `go mod tidy` reconciles the workspace graph.
+      #   x/text       v0.38.0            -> v0.39.0  clears CVE-2026-56852.
       go get github.com/Azure/go-ntlmssp@v0.1.1
       go get go.mongodb.org/mongo-driver@v1.17.7
+      go get golang.org/x/text@v0.39.0
       go mod tidy
       go build -trimpath -tags all_providers \
         -ldflags "-s -w" \

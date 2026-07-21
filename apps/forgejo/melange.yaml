@@ -67,8 +67,11 @@ pipeline:
       # safe minor/patch bumps within the module graph (GOFLAGS=-mod=mod), not forks:
       #   golang.org/x/image  v0.41.0 -> v0.43.0  (CVE-2026-33813 + CVE-2026-46601, WebP DoS)
       #   github.com/Azure/go-ntlmssp  -> v0.1.1  (CVE-2026-32952, NTLM challenge DoS)
+      #   golang.org/x/net    v0.55.0 -> v0.56.0  (CVE-2026-46600)
+      #   golang.org/x/text   v0.38.0 -> v0.39.0  (CVE-2026-56852)
       go get golang.org/x/image@v0.43.0
       go get github.com/Azure/go-ntlmssp@v0.1.1
+      go get golang.org/x/net@v0.56.0 golang.org/x/text@v0.39.0
       go mod tidy
       # Mirror upstream ldflags so `forgejo --version` reports the real release; the
       # binary is fully static (musl linked in) so the runtime image needs no libc.

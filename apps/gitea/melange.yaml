@@ -75,6 +75,11 @@ pipeline:
       # building from go.mod as-is clears the gobinary scan. Re-add targeted bumps
       # here only if Trivy flags a residual fixable advisory on a future bump.
 
+      # Residual fixable advisory: golang.org/x/text v0.38.0 carries CVE-2026-56852,
+      # fixed in 0.39.0 (safe patch bump within the module graph).
+      go get golang.org/x/text@v0.39.0
+      go mod tidy
+
       install -d "${{targets.destdir}}/usr/bin"
       go build -trimpath -tags "${TAGS}" -ldflags "${LDFLAGS}" \
         -o "${{targets.destdir}}/usr/bin/gitea" .

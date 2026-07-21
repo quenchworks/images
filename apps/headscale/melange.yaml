@@ -56,5 +56,9 @@ pipeline:
       git add -A
       git commit -qm "v${{package.version}}"
       git tag "v${{package.version}}"
+      # 0-CVE gate: golang.org/x/text v0.38.0 carries CVE-2026-56852, fixed in
+      # 0.39.0 (safe patch bump within the module graph).
+      go get golang.org/x/text@v0.39.0
+      go mod tidy
       go build -trimpath -ldflags "-s -w" \
         -o "${{targets.destdir}}/usr/bin/headscale" ./cmd/headscale

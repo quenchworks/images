@@ -84,7 +84,9 @@ pipeline:
       # Bump the one transitive dep the comprehensive Trivy gate flags: golang.org/x/image
       # v0.42.0 carries CVE-2026-46601 (webp DoS), fixed in 0.43.0. Same minor API, so this
       # is a safe patch bump within the module graph (GOFLAGS=-mod=mod), not a fork/force.
+      # golang.org/x/text v0.38.0 carries CVE-2026-56852, fixed in 0.39.0 (safe patch bump).
       go get golang.org/x/image@v0.43.0
+      go get golang.org/x/text@v0.39.0
       go mod tidy
       # Mirror upstream ldflags so `filebrowser version` reports the real release.
       go build -trimpath \
