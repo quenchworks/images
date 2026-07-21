@@ -1,0 +1,67 @@
+# Assembles the Typesense search-engine runtime image.
+# Minimal, nonroot, multi-arch, read-only-rootfs friendly, SBOM by apko.
+#
+# Typesense serves its REST search API on :8108. The thin entrypoint ensures the
+# writable --data-dir exists (default /data, a writable mount / PVC) then runs the
+# server binding all interfaces, so the image runs on a read-only rootfs.
+#
+# Auth: TYPESENSE_API_KEY (supplied by the chart from a Secret) is MANDATORY and
+# protects every API route except GET /health.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - bash                          # the entrypoint is a shell script
+    - busybox
+    - glibc
+    - ca-certificates-bundle
+    - quench-typesense@local
+
+accounts:
+  groups:
+    - groupname: typesense
+      gid: 1001
+  users:
+    - username: typesense
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/docker-entrypoint.sh
+
+environment:
+  TYPESENSE_DATA_DIR: /data
+  TYPESENSE_API_ADDRESS: "0.0.0.0"
+  TYPESENSE_API_PORT: "8108"
+  PATH: /usr/bin:/bin
+
+work-dir: /data
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+  - path: /tmp
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o1777
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-typesense"
+  org.opencontainers.image.licenses: "GPL-3.0"

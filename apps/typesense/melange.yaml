@@ -1,0 +1,76 @@
+# Packages Typesense (fast, typo-tolerant search engine) onto Wolfi. Typesense is
+# NOT built from source here: its upstream build is a huge C++ tree (Bazel + LLVM,
+# tens of GB) — infeasible on a 2-core/7GB GitHub runner. Instead we ship Typesense's
+# OWN official precompiled per-arch server binary (same upstream-artifact pattern
+# clickhouse/kafka/opensearch use), then harden it on a minimal apko base and gate it
+# 0-CVE with Trivy. Clean-room-consistent: it is upstream's published artifact, not a
+# Bitnami chart, and the scan still fully applies. The binary is self-contained
+# (bundled jemalloc, RocksDB, etc.) and only links glibc (libc/libm/libpthread/
+# libdl/librt), so the runtime surface is tiny.
+package:
+  name: quench-typesense
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Typesense search engine, packaged on Wolfi"
+  copyright:
+    - license: GPL-3.0
+  dependencies:
+    runtime:
+      - bash                    # the entrypoint is a shell script
+      - busybox                 # mkdir used by the entrypoint
+      - glibc                   # the binary links glibc (libc/libm/libpthread/...)
+      - ca-certificates-bundle  # Typesense talks TLS to external endpoints
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - curl
+      - ca-certificates-bundle
+
+pipeline:
+  # Typesense publishes separate amd64/arm64 server tarballs, so fetch the one
+  # matching the build arch by uname -m (x86_64->amd64, aarch64->arm64) with the
+  # arch-matching sha256 — using the wrong arch yields a wrong-arch binary. Each
+  # tarball holds just the `typesense-server` binary (+ an md5 sidecar).
+  - runs: |
+      VER="${{package.version}}"
+      case "$(uname -m)" in
+        x86_64)  tsarch=amd64; sha=__SHA_AMD__ ;;
+        aarch64) tsarch=arm64; sha=__SHA_ARM__ ;;
+        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+      esac
+      url="https://dl.typesense.org/releases/${VER}/typesense-server-${VER}-linux-${tsarch}.tar.gz"
+      curl -fsSL -o ts.tgz "$url"
+      echo "${sha}  ts.tgz" | sha256sum -c -
+      tar -xzf ts.tgz
+      install -Dm0755 typesense-server "${{targets.destdir}}/usr/bin/typesense-server"
+
+  # Thin entrypoint. Typesense requires a writable --data-dir and an --api-key, and
+  # reads every CLI option from a matching TYPESENSE_* env var. We default the data
+  # dir to the writable /data mount and bind all interfaces so it works on a
+  # read-only rootfs; TYPESENSE_API_KEY is supplied by the chart from a Secret. Any
+  # extra flags pass through via "$@".
+  - runs: |
+      install -d "${{targets.destdir}}/usr/bin"
+      cat > "${{targets.destdir}}/usr/bin/docker-entrypoint.sh" <<'EOS'
+      #!/bin/bash
+      set -euo pipefail
+      export TYPESENSE_DATA_DIR="${TYPESENSE_DATA_DIR:-/data}"
+      export TYPESENSE_API_ADDRESS="${TYPESENSE_API_ADDRESS:-0.0.0.0}"
+      export TYPESENSE_API_PORT="${TYPESENSE_API_PORT:-8108}"
+      mkdir -p "$TYPESENSE_DATA_DIR"
+      exec /usr/bin/typesense-server "$@"
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/bin/typesense-server
+        typesense-server --version
+        test -x /usr/bin/docker-entrypoint.sh
