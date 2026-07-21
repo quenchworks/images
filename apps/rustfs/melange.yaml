@@ -21,8 +21,11 @@ package:
   name: quench-rustfs
   # apk-version form of the upstream tag 1.0.0-beta.10-preview.5. melange's version
   # parser rejects the dash/dot pre-release form (and "preview" is not a valid apk
-  # suffix), so we use chained apk pre-release suffixes (_beta10_pre5, preview.N ->
-  # _preN) here and keep the real upstream tag in vars.upstream-tag for fetching.
+  # suffix); it also rejects two chained pre-release suffixes (_beta10_pre5 ->
+  # "could not parse"). melange accepts one pre-release suffix plus a trailing _p
+  # (post-release) suffix, so we map preview.N -> _pN on the beta10 line
+  # (1.0.0_beta10_pN, sorts above the prior 1.0.0_beta8) and keep the real upstream
+  # tag in vars.upstream-tag for fetching.
   version: __VER__
   epoch: 0
   description: "Quenchworks hardened RustFS (Rust S3-compatible object store), packaged on Wolfi"

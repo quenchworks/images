@@ -80,6 +80,15 @@ environment:
     packages:
       - busybox
       - ca-certificates-bundle
+      # composer + a minimal php to re-resolve the stale-in-tarball guzzle dep
+      # (see the guzzle bump step). Build-env only; NOT in the runtime image.
+      - composer
+      - php-8.4
+      - php-8.4-phar
+      - php-8.4-openssl
+      - php-8.4-mbstring
+      - php-8.4-curl
+      - php-8.4-zip
 
 pipeline:
   # The release asset is the finished app: fetch the exact drupal-<VER>.tar.gz and
@@ -92,6 +101,30 @@ pipeline:
       # lands in a named subdir, NOT mixed into the melange workspace root (where
       # copying ./* would recurse into melange-out/).
       strip-components: 0
+
+  - name: Bump the guzzle dep the release tarball ships stale
+    runs: |
+      set -eu
+      src="drupal-${{package.version}}"
+      # 11.4.4 vendors guzzlehttp/guzzle 7.14.2, which carries GHSA-f283-ghqc-fg79 /
+      # h95v-h523-3mw8 / wm3w-8rrp-j577 (3 MEDIUM), all fixed in 7.15.1. 11.4's
+      # drupal/core-recommended does NOT pin guzzle -- only drupal/core's ^7.10 (>=7.10
+      # <8) applies, which 7.15.1 satisfies. So this is a stale lock, NOT an app-pin
+      # conflict: a scoped `composer update` (with-dependencies, this package only)
+      # re-resolves guzzle within constraints and leaves the rest of the tree locked.
+      # --ignore-platform-reqs because the build env has only enough php to run
+      # composer, not Drupal's full ext surface.
+      composer update -d "$src" --with-dependencies --no-dev --no-scripts \
+        --no-audit --no-progress --no-interaction --ignore-platform-reqs \
+        guzzlehttp/guzzle
+      # Assert the fixed guzzle actually landed in the vendored lock (parse the JSON so
+      # we check guzzle specifically, not any package that happens to be 7.15).
+      php -r '$j=json_decode(file_get_contents($argv[1]),true);
+        foreach(($j["packages"]??$j) as $p){ if($p["name"]==="guzzlehttp/guzzle"){
+          if(version_compare($p["version"],"7.15.1","<")){
+            fwrite(STDERR,"guzzle still $p[version]\n"); exit(1);} exit(0);}}
+        fwrite(STDERR,"guzzle not found in lock\n"); exit(1);' \
+        "$src/vendor/composer/installed.json"
 
   - name: Install the Drupal tree under /opt/drupal
     runs: |

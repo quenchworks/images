@@ -35,6 +35,10 @@ pipeline:
   - runs: |
       export CGO_ENABLED=0
       export GOFLAGS=-mod=mod
+      # 0-CVE float: bundled github.com/DataDog/dd-trace-go/v2 v2.7.1 carries
+      # CVE-2026-50274 (HIGH), fixed in v2.8.1. Bump the module and re-resolve.
+      go get github.com/DataDog/dd-trace-go/v2@v2.8.1
+      go mod tidy
       go build -trimpath \
         -ldflags "-s -w -X github.com/buildkite/agent/v3/version.buildNumber=quench" \
         -o "${{targets.destdir}}/usr/bin/buildkite-agent" .
