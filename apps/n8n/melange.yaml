@@ -100,11 +100,13 @@ pipeline:
         Object.assign(p.dependencies,{
           "@opentelemetry/core":"2.8.0",  // direct 2.7.1 < 2.8.0 (fix)
           "nodemailer":"9.0.1",           // direct 8.0.10 (fix = 9.0.1, major)
+          "tar":"7.5.19",                 // direct ^7.5.16 resolved 7.5.16 < 7.5.19 (CVE-2026-59873 CRIT +3)
           "ws":"8.21.0"                   // direct 8.20.1 < 8.21.0 (fix)
         });
         // transitive copies (+ direct deps already AT the fix: langsmith/uuid/@azure/identity/tar)
         p.overrides=Object.assign(p.overrides||{},{
           "xlsx":"npm:@e965/xlsx@0.20.3",
+          "adm-zip":"0.6.0",              // transitive 0.5.18 < 0.6.0 (CVE-2026-39244 HIGH)
           "@anthropic-ai/sdk":"0.91.1",
           "@azure/identity@3":"4.2.1",    // only the transitive 3.4.2 (direct is 4.13.0, safe)
           "@opentelemetry/core":"2.8.0",
@@ -112,16 +114,16 @@ pipeline:
           "@opentelemetry/sdk-node@<0.217.0":"0.217.0",  // only the transitive 0.204.0 (direct is ^0.217.0)
           "@tootallnate/once":"2.0.1",
           "ajv@7":"8.18.0",               // only the 7.x copy
-          "axios":"1.16.0",
+          "axios":"1.18.0",               // transitive 1.16.0 < 1.18.0 (GHSA-gcfj-64vw-6mp9 HIGH +9)
           "fast-xml-parser":"5.7.0",
           "form-data":"4.0.6",
           "langsmith":"0.6.0",
           "linkify-it":"5.0.1",
           "nodemailer":"9.0.1",
-          "protobufjs":"8.6.0",
+          "protobufjs":"8.6.6",           // transitive 8.6.0 < 8.6.6 (CVE-2026-59876/59877)
           "qs":"6.15.2",
           "semver@<5.7.2":"5.7.2",        // only the vulnerable 5.x (tree keeps its 6.x/7.x)
-          "tar@6":"7.5.16",               // only the transitive 6.2.1 (direct is ^7.5.16)
+          "tar@6":"7.5.19",               // only the transitive 6.2.1 (direct bumped in dependencies)
           "uuid":"11.1.1",
           "ws":"8.21.0"
         });

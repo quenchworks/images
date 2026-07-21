@@ -85,6 +85,12 @@ pipeline:
       export CGO_ENABLED=0
       export GOFLAGS="-buildvcs=false -mod=mod"
       export GOTOOLCHAIN=local
+      # 0-CVE float: the launcher's transitive tree pins golang.org/x/sys v0.18.0
+      # (CVE-2026-39824) and golang.org/x/text v0.14.0 (CVE-2026-56852). Bump both
+      # to their fixed releases and re-resolve. (-mod=mod above lets go get edit go.mod.)
+      go get golang.org/x/sys@v0.44.0
+      go get golang.org/x/text@v0.39.0
+      go mod tidy
       mkdir -p /home/build/stage/usr/bin
       go build -trimpath -ldflags="-s -w" \
         -o /home/build/stage/usr/bin/task-runner-launcher ./cmd/launcher
