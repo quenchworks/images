@@ -1,0 +1,103 @@
+# Packages code-server (VS Code in the browser) onto Wolfi. code-server is NOT built
+# from source here: an upstream build needs a full Node/yarn toolchain and a VS Code
+# compile — infeasible on a 2-core GitHub runner. Instead we ship coder's OWN official
+# per-arch prebuilt release tarball, which bundles a self-contained Node 24 + the
+# compiled VS Code, then harden it on a minimal apko base and gate it 0-CVE with Trivy.
+# Clean-room-consistent: it is upstream's published artifact, not a Bitnami chart.
+# The bundled `lib/node` links glibc + libstdc++ + libgcc_s (verified via ldd), so those
+# are the runtime deps; bash/busybox back the integrated terminal.
+package:
+  name: quench-code-server
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened code-server (VS Code in the browser), packaged on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - glibc                  # bundled node links libc/libm/libdl/libpthread
+      - libstdc++              # bundled node links libstdc++.so.6
+      - libgcc                 # bundled node links libgcc_s.so.1
+      - ca-certificates-bundle
+      - bash                   # integrated terminal / extension shell tasks
+      - busybox                # basic coreutils for the integrated terminal
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - curl
+      - ca-certificates-bundle
+
+pipeline:
+  # coder publishes separate amd64/arm64 prebuilt tarballs, so fetch the one matching
+  # the build arch by uname -m (x86_64->amd64, aarch64->arm64) with the arch-matching
+  # sha256 — the wrong arch yields a non-executable bundled node. The tarball extracts
+  # to code-server-<ver>-linux-<charch>/ containing bin/, lib/node (bundled Node), lib/
+  # vscode, out/ (server assets + entry.js) and node_modules; we install the whole tree
+  # read-only under /usr/lib/code-server and exec the bundled node directly (no wrapper).
+  - runs: |
+      VER="${{package.version}}"
+      case "$(uname -m)" in
+        x86_64)  charch=amd64; sha=__SHA_AMD__ ;;
+        aarch64) charch=arm64; sha=__SHA_ARM__ ;;
+        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+      esac
+
+      url="https://github.com/coder/code-server/releases/download/v${VER}/code-server-${VER}-linux-${charch}.tar.gz"
+      curl -fsSL -o code-server.tgz "$url"
+      echo "${sha}  code-server.tgz" | sha256sum -c -
+      tar -xzf code-server.tgz
+
+      src="code-server-${VER}-linux-${charch}"
+      dest="${{targets.destdir}}/usr/lib/code-server"
+      install -d "$dest"
+      cp -a "$src/." "$dest/"
+      # the bundled launcher is `node <root> "$@"`; make sure node stays executable
+      chmod 0755 "$dest/lib/node"
+
+      # Drop the built-in microsoft-authentication extension: its native MSAL runtime
+      # (libmsalruntime.so / msal-node-runtime.node) links the whole desktop GNOME/GTK
+      # stack — libsoup-3.0, libwebkit2gtk, libgtk-3, libsecret, libX11, libdbus — none
+      # of which exist on Wolfi, so melange's SCA would emit unsatisfiable so: depends
+      # and apko can't assemble the image. The extension needs the desktop MSAL broker
+      # and does nothing on code-server (no MS-account settings-sync here); GitHub auth
+      # is a separate extension and is unaffected. Removing it is the hardening win:
+      # it strips the only binaries pulling a GTK/webkit attack surface.
+      rm -rf "$dest/lib/vscode/extensions/microsoft-authentication"
+
+      # Remove the built-in "npm" extension (npm-scripts explorer view). Its package.json
+      # is named "npm" at version "1.0.1", so Trivy's node-pkg analyzer collides it with
+      # the npm CLI and reports a swarm of historical npm-CLI CVEs — pure false positives
+      # (this is the VS Code extension, not the npm CLI, which isn't even shipped). npm
+      # still runs fine from the integrated terminal; only the scripts side-panel is gone.
+      rm -rf "$dest/lib/vscode/extensions/npm"
+
+      # Bump the vendored pure-JS deps that carry FIXABLE CVEs to their upstream fixed
+      # versions. This is a security update, not a gate weaken — same major line, same
+      # (already-hoisted) transitive deps, so each is a drop-in: tar 7.5.19 (CVE-2026-59873
+      # gzip-bomb DoS + CVE-2026-59874/59871), js-yaml 4.3.0 (CVE-2026-59869), shell-quote
+      # 1.9.0 (CVE-2026-13311), body-parser 2.3.0 (CVE-2026-12590). npm tarballs extract
+      # under package/. sha256 pinned (version-independent of the code-server release).
+      patch_pkg() {  # <target-node_modules-dir> <name> <url> <sha256>
+        curl -fsSL -o pkg.tgz "$3"
+        echo "$4  pkg.tgz" | sha256sum -c -
+        rm -rf npmpkg && mkdir npmpkg && tar -xzf pkg.tgz -C npmpkg
+        rm -rf "$1/$2" && mkdir -p "$1/$2"
+        cp -a npmpkg/package/. "$1/$2/"
+      }
+      patch_pkg "$dest/lib/vscode/node_modules" tar         https://registry.npmjs.org/tar/-/tar-7.5.19.tgz                191644f88c7dbd61121f913231ab328d1fc621f058e8ca334451b17cad85dfae
+      patch_pkg "$dest/lib/vscode/node_modules" shell-quote https://registry.npmjs.org/shell-quote/-/shell-quote-1.9.0.tgz 5d3b53eba647dee6d8c8465b57937e59798710eb728af66d5e21ab0977824d05
+      patch_pkg "$dest/node_modules"            js-yaml     https://registry.npmjs.org/js-yaml/-/js-yaml-4.3.0.tgz         8594ee34496dd2e41ec934fd202843dc993be9ab2d7d5d47579146962fbdfae6
+      patch_pkg "$dest/node_modules"            body-parser https://registry.npmjs.org/body-parser/-/body-parser-2.3.0.tgz 031d7f6c5142e31be91d36a43f541f02a505943e3b871aa44ef5fb6939be258e
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/lib/code-server/lib/node
+        test -f /usr/lib/code-server/out/node/entry.js
+        /usr/lib/code-server/lib/node /usr/lib/code-server --version

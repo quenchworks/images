@@ -1,0 +1,60 @@
+# Assembles the code-server runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Ships coder's official prebuilt tree (bundled Node 24 + compiled VS Code) under
+# /usr/lib/code-server. The entrypoint execs the bundled node directly against the
+# code-server root (no shell wrapper) and binds 0.0.0.0:8080. code-server writes its
+# state under $HOME (~/.local/share/code-server, ~/.config/code-server) — HOME points
+# at /home/coder, which the chart mounts as a PVC (workspace + user data). Auth is by
+# the PASSWORD env (code-server's default --auth password).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - busybox            # integrated-terminal coreutils
+    - bash               # integrated-terminal shell
+    - ca-certificates-bundle
+    - tzdata
+    - quench-code-server@local
+
+accounts:
+  groups:
+    - groupname: coder
+      gid: 1001
+  users:
+    - username: coder
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/lib/code-server/lib/node /usr/lib/code-server --bind-addr 0.0.0.0:8080 --disable-telemetry --disable-update-check
+
+environment:
+  HOME: /home/coder
+  PATH: /usr/lib/code-server/bin:/usr/bin:/bin
+
+work-dir: /home/coder
+
+paths:
+  # writable home for a read-only rootfs: code-server state + the user's workspace.
+  # The chart mounts a PVC here; for a bare docker run this seeds an owned dir.
+  - path: /home/coder
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-code-server"
+  org.opencontainers.image.licenses: "MIT"
