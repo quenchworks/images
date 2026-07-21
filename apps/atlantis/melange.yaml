@@ -72,6 +72,9 @@ pipeline:
       export CGO_ENABLED=0
       export GOTOOLCHAIN=local
       export GOFLAGS=-mod=mod
+      # 0-CVE gate: float the flagged Go modules to their fixed releases before
+      # building (x/net CVE-2026-46600, x/text CVE-2026-56852), then tidy.
+      go get golang.org/x/net@v0.56.0 golang.org/x/text@v0.39.0 && go mod tidy
       # Stamp version/commit/date into main.* exactly like upstream's goreleaser
       # (-X main.version / main.commit / main.date), so `atlantis version` prints
       # the pinned tag. We have no git metadata in a tarball build, so commit is

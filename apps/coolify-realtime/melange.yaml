@@ -136,6 +136,9 @@ pipeline:
       export GOPATH="$(mktemp -d)"
       export GOCACHE="$(mktemp -d)"
       cd cloudflared-src
+      # 0-CVE gate: this release's module graph now trails the fixed x/net/x/text
+      # (x/net CVE-2026-46600, x/text CVE-2026-56852). Float them, then tidy.
+      go get golang.org/x/net@v0.56.0 golang.org/x/text@v0.39.0 && go mod tidy
       # Mirror the upstream Makefile's VERSION_FLAGS (-X main.Version=...); also stamp
       # BuiltForPackageManager so cloudflared's self-updater refuses to overwrite the
       # managed binary inside the immutable image. -buildvcs=false keeps the main module
@@ -195,7 +198,7 @@ pipeline:
           "ws": "7.5.11",
           "mysql2": "3.9.8",
           "ip": "1.1.9",
-          "brace-expansion": "1.1.13",
+          "brace-expansion": "1.1.16",
           "minimatch": "3.1.5",
           "braces": "3.0.3",
           "lodash": "4.18.1"
