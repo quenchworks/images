@@ -54,6 +54,8 @@ pipeline:
       sed -i 's#github.com/prometheus/prometheus => github.com/prometheus/prometheus v0.304.2#github.com/prometheus/prometheus => github.com/prometheus/prometheus v0.311.3#' go.mod
       sed -i 's#matchers, err := parser.ParseMetricSelector(valueLocation)#matchers, err := parser.NewParser(parser.Options{}).ParseMetricSelector(valueLocation)#' pkg/scalers/metrics_api_scaler.go
       go get github.com/prometheus/prometheus@v0.311.3
+      # x/net v0.55.0 -> v0.56.0 (CVE-2026-46600), x/text v0.37.0 -> v0.39.0 (CVE-2026-56852).
+      go get golang.org/x/net@v0.56.0 golang.org/x/text@v0.39.0
       go mod tidy
 
       VERPKG="github.com/kedacore/keda/v2/version"

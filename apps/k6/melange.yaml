@@ -45,5 +45,9 @@ pipeline:
       export GOFLAGS=-mod=mod
       export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's directive
       export GO111MODULE=on
+      # 0-CVE gate: x/text v0.38.0 -> v0.39.0 (CVE-2026-56852: infinite loop on
+      # invalid input). x/net is already >= v0.56.0 in this release.
+      go get golang.org/x/text@v0.39.0
+      go mod tidy
       go build -trimpath -ldflags "-s -w" \
         -o "${{targets.destdir}}/usr/bin/k6" .
