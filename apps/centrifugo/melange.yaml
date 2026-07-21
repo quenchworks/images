@@ -38,7 +38,7 @@ pipeline:
       export GOFLAGS=-mod=mod
       # 0-CVE gate: float the flagged Go modules to their fixed releases before
       # building (x/net CVE-2026-46600, x/text CVE-2026-56852), then tidy.
-      go get golang.org/x/net@v0.56.0 golang.org/x/text@v0.39.0 && go mod tidy
+      go get golang.org/x/net@v0.56.0 golang.org/x/crypto@v0.53.0 golang.org/x/text@v0.39.0 && go mod tidy
       go build -trimpath \
         -ldflags "-s -w -X github.com/centrifugal/centrifugo/v6/internal/build.Version=${{package.version}}" \
         -o "${{targets.destdir}}/usr/bin/centrifugo" .

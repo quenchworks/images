@@ -43,7 +43,7 @@ pipeline:
       # 0-CVE float: golang.org/x/net (CVE-2026-46600 dnsmessage panic) and
       # golang.org/x/text (CVE-2026-56852 infinite loop) to their fixed minors,
       # resolved within the module graph via GOFLAGS=-mod=mod (not forks/forces).
-      go get golang.org/x/net@v0.56.0 golang.org/x/text@v0.39.0
+      go get golang.org/x/net@v0.56.0 golang.org/x/crypto@v0.53.0 golang.org/x/text@v0.39.0
       go mod tidy
       go build -trimpath -tags memoryprotection \
         -ldflags "-s -w -checklinkname=0 -X github.com/jzelinskie/cobrautil/v2.Version=v${{package.version}}" \
