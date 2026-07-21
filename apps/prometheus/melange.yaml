@@ -126,6 +126,12 @@ pipeline:
       # the workspace so the main module's go.mod is used directly.
       export GOWORK=off
 
+      # 0-CVE float: golang.org/x/net (CVE-2026-46600 dnsmessage panic) and
+      # golang.org/x/text (CVE-2026-56852 infinite loop) to their fixed minors,
+      # resolved within the module graph via GOFLAGS=-mod=mod (not forks/forces).
+      go get golang.org/x/net@v0.56.0 golang.org/x/text@v0.39.0
+      go mod tidy
+
       REVISION="$(git rev-parse HEAD)"
       DATE="$(date -u +'%Y%m%d-%H:%M:%S')"
       VERPKG="github.com/prometheus/common/version"

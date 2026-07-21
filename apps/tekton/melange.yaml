@@ -44,6 +44,13 @@ pipeline:
       # does not try to fetch a newer toolchain. Patch-level, source stays compatible.
       installed="$(go env GOVERSION | sed 's/^go//')"
       sed -i -E "s/^go 1\.26\.[0-9]+$/go ${installed}/" go.mod
+      # 0-CVE float: golang.org/x/text (CVE-2026-56852 infinite loop). Vendor mode
+      # cannot `go get`, and the build must see the bump, so re-vendor. Skip
+      # `go mod tidy` -- it would re-raise the go directive above Wolfi's go-1.26
+      # patch and break GOTOOLCHAIN=local. `go get` + `go mod vendor` is surgical:
+      # MVS raises only x/text, leaving the rest of the pinned vendored graph intact.
+      GOFLAGS=-mod=mod go get golang.org/x/text@v0.39.0
+      GOFLAGS=-mod=mod go mod vendor
       for b in controller webhook entrypoint nop resolvers sidecarlogresults workingdirinit events; do
         echo "building cmd/$b ..."
         go build -trimpath -ldflags "-s -w" \

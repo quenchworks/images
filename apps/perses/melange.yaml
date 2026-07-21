@@ -101,7 +101,8 @@ pipeline:
       # flags (same major/minor API lines, resolved within the module graph via
       # GOFLAGS=-mod=mod -- not forks/forces):
       #   golang.org/x/crypto  0.48.0 -> 0.52.0   (multiple, incl. ssh DoS)
-      #   golang.org/x/net     0.49.0 -> 0.55.0   (html XSS / http2 DoS / idna)
+      #   golang.org/x/net     0.49.0 -> 0.56.0   (html XSS / http2 DoS / idna; CVE-2026-46600 dnsmessage panic)
+      #   golang.org/x/text    -> 0.39.0          (CVE-2026-56852 infinite loop)
       #   google.golang.org/grpc 1.75 -> 1.79.3   (CVE-2026-33186 authz bypass, CRITICAL)
       #   github.com/jackc/pgx/v5 5.8.0 -> 5.9.2  (CVE-2026-33815/33816 mem-safety CRITICAL + SQLi)
       #   github.com/go-jose/go-jose/v4 -> 4.1.4  (CVE-2026-34986 DoS)
@@ -109,7 +110,8 @@ pipeline:
       #   go.opentelemetry.io/otel{,/sdk,/trace,/metric} 1.40 -> 1.43.0 (otel CVEs)
       go get \
         golang.org/x/crypto@v0.52.0 \
-        golang.org/x/net@v0.55.0 \
+        golang.org/x/net@v0.56.0 \
+        golang.org/x/text@v0.39.0 \
         google.golang.org/grpc@v1.79.3 \
         github.com/jackc/pgx/v5@v5.9.2 \
         github.com/go-jose/go-jose/v4@v4.1.4 \

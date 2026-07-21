@@ -93,14 +93,27 @@ pipeline:
       CGO_ENABLED=0 go install -trimpath -ldflags="-s -w" \
         go.opentelemetry.io/collector/cmd/builder@v${{package.version}}
 
-      # Generate the distribution module from the vendored official manifest and
-      # build the static binary. ocb's manifest sets output_path ./_build and
-      # build_tags grpcnotrace; we match upstream's goreleaser ldflags (-s -w)
-      # and -trimpath. ocb invokes `go build` internally.
-      # Select the EXACT official contrib manifest vendored for this release.
+      # Generate the distribution module from the vendored official manifest.
+      # ocb's manifest sets output_path ./_build and build_tags grpcnotrace.
+      # --skip-compilation stops ocb after it generates the module and resolves
+      # its dependency graph (Generate + GetModules), leaving the go build to us so
+      # we can float a transitive CVE before compiling. Select the EXACT official
+      # contrib manifest vendored for this release.
       builder --config=manifest-${{package.version}}.yaml \
-        --ldflags="-s -w" \
-        --skip-strict-versioning
+        --skip-strict-versioning \
+        --skip-compilation
+
+      # 0-CVE float: the generated distribution pulls golang.org/x/text v0.38.0
+      # (CVE-2026-56852, infinite loop), fixed in v0.39.0. Bump it in the generated
+      # module, then build the static binary ourselves, matching upstream's
+      # goreleaser flags (-trimpath -ldflags "-s -w") and the manifest build tag
+      # (grpcnotrace). ocb bakes dist.version into the generated code's BuildInfo,
+      # so no version ldflag is needed.
+      (
+        cd _build
+        go get golang.org/x/text@v0.39.0
+        go build -trimpath -tags grpcnotrace -ldflags "-s -w" -o otelcol-contrib .
+      )
 
       install -Dm0755 ./_build/otelcol-contrib \
         "${{targets.destdir}}/usr/bin/otelcol-contrib"

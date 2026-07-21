@@ -82,6 +82,12 @@ pipeline:
       export CGO_ENABLED=0
       export GOFLAGS=-mod=mod
       export GOTOOLCHAIN=local
+      # Float the transitive deps the Trivy gate flags on the step CLI binary
+      # (the step-ca binary already floats these above): golang.org/x/net
+      # (CVE-2026-46600 dnsmessage panic) and golang.org/x/text (CVE-2026-56852
+      # infinite loop). Minor bumps within v0, resolved via GOFLAGS=-mod=mod.
+      go get golang.org/x/net@v0.56.0 golang.org/x/text@v0.39.0
+      go mod tidy
       go build -trimpath \
         -ldflags "-s -w -X main.Version=__STEPVER__" \
         -o "${{targets.destdir}}/usr/bin/step" ./cmd/step

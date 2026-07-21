@@ -58,7 +58,9 @@ pipeline:
       # v0.41.0 carries CVE-2026-33813 + CVE-2026-46601 (webp/VP8 DoS), both fixed by 0.43.0.
       # Same minor API, so this is a safe patch bump within the module graph
       # (GOFLAGS=-mod=mod), not a fork/force.
-      go get golang.org/x/image@v0.43.0
+      # Also float golang.org/x/net (CVE-2026-46600, dnsmessage panic) and
+      # golang.org/x/text (CVE-2026-56852, infinite loop) to their fixed minors.
+      go get golang.org/x/image@v0.43.0 golang.org/x/net@v0.56.0 golang.org/x/text@v0.39.0
       go mod tidy
       # Mirror upstream ldflags so `pocketbase --version` reports the real release.
       go build -trimpath \

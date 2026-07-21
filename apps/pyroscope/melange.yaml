@@ -96,6 +96,11 @@ pipeline:
       export GOWORK=off             # tarball ships a go.work (., ./api, ./lidia); build the
                                     # main module standalone (go.mod already replaces api=>./api,
                                     # lidia v0.0.2 is a published module) so -mod=mod is allowed
+      # 0-CVE float: golang.org/x/net (CVE-2026-46600 dnsmessage panic) and
+      # golang.org/x/text (CVE-2026-56852 infinite loop) to their fixed minors,
+      # resolved within the module graph via GOFLAGS=-mod=mod (not forks/forces).
+      go get golang.org/x/net@v0.56.0 golang.org/x/text@v0.39.0
+      go mod tidy
       COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
       VPREFIX="github.com/grafana/pyroscope/v2/pkg/util/build"
       # Mirror upstream ldflags (Makefile go/bin) so `pyroscope -version` reports the

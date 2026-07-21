@@ -42,6 +42,10 @@ pipeline:
       export CGO_ENABLED=1
       export GOFLAGS=-mod=mod
       export GOTOOLCHAIN=local
+      # 0-CVE float: golang.org/x/text (CVE-2026-56852 infinite loop) to its fixed
+      # minor, resolved within the module graph via GOFLAGS=-mod=mod (not a fork/force).
+      go get golang.org/x/text@v0.39.0
+      go mod tidy
       LDFLAGS='-s -w -X github.com/rqlite/rqlite/v10/cmd.Version=${{package.version}} -extldflags "-static"'
       # rqlited: the distributed database server.
       go build -trimpath -ldflags "$LDFLAGS" \
