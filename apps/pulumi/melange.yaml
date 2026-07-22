@@ -39,6 +39,11 @@ pipeline:
       export GOFLAGS=-mod=mod
       # The pulumi CLI is its own module under pkg/; build from inside it.
       cd pkg
+      # 0-CVE gate: grpc GHSA-hrxh-6v49-42gf -> 1.82.1 (+ coherent otel 1.43.0 +
+      # oauth2 0.36.0 cascade). -mod=mod lets the build below resolve go.sum.
+      go get google.golang.org/grpc@v1.82.1 golang.org/x/oauth2@v0.36.0 \
+        go.opentelemetry.io/otel@v1.43.0 go.opentelemetry.io/otel/trace@v1.43.0 \
+        go.opentelemetry.io/otel/metric@v1.43.0 go.opentelemetry.io/otel/sdk@v1.43.0
       go build -trimpath -tags "osusergo grpcnotrace" \
         -ldflags "-s -w -X github.com/pulumi/pulumi/sdk/v3/go/common/version.Version=v${{package.version}}" \
         -o "${{targets.destdir}}/usr/bin/pulumi" ./cmd/pulumi

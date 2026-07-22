@@ -37,9 +37,17 @@ pipeline:
       export CGO_ENABLED=0
       export GOFLAGS=-mod=mod
       cd cmd
-      # 0-CVE gate: minimal same-major bumps of vendored transitive modules.
+      # 0-CVE gate: minimal same-major bumps of transitive modules. grpc bumped to
+      # v1.82.1 for GHSA-hrxh-6v49-42gf (xDS RBAC + HTTP/2, HIGH); grpc@1.82.1 requires
+      # the otel@1.43.0 family + x/oauth2@0.36.0, so float that cascade (otel bumped
+      # 1.41.0 -> 1.43.0 in place).
       go get github.com/opencontainers/runc@v1.4.3 \
-             go.opentelemetry.io/otel@v1.41.0 \
+             google.golang.org/grpc@v1.82.1 \
+             go.opentelemetry.io/otel@v1.43.0 \
+             go.opentelemetry.io/otel/sdk@v1.43.0 \
+             go.opentelemetry.io/otel/trace@v1.43.0 \
+             go.opentelemetry.io/otel/metric@v1.43.0 \
+             golang.org/x/oauth2@v0.36.0 \
              golang.org/x/crypto@v0.52.0 \
              golang.org/x/net@v0.55.0
       go mod tidy

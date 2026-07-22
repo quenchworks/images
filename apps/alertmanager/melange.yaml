@@ -111,9 +111,15 @@ pipeline:
       # Bump the one transitive dep the comprehensive Trivy gate flags (minor/patch,
       # API-compatible -- not a fork/force). golang.org/x/crypto resolves to v0.51.0
       # in 0.33.0's module graph; 0.52.0 clears the x/crypto/ssh advisories
-      # (CVE-2026-39827..39835 / 42508 / 46595 / 46597 / 46598). grpc, x/net and the
-      # otel family already resolve to their fixed versions here, so no further bumps.
+      # (CVE-2026-39827..39835 / 42508 / 46595 / 46597 / 46598). x/net and x/text
+      # already resolve to their fixed versions here.
       go get golang.org/x/crypto@v0.54.0
+      # grpc GHSA-hrxh-6v49-42gf (xDS RBAC + HTTP/2, HIGH): bump to v1.82.1. grpc@1.82.1
+      # requires the otel@1.43.0 family + x/oauth2@0.36.0, so float that cascade too.
+      go get google.golang.org/grpc@v1.82.1 \
+             go.opentelemetry.io/otel@v1.43.0 go.opentelemetry.io/otel/sdk@v1.43.0 \
+             go.opentelemetry.io/otel/trace@v1.43.0 go.opentelemetry.io/otel/metric@v1.43.0 \
+             golang.org/x/oauth2@v0.36.0
       go mod tidy
 
       REVISION="$(git rev-parse HEAD)"

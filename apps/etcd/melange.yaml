@@ -34,11 +34,18 @@ pipeline:
       # repo is multi-module: server -> etcd, plus etcdctl and etcdutl.
       # 0-CVE: bump golang.org/x/net v0.54.0 -> v0.55.0 (MINOR, same major)
       # in every module to clear the x/net/html + x/net/idna CVE cluster
-      # (CVE-2026-25680/25681/27136/39821/42502/42506).
+      # (CVE-2026-25680/25681/27136/39821/42502/42506). Also bump grpc to v1.82.1
+      # for GHSA-hrxh-6v49-42gf (xDS RBAC + HTTP/2, HIGH); grpc@1.82.1 requires the
+      # otel@1.43.0 family + x/oauth2@0.36.0, so float that cascade (go mod tidy
+      # prunes it from modules that don't import grpc).
       for pair in server:etcd etcdctl:etcdctl etcdutl:etcdutl; do
         dir="${pair%%:*}"; bin="${pair##*:}"
         ( cd "$dir" \
             && go get golang.org/x/net@v0.57.0 golang.org/x/text@v0.40.0 \
+            && go get google.golang.org/grpc@v1.82.1 \
+                 go.opentelemetry.io/otel@v1.43.0 go.opentelemetry.io/otel/sdk@v1.43.0 \
+                 go.opentelemetry.io/otel/trace@v1.43.0 go.opentelemetry.io/otel/metric@v1.43.0 \
+                 golang.org/x/oauth2@v0.36.0 \
             && go mod tidy \
             && go build -trimpath -ldflags "-s -w" \
                 -o "${{targets.destdir}}/usr/bin/${bin}" . )
