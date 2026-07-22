@@ -55,7 +55,9 @@ pipeline:
       # makes `go mod tidy` cascade-downgrade go-kms-wrapping/wrappers/transit/v2 to an
       # old v2.1.0 that predates WrapperTypeTransit, breaking the build.
       go get github.com/Azure/go-ntlmssp@v0.1.1 golang.org/x/net@v0.56.0 google.golang.org/grpc@v1.82.1 go.opentelemetry.io/otel@v1.43.0 go.opentelemetry.io/otel/sdk@v1.43.0 go.opentelemetry.io/otel/trace@v1.43.0 go.opentelemetry.io/otel/metric@v1.43.0 golang.org/x/oauth2@v0.36.0
-      go mod tidy
+      # NOTE: no `go mod tidy` — it cascade-downgrades go-kms-wrapping/transit/v2 to
+      # v2.1.0 (pre-WrapperTypeTransit). `go get` above raises the floated deps + go.sum;
+      # `go build` resolves the rest without re-tidying the whole graph.
       # The repo root is `package main` -> the `bao` binary (Vault-compatible CLI/API).
       # Stamp version.GitCommit/BuildDate like upstream's scripts/build.sh (no `ui` tag).
       # -buildvcs=false: without it, a git-checkout build stamps the main module as the
