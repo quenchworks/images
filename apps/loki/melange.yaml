@@ -56,7 +56,9 @@ pipeline:
       #     (CVE-2026-41602: integer overflow in TFramedTransport Go impl)
       # thrift is an indirect dep (jaeger/otel export path); go mod tidy keeps
       # it in the graph at the bumped version.
-      go get github.com/apache/thrift@v0.23.0
+      #   golang.org/x/net v0.55.0 -> v0.56.0
+      #     (CVE-2026-46600: panic parsing an invalid SVCB/HTTPS DNS RR)
+      go get github.com/apache/thrift@v0.23.0 golang.org/x/net@v0.56.0
       go mod tidy
       # Stamp version exactly like upstream's Makefile (VPREFIX = the stable
       # Loki build package, which forwards into prometheus/common/version) so

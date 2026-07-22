@@ -49,10 +49,12 @@ pipeline:
       # advisory fix and already ships jackc/pgx/v5 v5.10.0 (>=v5.9.2, CVE-2026-41889
       # fixed upstream). One transitive dep still ships vulnerable:
       #   go-ntlmssp   CVE-2026-32952 -> v0.1.1  (upstream pins v0.1.0)
+      #   golang.org/x/net v0.55.0 -> v0.56.0 (CVE-2026-46600: panic parsing an
+      #   invalid SVCB/HTTPS DNS RR)
       # NOTE: do NOT force a pgx downgrade here -- pinning pgx below 2.6.0's own v5.10.0
       # makes `go mod tidy` cascade-downgrade go-kms-wrapping/wrappers/transit/v2 to an
       # old v2.1.0 that predates WrapperTypeTransit, breaking the build.
-      go get github.com/Azure/go-ntlmssp@v0.1.1
+      go get github.com/Azure/go-ntlmssp@v0.1.1 golang.org/x/net@v0.56.0
       go mod tidy
       # The repo root is `package main` -> the `bao` binary (Vault-compatible CLI/API).
       # Stamp version.GitCommit/BuildDate like upstream's scripts/build.sh (no `ui` tag).

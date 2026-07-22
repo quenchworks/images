@@ -52,6 +52,14 @@ pipeline:
       export CGO_ENABLED=0
       export GOFLAGS=-mod=vendor
       export GOTOOLCHAIN=local
+      # 0-CVE gate float: golang.org/x/net v0.55.0 -> v0.56.0 (CVE-2026-46600:
+      # panic parsing an invalid SVCB/HTTPS DNS RR). Vendored build -- bump in
+      # module mode, then re-vendor so the build sees it. Skip `go mod tidy`: it
+      # would raise the go directive above Wolfi's go-1.26 and break
+      # GOTOOLCHAIN=local; go get + go mod vendor is surgical (MVS raises only
+      # x/net, the rest of the pinned vendored graph is untouched).
+      GOFLAGS=-mod=mod go get golang.org/x/net@v0.56.0
+      GOFLAGS=-mod=mod go mod vendor
       # Stamp version exactly like upstream's Makefile GO_FLAGS: it sets the
       # pkg/util/version package vars (MIMIR_VERSION), so `mimir -version` and the
       # build_info metric report the pinned release. GO_TAGS = netgo,stringlabels.

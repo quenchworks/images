@@ -57,6 +57,10 @@ pipeline:
       # Stamp the real version into the //go:embed'd VERSION file (a tarball has
       # no .git, so upstream's versiongetter would otherwise write v0.0.0).
       printf 'v%s' "${{package.version}}" > internal/core/VERSION
+      # 0-CVE gate float: golang.org/x/text v0.38.0 -> v0.39.0 (CVE-2026-56852:
+      # infinite loop on invalid input). Minor, API-compatible.
+      go get golang.org/x/text@v0.39.0
+      go mod tidy
       go build -trimpath -ldflags "-s -w" \
         -o "${{targets.destdir}}/usr/bin/mediamtx" .
       # Ship the upstream default config at a path MediaMTX auto-discovers

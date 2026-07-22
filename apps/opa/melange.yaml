@@ -34,6 +34,10 @@ pipeline:
   - runs: |
       export CGO_ENABLED=0
       export GOFLAGS=-mod=mod
+      # 0-CVE gate float: golang.org/x/net v0.55.0 -> v0.56.0 (CVE-2026-46600:
+      # panic parsing an invalid SVCB/HTTPS DNS RR). Minor, API-compatible.
+      go get golang.org/x/net@v0.56.0
+      go mod tidy
       go build -trimpath \
         -ldflags "-s -w -X github.com/open-policy-agent/opa/v1/version.Version=${{package.version}}" \
         -o "${{targets.destdir}}/usr/bin/opa" .

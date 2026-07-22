@@ -89,7 +89,9 @@ pipeline:
       # Bump golang.org/x/image the comprehensive gate flags: v0.41.0 carries
       # CVE-2026-33813 + CVE-2026-46601 (webp/VP8 DoS), fixed in 0.43.0. Minor,
       # API-compatible bump within the module graph -- not a fork/force.
-      go get golang.org/x/image@v0.43.0
+      #   golang.org/x/net v0.55.0 -> v0.56.0 (CVE-2026-46600: panic parsing an
+      #   invalid SVCB/HTTPS DNS RR).
+      go get golang.org/x/image@v0.43.0 golang.org/x/net@v0.56.0
       go mod tidy
       # netgo,sqlite_fts5 match upstream GO_BUILD_TAGS. Static link like the
       # upstream "standalone distribution" build (-extldflags '-static -latomic').
