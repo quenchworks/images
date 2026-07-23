@@ -105,13 +105,22 @@ pipeline:
       swap io/netty netty-transport-native-epoll  4.2.14.Final 4.2.16.Final linux-x86_64
       swap io/netty netty-transport-native-kqueue 4.2.14.Final 4.2.16.Final osx-aarch_64
       swap io/netty netty-transport-native-kqueue 4.2.14.Final 4.2.16.Final osx-x86_64
-      # jetty 12.1.8 -> 12.1.10 (Jul-2026 jetty wave; only the CVE-flagged modules).
-      # jetty patch releases are ABI-compatible within 12.1.x, so bumping just the flagged
-      # jars alongside the 12.1.8 remainder is safe (same pattern as the netty subset above).
-      swap org/eclipse/jetty     jetty-security     12.1.8 12.1.10
-      swap org/eclipse/jetty     jetty-server       12.1.8 12.1.10
-      swap org/eclipse/jetty     jetty-util         12.1.8 12.1.10
-      swap org/eclipse/jetty/ee8 jetty-ee8-security 12.1.8 12.1.10
+      # jetty 12.1.8 -> 12.1.10 (Jul-2026 jetty wave). Neo4j's embedded HTTP server links
+      # against a SINGLE coherent jetty version -- mixing 12.1.8 + 12.1.10 makes its HTTP
+      # endpoints 500 (probes fail -> CrashLoop). So bump the WHOLE org.eclipse.jetty.* set
+      # neo4j ships (core + http2 + ee8 + ee), not just the CVE-flagged jars, in lockstep.
+      # (jetty-servlet-api-4.0.9 is the servlet API spec jar, a different artifact -- leave it.)
+      for a in jetty-alpn-java-server jetty-alpn-server jetty-http jetty-io \
+               jetty-session jetty-util jetty-server jetty-security jetty-xml; do
+        swap org/eclipse/jetty "$a" 12.1.8 12.1.10
+      done
+      for a in jetty-http2-common jetty-http2-hpack jetty-http2-server; do
+        swap org/eclipse/jetty/http2 "$a" 12.1.8 12.1.10
+      done
+      for a in jetty-ee8-nested jetty-ee8-security jetty-ee8-servlet jetty-ee8-webapp; do
+        swap org/eclipse/jetty/ee8 "$a" 12.1.8 12.1.10
+      done
+      swap org/eclipse/jetty/ee jetty-ee-webapp 12.1.8 12.1.10
       # shiro 2.1.0 -> 2.2.1 (CVE-2026-49268 HIGH LDAP injection + CVE-2026-43827 session
       # fixation); whole module set bumped in lockstep (shiro pins ${project.version}).
       for a in shiro-core shiro-cache shiro-config-core shiro-lang shiro-event \
