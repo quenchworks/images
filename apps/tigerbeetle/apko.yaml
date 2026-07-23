@@ -1,0 +1,55 @@
+# Assembles the TigerBeetle runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Ships upstream's self-contained static `tigerbeetle` binary. TigerBeetle needs a
+# formatted data file before it can start; the chart's initContainer runs
+# `tigerbeetle format` once, then the main container runs `tigerbeetle start`. The
+# data file must live on a writable, persisted mount (/data). Default port 3000.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - busybox            # /bin/sh for the chart's format-once initContainer guard
+    - ca-certificates-bundle
+    - tzdata
+    - quench-tigerbeetle@local
+
+accounts:
+  groups:
+    - groupname: tigerbeetle
+      gid: 1001
+  users:
+    - username: tigerbeetle
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/tigerbeetle
+
+environment:
+  PATH: /usr/bin:/bin
+
+work-dir: /data
+
+paths:
+  # writable data mount (read-only rootfs elsewhere): holds the formatted data file
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-tigerbeetle"
+  org.opencontainers.image.licenses: "Apache-2.0"
