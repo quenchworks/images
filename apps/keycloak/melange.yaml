@@ -80,6 +80,19 @@ pipeline:
       swap "$OT/opentelemetry-sdk-metrics/1.62.0/opentelemetry-sdk-metrics-1.62.0.jar" io.opentelemetry.opentelemetry-sdk-metrics-1.57.0.jar 50b057fbf063f6801f623212f4b51b6a3fefc77837314a1316b2f54894c8b5d4
       swap "$OT/opentelemetry-sdk-trace/1.62.0/opentelemetry-sdk-trace-1.62.0.jar" io.opentelemetry.opentelemetry-sdk-trace-1.57.0.jar fb6c0953b229a6da1db813135ae11a621bf9da56b7356c1e93049ed4b088c232
       swap "https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-databind/2.21.5/jackson-databind-2.21.5.jar" com.fasterxml.jackson.core.jackson-databind-2.21.2.jar 507418c0fafd38b2b2cfb704521630da613a8e4cc8381195a6f418017883e2c0
+      # (3) jackson-core 2.21.2 -> 2.21.5 (same Jul-2026 cluster; databind 2.21.5 above needs a
+      #     matching-or-newer jackson-core). Content-swap keeping the 2.21.2 filename.
+      swap "https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-core/2.21.5/jackson-core-2.21.5.jar" com.fasterxml.jackson.core.jackson-core-2.21.2.jar b64b5874162b503a0e58a8f7758266e8dd9f91bf49e3a59ae0b5f47589a231b7
+      # (4) netty 4.1.135 -> 4.1.136.Final for the Jul-2026-flagged codec jars (codec/haproxy/
+      #     http/http2). Netty is ABI-stable within 4.1.x, so bumping the flagged jars against
+      #     the 4.1.135 remainder is safe. Content-swap keeping the 4.1.135 filenames.
+      NET="https://repo1.maven.org/maven2/io/netty"
+      swap "$NET/netty-codec/4.1.136.Final/netty-codec-4.1.136.Final.jar" io.netty.netty-codec-4.1.135.Final.jar 2de4fc13005c7740b46427a47ee04265a19779c147d53e583f441889b1148159
+      swap "$NET/netty-codec-haproxy/4.1.136.Final/netty-codec-haproxy-4.1.136.Final.jar" io.netty.netty-codec-haproxy-4.1.135.Final.jar 841be7fc6f1c929ecc63c70a909e0df085b4e80e44680acf46708f0e93e68037
+      swap "$NET/netty-codec-http/4.1.136.Final/netty-codec-http-4.1.136.Final.jar" io.netty.netty-codec-http-4.1.135.Final.jar ffd1e1b19a533bc6e47ef2cbc1290374ff4a7cb53a280defa3df392538214948
+      swap "$NET/netty-codec-http2/4.1.136.Final/netty-codec-http2-4.1.136.Final.jar" io.netty.netty-codec-http2-4.1.135.Final.jar 14f67ae095c056b062aa0ee2c7b01f6b78004cf3620a6e9061bcb637f079387a
+      # (5) org.postgresql:postgresql 42.7.11 -> 42.7.12 (Jul-2026). Content-swap keeping name.
+      swap "https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.12/postgresql-42.7.12.jar" org.postgresql.postgresql-42.7.11.jar 31fbf6f06b2217fb51d5100cee51b22625cc81640da0679b47914e54c1e6377c
       cd ../../..
   - runs: |
       # Run the augmentation (`kc.sh build`) at IMAGE BUILD time so runtime is optimized

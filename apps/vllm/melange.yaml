@@ -8,9 +8,12 @@
 # (comprehensive mode, which scans the venv's ~140 Python packages too).
 #
 # The venv lives at /opt/vllm/venv; vllm is pinned to the build version's CPU wheel so the
-# install matches the catalog version exactly. setuptools is bumped to 80.9.0 (within
-# vLLM's >=77.0.3,<81.0.0 runtime constraint) to clear the FIXABLE CVE-2025-47273 that the
-# stock 77.0.3 pin carries.
+# install matches the catalog version exactly. setuptools is bumped to 83.0.0 to clear the
+# FIXABLE CVE-2025-47273 that the stock 77.0.3 pin carries AND CVE-2026-59890 (gate-blocking)
+# that 80.9.0 still carries. This exceeds vLLM's declared >=77.0.3,<81.0.0 runtime constraint,
+# but setuptools is build tooling (never imported on the inference path), the bump runs as a
+# separate post-install pip invocation so it does not trip vLLM's own resolver, and
+# `import vllm` is verified afterward in test.sh.
 package:
   name: quench-vllm
   version: __VER__
@@ -70,14 +73,14 @@ pipeline:
 
       # Clear the FIXABLE CVEs the pip build pulls into the venv as build tooling (none of
       # these are vLLM runtime deps, but Trivy comprehensive scans them anyway):
-      #   setuptools 77.0.3  -> CVE-2025-47273 (fixed 78.1.1); 80.9.0 is in vLLM's
-      #                         >=77.0.3,<81.0.0 runtime constraint.
+      #   setuptools 77.0.3  -> CVE-2025-47273 (fixed 78.1.1) + CVE-2026-59890 (fixed 83.0.0,
+      #                         gate-blocking, also present in 80.9.0). Bumped to 83.0.0.
       #   wheel 0.45.1       -> CVE-2026-24049 (fixed 0.46.2)
       #   jaraco.context 5.3 -> CVE-2026-23949 (fixed 6.1.0)  [a setuptools dependency]
       # Bumping (not removing) keeps setuptools/pkg_resources importable for any runtime
       # `import pkg_resources`. Verified `import vllm` still succeeds afterward.
       /opt/vllm/venv/bin/pip install --no-cache-dir \
-        "setuptools==80.9.0" "wheel>=0.46.2" "jaraco.context>=6.1.0"
+        "setuptools==83.0.0" "wheel>=0.46.2" "jaraco.context>=6.1.0"
 
       # setuptools 80.9.0 still bundles OLD vendored copies under setuptools/_vendor:
       # jaraco.context 5.3.0 (CVE-2026-23949) and wheel 0.45.1 (CVE-2026-24049). They

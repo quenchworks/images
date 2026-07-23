@@ -87,15 +87,19 @@ pipeline:
       # the WHOLE bundled netty family is pinned so io.netty stays version-aligned.
       {
         echo '            <dependency><groupId>com.fasterxml.jackson.core</groupId><artifactId>jackson-databind</artifactId><version>2.21.5</version></dependency>'
+        echo '            <dependency><groupId>com.fasterxml.jackson.core</groupId><artifactId>jackson-core</artifactId><version>2.21.5</version></dependency>'
         for a in buffer codec codec-dns codec-haproxy codec-http codec-http2 codec-mqtt codec-socks common handler handler-proxy resolver resolver-dns transport transport-native-unix-common; do
           echo "            <dependency><groupId>io.netty</groupId><artifactId>netty-$a</artifactId><version>4.1.136.Final</version></dependency>"
         done
+        # QuenchWorks CVE-2026-54291 (HIGH): pin the postgresql JDBC driver.
+        echo '            <dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId><version>42.7.12</version></dependency>'
       } > /tmp/dm-pins.xml
       # Insert before the FIRST </dependencies> in the pom -- that is the closer
       # of <dependencyManagement><dependencies> (it precedes the main deps list).
       awk '/<\/dependencies>/ && !done { while ((getline l < "/tmp/dm-pins.xml") > 0) print l; done=1 } { print }' pom.xml > pom.xml.new
       mv pom.xml.new pom.xml
       grep -q 'netty-codec-haproxy' pom.xml
+      grep -q '<version>42.7.12</version>' pom.xml
 
       # apicurio 3.x API port of floci's single apicurio consumer (the Glue
       # schema-registry adapter). Three deltas, all mechanical:

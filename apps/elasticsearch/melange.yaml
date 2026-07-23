@@ -145,6 +145,31 @@ pipeline:
       }
       xc_surgery "$dest/lib/elasticsearch-x-content-9.4.3.jar"
       xc_surgery "$dest/lib/tools/plugin-cli/elasticsearch-x-content-9.4.3.jar"
+
+      # --- (g) netty 4.1.135.Final -> 4.1.136.Final (Jul-2026 netty codec/http wave). The
+      #     RETAINED modules (transport-netty4, x-pack-security, x-pack-inference,
+      #     esql-datasource-grpc) bundle standalone io.netty jars; the azure/iceberg/gcs
+      #     datasources + repository-azure that also carried netty were dropped in (a) above.
+      #     netty is ABI-stable within 4.1.x -> content-swap in place keeping the 4.1.135
+      #     filename (Trivy reads the jar's pom.properties = 4.1.136 -> clean).
+      nettyswap() { # <artifact> <sha256-of-4.1.136>
+        getj "$MC/io/netty/$1/4.1.136.Final/$1-4.1.136.Final.jar" "$1-4.1.136.Final.jar" "$2"
+        find "$dest/modules" -name "$1-4.1.135.Final.jar" -exec cp "$DL/$1-4.1.136.Final.jar" {} \;
+      }
+      nettyswap netty-buffer                        c88f13fc41156fde5df918c7b240038dfbe97ac57576163f208630391789b5d5
+      nettyswap netty-codec                         2de4fc13005c7740b46427a47ee04265a19779c147d53e583f441889b1148159
+      nettyswap netty-codec-dns                     89bddc4ec42756c41a0195a50a1323a324836162b6712a843c3de5c29096c93b
+      nettyswap netty-codec-http                    ffd1e1b19a533bc6e47ef2cbc1290374ff4a7cb53a280defa3df392538214948
+      nettyswap netty-codec-http2                   14f67ae095c056b062aa0ee2c7b01f6b78004cf3620a6e9061bcb637f079387a
+      nettyswap netty-codec-socks                   341f47dbaac667a6e7e6cad4114218025f9755ced641bb0740fb69e34d29b421
+      nettyswap netty-common                        e2f73be7ec359b46583ad875521137000eff520bafd320e730846ec9974f3be6
+      nettyswap netty-handler                       54bb1a59f46a3aefd117942e6acee09e555b756776bad731fc06159d89c2da28
+      nettyswap netty-handler-proxy                 47400551f0444dea33629ee0c52d4e30856b2ddf00b12adf1881902957e74cf2
+      nettyswap netty-resolver                      e64972fec474f5b9bd086b738154d190a923e82c4923ac550aff4f5ea9e98600
+      nettyswap netty-resolver-dns                  9c05a9b18b5d54fcc1569c48b93958019cf3dde5ae7011f8a46451ee05e7daff
+      nettyswap netty-transport                     b92881ea925721ed42fee5122a42b8bce4b84da737dbc3ca2d84dfaca52c28b6
+      nettyswap netty-transport-classes-epoll       f6a0b631b98667f131daf4ca07a9cae1072d58e259dcbc0f8c6a053d843449c6
+      nettyswap netty-transport-native-unix-common  7e014c9b13defd9d254d4e5a5edd8ab6dde17533e1152f99699a6b28b2967a8a
       rm -rf "$PW"
       # ========================================================================
 

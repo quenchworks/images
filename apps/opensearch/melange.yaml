@@ -66,15 +66,24 @@ pipeline:
       #     Sha256-pinned Maven Central. Replace content in place (keep filename); the
       #     OpenSearch plugin classloader scans the dir and Trivy reads the jar's internal
       #     pom.properties (= the fixed version).
+      #     Jul-2026 update: the com.fasterxml line also needs jackson-core -> 2.21.5, and
+      #     the tools.jackson 3.x line moves databind+core -> 3.1.5 (3.1.4 no longer clears
+      #     the wave). All are same-line drop-ins, content replaced in place (filename kept).
       MC="https://repo1.maven.org/maven2"
-      jd2=$(mktemp); jd3=$(mktemp)
+      jd2=$(mktemp); jc2=$(mktemp); jd3=$(mktemp); jc3=$(mktemp)
       curl -fsSL -o "$jd2" "$MC/com/fasterxml/jackson/core/jackson-databind/2.21.5/jackson-databind-2.21.5.jar"
       echo "507418c0fafd38b2b2cfb704521630da613a8e4cc8381195a6f418017883e2c0  $jd2" | sha256sum -c -
-      curl -fsSL -o "$jd3" "$MC/tools/jackson/core/jackson-databind/3.1.4/jackson-databind-3.1.4.jar"
-      echo "14034bfdf392b6ebec1b4bb6c1de29d604f0aa97251259a19d5f19af8719bb20  $jd3" | sha256sum -c -
+      curl -fsSL -o "$jc2" "$MC/com/fasterxml/jackson/core/jackson-core/2.21.5/jackson-core-2.21.5.jar"
+      echo "b64b5874162b503a0e58a8f7758266e8dd9f91bf49e3a59ae0b5f47589a231b7  $jc2" | sha256sum -c -
+      curl -fsSL -o "$jd3" "$MC/tools/jackson/core/jackson-databind/3.1.5/jackson-databind-3.1.5.jar"
+      echo "3a2338d996fd3056791df8d335fa9ba8a62a706ed4245ecf81b3e583df37d08a  $jd3" | sha256sum -c -
+      curl -fsSL -o "$jc3" "$MC/tools/jackson/core/jackson-core/3.1.5/jackson-core-3.1.5.jar"
+      echo "9431b7fa2673bbb618c11d865fe15e13222fd182a214ff998cb7e56afd8f35d2  $jc3" | sha256sum -c -
       find "$dest" -name 'jackson-databind-2.21.3.jar' -exec cp "$jd2" {} \;
+      find "$dest" -name 'jackson-core-2.21.3.jar'     -exec cp "$jc2" {} \;
       find "$dest" -name 'jackson-databind-3.1.3.jar'  -exec cp "$jd3" {} \;
-      rm -f "$jd2" "$jd3"
+      find "$dest" -name 'jackson-core-3.1.3.jar'      -exec cp "$jc3" {} \;
+      rm -f "$jd2" "$jc2" "$jd3" "$jc3"
       # (3) opensearch-sql/opensearch-skills bundle Apache Calcite 1.41.0, whose
       #     calcite-core carries CVE-2026-46718 (unsafe reflection, MEDIUM). The fix is
       #     calcite-core 1.42.0 -- BUT 1.42's CALCITE-7351 made RelDataTypeSystemImpl's
@@ -140,6 +149,50 @@ pipeline:
         cp "$cal"/calcite-*-1.42.0.jar "$dest/plugins/$pdir/"
       done
       rm -rf "$cal"
+      # (4) netty 4.2.15.Final -> 4.2.16.Final (Jul-2026 netty wave). Standalone io.netty jars
+      #     in transport-netty4 + the ml/notifications/performance-analyzer plugins (the
+      #     opensearch-security / -security-analytics plugins that also carried netty are
+      #     already dropped above). netty is ABI-stable within 4.2.x -> content-swap in place
+      #     keeping the 4.2.15 filename; Trivy reads the jar's pom.properties = 4.2.16 -> clean.
+      #     NOTE: opensearch-ml/-notifications also ship netty-transport-classes-epoll-4.1.124
+      #     (a separate 4.1.x line, not part of this 4.2.15 set); left as-is.
+      nd=$(mktemp -d)
+      nettyswap() { # <artifact> <sha256-of-4.2.16>
+        curl -fsSL -o "$nd/$1-4.2.16.Final.jar" "$MC/io/netty/$1/4.2.16.Final/$1-4.2.16.Final.jar"
+        echo "$2  $nd/$1-4.2.16.Final.jar" | sha256sum -c -
+        find "$dest" -name "$1-4.2.15.Final.jar" -exec cp "$nd/$1-4.2.16.Final.jar" {} \;
+      }
+      nettyswap netty-buffer                        cc36ae9fbd0b03fe755eb4eb4424ca53b59cfd297d7fd47d49e5b1059beded6c
+      nettyswap netty-codec                         41868bcc428954e707e39a30686ceddc0bd238391d3989d04dfb72d5f0735926
+      nettyswap netty-codec-base                    feb410225938d9970de6b624a0c031d079804fa5cc5e1ec6e9298f16db5998a7
+      nettyswap netty-codec-classes-quic            9b2856532681b109ecc1d15ba81341665fea4ba1aab78788e3d74c1aff38ca00
+      nettyswap netty-codec-compression             13c8565414dd2115281303ef4ad1f7cc69bd7771d8d12c7d2fb31307dff26d11
+      nettyswap netty-codec-http                    0d16f981de8d0d304a2ab1a81f0a674892089fbaa8a583100aebb4a5b00456ec
+      nettyswap netty-codec-http2                   fe1ffc7ed6bfb40f91c4e265fe76e3be7f9049deef0e8cf5a992420e4f02b542
+      nettyswap netty-codec-http3                   94a4b22187d0240bc299366a5135d439affd1fafd3b5162764e86d290d2e85a4
+      nettyswap netty-codec-marshalling             9691818c6e59a97e454f8381c86dfe840302168d985098a278dca07781efc75e
+      nettyswap netty-codec-protobuf                bb66f23ccb543dd842ddda91b6c8e97e222220d2efa5459f6a46a22ade3b2170
+      nettyswap netty-codec-socks                   e5230b4c467755bb570c846c8e3c0ffadcb1b568c1cd9a3a4ee946734baae54d
+      nettyswap netty-common                        9825ee68a0dc4cd2b53e2f532502401b2211bad9b77e8b04882d9e64487283ff
+      nettyswap netty-handler                       a259ca496da05ac1981f95cd856211f894a328056a6129e9cd70dbbd5df401f7
+      nettyswap netty-handler-proxy                 c53706ebaffd2fcef17b5f675b81eab4be13a714886cb4b2a7d0b73275cd39fe
+      nettyswap netty-resolver                      c9eca6a99036485cf1d186b4a6a595b0a54c53808319ee03924270eae04c32bb
+      nettyswap netty-transport                     cfa3f654caff906653385f4b7ddaa539d795b78f5711a622482b17d2b73484c0
+      nettyswap netty-transport-native-unix-common  41ca8fe192083d17917be7ddcecded4da4fc1db1d1656d03d0bcb14e2f431155
+      # netty-codec-native-quic ships a base jar + per-OS classifier jars (transport-netty4).
+      nettyquic() { # <classifier-suffix, "" for the base jar> <sha256-of-4.2.16>
+        f="netty-codec-native-quic-4.2.16.Final$1.jar"; o="netty-codec-native-quic-4.2.15.Final$1.jar"
+        curl -fsSL -o "$nd/$f" "$MC/io/netty/netty-codec-native-quic/4.2.16.Final/$f"
+        echo "$2  $nd/$f" | sha256sum -c -
+        find "$dest" -name "$o" -exec cp "$nd/$f" {} \;
+      }
+      nettyquic ""               cf2d2a587ea7e45f130ccd2a132e70e048979bc20e25efdbf332c2f18abe5230
+      nettyquic -linux-aarch_64  b338c76fee30c1b8b655e3e992e88dffa71591fecb35e1fed70089dc3696e0f6
+      nettyquic -linux-x86_64    3c29587f8b2953032bd37fc20e3eda5bb7270e5e1e09b496f2c024f8ac8b5dc1
+      nettyquic -osx-aarch_64    93c4fcc7a63888cbbc621ff2774632234344518503fca967b77d6cb7f241a8ce
+      nettyquic -osx-x86_64      15cecee5ab661a650fa5c3513fd0c6d84f27d5dcc0eddcdc1b9619649b08fe12
+      nettyquic -windows-x86_64  ebe477b5374382f0d34583907b7441dc59c52492c890f946154deff47883041d
+      rm -rf "$nd"
       # OpenSearch ships config/ with restrictive perms; the nonroot runtime user must
       # be able to read them to seed the writable conf dir (and execute the launchers).
       chmod -R a+rX "$dest"

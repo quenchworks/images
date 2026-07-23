@@ -70,6 +70,21 @@ pipeline:
              '                <groupId>com.fasterxml.jackson.core</groupId>\n'
              '                <artifactId>jackson-databind</artifactId>\n'
              '                <version>2.21.5</version>\n'
+             '            </dependency>\n'
+             '            <dependency>\n'
+             '                <!-- QuenchWorks July-2026 netty CVE wave: first-declared netty-bom import\n'
+             '                     wins over quarkus-bom; covers netty-codec/-haproxy/-http/-http2 etc. -->\n'
+             '                <groupId>io.netty</groupId>\n'
+             '                <artifactId>netty-bom</artifactId>\n'
+             '                <version>4.1.136.Final</version>\n'
+             '                <type>pom</type>\n'
+             '                <scope>import</scope>\n'
+             '            </dependency>\n'
+             '            <dependency>\n'
+             '                <!-- QuenchWorks CVE-2026-54291 pin (HIGH): postgresql JDBC driver -->\n'
+             '                <groupId>org.postgresql</groupId>\n'
+             '                <artifactId>postgresql</artifactId>\n'
+             '                <version>42.7.12</version>\n'
              '            </dependency>')
       m = re.search(r'<dependencyManagement>\s*<dependencies>', src)
       if m:
@@ -82,6 +97,9 @@ pipeline:
       print(f"jackson pin applied (property bumped x{n}, databind pinned to 2.21.5)")
       PYEOF
       grep -n '2.21.5' pom.xml || { echo "jackson pin FAILED to apply"; exit 1; }
+      grep -q 'netty-bom' pom.xml || { echo "netty-bom pin FAILED to apply"; exit 1; }
+      grep -q '4.1.136.Final' pom.xml || { echo "netty version pin FAILED to apply"; exit 1; }
+      grep -q '<version>42.7.12</version>' pom.xml || { echo "postgresql pin FAILED to apply"; exit 1; }
       # -----------------------------------------------------------------------
       # Build the Quarkus fast-jar. Skip tests (they need Docker + network); the
       # released bytecode is identical to upstream's `mvn clean package`.

@@ -97,6 +97,12 @@ pipeline:
       done
       swap io/opentelemetry opentelemetry-api-incubator      1.56.0-alpha 1.62.0-alpha
       swap io/opentelemetry opentelemetry-exporter-prometheus 1.56.0-alpha 1.62.0-alpha
+      # netty codec family: 4.1.135.Final -> 4.1.136.Final (July-2026 wave on the standalone
+      # netty-codec/-haproxy/-http/-http2 jars; same 4.1.x line, ABI-safe patch).
+      swap io/netty netty-codec         4.1.135.Final 4.1.136.Final
+      swap io/netty netty-codec-haproxy 4.1.135.Final 4.1.136.Final
+      swap io/netty netty-codec-http    4.1.135.Final 4.1.136.Final
+      swap io/netty netty-codec-http2   4.1.135.Final 4.1.136.Final
       # Drop the shaded functions-runtime uber-jar (unused in --no-functions-worker standalone).
       rm -f "$dest/instances/java-instance.jar"
       chmod -R a+rX "$dest"

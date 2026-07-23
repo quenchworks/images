@@ -93,17 +93,25 @@ pipeline:
       swap com/fasterxml/jackson/jaxrs    jackson-jaxrs-base           2.21.2 2.21.5
       swap com/fasterxml/jackson/jaxrs    jackson-jaxrs-json-provider  2.21.2 2.21.5
       swap com/fasterxml/jackson/module   jackson-module-jaxb-annotations 2.21.2 2.21.5
-      # netty 4.2.14.Final -> 4.2.15.Final (CVE-2026-44893/48059/44249/45416/50010/50020/45536).
+      # netty 4.2.14.Final -> 4.2.16.Final (Jul-2026 wave on top of the earlier
+      # CVE-2026-44893/48059/44249/45416/50010/50020/45536 set).
       for a in netty-buffer netty-codec-base netty-codec-compression netty-codec-haproxy \
                netty-codec-http netty-common netty-handler netty-resolver netty-transport \
                netty-transport-classes-epoll netty-transport-classes-kqueue \
                netty-transport-native-unix-common; do
-        swap io/netty "$a" 4.2.14.Final 4.2.15.Final
+        swap io/netty "$a" 4.2.14.Final 4.2.16.Final
       done
-      swap io/netty netty-transport-native-epoll  4.2.14.Final 4.2.15.Final linux-aarch_64
-      swap io/netty netty-transport-native-epoll  4.2.14.Final 4.2.15.Final linux-x86_64
-      swap io/netty netty-transport-native-kqueue 4.2.14.Final 4.2.15.Final osx-aarch_64
-      swap io/netty netty-transport-native-kqueue 4.2.14.Final 4.2.15.Final osx-x86_64
+      swap io/netty netty-transport-native-epoll  4.2.14.Final 4.2.16.Final linux-aarch_64
+      swap io/netty netty-transport-native-epoll  4.2.14.Final 4.2.16.Final linux-x86_64
+      swap io/netty netty-transport-native-kqueue 4.2.14.Final 4.2.16.Final osx-aarch_64
+      swap io/netty netty-transport-native-kqueue 4.2.14.Final 4.2.16.Final osx-x86_64
+      # jetty 12.1.8 -> 12.1.10 (Jul-2026 jetty wave; only the CVE-flagged modules).
+      # jetty patch releases are ABI-compatible within 12.1.x, so bumping just the flagged
+      # jars alongside the 12.1.8 remainder is safe (same pattern as the netty subset above).
+      swap org/eclipse/jetty     jetty-security     12.1.8 12.1.10
+      swap org/eclipse/jetty     jetty-server       12.1.8 12.1.10
+      swap org/eclipse/jetty     jetty-util         12.1.8 12.1.10
+      swap org/eclipse/jetty/ee8 jetty-ee8-security 12.1.8 12.1.10
       # shiro 2.1.0 -> 2.2.1 (CVE-2026-49268 HIGH LDAP injection + CVE-2026-43827 session
       # fixation); whole module set bumped in lockstep (shiro pins ${project.version}).
       for a in shiro-core shiro-cache shiro-config-core shiro-lang shiro-event \
