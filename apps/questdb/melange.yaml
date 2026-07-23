@@ -1,0 +1,78 @@
+# Packages QuestDB onto Wolfi. QuestDB is a JVM app: we ship the upstream
+# `no-jre` binary distribution (a single prebuilt modular questdb.jar) on a
+# hardened Wolfi openjdk-21-jre, which is the CVE surface the Trivy gate scans.
+# Same JVM shape as apps/kafka; no standalone libs/ jars to CVE-swap (QuestDB
+# bundles everything into questdb.jar), so this recipe is just fetch + install.
+package:
+  name: quench-questdb
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened QuestDB time-series database, packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-25-jre     # the JRE QuestDB runs on (the scanned CVE surface); 9.4.x jars target class v69 (JDK 25)
+      - libstdc++          # QuestDB unpacks a bundled libquestdb.so that links libstdc++.so.6
+      - bash               # the baked docker-entrypoint.sh is bash
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+
+pipeline:
+  - uses: fetch
+    with:
+      # arch-independent no-jre tarball; extracts to questdb-<ver>-no-jre-bin/
+      uri: https://github.com/questdb/questdb/releases/download/${{package.version}}/questdb-${{package.version}}-no-jre-bin.tar.gz
+      expected-sha256: "__SHA256__"
+      strip-components: 1
+  - runs: |
+      # install the modular jar + license under /opt/questdb
+      dest="${{targets.destdir}}/opt/questdb"
+      install -d "$dest"
+      install -m 0644 questdb.jar "$dest/questdb.jar"
+      install -m 0644 LICENSE.txt "$dest/LICENSE.txt" 2>/dev/null || true
+
+      # bake the container entrypoint. Launches ServerMain directly (skipping the
+      # daemon-style questdb.sh with its PID files / async-profiler); the JVM flags
+      # mirror the upstream launcher's container path. A read-only rootfs means the
+      # data dir (QDB_ROOT) is the sole writable path; QuestDB binds 0.0.0.0 by
+      # default (http 9000, pg-wire 8812, ILP 9009).
+      install -d "${{targets.destdir}}/usr/bin"
+      cat > "${{targets.destdir}}/usr/bin/docker-entrypoint.sh" <<'EOS'
+      #!/bin/bash
+      set -euo pipefail
+
+      QDB_ROOT="${QDB_ROOT:-/var/lib/questdb}"
+      mkdir -p "$QDB_ROOT/db"
+
+      exec java \
+        -DQuestDB-Runtime-66535 \
+        -Dcontainerized=true \
+        -ea -Dnoebug \
+        -XX:ErrorFile="$QDB_ROOT/db/hs_err_pid+%p.log" \
+        -XX:+UnlockExperimentalVMOptions \
+        -XX:+AlwaysPreTouch \
+        -XX:+UseParallelGC \
+        --sun-misc-unsafe-memory-access=allow \
+        --enable-native-access=io.questdb \
+        --add-opens=java.base/java.lang=io.questdb \
+        --add-opens=java.base/java.lang.reflect=io.questdb \
+        --add-opens=java.base/java.nio=io.questdb \
+        --add-opens=java.base/java.time.zone=io.questdb \
+        ${QDB_JAVA_OPTS:-} \
+        -p /opt/questdb/questdb.jar -m io.questdb/io.questdb.ServerMain -d "$QDB_ROOT"
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/docker-entrypoint.sh"
+
+test:
+  pipeline:
+    - runs: |
+        test -f /opt/questdb/questdb.jar

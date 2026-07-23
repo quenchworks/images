@@ -1,0 +1,57 @@
+# Assembles the QuestDB runtime image: hardened Wolfi JRE + the QuestDB jar.
+# Minimal, nonroot, multi-arch, SBOM by apko. Standalone time-series DB.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - openjdk-25-jre
+    - libstdc++
+    - bash
+    - busybox
+    - quench-questdb@local
+
+accounts:
+  groups:
+    - groupname: questdb
+      gid: 1001
+  users:
+    - username: questdb
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/docker-entrypoint.sh
+
+environment:
+  # openjdk-25-jre installs under /usr/lib/jvm with no /usr/bin/java symlink, so the
+  # entrypoint needs java on PATH via JAVA_HOME.
+  JAVA_HOME: /usr/lib/jvm/java-25-openjdk
+  PATH: /usr/lib/jvm/java-25-openjdk/bin:/usr/bin
+  QDB_ROOT: /var/lib/questdb
+
+work-dir: /var/lib/questdb
+
+paths:
+  - path: /var/lib/questdb
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-questdb"
+  org.opencontainers.image.licenses: "Apache-2.0"
