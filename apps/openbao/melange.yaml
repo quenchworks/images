@@ -45,15 +45,18 @@ pipeline:
       export CGO_ENABLED=0
       export GOFLAGS=-mod=mod
       # 0-CVE dependency bumps (minor/patch, same-major -- no API break). We build the
-      # newest OpenBao tag (2.6.0), whose code already carries every openbao/openbao
+      # newest OpenBao tag (2.6.1), whose code already carries every openbao/openbao
       # advisory fix and already ships jackc/pgx/v5 v5.10.0 (>=v5.9.2, CVE-2026-41889
       # fixed upstream). One transitive dep still ships vulnerable:
       #   go-ntlmssp   CVE-2026-32952 -> v0.1.1  (upstream pins v0.1.0)
       #   golang.org/x/net v0.55.0 -> v0.56.0 (CVE-2026-46600: panic parsing an
       #   invalid SVCB/HTTPS DNS RR)
-      # NOTE: do NOT force a pgx downgrade here -- pinning pgx below 2.6.0's own v5.10.0
-      # makes `go mod tidy` cascade-downgrade go-kms-wrapping/wrappers/transit/v2 to an
-      # old v2.1.0 that predates WrapperTypeTransit, breaking the build.
+      # NOTE: NO grpc float here (HELD). 2.6.1 resolves grpc v1.81.1 + go-kms-wrapping/
+      # wrappers/transit/v2 v2.8.0 (which HAS WrapperTypeTransit), same as 2.6.0. Forcing
+      # the canonical grpc@v1.82.1 float makes `go mod tidy` cascade-downgrade transit/v2
+      # to an old v2.1.0 that predates WrapperTypeTransit, breaking the build. Same reason
+      # a pgx downgrade below v5.10.0 is off-limits. 2.6.1 did NOT bump these deps, so the
+      # float stays out until upstream moves to a transit/grpc pair the float tolerates.
       go get github.com/Azure/go-ntlmssp@v0.1.1 golang.org/x/net@v0.56.0
       go mod tidy
       # The repo root is `package main` -> the `bao` binary (Vault-compatible CLI/API).
@@ -67,7 +70,7 @@ pipeline:
       go build -trimpath -buildvcs=false \
         -ldflags "-s -w \
           -X github.com/openbao/openbao/version.fullVersion=${{package.version}} \
-          -X github.com/openbao/openbao/version.GitCommit=03e3a243b6f07d17c60ce0a182adee7cf4c424eb \
+          -X github.com/openbao/openbao/version.GitCommit=__COMMIT__ \
           -X github.com/openbao/openbao/version.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         -o "${{targets.destdir}}/usr/bin/bao" .
 
