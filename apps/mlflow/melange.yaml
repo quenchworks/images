@@ -53,8 +53,12 @@ pipeline:
   # the build version. --no-cache-dir keeps the layer small. The package list is the
   # complete minimal set `mlflow server` needs to boot and serve HTTP (see header). All
   # shebangs in the venv point at /opt/mlflow/venv/bin/python.
-  # GitPython is pinned to 3.1.52 (a transitive mlflow-skinny dep) to clear
-  # GHSA-rwj8-pgh3-r573 (HIGH) that the stock 3.1.51 pull carries.
+  # GitPython is pinned to 3.1.55 (a transitive mlflow-skinny dep; its declared range is
+  # gitpython<4,>=3.1.9, so the pin is in-range). 3.1.55 is the FIRST release that clears
+  # all six HIGH advisories on that line -- GHSA-rwj8-pgh3-r573 (fixed 3.1.52),
+  # GHSA-3rp5-jjmw-4wv2 (3.1.53), GHSA-fjr4-x663-mwxc + GHSA-6p8h-3wgx-97gf +
+  # GHSA-r9mr-m37c-5fr3 (3.1.54) and GHSA-94p4-4cq8-9g67 (3.1.55) -- so nothing lower
+  # (including the 3.1.52 this recipe used to pin) is enough.
   - runs: |
       VER="${{package.version}}"
       dest="${{targets.destdir}}"
@@ -63,7 +67,7 @@ pipeline:
       /opt/mlflow/venv/bin/pip install --no-cache-dir --upgrade pip
       /opt/mlflow/venv/bin/pip install --no-cache-dir \
         "mlflow-skinny==${VER}" \
-        "GitPython==3.1.52" \
+        "GitPython==3.1.55" \
         flask \
         flask-cors \
         sqlalchemy \

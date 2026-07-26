@@ -57,9 +57,11 @@ pipeline:
       # Stamp the real version into the //go:embed'd VERSION file (a tarball has
       # no .git, so upstream's versiongetter would otherwise write v0.0.0).
       printf 'v%s' "${{package.version}}" > internal/core/VERSION
-      # 0-CVE gate float: golang.org/x/text v0.38.0 -> v0.39.0 (CVE-2026-56852:
-      # infinite loop on invalid input). Minor, API-compatible.
-      go get golang.org/x/text@v0.39.0
+      # 0-CVE gate: 1.19.3 already requires webtransport-go v0.11.1 (CVE-2026-57497),
+      # x/net v0.57.0, x/crypto v0.54.0, x/sys v0.47.0 and x/text v0.40.0, so nothing
+      # needs floating up; hold x/text at the version this release ships (pinning the
+      # older v0.39.0 here would downgrade the module graph).
+      go get golang.org/x/text@v0.40.0
       go mod tidy
       go build -trimpath -ldflags "-s -w" \
         -o "${{targets.destdir}}/usr/bin/mediamtx" .
