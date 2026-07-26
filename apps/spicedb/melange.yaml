@@ -37,14 +37,54 @@ pipeline:
       uri: https://github.com/authzed/spicedb/archive/refs/tags/v${{package.version}}.tar.gz
       expected-sha256: __SHA256__
   - runs: |
+      set -eu
       export CGO_ENABLED=0
       export GOTOOLCHAIN=local
       export GOFLAGS=-mod=mod
-      # 0-CVE float: golang.org/x/net (CVE-2026-46600 dnsmessage panic) and
-      # golang.org/x/text (CVE-2026-56852 infinite loop) to their fixed minors,
-      # resolved within the module graph via GOFLAGS=-mod=mod (not forks/forces).
-      go get golang.org/x/net@v0.56.0 golang.org/x/sys@v0.46.0 google.golang.org/grpc@v1.82.1 golang.org/x/crypto@v0.53.0 golang.org/x/text@v0.39.0
+      # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
+      #   golang.org/x/net    CVE-2026-46600 dnsmessage panic
+      #   golang.org/x/text   CVE-2026-56852 infinite loop
+      #   github.com/google/cel-go  GHSA-gcjh-h69q-9w9g (fixed in 0.29.0); pulled in
+      #     via buf.build/go/protovalidate. NOTE: spicedb's DIRECT cel dependency is
+      #     the fork github.com/authzed/cel-go v0.20.2 (a copy held back so it does
+      #     not clash with the cel-go Kubernetes pins) -- that module path carries no
+      #     advisories, so only github.com/google/cel-go is floated here.
+      #
+      # FLOOR is a FLOOR, not a pin. A bare `go get mod@vX` fails silently in two
+      # directions: it is a NO-OP when an upstream `replace` overrides it, and it
+      # becomes a DOWNGRADE once upstream requires more than vX -- re-introducing
+      # the CVE it was added to clear. As of 1.56.0 upstream already requires
+      # x/net 0.57.0 / x/text 0.40.0 / x/crypto 0.54.0 / x/sys 0.47.0 / grpc 1.82.1,
+      # i.e. above every floor below, so a bare `go get` would DOWNGRADE four of
+      # them. Float only what is below the floor, then assert the SHIPPED BINARY
+      # carries nothing below it.
+      FLOOR="golang.org/x/net@v0.56.0 golang.org/x/sys@v0.46.0 google.golang.org/grpc@v1.82.1 golang.org/x/crypto@v0.53.0 golang.org/x/text@v0.39.0 github.com/google/cel-go@v0.29.2"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is
+      # the EFFECTIVE version and a replace cannot hide behind the require line.
+      go list -m $MODS
+      need="$(go list -m $MODS | awk '{ print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
       go mod tidy
       go build -trimpath -tags memoryprotection \
         -ldflags "-s -w -checklinkname=0 -X github.com/jzelinskie/cobrautil/v2.Version=v${{package.version}}" \
         -o "${{targets.destdir}}/usr/bin/spicedb" ./cmd/spicedb
+      # The float is only real if it reached the BINARY. Every `dep`/`=>` line of
+      # `go version -m` must be at or above its floor -- the `=>` line is what
+      # catches a replace-shadowed float. Fail the build rather than ship it.
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/spicedb" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor spicedb)"
+      [ -z "$bad" ] || { echo "❌ 0-CVE float did not reach the binary:"; echo "$bad"; exit 1; }

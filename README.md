@@ -64,8 +64,14 @@ catalog.yaml                 source of truth: app, version, source, license, tie
 apps/<app>/melange.yaml      build the package from source
 apps/<app>/apko.yaml         assemble the minimal nonroot image
 apps/<app>/test.sh           smoke test the built image
+docs/                        build conventions
 .github/workflows/           per-app build, scan, sign, dispatch
 ```
+
+Go recipes that raise a dependency past a CVE must follow
+[docs/go-module-float.md](docs/go-module-float.md) — a bare `go get mod@version`
+is silently defeated by an upstream `replace`, and silently inverts into a
+downgrade once upstream moves past the pin.
 
 ## Add an app
 

@@ -77,15 +77,53 @@ pipeline:
       export GOFLAGS=-mod=mod
       export GO111MODULE=on
       export GOTOOLCHAIN=local   # use the installed go-1.26, don't fetch go.mod's toolchain
-      # 0-CVE gate: float the flagged Go modules to their fixed releases before
-      # building (x/net CVE-2026-46600, x/text CVE-2026-56852), then tidy.
-      go get golang.org/x/net@v0.56.0 golang.org/x/sys@v0.46.0 google.golang.org/grpc@v1.82.1 golang.org/x/crypto@v0.53.0 golang.org/x/text@v0.39.0 && go mod tidy
+      # Upstream go.mod pins x/net DOWN with `replace golang.org/x/net =>
+      # golang.org/x/net v0.55.0`. A replace outranks `go get`, so the float below
+      # was silently discarded and the shipped binary recorded
+      # "dep golang.org/x/net v0.56.0 => golang.org/x/net v0.55.0" -- i.e. it kept
+      # shipping CVE-2026-46600. Drop the replace so MVS can honour the float.
+      # (The other replace, filippo.io/edwards25519 v1.1.0 => v1.2.0, is an
+      # UPGRADE and clears CVE-2026-26958 -- keep it.)
+      go mod edit -dropreplace=golang.org/x/net
+      # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
+      # FLOOR is a FLOOR, not a pin. A bare `go get mod@vX` fails silently in two
+      # directions: it is a NO-OP when a `replace` overrides it, and it becomes a
+      # DOWNGRADE once upstream requires more than vX -- re-introducing the CVE it
+      # was added to clear. So float only what is below the floor, then assert the
+      # SHIPPED BINARY carries nothing below it.
+      FLOOR="golang.org/x/net@v0.56.0 golang.org/x/sys@v0.46.0 google.golang.org/grpc@v1.82.1 golang.org/x/crypto@v0.53.0 golang.org/x/text@v0.39.0 github.com/google/cel-go@v0.29.2"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is
+      # the EFFECTIVE version and a replace cannot hide behind the require line.
+      go list -m $MODS
+      need="$(go list -m $MODS | awk '{ print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
+      go mod tidy
       VER="${{package.version}}"
       # BuildTag = the release tag; BuildState "tagged clean" makes utils.Version() emit the
       # bare vX.Y.Z (what `authelia --version` prints and the chart/test assert).
       go build -trimpath \
         -ldflags "-s -w -X 'github.com/authelia/authelia/v4/internal/utils.BuildTag=v${VER}' -X 'github.com/authelia/authelia/v4/internal/utils.BuildState=tagged clean'" \
         -o "${{targets.destdir}}/usr/bin/authelia" ./cmd/authelia
+      # The float is only real if it reached the BINARY. Every `dep`/`=>` line of
+      # `go version -m` must be at or above its floor -- the `=>` line is what
+      # catches a replace-shadowed float. Fail the build rather than ship it.
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/authelia" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor authelia)"
+      [ -z "$bad" ] || { echo "❌ 0-CVE float did not reach the binary:"; echo "$bad"; exit 1; }
 
 test:
   pipeline:
