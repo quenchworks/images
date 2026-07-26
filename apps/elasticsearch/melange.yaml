@@ -100,14 +100,16 @@ pipeline:
       #     needs reactor-core >= 3.6), so it cannot be cleanly swapped. Drop it.
       rm -rf "$dest"/modules/repository-azure
 
-      # --- (b) standalone jackson 2.15.0 -> 2.18.9 (core+databind+annotations, consistent
-      #     set; databind fix = 2.18.9 (for -54515), core fix >= 2.18.6). Backward-compatible within 2.x.
+      # --- (b) standalone jackson 2.18.8 -> 2.18.9 (core+databind+annotations, consistent
+      #     set; databind fix = 2.18.9 (for -54515 and CVE-2026-59889), core fix >= 2.18.6).
+      #     Backward-compatible within 2.x. (ES <= 9.4.3 bundled 2.15.0 here; 9.4.4 ships
+      #     2.18.8, which still carries the databind advisory -> same swap, newer source.)
       getj "$MC/com/fasterxml/jackson/core/jackson-core/2.18.9/jackson-core-2.18.9.jar" jackson-core-2.18.9.jar e03144f48c8d5307da2894570b4972aab8c72f22440f8dcdb745be2485ce2024
       getj "$MC/com/fasterxml/jackson/core/jackson-databind/2.18.9/jackson-databind-2.18.9.jar" jackson-databind-2.18.9.jar 71595a3f7ff58344ec0496a9f9ec9f623ef7b85b45402d88f1ca261f1bc4b42c
       getj "$MC/com/fasterxml/jackson/core/jackson-annotations/2.18.9/jackson-annotations-2.18.9.jar" jackson-annotations-2.18.9.jar 798c85b86e7420d0b4eb91e7b3e37d4bee673c61de37a616ba51a7539631e6b7
-      find "$dest/modules" -name 'jackson-core-2.15.0.jar'        -exec sh -c 'cp "$1" "$(dirname "$2")/jackson-core-2.18.9.jar";        rm -f "$2"' _ "$DL/jackson-core-2.18.9.jar" {} \;
-      find "$dest/modules" -name 'jackson-databind-2.15.0.jar'    -exec sh -c 'cp "$1" "$(dirname "$2")/jackson-databind-2.18.9.jar";    rm -f "$2"' _ "$DL/jackson-databind-2.18.9.jar" {} \;
-      find "$dest/modules" -name 'jackson-annotations-2.15.0.jar' -exec sh -c 'cp "$1" "$(dirname "$2")/jackson-annotations-2.18.9.jar"; rm -f "$2"' _ "$DL/jackson-annotations-2.18.9.jar" {} \;
+      find "$dest/modules" -name 'jackson-core-2.18.8.jar'        -exec sh -c 'cp "$1" "$(dirname "$2")/jackson-core-2.18.9.jar";        rm -f "$2"' _ "$DL/jackson-core-2.18.9.jar" {} \;
+      find "$dest/modules" -name 'jackson-databind-2.18.8.jar'    -exec sh -c 'cp "$1" "$(dirname "$2")/jackson-databind-2.18.9.jar";    rm -f "$2"' _ "$DL/jackson-databind-2.18.9.jar" {} \;
+      find "$dest/modules" -name 'jackson-annotations-2.18.8.jar' -exec sh -c 'cp "$1" "$(dirname "$2")/jackson-annotations-2.18.9.jar"; rm -f "$2"' _ "$DL/jackson-annotations-2.18.9.jar" {} \;
 
       # --- (c) commons-lang3 3.9 -> 3.18.0 (x-pack-ent-search; other modules already 3.18+)
       getj "$MC/org/apache/commons/commons-lang3/3.18.0/commons-lang3-3.18.0.jar" commons-lang3-3.18.0.jar 4eeeae8d20c078abb64b015ec158add383ac581571cddc45c68f0c9ae0230720
@@ -128,7 +130,7 @@ pipeline:
       cp "$DL/reactor-netty-http-1.2.8.jar" "$infd/reactor-netty-http-1.2.8.jar"
 
       # --- (f) SURGERY on Elastic's OWN core x-content uber-jar (un-droppable). It embeds
-      #     jackson-core 2.17.2 as an EXPLODED, UN-RELOCATED impl dir under IMPL-JARS/, read
+      #     jackson-core 2.18.8 as an EXPLODED, UN-RELOCATED impl dir under IMPL-JARS/, read
       #     by Elastic's EmbeddedImplClassLoader via a plain-text LISTING.TXT (no checksum /
       #     per-class manifest). Rebuild that impl dir from jackson-core 2.18.9 and update
       #     LISTING.TXT so the embedded loader finds the renamed dir. Two copies (server lib
@@ -137,14 +139,14 @@ pipeline:
         jarp="$1"; w="$PW/xc"; rm -rf "$w"; mkdir -p "$w"
         ( cd "$w" && unzip -qo "$jarp" )
         imp="$w/IMPL-JARS/x-content"
-        rm -rf "$imp/jackson-core-2.17.2.jar"
+        rm -rf "$imp/jackson-core-2.18.8.jar"
         mkdir -p "$imp/jackson-core-2.18.9.jar"
         ( cd "$imp/jackson-core-2.18.9.jar" && unzip -qo "$DL/jackson-core-2.18.9.jar" )
-        sed -i 's/jackson-core-2\.17\.2\.jar/jackson-core-2.18.9.jar/' "$imp/LISTING.TXT"
+        sed -i 's/jackson-core-2\.18\.8\.jar/jackson-core-2.18.9.jar/' "$imp/LISTING.TXT"
         rm -f "$jarp"; ( cd "$w" && zip -qrX "$jarp" . )
       }
-      xc_surgery "$dest/lib/elasticsearch-x-content-9.4.3.jar"
-      xc_surgery "$dest/lib/tools/plugin-cli/elasticsearch-x-content-9.4.3.jar"
+      xc_surgery "$dest/lib/elasticsearch-x-content-${{package.version}}.jar"
+      xc_surgery "$dest/lib/tools/plugin-cli/elasticsearch-x-content-${{package.version}}.jar"
 
       # --- (g) netty 4.1.135.Final -> 4.1.136.Final (Jul-2026 netty codec/http wave). The
       #     RETAINED modules (transport-netty4, x-pack-security, x-pack-inference,
@@ -170,6 +172,15 @@ pipeline:
       nettyswap netty-transport                     b92881ea925721ed42fee5122a42b8bce4b84da737dbc3ca2d84dfaca52c28b6
       nettyswap netty-transport-classes-epoll       f6a0b631b98667f131daf4ca07a9cae1072d58e259dcbc0f8c6a053d843449c6
       nettyswap netty-transport-native-unix-common  7e014c9b13defd9d254d4e5a5edd8ab6dde17533e1152f99699a6b28b2967a8a
+      # --- (h) lz4-java 1.10.1 -> 1.11.1 in core lib/ (CVE-2026-59949 MEDIUM: the native
+      #     XXHash impl can crash the JVM on invalid input; new in the 9.4.4 bundle). Same
+      #     at.yawk.lz4 coordinates, same net/jpountz layout, and the 1.11.1 jar still ships
+      #     the linux amd64 + aarch64 natives -> content-swap in place keeping the 1.10.1
+      #     filename (Trivy reads the jar's pom.properties = 1.11.1; the derived automatic-
+      #     module name comes from the filename, so the module graph is untouched).
+      getj "$MC/at/yawk/lz4/lz4-java/1.11.1/lz4-java-1.11.1.jar" lz4-java-1.11.1.jar e5e31b195fcc7e9c5da4b191af3b0082ee616c13f61cbd79409ffa65e4dd5c47
+      cp "$DL/lz4-java-1.11.1.jar" "$dest/lib/lz4-java-1.10.1.jar"
+
       rm -rf "$PW"
       # ========================================================================
 

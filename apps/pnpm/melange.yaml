@@ -24,6 +24,7 @@ environment:
     packages:
       - busybox
       - ca-certificates-bundle
+      - curl                        # fetch the patched vendored npm tarballs (see below)
 
 pipeline:
   # npm tarballs extract to ./package/; keep that dir (fetch defaults to
@@ -38,6 +39,27 @@ pipeline:
       dest="${{targets.destdir}}/usr/lib/node_modules/pnpm"
       install -d "$dest"
       cp -a package/. "$dest/"
+
+      # Bump the vendored pure-JS deps that carry FIXABLE CVEs to their upstream fixed
+      # versions. Security update, not a gate weaken -- same major/minor line, so each is
+      # a drop-in: tar 7.5.20 -> 7.5.21 (GHSA-r292-9mhp-454m, uncontrolled recursion in
+      # mapHas/filesFilter => uncatchable stack-overflow DoS on crafted long paths).
+      # pnpm bundles TWO copies: dist/node_modules (the running CLI) and
+      # artifacts/exe/dist/node_modules (the standalone-executable payload) -- both are
+      # scanned, so both get patched. npm tarballs extract under package/.
+      patch_pkg() {  # <target-node_modules-dir> <name> <url> <sha256>
+        [ -d "$1/$2" ] || { echo "vendored $2 not at $1/$2 -- layout changed" >&2; exit 1; }
+        curl -fsSL -o pkg.tgz "$3"
+        echo "$4  pkg.tgz" | sha256sum -c -
+        rm -rf npmpkg && mkdir npmpkg && tar -xzf pkg.tgz -C npmpkg
+        rm -rf "$1/$2" && mkdir -p "$1/$2"
+        cp -a npmpkg/package/. "$1/$2/"
+      }
+      TAR_URL=https://registry.npmjs.org/tar/-/tar-7.5.21.tgz
+      TAR_SHA=bcedf25a21daecd1a18fb5e19ab855b7d79ec8ef1da175e8ba85cfc0ed0069d1
+      patch_pkg "$dest/dist/node_modules"              tar "$TAR_URL" "$TAR_SHA"
+      patch_pkg "$dest/artifacts/exe/dist/node_modules" tar "$TAR_URL" "$TAR_SHA"
+
       # PATH launcher; the .cjs carries `#!/usr/bin/env node`. The image
       # entrypoint runs it through node explicitly (shell-less rootfs).
       install -d "${{targets.destdir}}/usr/bin"
