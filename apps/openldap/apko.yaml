@@ -1,0 +1,102 @@
+# Assembles a hardened OpenLDAP (slapd) image directly from Wolfi's own versioned
+# openldap-2.6 packages. No Dockerfile, NO melange build -- apko pulls the server,
+# the LMDB (back-mdb) backend module and the client tools straight from the Wolfi
+# `os` repo. `__PKG_SERVER__` / `__PKG_CLIENTS__` / `__PKG_MDB__` are the pinned
+# apks, substituted per matrix entry by apps/openldap/build.conf render().
+#
+# CONFIG + BOOT (the shell-free-entrypoint question, answered):
+#   The entrypoint EXECS slapd DIRECTLY -- no `#!/bin/sh` wrapper, which a minimal
+#   apko image could not run anyway. slapd needs a config file to boot at all, so
+#   we keep the config that Wolfi's own apk installs at /etc/openldap/slapd.conf
+#   (legacy single-file format: back_mdb module load, suffix dc=my-domain,dc=com,
+#   rootdn cn=Manager, rootpw secret, data under /var/lib/openldap/openldap-data).
+#   That makes `docker run` and test.sh work with ZERO extra wiring, and mdb creates
+#   its database on first start, so no offline slapadd is required just to come up.
+#   The CHART overrides command/args to point -f at its OWN generated slapd.conf
+#   (real base DN + admin password from a Secret) rendered by an init container, and
+#   seeds the base DN there. The baked config is the standalone default, never the
+#   production one.
+#
+# PORTS: nonroot (uid 1001) cannot bind 389/636, so slapd listens on the
+# unprivileged 1389 (ldap) and, when the operator supplies TLS material and adds
+# the URL to args, 1636 (ldaps). 1389 is also what Bitnami's openldap uses.
+#
+# busybox is included on purpose: it is what lets the CHART run a small idempotent
+# bootstrap script in an init container (render the config from a template, seed the
+# base DN once) using the slap* tools already in this image. The SERVER entrypoint
+# still needs no shell.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - busybox               # init-container bootstrap + operator exec/debug
+    - __PKG_SERVER__        # slapd + slapadd/slapcat/slappasswd/slaptest + schema
+    - __PKG_CLIENTS__       # ldapadd/ldapsearch/ldapwhoami/ldappasswd/...
+    - __PKG_MDB__           # back_mdb.so, the modern LMDB backend
+
+accounts:
+  groups:
+    - groupname: openldap
+      gid: 1001
+  users:
+    - username: openldap
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# -d keeps slapd in the FOREGROUND (any -d value sets no_detach), which is what a
+# container needs; 256 is the "stats" level, so connections/operations/results land
+# on stderr as container logs.
+entrypoint:
+  command: /usr/bin/slapd -h ldap://0.0.0.0:1389/ -f /etc/openldap/slapd.conf -d 256
+
+environment:
+  LDAPTLS_CACERT: /etc/ssl/certs/ca-certificates.crt
+
+paths:
+  # The apk installs slapd.conf mode 0600 root:root, so uid 1001 cannot read its own
+  # config; recursively own the config tree (config + schema) instead. Harmless: the
+  # chart runs with readOnlyRootFilesystem, so this tree is immutable at runtime.
+  - path: /etc/openldap
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+    recursive: true
+  # Own the whole state tree: the apk ships /var/lib/openldap/openldap-data as
+  # root:root, and slapd (uid 1001) must create + write the LMDB files there.
+  # `recursive` is required -- apko chowns only the named path otherwise.
+  - path: /var/lib/openldap
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+    recursive: true
+  # pidfile/argsfile target from slapd.conf; the apk does not create it.
+  - path: /var/lib/openldap/run
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+  # Where the chart mounts the init-container-rendered config (emptyDir). Present so
+  # a bare `docker run -v ...` works too.
+  - path: /opt/quench/openldap
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-openldap"
+  org.opencontainers.image.licenses: "OLDAP-2.8"
