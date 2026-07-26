@@ -1,0 +1,41 @@
+# Assembles the Sealed Secrets controller runtime image. Minimal, nonroot, multi-arch,
+# SBOM by apko. Entrypoint is the bare controller binary with its defaults: it serves
+# /healthz, /v1/cert.pem, /v1/verify and /v1/rotate on :8080 and Prometheus metrics on
+# :8081, both unprivileged, so the image runs as nonroot with no capabilities. The chart
+# supplies any extra flags. The controller writes nothing outside /tmp, so it runs fine
+# with a read-only root filesystem.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-sealed-secrets@local
+
+accounts:
+  groups:
+    - groupname: sealed-secrets
+      gid: 1001
+  users:
+    - username: sealed-secrets
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/controller
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-sealed-secrets"
+  org.opencontainers.image.licenses: "Apache-2.0"

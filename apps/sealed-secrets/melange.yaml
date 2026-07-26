@@ -1,0 +1,53 @@
+# Builds the Sealed Secrets controller from source onto Wolfi. Static Go binary, no CGO.
+# The repo is a single Go module (github.com/bitnami/sealed-secrets) with two commands:
+# cmd/controller (the cluster-side unsealing controller) and cmd/kubeseal (the client
+# CLI). Only the controller belongs in a server image, so that is all we build. The
+# version is stamped via -X main.VERSION so `controller --version` reports the real
+# release. Output is a signed APK in Quenchworks' own repo. No upstream distro binaries.
+package:
+  name: quench-sealed-secrets
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Sealed Secrets controller, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go-1.26
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/bitnami-labs/sealed-secrets/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local   # use the installed go-1.26, don't fetch a newer go.mod toolchain
+      # 0-CVE gate: float the coherent golang.org/x/* set together (they share internal
+      # APIs, so bumping one alone breaks the build). Older lines (0.36/0.37) pin net,
+      # crypto, sys, text and oauth2 below their fixed versions; on 0.38.4 most of these
+      # are already satisfied and the bump is a no-op. grpc/otel are not in this module's
+      # graph, so they are deliberately absent from the float set.
+      go get \
+        golang.org/x/net@v0.56.0 \
+        golang.org/x/crypto@v0.53.0 \
+        golang.org/x/sys@v0.46.0 \
+        golang.org/x/text@v0.39.0 \
+        golang.org/x/oauth2@v0.36.0
+      go mod tidy
+      go build -trimpath \
+        -ldflags "-s -w -X main.VERSION=${{package.version}}" \
+        -o "${{targets.destdir}}/usr/bin/controller" ./cmd/controller
