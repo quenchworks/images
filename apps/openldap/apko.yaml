@@ -21,10 +21,10 @@
 # unprivileged 1389 (ldap) and, when the operator supplies TLS material and adds
 # the URL to args, 1636 (ldaps). 1389 is also what Bitnami's openldap uses.
 #
-# busybox is included on purpose: it is what lets the CHART run a small idempotent
+# busybox is included on purpose: the entrypoint needs one shell line to cap
+# RLIMIT_NOFILE (see below), and it is what lets the CHART run a small idempotent
 # bootstrap script in an init container (render the config from a template, seed the
-# base DN once) using the slap* tools already in this image. The SERVER entrypoint
-# still needs no shell.
+# base DN once) using the slap* tools already in this image.
 contents:
   keyring:
     - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
@@ -51,8 +51,16 @@ accounts:
 # -d keeps slapd in the FOREGROUND (any -d value sets no_detach), which is what a
 # container needs; 256 is the "stats" level, so connections/operations/results land
 # on stderr as container logs.
+#
+# `ulimit -n` is NOT optional: slapd sizes its connection table from RLIMIT_NOFILE at
+# startup. containerd/Kubernetes hand containers a soft limit of 1073741816, so slapd
+# tries to allocate ~56 GB of connection slots, thrashes, and gets OOM-killed before
+# it ever listens (docker's own 1M default is small enough to hide the bug). Capping
+# the limit bounds the table; 4096 allows ~4k concurrent connections for a few hundred
+# kB. This needs a shell for one line, hence shell-fragment -- slapd itself is still
+# `exec`ed, so it stays PID 1 and receives signals directly.
 entrypoint:
-  command: /usr/bin/slapd -h ldap://0.0.0.0:1389/ -f /etc/openldap/slapd.conf -d 256
+  shell-fragment: "ulimit -n 4096; exec /usr/bin/slapd -h ldap://0.0.0.0:1389/ -f /etc/openldap/slapd.conf -d 256"
 
 environment:
   LDAPTLS_CACERT: /etc/ssl/certs/ca-certificates.crt
@@ -83,7 +91,13 @@ paths:
     gid: 1001
     permissions: 0o750
   # Where the chart mounts the init-container-rendered config (emptyDir). Present so
-  # a bare `docker run -v ...` works too.
+  # a bare `docker run -v ...` works too. Own the PARENT as well, or apko leaves
+  # /opt/quench root:root 0750 and uid 1001 cannot traverse into it.
+  - path: /opt/quench
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
   - path: /opt/quench/openldap
     type: directory
     uid: 1001
