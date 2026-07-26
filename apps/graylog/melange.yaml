@@ -44,7 +44,8 @@ pipeline:
       # 0-CVE remediation via CLASS-LEVEL SURGERY inside the shaded uber-jars.
       # graylog.jar (a Multi-Release fat jar) and plugin/graylog-storage-opensearch3
       # bundle vulnerable libraries as LOOSE, UN-RELOCATED classes (plain package
-      # paths com/fasterxml/jackson/**, org/apache/shiro/**, com/sun/mail|javax/mail),
+      # paths com/fasterxml/jackson/**, org/apache/shiro/**, com/sun/mail|javax/mail,
+      # net/jpountz/**),
       # so we overlay the patched upstream classes (+ their META-INF/maven pom.properties
       # that Trivy reads for the version) and repackage. Not relocated => swappable.
       #   * jackson-core + jackson-databind 2.21.2 -> 2.21.5 (CVE-2026-54512..54518;
@@ -54,13 +55,17 @@ pipeline:
       #     only shiro-core is flagged but the family is bumped together to keep the
       #     minor consistent)
       #   * com.sun.mail:jakarta.mail 1.6.7 -> 1.6.8 (CVE-2025-7962 SMTP injection)
+      #   * at.yawk.lz4:lz4-java 1.10.4 -> 1.11.1 (CVE-2026-59949 MEDIUM: the native
+      #     XXHash implementations can crash the JVM). Sole artifact in the at.yawk.lz4
+      #     group -- no sibling modules to keep aligned -- and only graylog.jar bundles
+      #     it (all three storage plugin jars are clean).
       # All fetches are sha256-pinned Maven Central. Scratch lives under the on-disk
       # build workspace (NOT /tmp, which is a small tmpfs in the sandbox).
       set -eu
       ROOT="$(pwd)"
       MC="https://repo1.maven.org/maven2"
       PW="$ROOT/.patchwork"; DL="$PW/dl"; ST="$PW/stage"
-      mkdir -p "$DL" "$ST/jackson" "$ST/shiro" "$ST/mail"
+      mkdir -p "$DL" "$ST/jackson" "$ST/shiro" "$ST/mail" "$ST/lz4"
       getj() { curl -fsSL -o "$DL/$2" "$1"; echo "$3  $DL/$2" | sha256sum -c -; }
 
       # --- jackson (databind + core) 2.21.5: overlay class trees + maven metadata ---
@@ -90,6 +95,15 @@ pipeline:
       getj "$MC/com/sun/mail/jakarta.mail/1.6.8/jakarta.mail-1.6.8.jar" jakarta.mail-1.6.8.jar c83f1a1ed580a35878957de7367071be27026d02d34ace6267d0c3da23e193c2
       ( cd "$ST/mail" && unzip -qo "$DL/jakarta.mail-1.6.8.jar" 'com/sun/mail/*' 'javax/mail/*' 'META-INF/maven/com.sun.mail/*' )
 
+      # --- at.yawk.lz4:lz4-java 1.11.1 ---
+      # graylog.jar's bundled net/jpountz/** tree is byte-for-byte the SAME FILE SET as the
+      # published 1.10.4 jar, and 1.11.1's tree is a strict superset of it, so the overlay
+      # leaves no stale classes behind. net/jpountz/util/**/liblz4-java.so are the prebuilt
+      # natives shipped inside the jar -- they are part of this tree, so the overlay replaces
+      # the vulnerable native XXHash code too, not just the Java side.
+      getj "$MC/at/yawk/lz4/lz4-java/1.11.1/lz4-java-1.11.1.jar" lz4-java-1.11.1.jar e5e31b195fcc7e9c5da4b191af3b0082ee616c13f61cbd79409ffa65e4dd5c47
+      ( cd "$ST/lz4" && unzip -qo "$DL/lz4-java-1.11.1.jar" 'net/jpountz/*' 'META-INF/maven/at.yawk.lz4/*' )
+
       # --- apply: explode each uber-jar, overlay the patched trees, repackage ---
       apply() {
         jarp="$1"; shift
@@ -100,7 +114,7 @@ pipeline:
         ( cd "$w" && zip -qrX "$jarp" . )
         rm -rf "$w"
       }
-      apply "$ROOT/graylog.jar" "$ST/jackson" "$ST/shiro" "$ST/mail"
+      apply "$ROOT/graylog.jar" "$ST/jackson" "$ST/shiro" "$ST/mail" "$ST/lz4"
       apply "$ROOT/plugin/graylog-storage-opensearch3-${{package.version}}.jar" "$ST/jackson"
       rm -rf "$PW"
   - runs: |

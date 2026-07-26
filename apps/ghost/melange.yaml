@@ -69,7 +69,7 @@ pipeline:
       export PYTHON="$(command -v python3.13 || command -v python3)"
       export npm_config_python="$PYTHON"
       # --- 0-CVE gate: inject pnpm dependency overrides -----------------------------------
-      # Ghost 6.51.0's prod tree still pins nine CVE-flagged deps. pnpm reads dependency
+      # Ghost 6.x's prod tree still pins eight CVE-flagged deps. pnpm reads dependency
       # overrides from the `overrides:` map in pnpm-workspace.yaml (Ghost already uses this to
       # patch e.g. fast-xml-parser/axios/tar). We append our own entries to that map so every
       # copy is pinned to its Trivy "Fixed version"; scoped `name@<range` keys keep the blast
@@ -82,9 +82,6 @@ pipeline:
       f="pnpm-workspace.yaml"
       lines=open(f).read().splitlines()
       add=[
-        # NOTE: @tryghost/members-csv CVE-2024-34448 is NOT overridable — Trivy's fixed
-        # version 5.82.0 is an unpublished Ghost-monorepo-internal number; the standalone npm
-        # package tops out at 2.0.7 (what Ghost 6.51.0 already ships). No installable fix.
         "  babel-traverse: 'npm:@babel/traverse@7.23.2'",  # CVE-2023-45133 rename fix
         "  'esbuild@<0.28.1': 0.28.1",           # GHSA-g7r4-m6w7-qqqr
         "  'jsonwebtoken@<9.0.0': 9.0.3",        # CVE-2022-23539/23540/23541
@@ -105,39 +102,22 @@ pipeline:
       PYEOF
       pnpm install --prod --no-frozen-lockfile
 
-      # --- CVE-2024-34448: @tryghost/members-csv genuine fix + version realignment --------
-      # SOLE remaining blocker. The standalone npm package @tryghost/members-csv tops out at
-      # 2.0.7, but the GHSA (GHSA-xgwh-cgv9-783v / CVE-2024-34448) keys its "Fixed version" to
-      # the Ghost MONOREPO number 5.82.0 with affected range [0, 5.82.0) — a version that was
-      # never published to npm, so no `pnpm override` can install it (ERR_PNPM_NO_MATCHING_VERSION).
-      # The actual upstream fix (commit de668e79) is a ONE-LINE change: pass `escapeFormulae:true`
-      # to papaparse.unparse so exported field values beginning with =,+,-,@ (and tab/CR) are
-      # neutralized with a leading quote — standard CSV-injection defense. 2.0.7 ALREADY carries
-      # that fix, so the code is genuinely safe; Trivy is purely version-matching. We therefore
-      # (a) re-assert the escapeFormulae fix in every installed copy (idempotent, future-proof),
-      # and (b) realign each installed copy's package.json version to the advisory's fixed number
-      # 5.82.0 so the installed version no longer falls inside the vulnerable range. This is a
-      # real fix, NOT a gate bypass: no .trivyignore, no --skip, no VEX — the vulnerable code path
-      # is neutralized AND the version genuinely matches the fixed release.
-      python3.13 - <<'PYEOF'
-      import glob, json, os
-      copies = glob.glob('node_modules/**/@tryghost/members-csv/package.json', recursive=True)
-      assert copies, "members-csv not found under node_modules"
-      for pj in copies:
-          d = os.path.dirname(pj)
-          up = os.path.join(d, 'lib', 'unparse.js')
-          if os.path.exists(up):
-              src = open(up).read()
-              if 'escapeFormulae' not in src:
-                  src = src.replace('papaparse.unparse(mappedRows, {',
-                                    'papaparse.unparse(mappedRows, {\n        escapeFormulae: true,', 1)
-                  open(up, 'w').write(src)
-                  assert 'escapeFormulae' in open(up).read(), "failed to inject escapeFormulae"
-          meta = json.load(open(pj))
-          meta['version'] = '5.82.0'  # advisory fixed version; escapes affected range [0,5.82.0)
-          json.dump(meta, open(pj, 'w'), indent=2)
-      print("members-csv: patched + realigned %d copy(ies) -> 5.82.0" % len(copies))
-      PYEOF
+      # --- CVE-2024-34448 (@tryghost/members-csv CSV injection): FIXED UPSTREAM in 6.54.0 --
+      # Up to 6.53.0 this recipe carried surgery on the installed @tryghost/members-csv copies:
+      # the GHSA (GHSA-xgwh-cgv9-783v) keys its "Fixed version" to the Ghost MONOREPO number
+      # 5.82.0 with affected range [0, 5.82.0), a version never published to npm, while the
+      # standalone package topped out at 2.0.7 — so no `pnpm override` could satisfy Trivy and
+      # we re-asserted the `escapeFormulae` fix and realigned the version by hand.
+      # Ghost 6.54.0 DELETED that dependency (gone from both package.json and pnpm-lock.yaml)
+      # and inlined the module into core/server/services/members/csv/. So there is no longer a
+      # versioned package for Trivy to match, and the surgery has nothing to operate on — the
+      # old `assert copies` is what broke the 6.54.0 build.
+      # The fix itself did NOT disappear: the inlined unparse() defaults escapeFormulae to true,
+      # which is the actual CSV-injection defense (papaparse prefixes a leading =,+,-,@ or tab
+      # with an apostrophe). Assert that default instead of the vanished node_modules copy, so a
+      # future release that silently drops it fails the build rather than shipping quietly.
+      # Not a gate bypass: no .trivyignore, no --skip, no VEX.
+      grep -q 'escapeFormulae = true' core/server/services/members/csv/unparse.js
 
       # Trim build-time cruft that bloats the image and the CVE surface but is never run:
       # caches, source maps for vendored deps, and pnpm's own store metadata.
