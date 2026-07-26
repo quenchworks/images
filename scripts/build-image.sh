@@ -62,7 +62,12 @@ fi
 # --- render placeholders, if any, via the app's render() --------------------
 APKO=apko.yaml
 MEL=melange.yaml
-needs_render() { grep -vE '^[[:space:]]*#' "$1" 2>/dev/null | grep -q '__[A-Z0-9_]*__'; }
+# Single awk process on purpose: the old `grep -v … | grep -q …` form raced with
+# `set -o pipefail` — grep -q exits on first match, the upstream grep takes
+# SIGPIPE (141), pipefail propagates it, and needs_render reports "no
+# placeholders". Under load that silently fed melange the UNRENDERED
+# melange.yaml ("invalid version __VER__"). No pipe, no SIGPIPE, no race.
+needs_render() { awk '!/^[[:space:]]*#/ && /__[A-Z0-9_]+__/ { found = 1; exit } END { exit !found }' "$1" 2>/dev/null; }
 if needs_render apko.yaml || { [ -f melange.yaml ] && needs_render melange.yaml; }; then
   if [ "$HAS_CONF" = 1 ] && declare -F render >/dev/null; then
     SED_PROG="$(render "$VERSION")"
