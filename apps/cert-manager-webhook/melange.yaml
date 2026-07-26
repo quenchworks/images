@@ -41,6 +41,11 @@ pipeline:
       # go-jose, go-ntlmssp and otel below the fixed versions; newer lines already
       # satisfy these, so the bump is a no-op there. cmd/<target> replaces the parent
       # cert-manager module (../../), so bumping here (the main module) wins via MVS.
+      # cel-go 0.26.0 -> 0.29.2 clears GHSA-gcjh-h69q-9w9g (MEDIUM: json:"-" fields
+      # readable from user CEL expressions; first fixed release is 0.29.0). cel-go is
+      # only reached via k8s.io/apiserver's CEL libs, which are source-compatible with
+      # 0.29. On the 1.18.x/1.19.x tags cel-go is not in the build graph at all, so
+      # `go mod tidy` drops the requirement again there.
       go get \
         golang.org/x/net@v0.56.0 \
         golang.org/x/crypto@v0.53.0 \
@@ -48,7 +53,8 @@ pipeline:
         google.golang.org/grpc@v1.82.1 \
         github.com/go-jose/go-jose/v4@v4.1.4 \
         github.com/Azure/go-ntlmssp@v0.1.1 \
-        go.opentelemetry.io/otel/sdk@v1.43.0
+        go.opentelemetry.io/otel/sdk@v1.43.0 \
+        github.com/google/cel-go@v0.29.2
       go mod tidy || true
       go build -trimpath \
         -ldflags "-s -w -X github.com/cert-manager/cert-manager/pkg/util.AppVersion=v${{package.version}}" \

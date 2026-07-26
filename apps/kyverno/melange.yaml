@@ -56,6 +56,9 @@ pipeline:
       #   sigstore/sigstore-go 1.1.4  -> 1.2.0   (CVE-2026-49834, MEDIUM)
       #   google.golang.org/grpc 1.81.1 -> 1.82.1 (GHSA-hrxh-6v49-42gf xDS/HTTP2, HIGH;
       #     pulls the otel 1.43 + oauth2 0.36 coherent cascade)
+      #   google/cel-go        0.27.0 -> 0.29.2  (GHSA-gcjh-h69q-9w9g, MEDIUM:
+      #     ext.NativeTypes(ParseStructTag("json")) exposes json:"-" fields to
+      #     user CEL expressions; first fixed release is 0.29.0)
       go get \
         golang.org/x/crypto@v0.54.0 \
         golang.org/x/net@v0.57.0 \
@@ -74,7 +77,8 @@ pipeline:
         go.opentelemetry.io/otel/sdk@v1.44.0 \
         go.opentelemetry.io/otel/trace@v1.44.0 \
         go.opentelemetry.io/otel/metric@v1.44.0 \
-        golang.org/x/oauth2@v0.36.0
+        golang.org/x/oauth2@v0.36.0 \
+        github.com/google/cel-go@v0.29.2
       go mod tidy
       LDF="-s -w -X github.com/kyverno/kyverno/pkg/version.BuildVersion=v${{package.version}}"
       bindir="${{targets.destdir}}/usr/bin"

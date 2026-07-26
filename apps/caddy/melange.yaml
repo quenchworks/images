@@ -55,9 +55,22 @@ pipeline:
       # flagged versions (x/net CVE-2026-46600, x/text CVE-2026-56852). Float them
       # to the fixed releases in module mode, then re-vendor so the -mod=vendor
       # build tree is consistent with the updated go.mod.
-      GOFLAGS=-mod=mod go get golang.org/x/net@v0.56.0 golang.org/x/sys@v0.46.0 google.golang.org/grpc@v1.82.1 golang.org/x/crypto@v0.53.0 golang.org/x/text@v0.39.0
+      # cel-go v0.28.1 -> v0.29.2 clears GHSA-gcjh-h69q-9w9g (MEDIUM:
+      # ext.NativeTypes(ParseStructTag("json")) exposes json:"-" fields to user CEL
+      # expressions); 0.29.0 is the first fixed release, there is no 0.28.x backport.
+      GOFLAGS=-mod=mod go get golang.org/x/net@v0.56.0 golang.org/x/sys@v0.46.0 google.golang.org/grpc@v1.82.1 golang.org/x/crypto@v0.53.0 golang.org/x/text@v0.39.0 github.com/google/cel-go@v0.29.2
       GOFLAGS=-mod=mod go mod tidy
       GOFLAGS=-mod=mod go mod vendor
+      # cel-go 0.29 made interpreter.Interpretable{Call,Const,Attribute,Constructor}
+      # embed the new InterpretableV2 interface, so interpreter.NewCall now takes
+      # []InterpretableV2 instead of []Interpretable. Caddy's CEL matcher decorator
+      # builds that slice with an explicit []interpreter.Interpretable literal, which
+      # no longer type-checks. reqAttr is an InterpretableAttribute, and that embeds
+      # InterpretableV2 in 0.29, so switching the literal's element type is the whole
+      # fix (2 call sites, no behavior change). Upstream caddy has not bumped cel-go
+      # yet; drop this once it ships a release built against cel-go >= 0.29.
+      sed -i 's#\[\]interpreter\.Interpretable{reqAttr}#[]interpreter.InterpretableV2{reqAttr}#g' \
+        vendor/github.com/caddyserver/caddy/v2/modules/caddyhttp/celmatcher.go
       export GOFLAGS=-mod=vendor
       # Stamp the version so `caddy version` reports the pinned release even if
       # build-info extraction ever changes. CustomVersion is Caddy's documented
