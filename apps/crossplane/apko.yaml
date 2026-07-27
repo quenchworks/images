@@ -1,0 +1,48 @@
+# Assembles the Crossplane control-plane runtime image. Minimal, nonroot, multi-arch,
+# SBOM by apko.
+#
+# The entrypoint is the BARE multi-call binary, not a fixed subcommand: the same image
+# runs `core init` (the chart's init container, installs the core CRDs from /crds),
+# `core start` (the control plane) and `rbac start` (the RBAC manager). kong marks the
+# `core` command `default:"withargs"`, so an argument-less run is `crossplane core start`.
+#
+# Ports (cmd/crossplane/core/core.go defaults): 8080 metrics, 8081 health probe,
+# 9443 webhook server -- all unprivileged, so the image runs as uid 1001 with no
+# capabilities. Crossplane writes only to its package/function caches (/cache/xpkg,
+# /cache/xfn) and /tmp, all of which the chart supplies as emptyDirs, so the root
+# filesystem can stay read-only.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-crossplane@local
+
+accounts:
+  groups:
+    - groupname: crossplane
+      gid: 1001
+  users:
+    - username: crossplane
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/crossplane
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-crossplane"
+  org.opencontainers.image.licenses: "Apache-2.0"
