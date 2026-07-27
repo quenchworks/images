@@ -41,6 +41,67 @@ pipeline:
       # creates ${destdir}/usr/bin/renovate -> ../lib/node_modules/renovate/...
       # and unpacks the bundled deps under ${destdir}/usr/lib/node_modules.
       npm install -g "renovate@${{package.version}}" --prefix="${destdir}/usr"
+
+      # --- brace-expansion CVE-2026-14257 (HIGH): install the fixed 5.0.8 over every stale copy
+      # A GLOBAL install has no project package.json, so npm `overrides` are unavailable here —
+      # the fix is applied to the installed tree instead. Renovate's own top-level copy already
+      # floats to 5.0.8 (glob 13 -> minimatch 10.2.5 -> brace-expansion ^5.0.5); the stragglers
+      # are two nested copies that CANNOT float:
+      #   bunyan (optionalDep) -> mv 2.1.1 -> rimraf ~2.4.0 -> glob ^6.0.1 -> minimatch 3.1.5 -> ^1.1.7  => 1.1.16
+      #   gaxios 7.x           -> rimraf ^5.0.1 -> glob 10.5.0 -> minimatch 9.0.9 -> ^2.0.2            => 2.1.2
+      # Both ranges are pinned to lines that have NO fix: the advisory (GHSA-mh99-v99m-4gvg) has a
+      # single affected range, `<= 5.0.7`, spanning every line, so the maintenance heads 1.1.16 and
+      # 2.1.2 are affected too and no future 1.x/2.x can sort above it — 5.0.8 is the only escape.
+      # Parent-bumping is not available either: rimraf 6 / glob 11 are promise-only and callback-
+      # style mv/rimraf 2 would break, and minimatch 9.0.9 (the newest 9.x) deliberately REVERTED
+      # from brace-expansion ^5.0.2 back to ^2.0.2.
+      # 5.0.8 also changed the CJS entry to a NAMED-only export (`exports.expand`, `__esModule`,
+      # no callable default) while minimatch 3.1.5 does `require("brace-expansion")(pattern)` and
+      # 9.0.9 does `__importDefault(...).default(pattern)` — so each copy gets a one-line
+      # re-export of the function as module.exports (named props kept). The patched
+      # implementation is what runs; the EXPANSION_MAX_LENGTH bound that fixes the CVE is
+      # untouched. No .trivyignore, no --skip, no VEX. Verified against the published tarballs:
+      # minimatch 3.1.5 / 9.0.9 / 10.2.5 all braceExpand() correctly and stay bounded afterwards.
+      # The staging dir carries its own package.json so npm treats it as an isolated root and
+      # cannot hoist into (and rewrite) the tree we just installed.
+      mkdir -p .be-stage
+      echo '{"name":"quench-be-stage","private":true}' > .be-stage/package.json
+      ( cd .be-stage && npm install --no-audit --no-fund --no-package-lock brace-expansion@5.0.8 )
+      BE_STAGE="${PWD}/.be-stage/node_modules" NM_ROOT="${destdir}/usr/lib/node_modules" node -e '
+        const fs=require("fs"), path=require("path");
+        const stage=process.env.BE_STAGE, root=process.env.NM_ROOT;
+        const SHIM="\n// QuenchWorks: brace-expansion 5.x exports a NAMED-only CJS binding; re-export\n"
+                  +"// the function itself (named props kept) so minimatch 3.x/9.0.9 keep working.\n"
+                  +"module.exports = Object.assign(expand, exports, { default: expand });\n";
+        const ver=d=>JSON.parse(fs.readFileSync(path.join(d,"package.json"),"utf8")).version;
+        const copies=fs.readdirSync(root,{recursive:true,withFileTypes:true})
+          .filter(e=>e.isDirectory()&&e.name==="brace-expansion")
+          .map(e=>path.join(e.parentPath,e.name));
+        if(!copies.length) throw new Error("no brace-expansion copy under "+root);
+        let rep=0, shim=0;
+        for(const d of copies){
+          if(!ver(d).startsWith("5.")){
+            fs.rmSync(d,{recursive:true});
+            fs.cpSync(path.join(stage,"brace-expansion"),d,{recursive:true});
+            // 5.x needs balanced-match ^4 while the tree hoists ^1 for the old copies, so nest it.
+            fs.cpSync(path.join(stage,"balanced-match"),path.join(d,"node_modules","balanced-match"),{recursive:true});
+            rep++;
+          }
+          const cjs=path.join(d,"dist","commonjs","index.js");
+          if(!fs.readFileSync(cjs,"utf8").includes("Object.assign(expand")){fs.appendFileSync(cjs,SHIM);shim++;}
+          if(!ver(d).startsWith("5.")) throw new Error("brace-expansion still "+ver(d)+" at "+d);
+          const b=require(d);
+          if(typeof b!=="function"||b("a{b,c}").join()!=="ab,ac")
+            throw new Error("brace-expansion CJS interop broken at "+d);
+        }
+        console.log("brace-expansion: "+copies.length+" copies, "+rep+" replaced, "+shim+" shimmed");
+      '
+      rm -rf .be-stage
+
       # Sanity: the launcher symlink must exist (build fails loudly otherwise).
       test -L "${destdir}/usr/bin/renovate"
       test -f "${destdir}/usr/lib/node_modules/renovate/dist/renovate.js"
+      # ...and renovate's own minimatch (a brace-expansion 5.x consumer) must still expand braces.
+      RENOVATE_NM="${destdir}/usr/lib/node_modules/renovate/node_modules" node -e '
+        if (require(process.env.RENOVATE_NM + "/minimatch").braceExpand("a{b,c}").join() !== "ab,ac")
+          throw new Error("minimatch braceExpand broken");'

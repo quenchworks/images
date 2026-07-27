@@ -128,10 +128,17 @@ pipeline:
       #   * fast-xml-parser 4.4.1 -> 5.7.0 (CVE-2026-25896 CRITICAL + 5 more; 5.7.0 is the only
       #     version clearing all, incl. CVE-2026-41650 which has no 4.x fix)
       #   * uuid 8.3.2 -> 11.1.1 (CVE-2026-41907; fix only in the 11.x major)
+      #   * brace-expansion -> 5.0.8 (CVE-2026-14257 HIGH). The advisory's affected range is a
+      #     single `<= 5.0.7` spanning EVERY line, so the 1.x/2.x maintenance heads (1.1.16 /
+      #     2.1.2) are affected too and 5.0.8 is the only fix; see the interop step below.
+      #   * tar -> 7.5.22 (GHSA-r292-9mhp-454m MED needs >= 7.5.21). Overridden rather than left
+      #     to float because n8n packages pin tar EXACTLY; 7.5.22 is the newest 7.5.x.
       node -e '
         const fs=require("fs");const p=JSON.parse(fs.readFileSync("package.json","utf8"));
         p.overrides=Object.assign(p.overrides||{},{
+          "brace-expansion":"5.0.8",
           "fast-xml-parser":"5.7.0",
+          "tar":"7.5.22",
           "uuid":"11.1.1"
         });
         fs.writeFileSync("package.json",JSON.stringify(p,null,2));
@@ -140,6 +147,43 @@ pipeline:
       # by default (allowScripts gating) and only WARNS, so native bindings in the JS runner tree
       # would be silently skipped. This hermetic, sha-pinned build wants the pre-npm-12 behavior.
       npm install --omit=dev --no-audit --no-fund --legacy-peer-deps --dangerously-allow-all-scripts
+
+      # --- brace-expansion CVE-2026-14257: 5.0.8 + the CJS interop it broke ---------------
+      # 5.0.8 rewrote the CJS entry to a NAMED-only export (`exports.expand`, `__esModule: true`,
+      # no callable default). minimatch 10.x consumes that shape natively, but minimatch 3.x/5.x
+      # do `require("brace-expansion")(pattern)` and 9.0.9 (the newest 9.x, which REVERTED to
+      # brace-expansion ^2.0.2) does `__importDefault(...).default(pattern)` — both throw
+      # "expand is not a function" at LOAD time. The override above pins every copy to the fixed
+      # 5.0.8, and this step re-exports the function as module.exports (named props kept) so any
+      # consumer shape the tree happens to resolve keeps working on the patched code. The
+      # EXPANSION_MAX_LENGTH bound that fixes the CVE is untouched: no .trivyignore, no --skip,
+      # no VEX. The assert fails the build if a copy escaped the override.
+      python3.13 - <<'PYEOF'
+      import json, os
+      SHIM = ('\n// QuenchWorks: brace-expansion 5.x exports a NAMED-only CJS binding; re-export the\n'
+              '// function itself (named props kept) so minimatch 3.x/5.x/9.0.9 consumers keep working.\n'
+              'module.exports = Object.assign(expand, exports, { default: expand });\n')
+      # os.walk, not glob: a hidden store dir (pnpm's node_modules/.pnpm/) is invisible to
+      # glob's **. Symlinks are not followed, so nothing is visited twice.
+      copies = sorted(os.path.join(r, 'brace-expansion', 'package.json')
+                      for r, dirs, _ in os.walk('node_modules') if 'brace-expansion' in dirs)
+      assert copies, "brace-expansion not found under node_modules"
+      stale = [p for p in copies if json.load(open(p))['version'].split('.')[0] != '5']
+      assert not stale, "override missed brace-expansion copies: %s" % stale
+      n = 0
+      for pj in copies:
+          cjs = os.path.join(os.path.dirname(pj), 'dist/commonjs/index.js')
+          if 'Object.assign(expand' not in open(cjs).read():
+              open(cjs, 'a').write(SHIM); n += 1
+      print("brace-expansion: %d copy(ies) at 5.x, %d shimmed" % (len(copies), n))
+      PYEOF
+      # Prove the shim on the REAL installed copies: require() must yield a callable that
+      # expands. A future 5.x that moves the CJS entry fails the build here instead of at runtime.
+      for d in $(find node_modules -type d -name brace-expansion); do
+        node -e "const b=require(require('path').resolve('$d'));
+                 if (typeof b!=='function'||b('a{b,c}').join()!=='ab,ac')
+                   throw new Error('brace-expansion CJS interop broken at $d');"
+      done
 
       # Strip foreign-arch + musl prebuilt native binaries (the JS runner pulls n8n-core /
       # n8n-workflow, whose deps vendor multi-arch .node files: @sentry/node-*, isolated-vm,

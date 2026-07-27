@@ -69,7 +69,7 @@ pipeline:
       export PYTHON="$(command -v python3.13 || command -v python3)"
       export npm_config_python="$PYTHON"
       # --- 0-CVE gate: inject pnpm dependency overrides -----------------------------------
-      # Ghost 6.51.0's prod tree still pins nine CVE-flagged deps. pnpm reads dependency
+      # Ghost 6.x's prod tree still pins a set of CVE-flagged deps. pnpm reads dependency
       # overrides from the `overrides:` map in pnpm-workspace.yaml (Ghost already uses this to
       # patch e.g. fast-xml-parser/axios/tar). We append our own entries to that map so every
       # copy is pinned to its Trivy "Fixed version"; scoped `name@<range` keys keep the blast
@@ -78,66 +78,114 @@ pipeline:
       # @tryghost/validator@3.2.1 uses 13.15.35, so validator 13 is API-compatible).
       #   babel-traverse@6 CVE-2023-45133 is a package RENAME -> alias to @babel/traverse@7.
       #   jsonwebtoken 8->9 matches what express-jwt@8.5.1 already wants (jsonwebtoken ^9).
+      # Every replacement value is EXACT, never a `^range`: the published tarball ships a
+      # lockfile and we install with --no-frozen-lockfile, so a caret whose range the locked
+      # version already satisfies leaves the stale version in place (exactly how tar sat at
+      # 7.5.16 under Ghost's own `tar@<7.5.11: ^7.5.11`).
       python3.13 - <<'PYEOF'
       f="pnpm-workspace.yaml"
       lines=open(f).read().splitlines()
+      # Ghost's own tar entry (`tar@<7.5.11: ^7.5.11`) is SUPERSEDED by our exact pin below:
+      # two overlapping selectors for one package is ambiguous, and its caret let the locked
+      # 7.5.16 (CVE-2026-59873 CRITICAL) survive. Drop it, and fail if it ever moves.
+      drop="tar@<7.5.11:"
       add=[
-        # NOTE: @tryghost/members-csv CVE-2024-34448 is NOT overridable — Trivy's fixed
-        # version 5.82.0 is an unpublished Ghost-monorepo-internal number; the standalone npm
-        # package tops out at 2.0.7 (what Ghost 6.51.0 already ships). No installable fix.
         "  babel-traverse: 'npm:@babel/traverse@7.23.2'",  # CVE-2023-45133 rename fix
+        "  'body-parser@<1.20.6': 1.20.6",       # CVE-2026-12590 (only the express-4 1.x copy;
+                                                 # the express-5 2.3.0 copy is already clean)
+        "  'brace-expansion@<5.0.8': 5.0.8",     # CVE-2026-14257 — see the interop step below
+        "  'dompurify@<3.4.12': 3.4.12",         # GHSA-c2j3-45gr-mqc4
         "  'esbuild@<0.28.1': 0.28.1",           # GHSA-g7r4-m6w7-qqqr
+        "  'fast-uri@<3.1.4': 3.1.4",            # CVE-2026-13676 + CVE-2026-16221; 3.1.4 is the
+                                                 # only 3.x clearing both (ajv 8 wants fast-uri ^3)
         "  'jsonwebtoken@<9.0.0': 9.0.3",        # CVE-2022-23539/23540/23541
         "  'multer@<2.2.0': 2.2.0",              # CVE-2026-5079/5038
         "  'nodemailer@<9.0.1': 9.0.1",          # GHSA-p6gq-j5cr-w38f
+        "  'postcss@<8.5.23': 8.5.23",           # GHSA-r28c-9q8g-f849 (fix 8.5.18; newest 8.5.x)
+        "  'tar@<7.5.22': 7.5.22",               # CVE-2026-59873 CRIT/59874 HIGH/59871+59875 MED +
+                                                 # GHSA-r292-9mhp-454m MED (needs >= 7.5.21)
         "  'uuid@<11': 11.1.1",                  # CVE-2026-41907 (3.x + 9.x copies)
         "  'validator@<13.15.20': 13.15.35",     # CVE-2025-12758/56200/2021-3765 (7.x + 13.12 copies)
         "  'vite@<7.3.5': 7.3.5",                # CVE-2026-53571/53632
       ]
       out=[]
-      done=False
+      done=dropped=False
       for ln in lines:
+          if ln.strip().startswith(drop):
+              dropped=True; continue
           out.append(ln)
           if not done and ln=="overrides:":
               out.extend(add); done=True
       assert done, "overrides: block not found in pnpm-workspace.yaml"
+      assert dropped, "expected Ghost's own '%s' override to supersede" % drop
       open(f,"w").write("\n".join(out)+"\n")
       PYEOF
       pnpm install --prod --no-frozen-lockfile
 
-      # --- CVE-2024-34448: @tryghost/members-csv genuine fix + version realignment --------
-      # SOLE remaining blocker. The standalone npm package @tryghost/members-csv tops out at
-      # 2.0.7, but the GHSA (GHSA-xgwh-cgv9-783v / CVE-2024-34448) keys its "Fixed version" to
-      # the Ghost MONOREPO number 5.82.0 with affected range [0, 5.82.0) — a version that was
-      # never published to npm, so no `pnpm override` can install it (ERR_PNPM_NO_MATCHING_VERSION).
-      # The actual upstream fix (commit de668e79) is a ONE-LINE change: pass `escapeFormulae:true`
-      # to papaparse.unparse so exported field values beginning with =,+,-,@ (and tab/CR) are
-      # neutralized with a leading quote — standard CSV-injection defense. 2.0.7 ALREADY carries
-      # that fix, so the code is genuinely safe; Trivy is purely version-matching. We therefore
-      # (a) re-assert the escapeFormulae fix in every installed copy (idempotent, future-proof),
-      # and (b) realign each installed copy's package.json version to the advisory's fixed number
-      # 5.82.0 so the installed version no longer falls inside the vulnerable range. This is a
-      # real fix, NOT a gate bypass: no .trivyignore, no --skip, no VEX — the vulnerable code path
-      # is neutralized AND the version genuinely matches the fixed release.
+      # --- CVE-2024-34448 (@tryghost/members-csv CSV injection): FIXED UPSTREAM in 6.54.0 --
+      # Up to 6.53.0 this recipe carried surgery on the installed @tryghost/members-csv copies:
+      # the GHSA (GHSA-xgwh-cgv9-783v) keys its "Fixed version" to the Ghost MONOREPO number
+      # 5.82.0 with affected range [0, 5.82.0), a version never published to npm, while the
+      # standalone package topped out at 2.0.7 — so no `pnpm override` could satisfy Trivy and
+      # we re-asserted the `escapeFormulae` fix and realigned the version by hand.
+      # Ghost 6.54.0 DELETED that dependency (gone from both package.json and pnpm-lock.yaml)
+      # and inlined the module into core/server/services/members/csv/. So there is no longer a
+      # versioned package for Trivy to match, and the surgery has nothing to operate on — the
+      # old `assert copies` is what broke the first 6.54.0 build.
+      # The fix itself did NOT disappear: the inlined unparse() defaults escapeFormulae to true,
+      # which is the actual CSV-injection defense (papaparse prefixes a leading =,+,-,@ or tab
+      # with an apostrophe). Assert that default instead of the vanished node_modules copy, so a
+      # future release that silently drops it fails the build rather than shipping quietly.
+      # Not a gate bypass: no .trivyignore, no --skip, no VEX.
+      grep -q 'escapeFormulae = true' core/server/services/members/csv/unparse.js
+
+      # --- brace-expansion CVE-2026-14257: 5.0.8 + the CJS interop it broke ---------------
+      # Why the `brace-expansion@<5.0.8` override above has to reach every line: the advisory
+      # (GHSA-mh99-v99m-4gvg) declares a SINGLE affected range, `<= 5.0.7`, spanning every
+      # line — so the maintenance heads (1.1.16 = maintenance-v1, 2.1.2 = maintenance-v2) are
+      # affected too and no future 1.x/2.x release can ever sort above 5.0.7. 5.0.8 is the only
+      # escape. Parent-bumping does not help: Ghost's tree gets brace-expansion only through
+      # minimatch, and it already pins minimatch 3.1.5 / 9.0.9 / 10.2.5 — of which 9.0.9 (the
+      # newest 9.x) deliberately REVERTED from brace-expansion ^5.0.2 back to ^2.0.2.
+      #
+      # 5.0.8 rewrote the CJS entry to a NAMED-only export (`exports.expand`, `__esModule: true`,
+      # no callable default), but minimatch 3.1.5 does `require("brace-expansion")(pattern)` and
+      # 9.0.9 does `__importDefault(...).default(pattern)` — both throw "expand is not a
+      # function" at LOAD time, which is why a blunt bump alone would break Ghost. So re-export
+      # the function AS module.exports with the named props kept: the patched implementation (the
+      # EXPANSION_MAX_LENGTH accumulator bound that fixes the CVE) is what runs, and all three
+      # consumer shapes work. Verified against the published tarballs: minimatch 3.1.5 / 9.0.9 /
+      # 10.2.5 all braceExpand() correctly afterwards and stay bounded.
+      # NOT a gate bypass — no .trivyignore, no --skip, no VEX; the installed version genuinely
+      # IS the fixed one. The assert fails the build if any copy escaped the override.
       python3.13 - <<'PYEOF'
-      import glob, json, os
-      copies = glob.glob('node_modules/**/@tryghost/members-csv/package.json', recursive=True)
-      assert copies, "members-csv not found under node_modules"
+      import json, os
+      SHIM = ('\n// QuenchWorks: brace-expansion 5.x exports a NAMED-only CJS binding; re-export the\n'
+              '// function itself (named props kept) so minimatch 3.x/9.0.9 consumers keep working.\n'
+              'module.exports = Object.assign(expand, exports, { default: expand });\n')
+      # os.walk, not glob: pnpm's REAL copies live under the hidden node_modules/.pnpm/ store,
+      # which glob's ** never enters (the top-level entries are just symlinks into it).
+      # Symlinks are not followed here, so nothing is visited twice.
+      copies = sorted(os.path.join(r, 'brace-expansion', 'package.json')
+                      for r, dirs, _ in os.walk('node_modules') if 'brace-expansion' in dirs)
+      assert copies, "brace-expansion not found under node_modules"
+      stale = [p for p in copies if json.load(open(p))['version'].split('.')[0] != '5']
+      assert not stale, "override missed brace-expansion copies: %s" % stale
+      n = 0
       for pj in copies:
-          d = os.path.dirname(pj)
-          up = os.path.join(d, 'lib', 'unparse.js')
-          if os.path.exists(up):
-              src = open(up).read()
-              if 'escapeFormulae' not in src:
-                  src = src.replace('papaparse.unparse(mappedRows, {',
-                                    'papaparse.unparse(mappedRows, {\n        escapeFormulae: true,', 1)
-                  open(up, 'w').write(src)
-                  assert 'escapeFormulae' in open(up).read(), "failed to inject escapeFormulae"
-          meta = json.load(open(pj))
-          meta['version'] = '5.82.0'  # advisory fixed version; escapes affected range [0,5.82.0)
-          json.dump(meta, open(pj, 'w'), indent=2)
-      print("members-csv: patched + realigned %d copy(ies) -> 5.82.0" % len(copies))
+          cjs = os.path.join(os.path.dirname(pj), 'dist/commonjs/index.js')
+          if 'Object.assign(expand' not in open(cjs).read():
+              open(cjs, 'a').write(SHIM); n += 1
+      print("brace-expansion: %d copy(ies) at 5.x, %d shimmed" % (len(copies), n))
       PYEOF
+      # Prove the shim on the REAL installed copies (pnpm keeps them in node_modules/.pnpm/,
+      # which `find` walks but glob would miss): require() must yield a callable that expands.
+      # A future 5.x that moves the CJS entry fails the build here, not at Ghost's boot.
+      for d in $(find node_modules -type d -name brace-expansion); do
+        node -e "const b=require(require('path').resolve('$d'));
+                 if (typeof b!=='function'||b('a{b,c}').join()!=='ab,ac')
+                   throw new Error('brace-expansion CJS interop broken at $d');"
+      done
 
       # Trim build-time cruft that bloats the image and the CVE surface but is never run:
       # caches, source maps for vendored deps, and pnpm's own store metadata.

@@ -100,7 +100,9 @@ pipeline:
         Object.assign(p.dependencies,{
           "@opentelemetry/core":"2.8.0",  // direct 2.7.1 < 2.8.0 (fix)
           "nodemailer":"9.0.1",           // direct 8.0.10 (fix = 9.0.1, major)
-          "tar":"7.5.19",                 // direct ^7.5.16 resolved 7.5.16 < 7.5.19 (CVE-2026-59873 CRIT +3)
+          "tar":"7.5.22",                 // direct ^7.5.16 (CVE-2026-59873 CRIT +3, GHSA-r292 MED -> 7.5.21;
+                                          // 7.5.22 is the newest 7.5.x, so the weekly node-tar
+                                          // advisories have some headroom before the next bump)
           "ws":"8.21.0"                   // direct 8.20.1 < 8.21.0 (fix)
         });
         // transitive copies (+ direct deps already AT the fix: langsmith/uuid/@azure/identity/tar)
@@ -108,6 +110,7 @@ pipeline:
           "xlsx":"npm:@e965/xlsx@0.20.3",
           "adm-zip":"0.6.0",              // transitive 0.5.18 < 0.6.0 (CVE-2026-39244 HIGH)
           "@anthropic-ai/sdk":"0.91.1",
+          "brace-expansion":"5.0.8",      // CVE-2026-14257 HIGH; see the interop step below
           "@azure/identity@3":"4.2.1",    // only the transitive 3.4.2 (direct is 4.13.0, safe)
           "@opentelemetry/core":"2.8.0",
           "@opentelemetry/exporter-prometheus":"0.217.0",
@@ -125,8 +128,10 @@ pipeline:
           "protobufjs":"8.6.6",           // transitive 8.6.0 < 8.6.6 (CVE-2026-59876/59877)
           "qs":"6.15.2",
           "semver@<5.7.2":"5.7.2",        // only the vulnerable 5.x (tree keeps its 6.x/7.x)
-          "tar@6":"7.5.19",               // only the transitive 6.2.1 (direct bumped in dependencies)
-          "tar@7":"7.5.19",               // direct 7.5.17 (CVE-2026-59873 CRIT/59874 HIGH/59871 MED)
+          "tar@6":"7.5.22",               // only the transitive 6.2.1 (direct bumped in dependencies)
+          "tar@7":"7.5.22",               // n8n-nodes-base pins tar 7.5.17 EXACTLY, so this copy
+                                          // cannot float (CVE-2026-59873 CRIT/59874 HIGH/59871 MED,
+                                          // GHSA-r292-9mhp-454m MED needs >= 7.5.21)
           "uuid":"11.1.1",
           "ws":"8.21.0"
         });
@@ -143,6 +148,57 @@ pipeline:
       # This build is hermetic (sha-pinned tarball, no network mutation of the pinned tree), so
       # running the pinned deps' install scripts is exactly the pre-npm-12 behavior we need.
       npm install --omit=dev --no-audit --no-fund --legacy-peer-deps --dangerously-allow-all-scripts
+
+      # --- brace-expansion CVE-2026-14257: 5.0.8 + the CJS interop it broke ---------------
+      # Why the blunt `"brace-expansion":"5.0.8"` override above is the ONLY option: the
+      # advisory (GHSA-mh99-v99m-4gvg) declares a SINGLE affected range, `<= 5.0.7`, which
+      # spans every line — so the maintenance heads (1.1.16 = maintenance-v1, 2.1.2 =
+      # maintenance-v2) are themselves affected, and no future 1.x/2.x release can ever sort
+      # above 5.0.7 either. 5.0.8 is the only escape. Parent-bumping instead of overriding the
+      # leaf does NOT work here: this tree's brace-expansion comes only from minimatch, and the
+      # newest minimatch 3.x/9.x both want a vulnerable line (3.1.5 -> ^1.1.7; 9.0.9, the newest
+      # 9.x, REVERTED from ^5.0.2 back to ^2.0.2), while their own parents are glob 7 (callback
+      # API, used by cacache/node-gyp/rimraf/shelljs/temp) which cannot take minimatch 9/10.
+      #
+      # 5.0.8 rewrote the CJS entry to a NAMED-only export (`exports.expand`, `__esModule: true`,
+      # no callable default), but minimatch 3.1.5 does `require("brace-expansion")(pattern)` and
+      # 9.0.9 does `__importDefault(...).default(pattern)` — both throw "expand is not a
+      # function" at load. So re-export the function AS module.exports with the named props kept:
+      # the patched implementation (the EXPANSION_MAX_LENGTH accumulator bound that fixes the CVE)
+      # is what runs, and all three consumer shapes work. Verified against the published tarballs:
+      # minimatch 3.1.5 / 9.0.9 / 10.2.5 all braceExpand() correctly afterwards and stay bounded.
+      # NOT a gate bypass — no .trivyignore, no --skip, no VEX; the installed version genuinely
+      # IS the fixed one. The assert fails the build if any copy escaped the override, so a stale
+      # brace-expansion can never ship silently.
+      python3.13 - <<'PYEOF'
+      import json, os
+      SHIM = ('\n// QuenchWorks: brace-expansion 5.x exports a NAMED-only CJS binding; re-export the\n'
+              '// function itself (named props kept) so minimatch 3.x/9.0.9 consumers keep working.\n'
+              'module.exports = Object.assign(expand, exports, { default: expand });\n')
+      # os.walk, not glob: pnpm's real copies live under the HIDDEN node_modules/.pnpm/ store,
+      # which glob's ** never enters. Symlinks are not followed, so nothing is visited twice.
+      copies = sorted(os.path.join(r, 'brace-expansion', 'package.json')
+                      for r, dirs, _ in os.walk('node_modules') if 'brace-expansion' in dirs)
+      assert copies, "brace-expansion not found under node_modules"
+      stale = [p for p in copies if json.load(open(p))['version'].split('.')[0] != '5']
+      assert not stale, "override missed brace-expansion copies: %s" % stale
+      n = 0
+      for pj in copies:
+          cjs = os.path.join(os.path.dirname(pj), 'dist/commonjs/index.js')
+          if 'Object.assign(expand' not in open(cjs).read():
+              open(cjs, 'a').write(SHIM); n += 1
+      print("brace-expansion: %d copy(ies) at 5.x, %d shimmed" % (len(copies), n))
+      PYEOF
+      # Prove the shim on the REAL installed copies: require() must yield a callable that
+      # expands, and minimatch (whose 3.x/9.0.9 copies are the ones that would break) must
+      # still braceExpand. A future 5.x that moves the CJS entry fails the build here.
+      for d in $(find node_modules -type d -name brace-expansion); do
+        node -e "const b=require(require('path').resolve('$d'));
+                 if (typeof b!=='function'||b('a{b,c}').join()!=='ab,ac')
+                   throw new Error('brace-expansion CJS interop broken at $d');"
+      done
+      node -e "if (require('minimatch').braceExpand('a{b,c}').join()!=='ab,ac')
+                 throw new Error('minimatch braceExpand broken');"
 
       # --- strip foreign-arch + musl prebuilt native binaries ---------------------------
       # n8n's tree VENDORS prebuilt .node/.so binaries for every platform/arch/libc inside
