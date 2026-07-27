@@ -17,9 +17,14 @@ import sys, re, io, tarfile, urllib.request
 
 IDX = "https://packages.wolfi.dev/os/x86_64/APKINDEX.tar.gz"
 
-def vkey(v):  # "10.33.0-r1" -> (10,33,0,1) for correct numeric ordering
-    nums = re.findall(r'\d+', v)
-    return tuple(int(n) for n in nums)
+def vkey(v):  # "10.33.0-r1" -> ((10,33,0), 1)
+    # The version and the -rN revision must be SEPARATE tuple elements. Flattening
+    # both into one tuple made "26-r6" -> (26,6) outrank "26.0.2-r0" -> (26,0,2,0),
+    # so a coarse-tagged apk hid every later patch (openjdk-26 would have been blind
+    # to 26.0.3+). Compare the dotted version first, then the revision.
+    xyz, _, rev = v.partition('-r')
+    return (tuple(int(n) for n in re.findall(r'\d+', xyz)),
+            int(re.sub(r'\D', '', rev) or 0))
 
 def load():
     raw = urllib.request.urlopen(IDX, timeout=60).read()
