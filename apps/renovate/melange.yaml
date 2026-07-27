@@ -67,16 +67,22 @@ pipeline:
       mkdir -p .be-stage
       echo '{"name":"quench-be-stage","private":true}' > .be-stage/package.json
       ( cd .be-stage && npm install --no-audit --no-fund --no-package-lock brace-expansion@5.0.8 )
-      BE_STAGE="${PWD}/.be-stage/node_modules" NM_ROOT="${destdir}/usr/lib/node_modules" node -e '
+      # Enumerate with `find`, NOT fs.readdirSync({recursive:true}). The readdir walker
+      # matched only the hoisted top-level copy — which already floats to 5.0.8 on its
+      # own — so it replaced nothing and the two NESTED copies shipped vulnerable
+      # (mv/node_modules/brace-expansion 1.1.16 and rimraf/node_modules/... 2.1.2,
+      # confirmed by extracting the built layer). find cannot miss a nesting depth.
+      find "${destdir}/usr/lib/node_modules" -type d -name brace-expansion -print0 \
+        > "${PWD}/.be-copies"
+      BE_STAGE="${PWD}/.be-stage/node_modules" NM_ROOT="${destdir}/usr/lib/node_modules" \
+      BE_COPIES="${PWD}/.be-copies" node -e '
         const fs=require("fs"), path=require("path");
         const stage=process.env.BE_STAGE, root=process.env.NM_ROOT;
         const SHIM="\n// QuenchWorks: brace-expansion 5.x exports a NAMED-only CJS binding; re-export\n"
                   +"// the function itself (named props kept) so minimatch 3.x/9.0.9 keep working.\n"
                   +"module.exports = Object.assign(expand, exports, { default: expand });\n";
         const ver=d=>JSON.parse(fs.readFileSync(path.join(d,"package.json"),"utf8")).version;
-        const copies=fs.readdirSync(root,{recursive:true,withFileTypes:true})
-          .filter(e=>e.isDirectory()&&e.name==="brace-expansion")
-          .map(e=>path.join(e.parentPath,e.name));
+        const copies=fs.readFileSync(process.env.BE_COPIES,"utf8").split("\0").filter(Boolean);
         if(!copies.length) throw new Error("no brace-expansion copy under "+root);
         let rep=0, shim=0;
         for(const d of copies){

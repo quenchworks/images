@@ -191,6 +191,17 @@ pipeline:
       # caches, source maps for vendored deps, and pnpm's own store metadata.
       rm -rf node_modules/.cache .pnpm-store 2>/dev/null || true
       find . -type d -name '.cache' -prune -exec rm -rf {} + 2>/dev/null || true
+      # pnpm's HOME store must go too. `.local/share/pnpm/store/...` ships pnpm's OWN
+      # vendored node_modules (its bundled tar 7.5.20 was the last gate finding —
+      # GHSA-r292-9mhp-454m — and it is pure build cache, not part of Ghost). The app's
+      # own tar is correctly 7.5.22 via the override; this copy was never reachable by it.
+      rm -rf .local/share/pnpm .local/state/pnpm .cache/pnpm .npm 2>/dev/null || true
+      # Fail the build if any pnpm store survives into the image, so this cannot regress.
+      if find . -path './node_modules' -prune -o -type d -name pnpm -print 2>/dev/null | grep -q .; then
+        echo "pnpm store/artifacts still present in the image tree:"
+        find . -path './node_modules' -prune -o -type d -name pnpm -print
+        exit 1
+      fi
 
   - runs: |
       set -eu
