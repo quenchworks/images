@@ -1,0 +1,182 @@
+# Builds Pgpool-II from source onto Wolfi. Output is a signed APK in Quenchworks'
+# own repo. No upstream distro binaries. Pgpool-II is C / autotools; we build from
+# the official release tarball (pgpool-II-<ver>.tar.gz) which ships a pre-generated
+# configure, so no autogen.sh / autoreconf is needed.
+#
+# License: the pgpool-II COPYING file is verbatim HPND (Historical Permission
+# Notice and Disclaimer) -- "Permission to use, copy, modify, and distribute this
+# software and its documentation for any purpose and without fee is hereby
+# granted ... makes no representations about the suitability ...". That is a real
+# SPDX identifier, so no LicenseRef- string is needed.
+package:
+  name: quench-pgpool
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Pgpool-II, built from source on Wolfi (nonroot, read-only rootfs)"
+  copyright:
+    - license: HPND
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      # Pgpool-II links libpq (-lpq) to talk to the backends. Pin the SAME
+      # PostgreSQL major the catalog ships (postgresql 18.4) so client and server
+      # move together; Pgpool-II 4.5+ supports PostgreSQL up to 18. Without the
+      # explicit pin, `so:libpq.so.5` alone would let apk resolve any libpq-1x.
+      - libpq-18
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - openssl-dev         # TLS (frontend + backend)
+      - postgresql-18-dev   # libpq-fe.h + libpq.so (matches the catalog's PG 18.4)
+      - libpq-18
+      - bison               # src/parser + config grammar
+      - flex                # src/config/pool_config.l
+      - linux-headers
+      - pkgconf
+
+pipeline:
+  - uses: fetch
+    with:
+      # Official release tarball from pgpool.net (autotools-ready).
+      uri: https://www.pgpool.net/source/pgpool-II-${{package.version}}.tar.gz
+      expected-sha256: "__SHA256__"
+  - runs: |
+      # TLS via OpenSSL, libpq from postgresql-18-dev. PAM, LDAP and memcached are
+      # left OFF (their defaults) to keep the runtime surface lean. Do NOT pass
+      # --without-pam / --without-ldap: pgpool's configure.ac declares them as
+      # AC_ARG_WITH(<x>, ..., [AC_DEFINE(USE_<X>)]) with the *action-if-given*
+      # branch doing the AC_DEFINE, so `--without-ldap` still defines USE_LDAP
+      # while skipping the header check -> "fatal error: ldap.h: No such file".
+      # Omitting the flag entirely is the only way to actually disable them.
+      # --disable-rpath keeps build-time library paths out of the binaries;
+      # --disable-static drops the unused libpcp/libsql-parser archives.
+      #
+      # -std=gnu17 is REQUIRED, not cosmetic: Wolfi's GCC 16 defaults to gnu23,
+      # where `bool` is a keyword, and Pgpool-II 4.5.x still has
+      # `typedef char bool;` in src/include/pool_type.h -> "error: 'bool' cannot be
+      # defined via 'typedef'" across the whole parser. 4.6/4.7 fixed it upstream;
+      # pinning the standard for every line keeps one recipe for the whole matrix.
+      export CFLAGS="-g -O2 -std=gnu17"
+      ./configure \
+        --prefix=/usr \
+        --sysconfdir=/etc/pgpool \
+        --with-openssl \
+        --with-pgsql=/usr \
+        --disable-rpath \
+        --disable-static
+      make -j"$(nproc)"
+
+      destdir="${{targets.destdir}}"
+      # Top-level SUBDIRS is just `src`, so this installs pgpool, the pcp_* admin
+      # clients + libpcp, pg_md5/pg_enc, and the sample configs. The doc/ trees are
+      # DIST_SUBDIRS only (they would need python3 to regenerate man pages), so
+      # they are never touched.
+      make install DESTDIR="$destdir"
+
+      # Drop everything a shell-free runtime image cannot use: the *.sample shell
+      # scripts for failover/recovery/watchdog escalation, the pgproto protocol
+      # test tool, the PAM stanza, and the insert_lock SQL fixture.
+      rm -f "$destdir"/etc/pgpool/*.sample
+      rm -rf "$destdir"/usr/share/pgpool-II
+      rm -f "$destdir"/usr/bin/pgproto
+
+      # Pgpool-II refuses to start without a config, and a shell-free apko image
+      # cannot run a wrapper script, so the entrypoint execs pgpool directly with
+      # -f/-F/-a. These are the DEFAULT files behind those flags: a self-contained
+      # config that boots as nonroot on a read-only rootfs. The Helm chart mounts
+      # its own pgpool.conf / pool_hba.conf / pool_passwd / pcp.conf over them.
+      #
+      # Deliberately version-agnostic: `logdir` (<=4.6) was renamed `work_dir`
+      # (4.7+), so neither is set -- pgpool keeps its default of /tmp for
+      # pgpool_status and lock files, and /tmp is a writable mount in every
+      # deployment. Setting either name would FATAL on the other release line.
+      install -d "$destdir/etc/pgpool"
+      cat > "$destdir/etc/pgpool/pgpool.conf" <<'EOF'
+      # Quenchworks hardened Pgpool-II default config.
+      # Nonroot (uid 1001) + read-only rootfs: the unix sockets and the pidfile live
+      # under /var/run/pgpool, pgpool_status/lock files under the default /tmp, and
+      # logs go to stderr (no logging_collector). Mount both as writable volumes.
+      # The Helm chart replaces this file with a templated ConfigMap.
+      backend_clustering_mode = 'streaming_replication'
+
+      listen_addresses = '*'
+      port = 9999
+      unix_socket_directories = '/var/run/pgpool'
+
+      pcp_listen_addresses = '*'
+      pcp_port = 9898
+      pcp_socket_dir = '/var/run/pgpool'
+
+      pid_file_name = '/var/run/pgpool/pgpool.pid'
+      log_destination = 'stderr'
+      logging_collector = off
+
+      # Client authentication is delegated to the backend by default; the chart
+      # turns on pool_hba for scram-sha-256 pooling. pool_passwd must point at a
+      # file that EXISTS: pgpool opens it "r" and, on ENOENT, tries to CREATE it,
+      # which is a startup FATAL on a read-only rootfs.
+      enable_pool_hba = off
+      pool_passwd = '/etc/pgpool/pool_passwd'
+
+      num_init_children = 32
+      max_pool = 4
+      connection_cache = on
+      load_balance_mode = on
+
+      # Placeholder backend so the image boots standalone. Replace it (chart values
+      # or your own pgpool.conf) with your real PostgreSQL hosts.
+      backend_hostname0 = 'localhost'
+      backend_port0 = 5432
+      backend_weight0 = 1
+      backend_flag0 = 'ALLOW_TO_FAILOVER'
+
+      # Health/streaming-replication checks need credentials, so they are off until
+      # the chart (or you) supplies a user via pool_passwd.
+      sr_check_period = 0
+      health_check_period = 0
+      EOF
+      cat > "$destdir/etc/pgpool/pool_hba.conf" <<'EOF'
+      # Quenchworks default pool_hba.conf. Only consulted when
+      # enable_pool_hba = on (off in the default pgpool.conf above). The chart
+      # replaces this with a templated ConfigMap that requires scram-sha-256.
+      # TYPE  DATABASE  USER  ADDRESS       METHOD
+      local   all       all                 trust
+      host    all       all   127.0.0.1/32  trust
+      host    all       all   ::1/128       trust
+      EOF
+      cat > "$destdir/etc/pgpool/pcp.conf" <<'EOF'
+      # Quenchworks default pcp.conf -- INTENTIONALLY EMPTY (no baked-in default
+      # credential). The PCP admin listener on 9898 starts, but nobody can
+      # authenticate until a "username:md5(password)" line exists here. Generate
+      # one with `pg_md5 <password>` and mount it as a Secret; the Helm chart does
+      # this for you.
+      EOF
+      # Empty credential store. It MUST exist: pgpool opens pool_passwd read-only
+      # at startup and, if it is missing, tries to create it -- which fails hard on
+      # a read-only rootfs ("failed to open file ... Read-only file system").
+      : > "$destdir/etc/pgpool/pool_passwd"
+      # 0644 on ALL FOUR, deliberately: these files are root-owned in the image and
+      # pgpool runs as uid 1001, so 0600 makes it FATAL at startup ("failed to open
+      # file ... Permission denied"). They ship EMPTY / comment-only, so nothing
+      # secret is world-readable; real credentials arrive as Kubernetes Secrets
+      # mounted over pool_passwd and pcp.conf by the chart.
+      chmod 0644 "$destdir"/etc/pgpool/pgpool.conf "$destdir"/etc/pgpool/pool_hba.conf \
+                 "$destdir"/etc/pgpool/pcp.conf "$destdir"/etc/pgpool/pool_passwd
+
+      # libtool archive for libpgpoolpcp: useless at runtime, and melange's
+      # libtool/la-files linter rejects it.
+      rm -f "$destdir"/usr/lib/*.la
+
+# No in-build `test:` block: melange fails to populate its test workspace here
+# ("unable to populate workspace: open test-dirfs-0"), the same limitation
+# documented on apps/nats. The functional smoke test runs against the assembled
+# image via test.sh instead, which is a stronger check anyway (it starts pgpool and
+# speaks the PostgreSQL wire protocol at it).
