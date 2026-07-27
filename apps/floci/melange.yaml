@@ -81,6 +81,14 @@ pipeline:
              '                <scope>import</scope>\n'
              '            </dependency>\n'
              '            <dependency>\n'
+             '                <!-- QuenchWorks CVE-2026-59949 pin: lz4-java native XXHash can crash\n'
+             '                     the JVM. at.yawk.lz4 has a single artifact on Maven Central, so\n'
+             '                     there is no sibling module to keep version-aligned. -->\n'
+             '                <groupId>at.yawk.lz4</groupId>\n'
+             '                <artifactId>lz4-java</artifactId>\n'
+             '                <version>1.11.1</version>\n'
+             '            </dependency>\n'
+             '            <dependency>\n'
              '                <!-- QuenchWorks CVE-2026-54291 pin (HIGH): postgresql JDBC driver -->\n'
              '                <groupId>org.postgresql</groupId>\n'
              '                <artifactId>postgresql</artifactId>\n'
@@ -100,6 +108,7 @@ pipeline:
       grep -q 'netty-bom' pom.xml || { echo "netty-bom pin FAILED to apply"; exit 1; }
       grep -q '4.1.136.Final' pom.xml || { echo "netty version pin FAILED to apply"; exit 1; }
       grep -q '<version>42.7.12</version>' pom.xml || { echo "postgresql pin FAILED to apply"; exit 1; }
+      grep -q '<artifactId>lz4-java</artifactId>' pom.xml || { echo "lz4-java pin FAILED to apply"; exit 1; }
       # -----------------------------------------------------------------------
       # Build the Quarkus fast-jar. Skip tests (they need Docker + network); the
       # released bytecode is identical to upstream's `mvn clean package`.

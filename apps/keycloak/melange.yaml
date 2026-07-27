@@ -84,13 +84,17 @@ pipeline:
       #     matching-or-newer jackson-core). Content-swap keeping the 2.21.2 filename.
       swap "https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-core/2.21.5/jackson-core-2.21.5.jar" com.fasterxml.jackson.core.jackson-core-2.21.2.jar b64b5874162b503a0e58a8f7758266e8dd9f91bf49e3a59ae0b5f47589a231b7
       # (4) netty 4.1.135 -> 4.1.136.Final for the Jul-2026-flagged codec jars (codec/haproxy/
-      #     http/http2). Netty is ABI-stable within 4.1.x, so bumping the flagged jars against
-      #     the 4.1.135 remainder is safe. Content-swap keeping the 4.1.135 filenames.
+      #     http/http2/dns). Netty is ABI-stable within 4.1.x, so bumping the flagged jars
+      #     against the 4.1.135 remainder is safe. Content-swap keeping the 4.1.135 filenames.
+      #     netty-codec-dns carries GHSA-mfg7-5gfp-c4w3 (MEDIUM, DNS record-decoder memory
+      #     leak on malformed domain names); netty-resolver-dns (its only consumer here) is
+      #     not flagged and stays at 4.1.135 -- same 4.1.x line, ABI-compatible.
       NET="https://repo1.maven.org/maven2/io/netty"
       swap "$NET/netty-codec/4.1.136.Final/netty-codec-4.1.136.Final.jar" io.netty.netty-codec-4.1.135.Final.jar 2de4fc13005c7740b46427a47ee04265a19779c147d53e583f441889b1148159
       swap "$NET/netty-codec-haproxy/4.1.136.Final/netty-codec-haproxy-4.1.136.Final.jar" io.netty.netty-codec-haproxy-4.1.135.Final.jar 841be7fc6f1c929ecc63c70a909e0df085b4e80e44680acf46708f0e93e68037
       swap "$NET/netty-codec-http/4.1.136.Final/netty-codec-http-4.1.136.Final.jar" io.netty.netty-codec-http-4.1.135.Final.jar ffd1e1b19a533bc6e47ef2cbc1290374ff4a7cb53a280defa3df392538214948
       swap "$NET/netty-codec-http2/4.1.136.Final/netty-codec-http2-4.1.136.Final.jar" io.netty.netty-codec-http2-4.1.135.Final.jar 14f67ae095c056b062aa0ee2c7b01f6b78004cf3620a6e9061bcb637f079387a
+      swap "$NET/netty-codec-dns/4.1.136.Final/netty-codec-dns-4.1.136.Final.jar" io.netty.netty-codec-dns-4.1.135.Final.jar 89bddc4ec42756c41a0195a50a1323a324836162b6712a843c3de5c29096c93b
       # (5) org.postgresql:postgresql 42.7.11 -> 42.7.12 (Jul-2026). Content-swap keeping name.
       swap "https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.12/postgresql-42.7.12.jar" org.postgresql.postgresql-42.7.11.jar 31fbf6f06b2217fb51d5100cee51b22625cc81640da0679b47914e54c1e6377c
       cd ../../..

@@ -59,6 +59,14 @@ pipeline:
       #                              CVE-2026-54515) -- annotations ships bare "2.21".
       #   logback 1.5.18 -> 1.5.35  (CVE-2025-11226, CVE-2026-1225, CVE-2026-9828,
       #                              CVE-2026-10532)
+      #   lz4-java 1.10.1 -> 1.11.1 (CVE-2026-59949: the native XXHash implementations can
+      #                              crash the JVM on invalid byte-array ranges). at.yawk.lz4
+      #                              has a SINGLE artifact on Maven Central (verified: the
+      #                              group dir holds only lz4-java/), so there is no sibling
+      #                              module to keep aligned. 1.11.1's entry set is a superset
+      #                              of 1.10.1's apart from the win32 native .so (irrelevant
+      #                              on Linux), and it ships liblz4-java.so for BOTH
+      #                              linux/amd64 and linux/aarch64.
       #   netty   4.1.130 -> 4.1.136.Final (CVE-2026-42583/44249/45416/50010/45536/42578
       #                              + the July-2026 wave on netty-codec + netty-handler-ssl-ocsp;
       #                              stay on the 4.1.x line, no 4.2 major jump)
@@ -79,6 +87,7 @@ pipeline:
       swap jackson-databind-2.21.5.jar 507418c0fafd38b2b2cfb704521630da613a8e4cc8381195a6f418017883e2c0 "$M/com/fasterxml/jackson/core/jackson-databind/2.21.5/jackson-databind-2.21.5.jar" 'jackson-databind-2.19.2.jar'
       swap jackson-datatype-jsr310-2.21.5.jar e941f9718d16a649614cb06711de06da34722afff9cee0b7725fc5318638304c "$M/com/fasterxml/jackson/datatype/jackson-datatype-jsr310/2.21.5/jackson-datatype-jsr310-2.21.5.jar" 'jackson-datatype-jsr310-2.19.2.jar'
       swap logback-classic-1.5.35.jar 1a0ba277c4d177862731c820099913013255892c79e05b5371307f174f089878 "$M/ch/qos/logback/logback-classic/1.5.35/logback-classic-1.5.35.jar" 'logback-classic-1.5.18.jar'
+      swap lz4-java-1.11.1.jar e5e31b195fcc7e9c5da4b191af3b0082ee616c13f61cbd79409ffa65e4dd5c47 "$M/at/yawk/lz4/lz4-java/1.11.1/lz4-java-1.11.1.jar" 'lz4-java-1.10.1.jar'
       swap logback-core-1.5.35.jar d8c38ea6871eefccf769f83e1afd07280e29fa0d1dd281092a77eb77c880ace6 "$M/ch/qos/logback/logback-core/1.5.35/logback-core-1.5.35.jar" 'logback-core-1.5.18.jar'
       NV=4.1.136.Final
       swap netty-all-$NV.jar 75cb7db3492915953aa19c566e477fb371ae2b32aa12bc4fe85bd7a2a6b8f5e8 "$M/io/netty/netty-all/$NV/netty-all-$NV.jar" 'netty-all-4.1.130.Final.jar'

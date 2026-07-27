@@ -93,6 +93,10 @@ pipeline:
         done
         # QuenchWorks CVE-2026-54291 (HIGH): pin the postgresql JDBC driver.
         echo '            <dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId><version>42.7.12</version></dependency>'
+        # QuenchWorks CVE-2026-59949: lz4-java's native XXHash can crash the JVM on
+        # invalid byte-array ranges (pulled in transitively by the kafka client).
+        # at.yawk.lz4 publishes a SINGLE artifact, so there is no sibling to align.
+        echo '            <dependency><groupId>at.yawk.lz4</groupId><artifactId>lz4-java</artifactId><version>1.11.1</version></dependency>'
       } > /tmp/dm-pins.xml
       # Insert before the FIRST </dependencies> in the pom -- that is the closer
       # of <dependencyManagement><dependencies> (it precedes the main deps list).
@@ -100,6 +104,7 @@ pipeline:
       mv pom.xml.new pom.xml
       grep -q 'netty-codec-haproxy' pom.xml
       grep -q '<version>42.7.12</version>' pom.xml
+      grep -q '<artifactId>lz4-java</artifactId>' pom.xml
 
       # apicurio 3.x API port of floci's single apicurio consumer (the Glue
       # schema-registry adapter). Three deltas, all mechanical:

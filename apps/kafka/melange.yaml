@@ -53,6 +53,13 @@ pipeline:
       #                              test verifies broker boot + produce/consume).
       #   jetty   12.0.34 -> 12.0.36 (July-2026 jetty wave; same-major.minor patch on
       #                              the standalone jetty-security/-server/-util jars).
+      #   lz4-java 1.10.2 -> 1.11.1 (CVE-2026-59949: the native XXHash implementations can
+      #                              crash the JVM on invalid byte-array ranges). Used by the
+      #                              lz4 producer/consumer compression codec. at.yawk.lz4 has
+      #                              a SINGLE artifact on Maven Central (verified: the group
+      #                              dir holds only lz4-java/), so no sibling module needs to
+      #                              stay aligned; 1.11.1's entry set is a superset of 1.10.2's
+      #                              and ships liblz4-java.so for linux/amd64 + linux/aarch64.
       # SHA256-pinned from Maven Central (repo1.maven.org). Filenames match the 4.3.1
       # bundle; guarded so older lines (which bundle different jar versions) never get a
       # mismatched swap. VERSIONS is newest-only (4.3.1) -- older kafka lines bundle a
@@ -74,6 +81,7 @@ pipeline:
       swap jackson-jakarta-rs-json-provider-2.21.5.jar c176333dd1edb820698fd3376e6f376919e3b6a208b37d112ce32192e9e787d6 "$M/com/fasterxml/jackson/jakarta/rs/jackson-jakarta-rs-json-provider/2.21.5/jackson-jakarta-rs-json-provider-2.21.5.jar" 'jackson-jakarta-rs-json-provider-2.21.2.jar'
       swap jackson-module-blackbird-2.21.5.jar 6e1aac3aed140a3defec385083bba339d52eebb3f940582f03f64ad43ef3c433 "$M/com/fasterxml/jackson/module/jackson-module-blackbird/2.21.5/jackson-module-blackbird-2.21.5.jar" 'jackson-module-blackbird-2.21.2.jar'
       swap jackson-module-jakarta-xmlbind-annotations-2.21.5.jar 5cb2cc2bf59faccf412ed6cba8588724b23c6145e5bda8d5ebee26db6d4dd12a "$M/com/fasterxml/jackson/module/jackson-module-jakarta-xmlbind-annotations/2.21.5/jackson-module-jakarta-xmlbind-annotations-2.21.5.jar" 'jackson-module-jakarta-xmlbind-annotations-2.21.2.jar'
+      swap lz4-java-1.11.1.jar e5e31b195fcc7e9c5da4b191af3b0082ee616c13f61cbd79409ffa65e4dd5c47 "$M/at/yawk/lz4/lz4-java/1.11.1/lz4-java-1.11.1.jar" 'lz4-java-1.10.2.jar'
       swap jline-4.2.1.jar bdbe3b7b276ee609c28f11f704be11fdebe7375eb1a7d10a489086225cdbc535 "$M/org/jline/jline/4.2.1/jline-4.2.1.jar" 'jline-3.30.4.jar'
       swap jetty-security-12.0.36.jar e6fb70974291312c58ac84d8bf28c909d1800d1b3104020e7cd4db77391f9fb2 "$M/org/eclipse/jetty/jetty-security/12.0.36/jetty-security-12.0.36.jar" 'jetty-security-12.0.34.jar'
       swap jetty-server-12.0.36.jar f0eb8d1e71d67d0f937c45752546cf479ba55ad3135cf600d3bf723f52cd53fe "$M/org/eclipse/jetty/jetty-server/12.0.36/jetty-server-12.0.36.jar" 'jetty-server-12.0.34.jar'
