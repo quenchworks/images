@@ -1,7 +1,9 @@
 # Assembles a hardened Jenkins inbound agent image directly from Wolfi packages. No
-# Dockerfile, NO melange build -- apko pulls the jenkins-agent script (jenkins-docker-agent,
-# which brings OpenJDK 17 + bash) and the remoting agent.jar (jenkins-remoting) straight
-# from the Wolfi `os` repository.
+# Dockerfile, NO melange build -- apko pulls the jenkins-agent script
+# (jenkins-docker-agent-openjdk-21, which brings OpenJDK 21 + jenkins-utils + bash)
+# and the remoting agent.jar (jenkins-remoting) straight from the Wolfi `os` repository.
+# Wolfi retired the flat `jenkins-docker-agent` apk in favour of the per-JDK
+# subpackages -- see build.conf for the rename rationale.
 #
 # IMAGE-ONLY -- no Helm chart. The 0-CVE, signed, nonroot, multi-arch answer to
 # jenkins/inbound-agent: the controller launches it over JNLP/websocket. The entrypoint
@@ -15,7 +17,7 @@ contents:
   packages:
     - wolfi-baselayout
     - ca-certificates-bundle
-    - __PKG__            # jenkins-docker-agent: /usr/local/bin/jenkins-agent + OpenJDK 17 + bash
+    - __PKG__            # jenkins-docker-agent-openjdk-21: /usr/local/bin/jenkins-agent + OpenJDK 21 + bash
     - jenkins-remoting   # the remoting agent.jar (/usr/share/jenkins/agent.jar)
 
 accounts:
