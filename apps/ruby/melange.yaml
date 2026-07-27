@@ -65,24 +65,34 @@ pipeline:
       test -s /tmp/all.txt
 
       # The bundled DEFAULT json version baked into ruby-__VER__ (the vulnerable one).
+      # EMPTY on Ruby >= 4.0: Wolfi's ruby-4.0 apk ships NO
+      # specifications/default/json-*.gemspec and instead `depend = ruby4.0-json`
+      # (already the fixed line), so there is nothing to strip there.
       DJV="$(grep -oE 'specifications/default/json-[0-9.]+\.gemspec' /tmp/all.txt \
              | sed -E 's#.*/json-([0-9.]+)\.gemspec#\1#' | head -n1)"
-      test -n "$DJV"
-      echo "stripping vulnerable default json gem: $DJV"
 
-      # Drop ONLY the vulnerable default json gem: its default gemspec (the Trivy
-      # finding), its gem stub dir, and its stdlib lib + arch C ext. The FIXED json
-      # from ruby__VER__-json lives under specifications/json-*.gemspec + gems/json-*
-      # (NOT default/) and is kept, so `require "json"` resolves the patched version.
-      grep -vE "(specifications/default/json-${DJV}\.gemspec$|/gems/json-${DJV}(/|$)|/ruby/__VER__\.0/json(\.rb$|/)|/ruby/__VER__\.0/[^/]+-linux[^/]*/json/)" \
-        /tmp/all.txt > /tmp/keep.txt
+      if [ -n "$DJV" ]; then
+        echo "stripping vulnerable default json gem: $DJV"
+        # Drop ONLY the vulnerable default json gem: its default gemspec (the Trivy
+        # finding), its gem stub dir, and its stdlib lib + arch C ext. The FIXED json
+        # from ruby__VER__-json lives under specifications/json-*.gemspec + gems/json-*
+        # (NOT default/) and is kept, so `require "json"` resolves the patched version.
+        grep -vE "(specifications/default/json-${DJV}\.gemspec$|/gems/json-${DJV}(/|$)|/ruby/__VER__\.0/json(\.rb$|/)|/ruby/__VER__\.0/[^/]+-linux[^/]*/json/)" \
+          /tmp/all.txt > /tmp/keep.txt
+      else
+        echo "no bundled default json gem (Ruby >= 4.0 layout) -- nothing to strip"
+        cp /tmp/all.txt /tmp/keep.txt
+      fi
       test -s /tmp/keep.txt
       tar -cf - --no-recursion -T /tmp/keep.txt | tar -C "$D" -xf -
 
-      # Guards: the vulnerable default json gem is gone, the FIXED json + the
-      # working toolchain (ruby + gem + bundle) are intact.
-      test ! -e "$D/usr/lib/ruby/gems/__VER__.0/specifications/default/json-${DJV}.gemspec"
-      test ! -e "$D/usr/lib/ruby/__VER__.0/json.rb"
+      # Guards: the vulnerable default json gem is gone (when there was one), the
+      # FIXED json + the working toolchain (ruby + gem + bundle) are intact.
+      if [ -n "$DJV" ]; then
+        test ! -e "$D/usr/lib/ruby/gems/__VER__.0/specifications/default/json-${DJV}.gemspec"
+        test ! -e "$D/usr/lib/ruby/__VER__.0/json.rb"
+      fi
+      test ! -e "$D"/usr/lib/ruby/gems/__VER__.0/specifications/default/json-*.gemspec
       ls "$D"/usr/lib/ruby/gems/__VER__.0/specifications/json-*.gemspec >/dev/null
       ls -d "$D"/usr/lib/ruby/gems/__VER__.0/gems/json-* >/dev/null
       test -x "$D/usr/bin/ruby"

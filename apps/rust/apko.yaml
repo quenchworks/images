@@ -8,9 +8,10 @@
 # nonroot, multi-arch answer to `rust:1.x`. Developers `FROM` it to build their
 # crates (like Chainguard's rust image) or `docker run <img> build ...`.
 #
-# NOTE: Wolfi DOES version Rust into per-minor packages (rust-1.69 .. rust-1.96),
-# so -- like Go/Python -- we ship the latest 3 stable minors via a matrix.
-# `__VER__` is a build-time placeholder CI substitutes (1.94 / 1.95 / 1.96).
+# NOTE: Wolfi DOES version Rust into per-minor packages (rust-1.69 .. rust-1.97),
+# but Rust has no LTS lines (a new minor every 6 weeks), so build.conf ships the
+# NEWEST line only and rolls it forward. `__VER__` is a build-time placeholder CI
+# substitutes per matrix entry (currently just 1.97).
 contents:
   keyring:
     - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
