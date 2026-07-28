@@ -167,9 +167,14 @@ pipeline:
       # glob's **. Symlinks are not followed, so nothing is visited twice.
       copies = sorted(os.path.join(r, 'brace-expansion', 'package.json')
                       for r, dirs, _ in os.walk('node_modules') if 'brace-expansion' in dirs)
-      assert copies, "brace-expansion not found under node_modules"
+      # Absence is LEGITIMATE here and must not fail the build: 2.31.7's runner tree no
+      # longer pulls brace-expansion at all (2.31.6's did, via glob->minimatch). The
+      # override is then a harmless no-op. What must still fail is a copy that EXISTS
+      # and escaped the pin, so assert-if-present rather than assert-exists.
       stale = [p for p in copies if json.load(open(p))['version'].split('.')[0] != '5']
       assert not stale, "override missed brace-expansion copies: %s" % stale
+      if not copies:
+          print("brace-expansion: absent from this tree, override is a no-op")
       n = 0
       for pj in copies:
           cjs = os.path.join(os.path.dirname(pj), 'dist/commonjs/index.js')
