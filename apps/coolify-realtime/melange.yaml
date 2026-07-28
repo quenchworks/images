@@ -198,7 +198,7 @@ pipeline:
           "ws": "7.5.11",
           "mysql2": "3.9.8",
           "ip": "1.1.9",
-          "brace-expansion": "1.1.16",
+          "brace-expansion": "5.0.8",   // CVE-2026-14257 HIGH; see the interop step below
           "minimatch": "3.1.5",
           "braces": "3.0.3",
           "lodash": "4.18.1"
@@ -221,6 +221,64 @@ pipeline:
       # (ignore-scripts on the prod pass: soketi's prod deps need no native build.)
       npm install --omit=dev --ignore-scripts --no-audit --no-fund
       npm prune --omit=dev
+
+      # --- brace-expansion CVE-2026-14257 (HIGH): 5.0.8 + the CJS interop it broke -------
+      # Path in this tree: bullmq 1.91.1 -> glob ^8.0.3 -> minimatch (5.1.8, glob-scoped
+      # override) -> brace-expansion. The advisory (GHSA-mh99-v99m-4gvg) declares a SINGLE
+      # affected range, `<= 5.0.7`, spanning EVERY line -- so the maintenance heads (1.1.16 =
+      # maintenance-v1, 2.1.2 = maintenance-v2) are themselves affected and no future 1.x/2.x
+      # can ever sort above it. 5.0.8 is the only escape, and the blunt global pin above is the
+      # only way to reach it: parent-bumping needs minimatch >= 9.0.6/10.1.3, but 9.0.9 (newest
+      # 9.x) REVERTED to brace-expansion ^2.0.2 and minimatch 10 is ESM-first with a changed CJS
+      # shape that glob 8 (bullmq's pin) cannot consume.
+      #
+      # 5.0.8 rewrote the CJS entry to a NAMED-only export (`exports.expand`, `__esModule: true`,
+      # no callable default), while minimatch 3.1.5 and 5.1.8 both do
+      # `require("brace-expansion")(pattern)` -> "expand is not a function" at soketi LOAD time.
+      # So re-export the function AS module.exports with the named props kept: `function expand`
+      # is a top-level declaration in that file, so the identifier resolves, and the patched
+      # implementation (the EXPANSION_MAX_LENGTH accumulator bound that fixes the CVE) is what
+      # runs. NOT a gate bypass -- no .trivyignore, no --skip, no VEX; the installed package
+      # genuinely IS the fixed version. The asserts below fail the build if any copy escaped the
+      # override or if a future 5.x moves the CJS entry, so a stale copy can never ship silently.
+      #
+      # The `engines: "20 || >=22"` on 5.0.8 (and on its balanced-match ^4 dep) is a SUPPORT
+      # statement, not a syntax/API floor: both compiled CJS entries are plain ES2018 with zero
+      # Node-20-only API (no structuredClone / findLast / groupBy / node: specifiers / private
+      # fields). Verified on real Node 18.20.8: 5.0.8 + balanced-match 4.0.4 load, the shim makes
+      # minimatch 3.1.5 AND 5.1.8 braceExpand correctly, glob 8 globs, EXPANSION_MAX_LENGTH is
+      # present. npm only warns (EBADENGINE) -- it does not refuse.
+      #
+      # Enumerate with `find`, NOT fs.readdirSync({recursive:true}): the readdir walker matched
+      # only the hoisted top-level copy and silently missed nested ones (that shipped vulnerable
+      # from another app before it was caught). find cannot miss a nesting depth.
+      find node_modules -type d -name brace-expansion -print0 > "$HOME/.be-copies"
+      BE_COPIES="$HOME/.be-copies" node -e '
+        const fs = require("fs"), path = require("path");
+        const SHIM = "\n// QuenchWorks: brace-expansion 5.x exports a NAMED-only CJS binding; re-export\n"
+                   + "// the function itself (named props kept) so minimatch 3.1.5 / 5.1.8 keep working.\n"
+                   + "module.exports = Object.assign(expand, exports, { default: expand });\n";
+        const ver = d => JSON.parse(fs.readFileSync(path.join(d, "package.json"), "utf8")).version;
+        const copies = fs.readFileSync(process.env.BE_COPIES, "utf8").split("\0").filter(Boolean);
+        if (!copies.length) throw new Error("no brace-expansion copy found under node_modules");
+        const stale = copies.filter(d => !ver(d).startsWith("5."));
+        if (stale.length) throw new Error("override missed brace-expansion copies: " + stale.join(" "));
+        let shim = 0;
+        for (const d of copies) {
+          const cjs = path.join(d, "dist", "commonjs", "index.js");
+          if (!fs.readFileSync(cjs, "utf8").includes("Object.assign(expand")) { fs.appendFileSync(cjs, SHIM); shim++; }
+          const b = require(path.resolve(d));
+          if (typeof b !== "function" || b("a{b,c}").join() !== "ab,ac")
+            throw new Error("brace-expansion CJS interop broken at " + d);
+        }
+        console.log("brace-expansion: " + copies.length + " copy(ies) at 5.x, " + shim + " shimmed");
+      '
+      # ...and every minimatch copy in the shipped tree (3.1.5 global + 5.1.8 under glob) must
+      # still braceExpand -- these are the consumers a broken shim would kill at soketi startup.
+      for d in $(find node_modules -type d -name minimatch); do
+        node -e "if (require(require('path').resolve('$d')).braceExpand('a{b,c}').join()!=='ab,ac')
+                   throw new Error('minimatch braceExpand broken at $d');"
+      done
 
       # Strip uWebSockets.js prebuilts that don't match this build's linux/<arch>, so
       # (a) melange's dep scanner doesn't emit a cross-arch SO dependency that breaks
