@@ -1,0 +1,84 @@
+# Assembles the HashiCorp Vault runtime image. Minimal, SHELL-FREE, nonroot, multi-arch,
+# SBOM by apko.
+#
+# !!! LICENSE: BUSL-1.1 -- NOT OSI-approved open source (Vault >= 1.15.0). Do NOT
+# !!! represent it as open source. OpenBao (MPL-2.0) is the truly-open drop-in fork:
+# !!! ghcr.io/quenchworks/images/openbao. See melange.yaml's header for the full note.
+#
+# The image is shell-free (no busybox), so the entrypoint execs the binary directly:
+# entrypoint `/usr/bin/vault` + cmd `server -config=/etc/vault/vault.hcl`. The baked
+# config (from the melange package) is a bootable single-node default -- `docker run
+# <image>` starts a real server. The chart mounts its own HCL from a ConfigMap and
+# overrides `args`, and `args: [server, -dev, ...]` gets a dev-mode node.
+#
+# A real node boots SEALED + UNINITIALIZED; that is expected. /v1/sys/health answers
+# 501 (uninitialized) / 503 (sealed) in that state, which is how liveness is proven
+# before `vault operator init` + `unseal`. HTTP API on 8200; 8201 is Vault's cluster
+# port (inactive with the default `file` storage, which is not an HA backend).
+#
+# mlock: `disable_mlock = true` in the config instead of granting CAP_IPC_LOCK -- the
+# house pattern is a cap-dropped nonroot container. Run on swap-disabled nodes.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-vault@local
+
+accounts:
+  groups:
+    - groupname: vault
+      gid: 1001
+  users:
+    - username: vault
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/vault
+# Overridable by the chart's `args` (Kubernetes args replace Cmd, not Entrypoint).
+cmd: server -config=/etc/vault/vault.hcl
+
+environment:
+  # Makes the in-image `vault` CLI talk to the local listener with no flags, so
+  # `kubectl exec <pod> -- vault status` / `vault operator init` just work (there is
+  # no shell to export it in).
+  VAULT_ADDR: http://127.0.0.1:8200
+  # The CLI's token helper writes $HOME/.vault-token; the rootfs is read-only, so
+  # point HOME at the writable /tmp mount.
+  HOME: /tmp
+  PATH: /usr/bin:/bin
+
+work-dir: /vault
+
+paths:
+  # the work-dir parent is auto-created 0700 root:root, which blocks the nonroot uid
+  # from traversing into the data mount below -- own it 1001 and make it traversable.
+  - path: /vault
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  # writable mount for a read-only rootfs: the `file` storage backend writes here.
+  - path: /vault/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-vault"
+  org.opencontainers.image.licenses: "BUSL-1.1"

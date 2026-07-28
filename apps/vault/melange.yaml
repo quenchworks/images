@@ -1,0 +1,181 @@
+# Builds HashiCorp Vault (the `vault` server + CLI) FROM SOURCE onto Wolfi. Single
+# static Go binary, no CGO. Output is a signed APK in Quenchworks' own repo -- no
+# upstream distro binaries and no prebuilt release zip.
+#
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+# !!! LICENSE WARNING -- NOT OPEN SOURCE !!!
+# Vault 1.15.0 and later are licensed under the Business Source License 1.1
+# (BUSL-1.1), which is NOT OSI-approved open source. Every version this recipe ships
+# (1.20.x, 1.21.x, 2.0.x) carries it -- the tag's LICENSE file names "Vault Version
+# 1.15.0 or later" and every source file header says `SPDX-License-Identifier:
+# BUSL-1.1`. Only Vault <= 1.14.x was MPL-2.0; we do NOT ship those. The BUSL adds a
+# competing-hosted-service use restriction and a 4-year change date. Do NOT represent
+# Vault as open source. CAUTION TIER.
+#   >>> CLEAN ALTERNATIVE: OpenBao (MPL-2.0, OSI-approved, already shipped at
+#   >>> apps/openbao + charts/quench/openbao) is the truly-open drop-in fork of Vault
+#   >>> -- PREFER IT for new deployments. Its `bao` CLI is Vault-API-compatible. <<<
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+#
+# VERSIONS: the two newest stable MINOR lines, not three -- 1.20.x links a docker/docker
+# HIGH that cannot be floated on the `+incompatible` module path. build.conf has the full
+# reasoning.
+#
+# BUILD METHOD: from-source from the pinned git tag (git-checkout + expected-commit),
+# CGO_ENABLED=0, upstream's default build tag (`vault`, per scripts/build.sh) and
+# WITHOUT the `ui` tag.
+#
+# NO WEB UI, deliberately: the browser UI is gated behind `//go:build ui`
+# (http/assets.go embeds `web_ui/*`, which is NOT in the source tree). Producing it
+# means `make static-dist` -> `ember-dist` -> a full pnpm + Ember + node-sass asset
+# build of ui/ (hundreds of MB of JS toolchain, minutes of build, and a Node CVE
+# surface that would then have to be gated). `make bin` adds `ui`; we build the
+# equivalent of `make dev` minus the testonly tag. The stub in http/assets_stub.go
+# takes over: the server, the full HTTP API, the `vault` CLI, every auth method,
+# secret engine and storage backend are fully functional -- only the browser console
+# is absent. Same call as apps/openbao. Use the CLI or the API.
+#
+# CONFIG: Vault refuses to start without a config file, and the image is SHELL-FREE
+# (no busybox), so there is no entrypoint script to synthesize one. We bake a bootable
+# single-node default at /etc/vault/vault.hcl (file storage, TLS off, mlock disabled)
+# and apko's `cmd` points at it, so `docker run <image>` just works. The chart mounts
+# its own HCL from a ConfigMap and overrides `args`.
+#
+# mlock: Vault normally mlock()s its memory to keep the master key out of swap, which
+# needs CAP_IPC_LOCK. The house pattern is a cap-dropped nonroot container, so we set
+# `disable_mlock = true` in the config instead of granting the capability. Run Vault on
+# nodes with swap disabled (the Kubernetes default) to keep the same guarantee.
+package:
+  name: quench-vault
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened HashiCorp Vault, built from source on Wolfi (BUSL-1.1 -- NOT OSI open source; OpenBao is the clean alt)"
+  copyright:
+    - license: BUSL-1.1   # NOT OSI-approved. Vault >= 1.15.0. See the header above.
+  dependencies:
+    runtime:
+      # Shell-free image: the only runtime dep is the CA bundle (TLS to KMS/auth
+      # providers, storage backends, and the `vault` CLI's own HTTPS calls).
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - git
+      # go.mod declares go 1.25.3 (1.21.x) / 1.26.3 (2.0.x); the newest toolchain
+      # builds both and carries the current stdlib CVE fixes.
+      # GOTOOLCHAIN=local below keeps the go directive from triggering a download.
+      - go-1.26
+
+pipeline:
+  # Pin to the exact tag AND its commit sha for clean-room provenance.
+  - uses: git-checkout
+    with:
+      repository: https://github.com/hashicorp/vault
+      tag: v${{package.version}}
+      expected-commit: __COMMIT__
+
+  - runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOTOOLCHAIN=local
+      export GOFLAGS=-mod=mod
+
+      # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
+      # FLOOR is a FLOOR, not a pin. A bare `go get mod@vX` fails silently in two
+      # directions: it is a NO-OP when an upstream `replace` overrides it, and it
+      # becomes a DOWNGRADE once upstream requires more than vX -- re-introducing
+      # the CVE it was added to clear. So float only what is below the floor, then
+      # assert the SHIPPED BINARY carries nothing below it.
+      #
+      # Vault's go.mod has replaces, but all of them are LOCAL SUBMODULE redirects
+      # (./api, ./sdk, ...) or fork swaps (99designs/keyring, ma314smith/signedxml,
+      # TritonDataCenter/triton-go) -- none holds a FLOOR module down, so nothing
+      # needs `go mod edit -dropreplace`. The `=>` assertion below catches it if a
+      # future release adds one.
+      # grpc@v1.82.1 clears GHSA-hrxh-6v49-42gf (HIGH). Unlike openbao, floating it
+      # here does NOT disturb go-kms-wrapping (see build.conf).
+      FLOOR="golang.org/x/net@v0.56.0 golang.org/x/sys@v0.46.0 golang.org/x/crypto@v0.53.0 golang.org/x/text@v0.39.0 google.golang.org/grpc@v1.82.1"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is
+      # the EFFECTIVE version and a replace cannot hide behind the require line.
+      go list -m $MODS
+      need="$(go list -m $MODS | awk '{ print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
+      go mod tidy
+
+      # Upstream's scripts/build.sh: BUILD_TAGS defaults to `vault`, main package is
+      # the repo root. The version string is NOT an ldflag any more -- version/VERSION
+      # is go:embed'ed into version.fullVersion, so the pinned tag reports itself. We
+      # still stamp GitCommit/BuildDate like upstream does.
+      #
+      # -buildvcs=false: without it a git-checkout build stamps the main module as a
+      # VCS pseudo-version (v0.0.0-<time>-<sha>), which Trivy sorts BELOW every
+      # github.com/hashicorp/vault fixed-version and thus false-flags advisories this
+      # release already fixed. Dropping the VCS stamp makes Main.Version "(devel)" so
+      # Trivy cannot mis-match it; provenance still comes from git-checkout's
+      # expected-commit plus the -X GitCommit ldflag. (Same reason as apps/openbao.)
+      go build -trimpath -buildvcs=false -tags vault \
+        -ldflags "-s -w \
+          -X github.com/hashicorp/vault/version.GitCommit=__COMMIT__ \
+          -X github.com/hashicorp/vault/version.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        -o "${{targets.destdir}}/usr/bin/vault" .
+
+      # The float is only real if it reached the BINARY. Every `dep`/`=>` line of
+      # `go version -m` must be at or above its floor -- the `=>` line is what
+      # catches a replace-shadowed float. Fail the build rather than ship it.
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/vault" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor vault)"
+      [ -z "$bad" ] || { echo "❌ 0-CVE float did not reach the binary:"; echo "$bad"; exit 1; }
+
+      # Assert we really built the UI-less variant: the `ui` tag would have embedded
+      # web_ui/*, which does not exist in the source tree, so a stray `-tags ui` is a
+      # build failure -- but assert the stub is what got linked anyway.
+      grep -q 'go:build !ui' http/assets_stub.go
+
+      # ---- bootable default config (shell-free image: nothing can generate one) ----
+      # Single node, file storage under /vault/data (a writable mount / PVC), plain
+      # HTTP on 8200, mlock off (cap-dropped nonroot cannot hold CAP_IPC_LOCK).
+      # `file` rather than `raft`: raft additionally requires cluster_addr/node_id,
+      # which are per-pod values a shell-free image cannot compute. The chart supplies
+      # its own HCL via ConfigMap, so raft/HA is a values-level change, not a rebuild.
+      install -d "${{targets.destdir}}/etc/vault"
+      cat > "${{targets.destdir}}/etc/vault/vault.hcl" <<'HCL'
+      # Quenchworks default single-node Vault config. Bootable as-is; override by
+      # mounting your own HCL and pointing `vault server -config=` at it.
+      disable_mlock = true
+      ui            = false
+
+      storage "file" {
+        path = "/vault/data"
+      }
+
+      listener "tcp" {
+        address     = "0.0.0.0:8200"
+        tls_disable = true
+      }
+      HCL
+      chmod 0644 "${{targets.destdir}}/etc/vault/vault.hcl"
+
+# No in-build `test:` block: `vault server` is long-running and a real node boots
+# sealed + uninitialized, so the functional smoke (init -> unseal -> kv roundtrip
+# against the live API) runs on the assembled image via test.sh instead.
