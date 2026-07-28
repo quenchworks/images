@@ -33,22 +33,53 @@ pipeline:
     with:
       uri: https://github.com/axllent/mailpit/archive/refs/tags/v${{package.version}}.tar.gz
       expected-sha256: __SHA256__
-  - name: Bump vulnerable Go modules to their fixed versions (0-CVE gate)
+  - name: Float vulnerable Go modules past their advisories (0-CVE gate)
     runs: |
       set -eu
       export GOFLAGS=-mod=mod
       export GO111MODULE=on
       export GOTOOLCHAIN=local   # use the installed go, don't fetch go.mod's toolchain
-      # Trivy flags x/net and x/crypto/ssh in the binary's module graph. Bump to
-      # the newest released versions (well past every advisory's fixed version),
-      # then `replace` to force every transitive use to the fixed version too.
-      go get golang.org/x/net@v0.56.0 golang.org/x/sys@v0.46.0 google.golang.org/grpc@v1.82.1 golang.org/x/text@v0.39.0 golang.org/x/crypto@v0.53.0
-      go mod edit -replace golang.org/x/net=golang.org/x/net@v0.56.0
-      go mod edit -replace golang.org/x/crypto=golang.org/x/crypto@v0.53.0
-      go mod tidy || true
-  - runs: |
       export CGO_ENABLED=0
-      export GOFLAGS=-mod=mod
+      # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
+      # 2026-07-28, on the 1.30.5 -> 1.30.6 bump: mailpit's go.mod OVERTOOK the old
+      # house floors (it now requires x/net 0.57.0, x/crypto 0.54.0, x/text 0.40.0,
+      # x/sys 0.47.0), so the previous `go get mod@vX` line had inverted into a
+      # DOWNGRADE of four modules -- and the two `go mod edit -replace` lines made
+      # that downgrade unavoidable, since a replace outranks MVS. Both replaces are
+      # gone and the floors are raised to what upstream requires. FLOOR is a FLOOR,
+      # not a pin: float only what is below it, then assert the SHIPPED BINARY
+      # carries nothing below it. google.golang.org/grpc is NOT in mailpit's module
+      # graph, so its old floor was dead weight and is dropped (a floor for an
+      # absent module would fail `go list -m`).
+      FLOOR="golang.org/x/net@v0.57.0 golang.org/x/crypto@v0.54.0 golang.org/x/text@v0.40.0 golang.org/x/sys@v0.47.0"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is
+      # the EFFECTIVE version and a replace cannot hide behind the require line.
+      go list -m $MODS
+      need="$(go list -m $MODS | awk '{ print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
+      go mod tidy
+
       go build -trimpath \
         -ldflags "-s -w -X github.com/axllent/mailpit/config.Version=v${{package.version}}" \
         -o "${{targets.destdir}}/usr/bin/mailpit" .
+
+      # The float is only real if it reached the BINARY. Every `dep`/`=>` line of
+      # `go version -m` must be at or above its floor -- the `=>` line is what
+      # catches a replace-shadowed float. Fail the build rather than ship it.
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/mailpit" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor mailpit)"
+      [ -z "$bad" ] || { echo "❌ 0-CVE float did not reach the binary:"; echo "$bad"; exit 1; }

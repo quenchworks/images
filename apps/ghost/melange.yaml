@@ -132,12 +132,15 @@ pipeline:
       # and inlined the module into core/server/services/members/csv/. So there is no longer a
       # versioned package for Trivy to match, and the surgery has nothing to operate on — the
       # old `assert copies` is what broke the first 6.54.0 build.
-      # The fix itself did NOT disappear: the inlined unparse() defaults escapeFormulae to true,
-      # which is the actual CSV-injection defense (papaparse prefixes a leading =,+,-,@ or tab
-      # with an apostrophe). Assert that default instead of the vanished node_modules copy, so a
-      # future release that silently drops it fails the build rather than shipping quietly.
+      # The fix itself did NOT disappear: the inlined serializer forces escapeFormulae on, which
+      # is the actual CSV-injection defense (papaparse prefixes a leading =,+,-,@ or tab with an
+      # apostrophe). Assert that instead of the vanished node_modules copy, so a future release
+      # that silently drops it fails the build rather than shipping quietly.
+      # 6.54.1 moved the module: members/csv/unparse.js -> members/import-export/csv/serialize.js,
+      # and the `escapeFormulae = true` destructured default became a literal `escapeFormulae:
+      # true` on the papaparse.unparse call. Both the path and the pattern below track that.
       # Not a gate bypass: no .trivyignore, no --skip, no VEX.
-      grep -q 'escapeFormulae = true' core/server/services/members/csv/unparse.js
+      grep -q 'escapeFormulae: true' core/server/services/members/import-export/csv/serialize.js
 
       # --- brace-expansion CVE-2026-14257: 5.0.8 + the CJS interop it broke ---------------
       # Why the `brace-expansion@<5.0.8` override above has to reach every line: the advisory
