@@ -1,0 +1,62 @@
+# Packages the DEFAULT VCL only -- nothing is compiled here. varnishd itself comes
+# from Wolfi's `varnish` apk (see build.conf); this package exists because varnishd
+# refuses to start without a VCL, a shell-free apko image cannot run a wrapper
+# script that writes one, and apko's `paths:` can create directories/symlinks but
+# not files with content. So one tiny apk carries /etc/varnish/default.vcl.
+#
+# License is BSD-2-Clause to match Varnish itself (the VCL below is our own).
+package:
+  name: quench-varnish-config
+  version: __VER__
+  epoch: 0
+  description: "Bootable default VCL for the Quenchworks hardened Varnish Cache image"
+  copyright:
+    - license: BSD-2-Clause
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+
+pipeline:
+  - runs: |
+      d="${{targets.destdir}}"
+      install -d "$d/etc/varnish"
+      # `backend default none;` is the point of this file: it is legal VCL from
+      # Varnish 6.3 on and lets varnishd boot with NOTHING behind it, so the image
+      # is self-contained (`docker run` works, test.sh needs no companion backend,
+      # and the chart's CI install gate reaches Ready without a fixture app). A VCL
+      # with no backend at all would fail to compile ("No backends nor directors").
+      # Every request is answered from vcl_synth, so the response still carries
+      # X-Varnish -- proof the cache, not something else, served it.
+      # The chart replaces this file with its own ConfigMap.
+      cat > "$d/etc/varnish/default.vcl" <<'EOF'
+      vcl 4.1;
+
+      # Quenchworks default VCL: no backend, every request answered locally.
+      # Point Varnish at something real by mounting your own VCL over this file
+      # (the Helm chart renders one from `vcl` / `backend.host` / `backend.port`).
+      backend default none;
+
+      sub vcl_recv {
+          return (synth(200, "OK"));
+      }
+
+      sub vcl_synth {
+          set resp.http.Content-Type = "text/plain; charset=utf-8";
+          set resp.body = "quench-varnish: no backend configured";
+          return (deliver);
+      }
+      EOF
+      # 0644, not 0600: the file is root-owned in the image and varnishd runs as
+      # uid 1001, which must be able to read its own VCL. Nothing secret is in it.
+      chmod 0644 "$d/etc/varnish/default.vcl"
+
+# No in-build `test:` block: melange's test workspace fails to populate on this
+# host ("unable to populate workspace: open test-dirfs-0"), the same limitation
+# documented on apps/nats and apps/pgpool. test.sh covers the real thing -- it
+# starts varnishd on this VCL and requires a cached HTTP response back.
