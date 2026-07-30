@@ -1,0 +1,114 @@
+# Assembles the phpMyAdmin runtime image: the phpMyAdmin tree (quench-phpmyadmin@local,
+# from the official release tarball, with its stale composer deps remediated) +
+# QuenchWorks' hardened nginx (quench-nginx@local, built FROM SOURCE -- the Wolfi
+# nginx-stable apk is 1.30.2 and Trivy wants 1.30.4-r2, which is what has matomo blocked)
+# + php-8.3 + FPM + the extension surface phpMyAdmin needs, all supervised by supervisord.
+# Minimal, nonroot (uid/gid 1001), multi-arch, read-only-rootfs friendly. SBOM by apko.
+#
+# Ports:
+#   8080/tcp  nginx   -- serves /var/www/html, FastCGI-passes .php to php-fpm
+#                        (nonroot cannot bind <1024)
+#   9000/tcp  php-fpm (loopback only; nginx -> 127.0.0.1:9000)
+#
+# Read-only rootfs: the ONLY writable surface needed is /tmp (tmpfs/emptyDir) -- it holds
+# supervisord's pid + control socket, nginx's pid and temp paths, PHP sessions and upload
+# scratch, and phpMyAdmin's TempDir (compiled Twig templates). phpMyAdmin is stateless:
+# all persistent state lives in the MySQL/MariaDB server it administers.
+#
+# PHP 8.3 (not 8.4/8.5) on purpose: phpMyAdmin 5.2.3 declares php ">=7.2,<8.4".
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - busybox
+    - supervisor                  # process supervisor (php-fpm + nginx)
+    - quench-nginx@local          # QuenchWorks' hardened nginx (from source), 8080/nonroot
+    - quench-phpmyadmin@local     # the phpMyAdmin tree + nginx/php-fpm/supervisor wiring
+    # PHP runtime + FPM. Each extension needs its -config sibling, otherwise the .so
+    # ships unregistered in php.ini.
+    - php-8.3
+    - php-8.3-fpm
+    - php-8.3-fpm-config
+    - php-8.3-config
+    - php-8.3-opcache
+    - php-8.3-opcache-config
+    # MySQL / MariaDB driver: phpMyAdmin talks mysqli (mysqlnd backend). Required.
+    - php-8.3-mysqli
+    - php-8.3-mysqli-config
+    - php-8.3-mysqlnd
+    - php-8.3-mysqlnd-config
+    # Required by composer.json (ext-iconv / ext-openssl / ext-xml) + the documented
+    # recommendations: mbstring (multibyte SQL + charset conversion), sodium (AES-256-CTR
+    # for cookie auth via sodium_compat), zip/bz2 (+ built-in zlib) for compressed
+    # import/export, gd (QR codes for 2FA, image/PDF export), curl (recaptcha/version
+    # checks), ctype/fileinfo/dom/simplexml (XML import + export).
+    - php-8.3-mbstring
+    - php-8.3-mbstring-config
+    - php-8.3-iconv
+    - php-8.3-iconv-config
+    - php-8.3-openssl
+    - php-8.3-openssl-config
+    - php-8.3-sodium
+    - php-8.3-sodium-config
+    - php-8.3-zip
+    - php-8.3-zip-config
+    - php-8.3-bz2
+    - php-8.3-bz2-config
+    - php-8.3-gd
+    - php-8.3-gd-config
+    - php-8.3-curl
+    - php-8.3-curl-config
+    - php-8.3-ctype
+    - php-8.3-ctype-config
+    - php-8.3-fileinfo
+    - php-8.3-fileinfo-config
+    - php-8.3-xml
+    - php-8.3-xml-config
+    - php-8.3-dom
+    - php-8.3-dom-config
+    - php-8.3-simplexml
+    - php-8.3-simplexml-config
+
+accounts:
+  groups:
+    - groupname: phpmyadmin
+      gid: 1001
+  users:
+    - username: phpmyadmin
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# supervisord (PID 1) starts php-fpm then nginx. No shell wrapper: supervisord parses the
+# program commands itself, and quench-nginx's own nginx.conf already puts the pid and all
+# temp paths under /tmp, so nothing has to be mkdir'd at boot.
+entrypoint:
+  command: /usr/bin/supervisord -c /etc/phpmyadmin/supervisord.conf
+
+work-dir: /var/www/html
+
+paths:
+  # /tmp holds supervisord pid/sock, nginx pid + temp dirs, PHP sessions/uploads and
+  # phpMyAdmin's TempDir (compiled Twig templates).
+  - path: /tmp
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o1777
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-phpmyadmin"
+  org.opencontainers.image.licenses: "GPL-2.0-only"

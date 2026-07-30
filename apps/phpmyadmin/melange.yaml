@@ -1,0 +1,526 @@
+# Packages phpMyAdmin (phpmyadmin/phpmyadmin) for Wolfi from the OFFICIAL release
+# tarball. phpMyAdmin-<VER>-all-languages.tar.xz is the finished application, not a
+# source checkout: it already carries index.php, libraries/, templates/, themes/, js/,
+# locale/ AND the composed vendor/ tree, so there is nothing to compile. We fetch the
+# sha256-pinned tarball, remediate the two dependency surfaces it ships stale (composer
+# packages + one bundled JS asset), and install the tree at /var/www/html together with
+# the runtime wiring (nginx server block, php-fpm pool, php.ini overrides, supervisord).
+#
+# The PHP runtime (php-8.3 + FPM + extensions) and the web tier (quench-nginx, built
+# from source in the same build) come from packages declared in apko.yaml, NOT from
+# here. Clean-room: we do not inherit docker.io/phpmyadmin (which layers on php:apache);
+# the whole runtime is reconstructed from Wolfi + QuenchWorks packages.
+package:
+  name: quench-phpmyadmin
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened phpMyAdmin (official release tarball) on Wolfi php-fpm + nginx"
+  copyright:
+    - license: GPL-2.0-only   # phpMyAdmin: composer.json "license" + LICENSE
+  dependencies:
+    runtime:
+      # PHP + FPM + the extension surface phpMyAdmin needs. composer.json requires
+      # ext-hash/iconv/json/mysqli/openssl/pcre/xml (hash+json+pcre+session are built
+      # into php-8.3 itself); mbstring/zip/bz2/gd/curl/sodium/ctype/fileinfo/dom/
+      # simplexml cover the documented recommendations (import + export incl. gzip/bz2/
+      # zip, charset conversion, QR codes for 2FA, PDF/graph export). Each extension
+      # needs its -config sibling, otherwise the .so ships unregistered in php.ini.
+      - php-8.3
+      - php-8.3-fpm
+      - php-8.3-fpm-config
+      - php-8.3-config
+      - php-8.3-opcache
+      - php-8.3-opcache-config
+      - php-8.3-mysqli
+      - php-8.3-mysqli-config
+      - php-8.3-mysqlnd
+      - php-8.3-mysqlnd-config
+      - php-8.3-mbstring
+      - php-8.3-mbstring-config
+      - php-8.3-iconv
+      - php-8.3-iconv-config
+      - php-8.3-openssl
+      - php-8.3-openssl-config
+      - php-8.3-sodium
+      - php-8.3-sodium-config
+      - php-8.3-zip
+      - php-8.3-zip-config
+      - php-8.3-bz2
+      - php-8.3-bz2-config
+      - php-8.3-gd
+      - php-8.3-gd-config
+      - php-8.3-curl
+      - php-8.3-curl-config
+      - php-8.3-ctype
+      - php-8.3-ctype-config
+      - php-8.3-fileinfo
+      - php-8.3-fileinfo-config
+      - php-8.3-xml
+      - php-8.3-xml-config
+      - php-8.3-dom
+      - php-8.3-dom-config
+      - php-8.3-simplexml
+      - php-8.3-simplexml-config
+      - supervisor
+      - busybox
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - python3   # rewrites composer.json / asserts the remediated lock (build only)
+      # composer + just enough php to run it: the release tarball vendors four packages
+      # with fixable CVEs (see the bump step). Build env only; NOT in the runtime image.
+      - composer
+      - php-8.3
+      - php-8.3-phar
+      - php-8.3-openssl
+      - php-8.3-mbstring
+      - php-8.3-curl
+      - php-8.3-zip
+
+pipeline:
+  # The release asset is the finished app: fetch the exact tarball and verify its sha256
+  # (identical to upstream's published phpMyAdmin-<VER>-all-languages.tar.xz.sha256).
+  # strip-components 0 keeps the tarball's own phpMyAdmin-<VER>-all-languages/ top dir so
+  # the tree lands in a named subdir instead of mixing into the melange workspace root.
+  - uses: fetch
+    with:
+      uri: https://files.phpmyadmin.net/phpMyAdmin/${{package.version}}/phpMyAdmin-${{package.version}}-all-languages.tar.xz
+      expected-sha256: __SHA256__
+      strip-components: "0"
+
+  - name: Bump the vendored composer packages that ship with fixable CVEs
+    runs: |
+      set -eu
+      src="phpMyAdmin-${{package.version}}-all-languages"
+      export COMPOSER_HOME=/tmp/composer COMPOSER_ALLOW_SUPERUSER=1
+
+      # 5.2.3 vendors twig/twig 3.11.3 (12 findings: CVE-2026-24425 / 46633 / 46634 /
+      # 48805 / 48806 / 48807 CRITICAL, 46638 / 48808 / 49981 HIGH, 46627 / 46628 /
+      # 46635 / 47730 / 47732 MEDIUM -> fixed in 3.26/3.27), symfony/cache 5.4.46
+      # (CVE-2026-45073 HIGH -> 5.4.52), symfony/process 5.4.47 (CVE-2026-24739 MEDIUM
+      # -> 5.4.51) and paragonie/sodium_compat 1.23.0 (CVE-2025-69277 MEDIUM -> 1.24.0).
+      # All four fixes are INSIDE the constraints phpMyAdmin declares, so this is a
+      # stale lock, not the drupal-11.2/11.3 kind of hard-pin conflict.
+      #
+      # A plain `composer update --no-dev` CANNOT be used here (it can for drupal): the
+      # release tarball's composer.json is the pristine repo one, while its composer.lock
+      # was produced by upstream's release script, which `composer require`s the optional
+      # runtime packages (tecnickcom/tcpdf, pragmarx/google2fa*, bacon/bacon-qr-code,
+      # code-lts/u2f-php-server, web-auth/webauthn-lib, thecodingmachine/safe + their
+      # transitives) WITHOUT writing them into composer.json. Re-resolving from that
+      # composer.json therefore PRUNES 20 shipped packages and silently removes PDF
+      # export and two-factor auth. So we first restate the release's own resolved set
+      # as exact requires -- making composer.json describe exactly what upstream shipped
+      # -- and only then raise the four floors. Result: 4 upgrades, 0 removals.
+      python3 - "$src" <<'PY'
+      import json, sys
+      root = sys.argv[1]
+      bump = {"twig/twig": "^3.28.0", "symfony/cache": "^5.4.53",
+              "symfony/process": "^5.4.51", "paragonie/sodium_compat": "^1.24.0"}
+      cj = json.load(open(root + "/composer.json"))
+      lock = json.load(open(root + "/composer.lock"))
+      req = dict(cj["require"])
+      for p in lock["packages"]:                 # non-dev = what the release ships
+          req[p["name"]] = bump.get(p["name"], p["version"])
+      req.update(bump)                           # floors win even if not yet in the lock
+      cj["require"] = req
+      json.dump(cj, open(root + "/composer.json", "w"), indent=4)
+      print("restated %d exact requires + %d CVE floors" % (len(req), len(bump)))
+      PY
+
+      composer update -d "$src" --with-dependencies --no-dev --no-scripts --no-audit \
+        --no-progress --no-interaction --ignore-platform-reqs \
+        twig/twig symfony/cache symfony/process paragonie/sodium_compat
+
+      # Assert the fixed versions really landed in the vendored inventory AND that the
+      # optional runtime packages survived the re-resolve (a silent prune would break
+      # PDF export / 2FA without failing the build).
+      python3 - "$src" <<'PY'
+      import json, sys
+      root = sys.argv[1]
+      inst = json.load(open(root + "/vendor/composer/installed.json"))
+      have = {p["name"]: p["version"].lstrip("v") for p in inst["packages"]}
+      floors = {"twig/twig": (3, 27, 0), "symfony/cache": (5, 4, 52),
+                "symfony/process": (5, 4, 51), "paragonie/sodium_compat": (1, 24, 0)}
+      bad = []
+      for name, floor in floors.items():
+          v = have.get(name)
+          if not v or tuple(int(x) for x in v.split(".")[:3]) < floor:
+              bad.append("%s=%s (need >= %s)" % (name, v, ".".join(map(str, floor))))
+      for name in ("tecnickcom/tcpdf", "pragmarx/google2fa", "bacon/bacon-qr-code",
+                   "web-auth/webauthn-lib", "code-lts/u2f-php-server",
+                   "thecodingmachine/safe", "phpmyadmin/sql-parser"):
+          if name not in have:
+              bad.append("%s was PRUNED from vendor/" % name)
+      if bad:
+          sys.exit("composer remediation failed: " + "; ".join(bad))
+      print("composer remediation ok: %d packages, twig=%s" % (len(have), have["twig/twig"]))
+      PY
+
+  - name: Patch the prototype-pollution hole in the bundled js-cookie asset
+    runs: |
+      set -eu
+      src="phpMyAdmin-${{package.version}}-all-languages"
+      # js/vendor/js.cookie.js is js-cookie 2.2.1, which carries CVE-2026-46625 (HIGH):
+      # the internal attribute-merge helper copies properties with `for (var key in ...)`
+      # + plain assignment, so a JSON.parse-produced "__proto__" member pollutes
+      # Object.prototype. Upstream fixed it in 3.0.7 -- but phpMyAdmin pins 2.2.1 and its
+      # JS uses `Cookies.defaults`, an API REMOVED in 3.x, so a drop-in 3.0.7 swap would
+      # silently stop applying cookie attributes (path / secure / samesite) on a
+      # session-security path. We patch the actual defect instead, keeping the 2.x API:
+      # skip inherited keys and __proto__ when merging attribute objects.
+      python3 - "$src/js/vendor/js.cookie.js" <<'PY'
+      import sys
+      p = sys.argv[1]
+      s = open(p).read()
+      needle = "\t\t\tfor (var key in attributes) {\n"
+      guard = ("\t\t\t\tif (key === '__proto__' || "
+               "!Object.prototype.hasOwnProperty.call(attributes, key)) { continue; }\n")
+      if s.count(needle) != 1:
+          sys.exit("js.cookie.js: expected exactly 1 attribute-merge loop, found %d"
+                   % s.count(needle))
+      open(p, "w").write(s.replace(needle, needle + guard))
+      print("js.cookie.js: prototype-pollution guard applied")
+      PY
+      grep -q "__proto__" "$src/js/vendor/js.cookie.js"
+
+  - name: Install the phpMyAdmin tree as the docroot at /var/www/html
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      app="$destdir/var/www/html"
+      src="phpMyAdmin-${{package.version}}-all-languages"
+      install -d -m 0755 "$app"
+      cp -a "$src/." "$app/"
+
+      # Drop the front-end BUILD metadata. package.json / yarn.lock / babel.config.json
+      # describe upstream's asset pipeline (babel, postcss, sass, eslint, jest ...) --
+      # tooling that is never installed, never shipped and never executed in this image;
+      # the built assets under js/ and themes/ are what actually runs. Keeping the lock
+      # file would make scanners report ~19 CVEs for build tools that do not exist in the
+      # image. The one bundled asset that DOES ship with a real advisory (js-cookie) is
+      # patched above rather than hidden. composer.lock is deliberately KEPT so the
+      # vendored PHP dependencies stay fully scannable.
+      rm -f "$app/package.json" "$app/yarn.lock" "$app/babel.config.json"
+
+      test -f "$app/index.php"
+      test -f "$app/libraries/classes/Config.php"
+      test -d "$app/vendor"
+      test -f "$app/composer.lock"
+      grep -q . "$app/RELEASE-DATE-${{package.version}}"
+
+  - name: Install the default config.inc.php (env-driven, chart-overridable)
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      app="$destdir/var/www/html"
+      # Unlike wordpress/drupal (which ship NO config and serve an installer until the
+      # chart supplies one), phpMyAdmin has no installer to fall back on: with no
+      # config.inc.php it defaults to connecting to localhost, and cookie auth REFUSES to
+      # work without a blowfish_secret. So we bake a BOOTABLE default that takes every
+      # setting from the environment -- `docker run -e PMA_HOST=db` works standalone, and
+      # the chart mounts its own ConfigMap over this file (subPath) when it needs more.
+      # php-fpm runs with clear_env = no, so the container environment reaches getenv().
+      # Env names mirror upstream's official image (PMA_HOST, PMA_PORT, PMA_ABSOLUTE_URI)
+      # so existing docs and compose files carry over.
+      cat > "$app/config.inc.php" <<'EOF'
+      <?php
+      /**
+       * Default configuration for the QuenchWorks phpMyAdmin image.
+       *
+       * Everything is read from the environment at request time, so this file holds no
+       * secret and no host-specific value. Override any of it by mounting your own
+       * config.inc.php over /var/www/html/config.inc.php (the Helm chart does exactly
+       * that, from a ConfigMap).
+       */
+      declare(strict_types=1);
+
+      // Cookie auth signs its session cookie with this key. It MUST be stable for the
+      // lifetime of a session and identical across replicas, so operators are expected to
+      // set PMA_BLOWFISH_SECRET (32 chars; the Helm chart generates one once and keeps it
+      // in a Secret across upgrades). Standalone, we derive a deterministic per-container
+      // value so `docker run` works out of the box instead of erroring out.
+      $blowfish = getenv('PMA_BLOWFISH_SECRET');
+      if (!is_string($blowfish) || $blowfish === '') {
+          $blowfish = substr(hash('sha256', 'quench-phpmyadmin|' . php_uname('n')), 0, 32);
+      }
+      $cfg['blowfish_secret'] = $blowfish;
+
+      $cfg['Servers'] = [];
+      $i = 0;
+
+      // Comma-separated PMA_HOSTS (or a single PMA_HOST) becomes the server list shown in
+      // the login form's dropdown. Defaults to the conventional in-cluster name "mysql".
+      $hosts = getenv('PMA_HOSTS') ?: (getenv('PMA_HOST') ?: 'mysql');
+      $port = getenv('PMA_PORT') ?: '3306';
+      $verboses = getenv('PMA_VERBOSES') ?: (getenv('PMA_VERBOSE') ?: '');
+      $verboseList = $verboses === '' ? [] : array_map('trim', explode(',', $verboses));
+
+      foreach (array_map('trim', explode(',', $hosts)) as $index => $host) {
+          if ($host === '') {
+              continue;
+          }
+          $i++;
+          $cfg['Servers'][$i] = [
+              'host' => $host,
+              'port' => $port,
+              'auth_type' => getenv('PMA_AUTH_TYPE') ?: 'cookie',
+              'AllowNoPassword' => (bool) getenv('PMA_ALLOW_NO_PASSWORD'),
+              'compress' => false,
+              // No control user / phpMyAdmin configuration storage by default: it needs a
+              // pre-created pmadb, and phpMyAdmin degrades gracefully without it.
+              'controluser' => '',
+              'controlpass' => '',
+          ];
+          if (isset($verboseList[$index]) && $verboseList[$index] !== '') {
+              $cfg['Servers'][$i]['verbose'] = $verboseList[$index];
+          }
+          // Optional single-user shortcuts (config auth): only used when auth_type=config.
+          if (getenv('PMA_USER')) {
+              $cfg['Servers'][$i]['user'] = getenv('PMA_USER');
+          }
+          if (getenv('PMA_PASSWORD')) {
+              $cfg['Servers'][$i]['password'] = getenv('PMA_PASSWORD');
+          }
+      }
+
+      // Behind an ingress / reverse proxy, phpMyAdmin needs to know its public URL to
+      // build correct redirects.
+      if (getenv('PMA_ABSOLUTE_URI')) {
+          $cfg['PmaAbsoluteUri'] = getenv('PMA_ABSOLUTE_URI');
+      }
+
+      // The rootfs is read-only; /tmp is the writable tmpfs/emptyDir. TempDir is where
+      // phpMyAdmin caches compiled Twig templates (it warns and runs slower without one).
+      $cfg['TempDir'] = getenv('PMA_TEMP_DIR') ?: '/tmp';
+      $cfg['UploadDir'] = getenv('PMA_UPLOAD_DIR') ?: '';
+      $cfg['SaveDir'] = getenv('PMA_SAVE_DIR') ?: '';
+      $cfg['CheckConfigurationPermissions'] = false;
+      // Version checks phone home to phpmyadmin.net; the image is rebuilt by CI instead.
+      $cfg['VersionCheck'] = (bool) getenv('PMA_VERSION_CHECK');
+      EOF
+      chmod 0644 "$app/config.inc.php"
+      php -l "$app/config.inc.php"
+
+  - name: Install the nginx server block (FastCGI to php-fpm, :8080, /var/www/html)
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/etc/nginx/conf.d"
+      # Included by quench-nginx's own nginx.conf via /etc/nginx/conf.d/*.conf, which
+      # already handles the nonroot / read-only-rootfs plumbing (no `user` directive, pid
+      # + every *_temp_path under /tmp, logs to stdout/stderr). We only add the site: the
+      # default_server on 8080 (nonroot cannot bind <1024), superseding quench-nginx's
+      # placeholder server on the same port.
+      cat > "$destdir/etc/nginx/conf.d/phpmyadmin.conf" <<'EOF'
+      server {
+          listen 8080 default_server;
+          listen [::]:8080 default_server;
+          server_name _;
+
+          root /var/www/html;
+          index index.php;
+          charset utf-8;
+
+          # Import/upload size; keep in step with php.ini upload_max_filesize below.
+          client_max_body_size 256M;
+          access_log off;
+
+          location = /favicon.ico { log_not_found off; access_log off; }
+          location = /robots.txt  { log_not_found off; access_log off; }
+
+          # Never serve dotfiles or the dependency/lock metadata as content.
+          location ~ /\.                        { return 403; }
+          location ~* ^/(composer\.(json|lock)|RELEASE-DATE-.*)$ { return 403; }
+
+          # phpMyAdmin's PHP lives in libraries/, templates/ and vendor/; only the front
+          # controllers at the docroot (and setup/) are ever requested directly.
+          location ~ ^/(libraries|templates|locale|sql|examples)/ { return 403; }
+          location ~ ^/vendor/                  { return 403; }
+
+          location / {
+              try_files $uri $uri/ =404;
+          }
+
+          location ~ \.php$ {
+              try_files $uri =404;
+              include        /etc/nginx/fastcgi_params;
+              fastcgi_split_path_info ^(.+\.php)(/.+)$;
+              fastcgi_param  SCRIPT_FILENAME $document_root$fastcgi_script_name;
+              fastcgi_param  PATH_INFO $fastcgi_path_info;
+              fastcgi_index  index.php;
+              fastcgi_pass   127.0.0.1:9000;
+              fastcgi_buffers 16 16k;
+              fastcgi_buffer_size 32k;
+              fastcgi_read_timeout 600;
+          }
+
+          # Long-cache the static assets shipped with the release.
+          location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff2?)$ {
+              expires max;
+              log_not_found off;
+              access_log off;
+          }
+      }
+      EOF
+
+  - name: Install the php-fpm pool + php.ini overrides (nonroot / read-only rootfs)
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/etc/php/php-fpm.d"
+      install -d "$destdir/etc/php/conf.d"
+
+      # Wolfi's pool sets user/group = nobody (a nonroot master cannot setuid workers, so
+      # those directives are ignored with a warning) and pins listen to [::]:9000. This
+      # zzz- override loads last: listen on 127.0.0.1:9000 (what the nginx block passes
+      # to), master in the foreground, worker output to stderr. clear_env = no is
+      # LOAD-BEARING: config.inc.php reads its whole configuration via getenv().
+      cat > "$destdir/etc/php/php-fpm.d/zzz-phpmyadmin.conf" <<'EOF'
+      [global]
+      daemonize = no
+      error_log = /proc/self/fd/2
+
+      [www]
+      listen = 127.0.0.1:9000
+      catch_workers_output = yes
+      decorate_workers_output = no
+      clear_env = no
+      pm = dynamic
+      pm.max_children = 16
+      pm.start_servers = 2
+      pm.min_spare_servers = 1
+      pm.max_spare_servers = 4
+      access.log = /proc/self/fd/2
+      EOF
+
+      # Runtime PHP tuning: import/export friendly limits, sessions + upload scratch under
+      # /tmp (the writable tmpfs on a read-only rootfs), errors to stderr, opcache on.
+      cat > "$destdir/etc/php/conf.d/zzz-phpmyadmin.ini" <<'EOF'
+      expose_php = Off
+      memory_limit = 512M
+      upload_max_filesize = 256M
+      post_max_size = 256M
+      max_execution_time = 600
+      max_input_time = 600
+      max_input_vars = 10000
+      sys_temp_dir = /tmp
+      upload_tmp_dir = /tmp
+      session.save_path = /tmp
+      session.cookie_httponly = 1
+      session.use_strict_mode = 1
+      error_reporting = E_ALL & ~E_DEPRECATED & ~E_STRICT
+      display_errors = Off
+      log_errors = On
+      error_log = /proc/self/fd/2
+      date.timezone = UTC
+      opcache.enable = 1
+      opcache.enable_cli = 0
+      opcache.memory_consumption = 128
+      opcache.max_accelerated_files = 20000
+      opcache.revalidate_freq = 2
+      EOF
+
+  - name: Install the supervisord configuration (php-fpm + nginx)
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/etc/phpmyadmin"
+      install -d "$destdir/etc/supervisor.d"
+
+      # Main config at /etc/phpmyadmin/supervisord.conf, NOT /etc/supervisord.conf (owned
+      # by Wolfi's supervisor-config package -> apko file conflict). Nonroot-friendly:
+      # nodaemon, logs to stdout, pid + control socket under /tmp. supervisord parses the
+      # program commands itself, so the image needs no shell wrapper entrypoint.
+      cat > "$destdir/etc/phpmyadmin/supervisord.conf" <<'EOF'
+      [supervisord]
+      nodaemon=true
+      logfile=/dev/stdout
+      logfile_maxbytes=0
+      pidfile=/tmp/supervisord.pid
+
+      [unix_http_server]
+      file=/tmp/supervisor.sock
+
+      [supervisorctl]
+      serverurl=unix:///tmp/supervisor.sock
+
+      [rpcinterface:supervisor]
+      supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+
+      [include]
+      files = /etc/supervisor.d/*.conf
+      EOF
+
+      # php-fpm first (the FastCGI backend), then nginx (the web front).
+      cat > "$destdir/etc/supervisor.d/php-fpm.conf" <<'EOF'
+      [program:php-fpm]
+      command=/usr/bin/php-fpm --nodaemonize --fpm-config /etc/php/php-fpm.conf
+      autostart=true
+      autorestart=true
+      priority=10
+      stdout_logfile=/dev/stdout
+      stdout_logfile_maxbytes=0
+      stderr_logfile=/dev/stderr
+      stderr_logfile_maxbytes=0
+      EOF
+
+      cat > "$destdir/etc/supervisor.d/nginx.conf" <<'EOF'
+      [program:nginx]
+      command=/usr/bin/nginx -g "daemon off;"
+      autostart=true
+      autorestart=true
+      priority=20
+      stdout_logfile=/dev/stdout
+      stdout_logfile_maxbytes=0
+      stderr_logfile=/dev/stderr
+      stderr_logfile_maxbytes=0
+      EOF
+
+  - name: Sanity-check the assembled tree
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      app="$destdir/var/www/html"
+      test -f "$app/index.php"
+      test -f "$app/config.inc.php"
+      test -d "$app/vendor/twig/twig/src"
+      test -f "$destdir/etc/nginx/conf.d/phpmyadmin.conf"
+      test -f "$destdir/etc/php/php-fpm.d/zzz-phpmyadmin.conf"
+      test -f "$destdir/etc/php/conf.d/zzz-phpmyadmin.ini"
+      test -f "$destdir/etc/phpmyadmin/supervisord.conf"
+      test ! -f "$app/yarn.lock"
+      grep -m1 "VERSION" "$app/libraries/classes/Version.php" || true
+
+test:
+  pipeline:
+    - runs: |
+        set -eu
+        test -f /var/www/html/index.php
+        test -f /var/www/html/config.inc.php
+        php --version
+        # Every extension phpMyAdmin requires/recommends must be registered in the runtime.
+        for ext in mysqli mysqlnd mbstring iconv openssl sodium zip bz2 gd curl ctype \
+                   fileinfo xml dom simplexml json hash pcre session zlib; do
+          php -m | grep -qi "^${ext}$" || { echo "missing PHP extension: $ext"; php -m; exit 1; }
+        done
+        php -l /var/www/html/config.inc.php
+        # The shipped version constant must match the package version. (It is declared as
+        # '<ver>' . VERSION_SUFFIX, a constant libraries/constants.php defines at runtime,
+        # so we assert the literal instead of evaluating the class.)
+        grep -q "public const VERSION = '${{package.version}}'" \
+          /var/www/html/libraries/classes/Version.php
+        # Twig must be the remediated release, not the 3.11.3 the tarball vendors.
+        php -r '$i=json_decode(file_get_contents("/var/www/html/vendor/composer/installed.json"),true);
+          foreach($i["packages"] as $p){ if($p["name"]==="twig/twig"){ echo "twig ",$p["version"],"\n";
+            exit(version_compare(ltrim($p["version"],"v"),"3.27.0","<") ? 1 : 0); } } exit(1);'
+        command -v php-fpm
+        command -v nginx
+        command -v supervisord
