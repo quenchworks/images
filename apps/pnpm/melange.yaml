@@ -42,23 +42,53 @@ pipeline:
 
       # Bump the vendored pure-JS deps that carry FIXABLE CVEs to their upstream fixed
       # versions. Security update, not a gate weaken -- same major/minor line, so each is
-      # a drop-in: tar 7.5.20 -> 7.5.21 (GHSA-r292-9mhp-454m, uncontrolled recursion in
+      # a drop-in: tar >= 7.5.21 clears GHSA-r292-9mhp-454m (uncontrolled recursion in
       # mapHas/filesFilter => uncatchable stack-overflow DoS on crafted long paths).
       # pnpm bundles TWO copies: dist/node_modules (the running CLI) and
       # artifacts/exe/dist/node_modules (the standalone-executable payload) -- both are
-      # scanned, so both get patched. npm tarballs extract under package/.
-      patch_pkg() {  # <target-node_modules-dir> <name> <url> <sha256>
+      # scanned, so both get checked. npm tarballs extract under package/.
+      #
+      # The version below is a FLOOR, not a pin -- the npm flavour of trap #2 in
+      # docs/go-module-float.md. pnpm vendors its own tar and moves it on its own cadence
+      # (11.17.0 shipped 7.5.20, 11.18.0 already ships 7.5.22), so a BLIND replace would
+      # silently DOWNGRADE the newer vendored copy and re-introduce whatever it fixed.
+      # So: replace only a copy that is actually BELOW the floor, and leave anything at or
+      # above it alone. This env has no node (nodejs-22 is a RUNTIME dep, not a build one),
+      # so the version is read out of package.json with sed and compared with the same
+      # awk major.minor.patch comparator docs/go-module-float.md uses -- busybox awk is
+      # present, whereas `sort -V` is not a feature this env guarantees.
+      ver_ge() {  # <floor> <have> -> exit 0 when have >= floor
+        awk -v f="$1" -v h="$2" 'BEGIN {
+          split(f, a, "."); split(h, b, ".")
+          for (i = 1; i <= 3; i++) {
+            if ((b[i] + 0) > (a[i] + 0)) exit 0
+            if ((b[i] + 0) < (a[i] + 0)) exit 1
+          }
+          exit 0 }'
+      }
+      patch_pkg() {  # <target-node_modules-dir> <name> <floor> <url> <sha256>
         [ -d "$1/$2" ] || { echo "vendored $2 not at $1/$2 -- layout changed" >&2; exit 1; }
-        curl -fsSL -o pkg.tgz "$3"
-        echo "$4  pkg.tgz" | sha256sum -c -
+        have="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+                  "$1/$2/package.json" | head -1)"
+        [ -n "$have" ] || { echo "could not read $2 version at $1/$2 -- layout changed" >&2; exit 1; }
+        if ver_ge "$3" "$have"; then
+          echo "vendored $2 is $have (>= floor $3) -- nothing to patch"
+          return
+        fi
+        echo "vendored $2 is $have (< floor $3) -- replacing with $3"
+        curl -fsSL -o pkg.tgz "$4"
+        echo "$5  pkg.tgz" | sha256sum -c -
         rm -rf npmpkg && mkdir npmpkg && tar -xzf pkg.tgz -C npmpkg
         rm -rf "$1/$2" && mkdir -p "$1/$2"
         cp -a npmpkg/package/. "$1/$2/"
       }
-      TAR_URL=https://registry.npmjs.org/tar/-/tar-7.5.21.tgz
-      TAR_SHA=bcedf25a21daecd1a18fb5e19ab855b7d79ec8ef1da175e8ba85cfc0ed0069d1
-      patch_pkg "$dest/dist/node_modules"              tar "$TAR_URL" "$TAR_SHA"
-      patch_pkg "$dest/artifacts/exe/dist/node_modules" tar "$TAR_URL" "$TAR_SHA"
+      # 7.5.22 is the newest 7.5.x, so the weekly node-tar advisories have some headroom
+      # before the floor needs raising again (same rationale as apps/n8n's tar override).
+      TAR_FLOOR=7.5.22
+      TAR_URL=https://registry.npmjs.org/tar/-/tar-7.5.22.tgz
+      TAR_SHA=b792c2d1c7fc770910522ca1ffc29eee02ee38de4fa3a01e7832eb705879c6c6
+      patch_pkg "$dest/dist/node_modules"              tar "$TAR_FLOOR" "$TAR_URL" "$TAR_SHA"
+      patch_pkg "$dest/artifacts/exe/dist/node_modules" tar "$TAR_FLOOR" "$TAR_URL" "$TAR_SHA"
 
       # PATH launcher; the .cjs carries `#!/usr/bin/env node`. The image
       # entrypoint runs it through node explicitly (shell-less rootfs).
