@@ -38,6 +38,22 @@ def github_tags(repo):
         capture_output=True, text=True).stdout.split()
     return [t.strip().lstrip("v") for t in out if t.strip()]
 
+def github_asset_releases(repo):
+    """Release tags that actually ship a downloadable asset (prereleases included).
+
+    Use this instead of github_tags() when the recipe fetches a RELEASE ASSET. Some
+    projects cut preview/rc git TAGS without publishing a release (or publish a release
+    with no binaries), so a tag-based check proposes a version whose artifact 404s --
+    that is exactly how rustfs 1.0.0-beta.12-preview.1 reached VERSIONS and failed the
+    build with curl exit 22. Filtering on assets keeps the checker honest about what is
+    actually installable.
+    """
+    out = subprocess.run(
+        ["gh", "api", f"repos/{repo}/releases?per_page=40", "-q",
+         '.[]|select(.draft==false and (.assets|length)>0)|.tag_name'],
+        capture_output=True, text=True).stdout.split()
+    return [t.strip().lstrip("v") for t in out if t.strip()]
+
 def npm(pkg):
     data = json.load(urllib.request.urlopen(f"https://registry.npmjs.org/{pkg}", timeout=30))
     return list(data["versions"])

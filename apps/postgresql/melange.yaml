@@ -136,8 +136,21 @@ pipeline:
         "urllib3>=2.5.0" \
         "requests>=2.32.4" \
         "certifi>=2025.1.31" \
-        "setuptools>=78.1.1"
+        "setuptools==83.0.0"
       /opt/patroni/venv/bin/pip check
+
+      # Remove pip from the shipped venv. pip VENDORS its own copies of msgpack and
+      # setuptools under pip/_vendor/, and those are what Trivy flags -- pip 26.x pins
+      # msgpack==1.1.2 (GHSA-6v7p-g79w-8964 HIGH) and setuptools==70.3.0
+      # (CVE-2026-59890) in its vendor.txt, so no top-level pin can reach them and every
+      # pip release 26.0-26.2 vendors the same pair. Deleting pip DELETES the vulnerable
+      # code rather than suppressing the finding -- no .trivyignore, no --skip, no VEX.
+      # Patroni is a pure supervisor and never shells out to pip at runtime. Runs AFTER
+      # the installs and `pip check` above, so nothing later in this step needs pip.
+      /opt/patroni/venv/bin/pip uninstall -y pip
+      # `test !` and not `! test`: set -e ignores a status inverted with `!`, so
+      # `! test -e f` would never fail the build. This form does.
+      test ! -e /opt/patroni/venv/lib/python3.13/site-packages/pip/_vendor/vendor.txt
 
       # Assert the CLIs import + run without a DCS (full failover is exercised in the
       # chart's kind gate).
