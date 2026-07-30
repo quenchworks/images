@@ -7,8 +7,10 @@
 # /var/www/html, and wire the runtime (nginx :8080 -> php-fpm :9000) with supervisord.
 #
 # CLEAN-ROOM: we do NOT inherit any upstream Matomo/Bitnami image. The PHP runtime
-# (php-8.3 + php-8.3-fpm + the extension set Matomo's System Check requires) and nginx
-# all come from Wolfi packages (declared in apko.yaml); the app tree, the nginx site
+# (php-8.3 + php-8.3-fpm + the extension set Matomo's System Check requires) comes from
+# Wolfi and the web tier from quench-nginx (apps/nginx, built from source -- Wolfi's
+# nginx-stable apk is stuck on 1.30.2 and Trivy wants 1.30.4-r2), both declared in
+# apko.yaml; the app tree, the nginx site
 # config, the php-fpm pool + php.ini overrides, the supervisord wiring and the
 # entrypoint are all authored here.
 #
@@ -111,8 +113,12 @@ pipeline:
       destdir="${{targets.destdir}}"
       install -d "$destdir/etc/matomo"
       # Self-contained nginx config (run with `nginx -c /etc/matomo/nginx.conf`), shipped
-      # under /etc/matomo so it does not collide with the Wolfi nginx package's own
-      # /etc/nginx/nginx.conf. Nonroot: listen 8080 (can't bind <1024), pid + all temp
+      # under /etc/matomo so it does not collide with quench-nginx's own
+      # /etc/nginx/nginx.conf (drupal/nextcloud/phpmyadmin instead drop a server block
+      # into /etc/nginx/conf.d/; matomo keeps its own top-level config -- same effect,
+      # and it is the path the chart already knows). mime.types + fastcgi_params are
+      # included from /etc/nginx: quench-nginx's `make install` ships both.
+      # Nonroot: listen 8080 (can't bind <1024), pid + all temp
       # paths under /tmp (writable tmpfs on a read-only rootfs). Adapted from Matomo's
       # officially recommended nginx config: only Matomo's real PHP entry points are
       # FastCGI-passed; every other .php is denied; the sensitive dirs (config/, tmp/,

@@ -1,7 +1,9 @@
 name: build-matomo
 
 # Matomo (web analytics), packaged from its official build tarball via melange +
-# apko. build.conf is the SINGLE SOURCE OF TRUTH: VERSIONS holds the full X.Y.Z
+# apko. The image fronts php-fpm with QuenchWorks' hardened nginx (quench-nginx), so
+# each build FIRST builds the nginx package from source into ./packages, then assembles
+# the Matomo package. build.conf is the SINGLE SOURCE OF TRUTH: VERSIONS holds the full X.Y.Z
 # (used as-is as the image tag) with a per-version sha256. The build matrix fans it
 # x both NATIVE arches (amd64 + arm64, no QEMU). Recipes render via build.conf
 # render() (__VER__ + __SHA256__). The per-version merge job assembles the multi-arch
@@ -87,11 +89,19 @@ jobs:
           sed -e "$prog" melange.yaml > melange.rendered.yaml
           sed -e "$prog" apko.yaml    > apko.rendered.yaml
 
-      - name: Build the Matomo package (native ${{ matrix.arch.name }})
+      - name: Build packages from source (quench-nginx dep + matomo, native ${{ matrix.arch.name }})
         run: |
           set -euo pipefail
           melange keygen melange.rsa
-          melange build melange.rendered.yaml --arch ${{ matrix.arch.name }} --signing-key melange.rsa --out-dir ./packages
+          # Inter-app dep: the Matomo image bundles quench-nginx@local (Wolfi's
+          # nginx-stable apk is stuck on 1.30.2 and Trivy wants 1.30.4-r2), so build the
+          # nginx package into ./packages FIRST (rendered at nginx's current newest
+          # version), then assemble the Matomo package into the same repo.
+          ( cd ../nginx && source build.conf
+            nv="${VERSIONS[${#VERSIONS[@]}-1]}"
+            sed -e "$(render "$nv")" melange.yaml > nginx.rendered.yaml )
+          melange build ../nginx/nginx.rendered.yaml --arch ${{ matrix.arch.name }} --signing-key melange.rsa --out-dir ./packages
+          melange build melange.rendered.yaml        --arch ${{ matrix.arch.name }} --signing-key melange.rsa --out-dir ./packages
 
       - name: Assemble single-arch image for the scan gate
         run: apko build apko.rendered.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}

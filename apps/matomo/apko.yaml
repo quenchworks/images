@@ -1,6 +1,7 @@
 # Assembles the Matomo runtime image: the Matomo application tree (quench-matomo) +
 # a hardened Wolfi PHP 8.3 runtime with php-fpm + the extension surface Matomo's
-# System Check requires, plus Wolfi's nginx. All under supervisord. Minimal, nonroot
+# System Check requires, plus QuenchWorks' own nginx (quench-nginx@local, built from
+# source -- see the packages list). All under supervisord. Minimal, nonroot
 # (uid/gid 1001), multi-arch, read-only-rootfs friendly. SBOM by apko.
 #
 # CLEAN-ROOM: nothing is inherited from an upstream Matomo/Bitnami image. The whole
@@ -30,7 +31,13 @@ contents:
     - bash                          # entrypoint is /bin/sh; bash for interactive debugging
     - ca-certificates-bundle
     - supervisor                    # keeps php-fpm + nginx alive
-    - nginx-stable                  # Wolfi nginx; pulls nginx-stable-config (mime.types, fastcgi_params)
+    # QuenchWorks' hardened nginx, built FROM SOURCE (apps/nginx -> quench-nginx),
+    # NOT Wolfi's `nginx-stable` apk. Wolfi's newest is 1.30.2-r0 while Trivy requires
+    # 1.30.4-r2 for CVE-2026-42055 (HIGH) + CVE-2026-48142 (MEDIUM) -- 12 findings that
+    # blocked every matomo band. apps/nginx builds 1.30.4, so the gate is clean again.
+    # `make install` also lays down /etc/nginx/mime.types + /etc/nginx/fastcgi_params,
+    # the two files the shipped /etc/matomo/nginx.conf includes.
+    - quench-nginx@local
     - quench-matomo@local           # the app tree + nginx/php-fpm/supervisor wiring + entrypoint
     # PHP 8.3 runtime + FPM + the extensions Matomo's System Check requires (pdo_mysql,
     # gd, mbstring, dom/xml/simplexml, curl, zip, gmp, intl) plus opcache. Each ext is a
