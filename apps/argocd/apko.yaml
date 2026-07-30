@@ -1,0 +1,90 @@
+# Assembles the Argo CD runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+#
+# ONE image serves EVERY component. /usr/bin/argocd is the multi-call binary and
+# /usr/bin/argocd-<component> are symlinks to it (cmd/main.go switches on
+# filepath.Base(os.Args[0]), overridable with $ARGOCD_BINARY_NAME). The default
+# entrypoint is the bare binary, i.e. the `argocd` CLI -- a Deployment picks a
+# component with `command: [argocd-server]`, `[argocd-repo-server]`,
+# `[argocd-application-controller]`, `[argocd-applicationset-controller]` or
+# `[argocd-notifications]`.
+#
+# Ports (all unprivileged, so uid 1001 with no capabilities is enough):
+#   argocd-server                     8080 api+ui, 8083 metrics
+#   argocd-repo-server                8081 grpc,   8084 metrics/health
+#   argocd-application-controller     8082 metrics + /healthz
+#   argocd-applicationset-controller  7000 webhook, 8080 metrics
+#   argocd-commit-server              8086 grpc,   8087 metrics/health
+#   argocd-notifications              9001 metrics
+#   argocd-dex (config shim only)     5556/5557/5558 -- served by the dex image
+#
+# Read-only rootfs works, but every component needs writable /tmp, the server and
+# the application controller need a writable /home/argocd (HOME), and the repo
+# server additionally needs /helm-working-dir (HELM_*_HOME) and
+# /app/config/gpg/keys (GNUPGHOME). The chart supplies those as emptyDirs.
+#
+# This image is NOT shell-free: busybox is a genuine runtime dependency, because
+# util/gpg/gpg.go execs `gpg-wrapper.sh` and util/git/client.go execs
+# `git-verify-wrapper.sh` -- upstream POSIX-sh scripts on the signature
+# verification path -- and git shells out for GIT_SSH_COMMAND / core.askpass /
+# credential helpers. See melange.yaml for the full justification.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-argocd@local
+
+accounts:
+  groups:
+    - groupname: argocd
+      gid: 1001
+  users:
+    - username: argocd
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  HOME: /home/argocd
+  USER: argocd
+  # Upstream sets this in the base image: gRPC's DNS TXT service-config lookup
+  # floods _grpc_config.<host> queries and times out on dual-stack clusters
+  # (argoproj/argo-cd#24991). Overridable per component via argocd-cmd-params-cm.
+  GRPC_ENABLE_TXT_SERVICE_CONFIG: "false"
+
+paths:
+  # HOME. The server and the application controller write here (kubeconfig cache,
+  # plugin state), so on a read-only rootfs the chart mounts an emptyDir over it.
+  - path: /home/argocd
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  # GNUPGHOME. gpg refuses to use a home directory that is group/world readable.
+  - path: /app/config/gpg/keys
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+  - path: /tmp
+    type: directory
+    permissions: 0o1777
+
+entrypoint:
+  command: /usr/bin/argocd
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-argocd"
+  org.opencontainers.image.licenses: "Apache-2.0"

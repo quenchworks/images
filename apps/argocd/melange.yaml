@@ -1,0 +1,297 @@
+# Builds Argo CD (argoproj/argo-cd) from source onto Wolfi.
+#
+# ---------------------------------------------------------------------------
+# ONE BINARY, EVERY COMPONENT
+# ---------------------------------------------------------------------------
+# cmd/main.go dispatches on filepath.Base(os.Args[0]) (with $ARGOCD_BINARY_NAME
+# as an override), so a single `go build ./cmd` produces the API server, the
+# repo server, the application controller, the applicationset controller, the
+# notifications controller, the CMP server, the commit server, the dex config
+# shim, the git-ask-pass helper, the k8s-auth credential plugin AND the `argocd`
+# CLI. The image therefore ships /usr/bin/argocd plus one symlink per component,
+# exactly as upstream's Dockerfile does. A chart selects a component with
+# `command: [argocd-server]`; an argument-less run is the CLI.
+#
+# ---------------------------------------------------------------------------
+# THE UI IS BUILT AND EMBEDDED
+# ---------------------------------------------------------------------------
+# server/ serves the React console from ui/dist/app via ui/embed.go
+# (`//go:embed dist/app`). The release tarball ships only ui/dist/app/gitkeep,
+# which means the embed directive is SATISFIED and a plain `go build` succeeds --
+# producing a server whose every UI asset 404s. There is no upstream build tag
+# that turns the console off; that placeholder is the only "stub" there is, and
+# shipping it would be shipping a silently broken web UI. So this recipe runs
+# upstream's own asset pipeline (Dockerfile argocd-ui stage: yarn install +
+# `yarn build` = webpack --mode production) in the sandbox and asserts a real
+# bundle landed before the Go build. Measured: ~90s and ~10 MB of assets per
+# arch. Node/yarn are BUILD-ONLY; the runtime image has no JS toolchain, so none
+# of it reaches the Trivy surface.
+#
+# ---------------------------------------------------------------------------
+# HELM IS BUILT FROM SOURCE, KUSTOMIZE COMES FROM WOLFI
+# ---------------------------------------------------------------------------
+# util/helm/cmd.go and util/kustomize/kustomize.go exec `helm` and `kustomize` by
+# bare name, so both must be on PATH. The Wolfi `helm-3` apk is frozen at
+# 3.19.2-r2 (Dec 2025) and scans with 44 apk + 58 Go-module fixable CVEs
+# (including CVE-2026-35206 in helm.sh/helm/v3 itself), so it cannot be used
+# under the 0-CVE gate -- helm is compiled here from the newest 3.x tag with the
+# same module float and binary assertion as Argo CD itself. Upstream's
+# hack/tool-versions.sh asks for 3.18.4/3.19.4; we ship 3.21.3, which is the same
+# CLI surface (`template`, `dependency build`, `repo add`, `pull`, `version
+# --short`) and the only patched option. Kustomize, by contrast, IS taken from
+# Wolfi: that apk is rebuilt continuously (5.8.1-r10) and scans clean.
+#
+# ---------------------------------------------------------------------------
+# go.mod declares go 1.26.0 (3.4) / 1.25.5 (3.2, 3.3); we build with go-1.26
+# (1.26.5, newest, clears stdlib advisories) and GOTOOLCHAIN=local so the
+# directive does not trigger a toolchain download. GOFLAGS=-mod=mod lets the
+# module graph resolve the floated deps for the 0-CVE gate.
+package:
+  name: quench-argocd
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Argo CD (all components in one multi-call binary, embedded web UI), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      # repo-server / commit-server clone and inspect git repositories.
+      - git
+      # `enableLfs: true` repositories run `git lfs`.
+      - git-lfs
+      # ssh:// and git@ repository URLs, and the ssh_known_hosts ConfigMap.
+      - openssh-client
+      # util/gpg/gpg.go verifies commit and tag signatures with gpg.
+      - gnupg
+      # AppProject syncWindows carry a timeZone; without zoneinfo they fail open.
+      - tzdata
+      # NOT shell-free, deliberately: util/gpg/gpg.go execs `gpg-wrapper.sh` and
+      # util/git/client.go execs `git-verify-wrapper.sh` (both upstream POSIX-sh
+      # scripts on the signature-verification path), and git shells out for
+      # GIT_SSH_COMMAND / core.askpass / credential helpers. busybox is the
+      # smallest thing that satisfies that and it scans clean.
+      - busybox
+      # `kustomize build` for Kustomize-sourced Applications.
+      - kustomize
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - bash
+      - curl                # fetches the pinned helm source tarball
+      - git                 # yarn resolves a handful of deps from git refs
+      - ca-certificates-bundle
+      - go-1.26
+      # UI toolchain (upstream Dockerfile argocd-ui stage uses node 23 + yarn
+      # classic; nodejs-24 is the closest Wolfi major). Build-only.
+      - nodejs-24
+      - yarn
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/argoproj/argo-cd/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Build the React web console from source (yarn + webpack)
+    runs: |
+      set -eu
+      # Writable HOME/cache for yarn inside the sandbox.
+      export HOME="$(mktemp -d)"
+      export YARN_CACHE_FOLDER="$(mktemp -d)"
+      cd ui
+      yarn install --network-timeout 200000
+      # Mirrors the Dockerfile argocd-ui stage. HOST_ARCH only feeds a
+      # process.env define used to link the right CLI download; take it from the
+      # toolchain so each native arch stamps itself.
+      HOST_ARCH="$(go env GOARCH)" \
+      ARGO_VERSION="v${{package.version}}" \
+      NODE_ENV=production \
+      NODE_ONLINE_ENV=online \
+      NODE_OPTIONS=--max_old_space_size=4096 \
+        yarn build
+      # `yarn build` starts by deleting everything under dist except `gitkeep`,
+      # so these assertions distinguish "webpack ran" from "the placeholder tree
+      # is still all there is" -- which is precisely the silent failure mode a
+      # bare `go build` would have shipped.
+      test -f dist/app/index.html
+      test -d dist/app/assets/images/resources
+      n="$(find dist/app -name '*.js' | wc -l)"
+      [ "$n" -ge 10 ] || { echo "❌ UI bundle looks empty ($n js files)"; exit 1; }
+      echo "UI built: $n js chunks, $(du -sh dist/app | cut -f1)"
+      cd ..
+
+  - name: Build helm 3 and the argocd multi-call binary (static, CGO off)
+    runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local   # use the installed go-1.26, don't fetch go.mod's toolchain
+      export GO111MODULE=on
+      SRC="$PWD"
+
+      # ---- 0-CVE module float (docs/go-module-float.md) --------------------
+      # FLOOR is a FLOOR, not a pin. A bare `go get mod@vX` fails silently in two
+      # directions: it is a NO-OP when an upstream `replace` overrides it, and it
+      # becomes a DOWNGRADE once upstream requires more than vX -- re-introducing
+      # the CVE it was added to clear. So float only what is below the floor, then
+      # assert the SHIPPED BINARY carries nothing below it.
+      #
+      # Argo CD's own go.mod has no `replace` on anything floated here (its
+      # replaces cover k8s.io/*, protobuf, grpc-gateway, x/tools, gopkg.in/yaml
+      # and the local ./gitops-engine submodule), so nothing is replace-shadowed.
+      # helm 3.21.3 has no replace block at all.
+      #
+      # Where each floor stands against upstream today:
+      #   x/net 0.56.0     3.4=0.56.0 (met) 3.3=0.48.0 3.2=0.47.0 helm=0.55.0
+      #   x/crypto 0.53.0  3.4=0.53.0 (met) 3.3/3.2=0.46.0 helm=0.53.0 (met)
+      #   x/sys 0.46.0     3.4=0.46.0 (met) 3.3=0.42.0 3.2=0.39.0 helm=0.46.0 (met)
+      #   x/text 0.39.0    3.4=0.38.0 3.3/3.2=0.32.0 helm=0.38.0
+      #   x/oauth2 0.36.0  3.4=0.36.0 (met) 3.3=0.34.0 3.2=0.31.0  [argo-cd only]
+      #   grpc 1.82.1      3.4/3.3=1.79.3 3.2=1.75.1 helm=1.80.0
+      #   otel* 1.43.0     3.4/3.3=1.43.0 (met) 3.2=1.38.0         [argo-cd only]
+      # No floor is below what any of the three lines already requires, so none of
+      # them is a downgrade. RE-CHECK THIS TABLE ON EVERY VERSION BUMP.
+      #
+      # Four app-specific floors on top of the house set, all of them REAL findings
+      # from the gate rather than precautionary (every line pins the vulnerable
+      # version, so all four actually move):
+      #   go-git/go-git 5.19.1  all lines pin 5.14.0 -- 7 advisories, the worst being
+      #                         CVE-2026-45022 (HIGH) and CVE-2026-45571 path escape
+      #   go-git/go-billy 5.9.0 all lines pin 5.6.2 -- CVE-2026-44973 path traversal
+      #   oras-go/v2 2.6.1      all lines pin 2.6.0 -- CVE-2026-50151 (HIGH) + 3 more
+      #   slack-go 0.23.1       all lines pin 0.16.0 -- GHSA-gxhx-2686-5h9g
+      #
+      # github.com/google/cel-go is deliberately NOT floored: it does not appear
+      # in argo-cd's go.mod OR go.sum on any of the three lines, so it is not in
+      # the module graph at all and `go list -m` would fail on it. If a future
+      # release starts pulling it, Trivy flags it -- add
+      # github.com/google/cel-go@v0.29.2 (GHSA-gcjh-h69q-9w9g) then.
+      #
+      # helm's graph has no x/oauth2, no otel and no go-git, so it gets its own
+      # shorter floor list -- every module named in a floor MUST be in that
+      # module's graph or `go list -m` fails the build. oras-go is in both.
+      ARGOCD_FLOOR="golang.org/x/net@v0.56.0 golang.org/x/crypto@v0.53.0 golang.org/x/sys@v0.46.0 golang.org/x/text@v0.39.0 golang.org/x/oauth2@v0.36.0 google.golang.org/grpc@v1.82.1 go.opentelemetry.io/otel@v1.43.0 go.opentelemetry.io/otel/sdk@v1.43.0 go.opentelemetry.io/otel/trace@v1.43.0 go.opentelemetry.io/otel/metric@v1.43.0 github.com/go-git/go-git/v5@v5.19.1 github.com/go-git/go-billy/v5@v5.9.0 oras.land/oras-go/v2@v2.6.1 github.com/slack-go/slack@v0.23.1"
+      HELM_FLOOR="golang.org/x/net@v0.56.0 golang.org/x/crypto@v0.53.0 golang.org/x/sys@v0.46.0 golang.org/x/text@v0.39.0 google.golang.org/grpc@v1.82.1 oras.land/oras-go/v2@v2.6.1"
+
+      # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
+      # $1 = floor list, $2 = label for the log line
+      below_floor() {
+        awk -v floor="$1" -v tag="$2" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF
+      # is the EFFECTIVE version and a replace cannot hide behind the require.
+      float() {
+        _floor="$1"; _tag="$2"
+        _mods="$(echo "$_floor" | tr ' ' '\n' | cut -d@ -f1)"
+        go list -m $_mods
+        _need="$(go list -m $_mods | awk '{ print $1, $NF }' | below_floor "$_floor" "$_tag" | awk '{ print $1 }')"
+        if [ -n "$_need" ]; then go get $_need; fi
+      }
+      # The float is only real if it reached the BINARY. Every `dep`/`=>` line of
+      # `go version -m` must be at or above its floor -- the `=>` line is what
+      # catches a replace-shadowed float. Fail the build rather than ship it.
+      assert_binary() {
+        _bin="$1"; _floor="$2"
+        _bad="$(go version -m "$_bin" | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' \
+                 | below_floor "$_floor" "$(basename "$_bin")")"
+        [ -z "$_bad" ] || { echo "❌ 0-CVE float did not reach $_bin:"; echo "$_bad"; exit 1; }
+      }
+
+      # ---- helm 3 (from source; see the header for why not the wolfi apk) ----
+      HELM_VER=3.21.3
+      HELM_SHA=9265b7bcad329480fe1f14547befe5da1dbbede6bbd13e3dd6bfebb00d42cb68
+      cd "$(mktemp -d)"
+      curl -fsSL -o helm.tar.gz "https://github.com/helm/helm/archive/refs/tags/v${HELM_VER}.tar.gz"
+      echo "${HELM_SHA}  helm.tar.gz" | sha256sum -c -
+      tar xzf helm.tar.gz
+      cd "helm-${HELM_VER}"
+      float "$HELM_FLOOR" helm-go.mod
+      go build -trimpath \
+        -ldflags "-s -w -X helm.sh/helm/v3/internal/version.version=v${HELM_VER}" \
+        -o "${{targets.destdir}}/usr/bin/helm" ./cmd/helm
+      assert_binary "${{targets.destdir}}/usr/bin/helm" "$HELM_FLOOR"
+
+      # ---- argo cd ----------------------------------------------------------
+      cd "$SRC"
+      float "$ARGOCD_FLOOR" argocd-go.mod
+
+      # The go-git floor drags github.com/cyphar/filepath-securejoin up to v0.6.1
+      # (go-git 5.19 requires it). That module MOVED MkdirAll into its pathrs-lite
+      # subpackage in v0.5.0, and the 3.2 line still calls securejoin.MkdirAll --
+      # so on 3.2 the float breaks the build with "undefined: securejoin.MkdirAll".
+      # The alternative would be holding go-git at 5.14 and shipping its seven
+      # advisories, so instead the one call site is rewritten onto the identical
+      # pathrs-lite.MkdirAll(root, unsafePath, mode). Guarded by the grep, so it is
+      # a no-op on 3.3/3.4 (which already require securejoin v0.6.1 and never call
+      # the moved function). Every other securejoin use in the tree is SecureJoin,
+      # which still lives in the root package.
+      f=util/io/files/secure_mkdir_linux.go
+      if grep -q 'securejoin\.MkdirAll(' "$f"; then
+        echo "patching $f for filepath-securejoin >= v0.5.0 (MkdirAll -> pathrs-lite)"
+        sed -i \
+          -e 's|^\(\tsecurejoin "github.com/cyphar/filepath-securejoin"\)$|\1\n\tpathrs "github.com/cyphar/filepath-securejoin/pathrs-lite"|' \
+          -e 's|securejoin\.MkdirAll(|pathrs.MkdirAll(|' \
+          "$f"
+        grep -q 'pathrs.MkdirAll(' "$f" || { echo "❌ securejoin patch did not apply"; exit 1; }
+      fi
+
+      # Upstream LDFLAGS (Makefile). common/version.go GetVersion() returns the
+      # bare gitTag only when gitCommit is non-empty AND gitTreeState == clean,
+      # which is why the tag commit is pinned in build.conf; otherwise `argocd
+      # version` would report "v${VER}+unknown". kubectlVersion is derived from
+      # the module graph exactly as the Makefile does ($NF survives the
+      # k8s.io/client-go replace).
+      VERPKG="github.com/argoproj/argo-cd/v3/common"
+      KUBECTL_VERSION="$(go list -m k8s.io/client-go | head -n1 | awk '{ print $NF }')"
+      go build -trimpath -ldflags "-s -w \
+        -X ${VERPKG}.version=${{package.version}} \
+        -X ${VERPKG}.buildDate=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+        -X ${VERPKG}.gitCommit=__COMMIT__ \
+        -X ${VERPKG}.gitTag=v${{package.version}} \
+        -X ${VERPKG}.gitTreeState=clean \
+        -X ${VERPKG}.kubectlVersion=${KUBECTL_VERSION}" \
+        -o "${{targets.destdir}}/usr/bin/argocd" ./cmd
+      assert_binary "${{targets.destdir}}/usr/bin/argocd" "$ARGOCD_FLOOR"
+
+      # ---- the multi-call symlinks (upstream Dockerfile final stage) --------
+      # Relative, so they survive any prefix relocation. cmd/main.go keys off
+      # filepath.Base(os.Args[0]); each name selects a different cobra root.
+      for c in server repo-server application-controller applicationset-controller \
+               notifications cmp-server commit-server dex git-ask-pass k8s-auth ; do
+        ln -s argocd "${{targets.destdir}}/usr/bin/argocd-${c}"
+      done
+
+      # ---- the two sh wrappers the Go code execs by name -------------------
+      install -Dm0755 hack/gpg-wrapper.sh        "${{targets.destdir}}/usr/bin/gpg-wrapper.sh"
+      install -Dm0755 hack/git-verify-wrapper.sh "${{targets.destdir}}/usr/bin/git-verify-wrapper.sh"
+
+      # ---- the /app/config tree (common/common.go DefaultPath* constants) ---
+      # Deployments mount ConfigMaps/Secrets/emptyDirs over these; they exist in
+      # the image so a bare `docker run` and a partially-configured Deployment
+      # both still start. The /etc/ssh symlink is upstream's: it makes ssh(1)
+      # honour the operator-supplied ssh_known_hosts ConfigMap system-wide.
+      install -d "${{targets.destdir}}/app/config/ssh" \
+                 "${{targets.destdir}}/app/config/tls" \
+                 "${{targets.destdir}}/app/config/gpg/source" \
+                 "${{targets.destdir}}/app/config/gpg/keys" \
+                 "${{targets.destdir}}/etc/ssh" \
+                 "${{targets.destdir}}/home/argocd"
+      : > "${{targets.destdir}}/app/config/ssh/ssh_known_hosts"
+      ln -s /app/config/ssh/ssh_known_hosts "${{targets.destdir}}/etc/ssh/ssh_known_hosts"
