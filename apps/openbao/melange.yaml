@@ -42,23 +42,54 @@ pipeline:
       tag: v${{package.version}}
       expected-commit: __COMMIT__
   - runs: |
+      set -eu
       export CGO_ENABLED=0
       export GOFLAGS=-mod=mod
-      # 0-CVE dependency bumps (minor/patch, same-major -- no API break). We build the
-      # newest OpenBao tag (2.6.1), whose code already carries every openbao/openbao
-      # advisory fix and already ships jackc/pgx/v5 v5.10.0 (>=v5.9.2, CVE-2026-41889
-      # fixed upstream). One transitive dep still ships vulnerable:
-      #   go-ntlmssp   CVE-2026-32952 -> v0.1.1  (upstream pins v0.1.0)
-      #   golang.org/x/net v0.55.0 -> v0.56.0 (CVE-2026-46600: panic parsing an
-      #   invalid SVCB/HTTPS DNS RR)
-      # NOTE: NO grpc float here (HELD). 2.6.1 resolves grpc v1.81.1 + go-kms-wrapping/
-      # wrappers/transit/v2 v2.8.0 (which HAS WrapperTypeTransit), same as 2.6.0. Forcing
-      # the canonical grpc@v1.82.1 float makes `go mod tidy` cascade-downgrade transit/v2
-      # to an old v2.1.0 that predates WrapperTypeTransit, breaking the build. Same reason
-      # a pgx downgrade below v5.10.0 is off-limits. 2.6.1 did NOT bump these deps, so the
-      # float stays out until upstream moves to a transit/grpc pair the float tolerates.
-      go get github.com/Azure/go-ntlmssp@v0.1.1 golang.org/x/net@v0.56.0
+      # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
+      # FLOOR is a FLOOR, not a pin. A bare `go get mod@vX` fails silently in two
+      # directions: it is a NO-OP when an upstream `replace` overrides it, and it
+      # becomes a DOWNGRADE once upstream requires more than vX -- re-introducing
+      # the CVE it was added to clear. So float only what is below the floor, then
+      # assert the SHIPPED BINARY carries nothing below it.
+      #   go-ntlmssp          CVE-2026-32952  (2.6.1 pins v0.1.0)
+      #   golang.org/x/net    CVE-2026-46600  (2.6.1 already ships v0.56.0 -- floor only)
+      #   google.golang.org/grpc GHSA-hrxh-6v49-42gf HIGH (2.6.1 pins v1.81.1)
+      #   github.com/google/cel-go GHSA-gcjh-h69q-9w9g MEDIUM (2.6.1 pins v0.28.1;
+      #     fixed in 0.29.0 -- floored at v0.29.2, the same version apps/spicedb uses)
+      #
+      # The grpc floor was HELD out of this recipe for weeks on the belief that it
+      # cascade-downgraded go-kms-wrapping/wrappers/transit/v2 to v2.1.0 (which calls
+      # `wrapping.WrapperTypeTransit`, a symbol the core module dropped in v2.8.0 in
+      # favour of the wrapper-local `transit.Type`) -- a real incompatibility, but NOT
+      # one this float triggers. Re-verified on 2.6.1: after the float, `go list -m`
+      # and the shipped binary both keep openbao/go-kms-wrapping/v2 v2.8.0 AND
+      # wrappers/transit/v2 v2.8.0, so no co-float and no `replace` is needed. The
+      # `=>`-aware binary assertion below is what keeps that honest.
+      # 2.6.1's replaces are all local submodule redirects (./api, ./sdk, ...) plus
+      # the boltdb stub -- none holds a FLOOR module down, so no -dropreplace.
+      FLOOR="github.com/Azure/go-ntlmssp@v0.1.1 golang.org/x/net@v0.56.0 google.golang.org/grpc@v1.82.1 github.com/google/cel-go@v0.29.2"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is
+      # the EFFECTIVE version and a replace cannot hide behind the require line.
+      go list -m $MODS
+      need="$(go list -m $MODS | awk '{ print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
       go mod tidy
+      # No guard needed for the go-kms-wrapping pair: a mixed core/wrapper pair is a
+      # hard compile error (`undefined: wrapping.WrapperTypeTransit`), never a silent ship.
       # The repo root is `package main` -> the `bao` binary (Vault-compatible CLI/API).
       # Stamp version.GitCommit/BuildDate like upstream's scripts/build.sh (no `ui` tag).
       # -buildvcs=false: without it, a git-checkout build stamps the main module as the
@@ -73,6 +104,13 @@ pipeline:
           -X github.com/openbao/openbao/version.GitCommit=__COMMIT__ \
           -X github.com/openbao/openbao/version.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         -o "${{targets.destdir}}/usr/bin/bao" .
+
+      # The float is only real if it reached the BINARY. Every `dep`/`=>` line of
+      # `go version -m` must be at or above its floor -- the `=>` line is what
+      # catches a replace-shadowed float. Fail the build rather than ship it.
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/bao" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor bao)"
+      [ -z "$bad" ] || { echo "❌ 0-CVE float did not reach the binary:"; echo "$bad"; exit 1; }
 
       # Read-only-rootfs entrypoint. Seeds a bao.hcl into a writable path from env, then
       # exec's the real (non-dev) raft server by default. BAO_DEV=1 -> dev mode (for the

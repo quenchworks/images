@@ -75,4 +75,33 @@ for i in $(seq 1 30); do
 done
 [ "$up" = 1 ] || exit 1
 
-echo "smoke test passed (nonroot user: $user, dev kv roundtrip OK, raft node listens sealed)"
+# Real `operator init` + shamir unseal on the raft node. This is the check that
+# exercises the seal-wrapper / crypto-barrier path (go-kms-wrapping) and raft storage
+# for real -- dev mode auto-inits with an in-memory backend and would hide a break there.
+echo "operator init (1 share, threshold 1) + unseal"
+init="$(docker exec -e BAO_ADDR=http://127.0.0.1:8200 "$SRV" \
+  bao operator init -key-shares=1 -key-threshold=1 -format=json | tr -d ' \n')"
+key="$(printf '%s' "$init" | sed -n 's/.*"unseal_keys_b64":\["\([^"]*\)".*/\1/p')"
+root="$(printf '%s' "$init" | sed -n 's/.*"root_token":"\([^"]*\)".*/\1/p')"
+[ -n "$key" ] && [ -n "$root" ] || { echo "operator init did not return a key/token"; echo "$init"; docker logs "$SRV"; exit 1; }
+
+docker exec -e BAO_ADDR=http://127.0.0.1:8200 "$SRV" bao operator unseal "$key" >/dev/null
+for i in $(seq 1 30); do
+  code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18300/v1/sys/health || true)"
+  [ "$code" = "200" ] && break
+  [ "$i" = 30 ] && { echo "raft node never unsealed (last=$code)"; docker logs "$SRV"; exit 1; }
+  sleep 1
+done
+echo "raft node initialized + unsealed, health 200 OK"
+
+# Write through the real (raft-backed, shamir-sealed) barrier.
+docker exec -e BAO_ADDR=http://127.0.0.1:8200 -e BAO_TOKEN="$root" "$SRV" \
+  bao secrets enable -path=secret kv-v2 >/dev/null
+docker exec -e BAO_ADDR=http://127.0.0.1:8200 -e BAO_TOKEN="$root" "$SRV" \
+  bao kv put secret/quench value=raft >/dev/null
+got="$(docker exec -e BAO_ADDR=http://127.0.0.1:8200 -e BAO_TOKEN="$root" "$SRV" \
+  bao kv get -field=value secret/quench)"
+[ "$got" = "raft" ] || { echo "raft kv roundtrip failed: got '$got'"; docker logs "$SRV"; exit 1; }
+echo "raft kv roundtrip OK (value='$got')"
+
+echo "smoke test passed (nonroot user: $user, dev kv roundtrip OK, raft node init+unseal+kv OK)"
