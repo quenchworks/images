@@ -39,11 +39,16 @@ pipeline:
       export GOFLAGS=-mod=mod
       # The pulumi CLI is its own module under pkg/; build from inside it.
       cd pkg
-      # 0-CVE gate: grpc GHSA-hrxh-6v49-42gf -> 1.82.1 (+ coherent otel 1.43.0 +
-      # oauth2 0.36.0 cascade). -mod=mod lets the build below resolve go.sum.
+      # 0-CVE gate: grpc GHSA-hrxh-6v49-42gf -> 1.82.1 (+ coherent otel + oauth2
+      # 0.36.0 cascade). -mod=mod lets the build below resolve go.sum.
+      # FLOOR, NOT A PIN (docs/go-module-float.md): the otel floor was raised
+      # 1.43.0 -> 1.44.0 because every version in the window (3.253.0 / 3.254.0 /
+      # 3.255.0) already REQUIRES otel v1.44.0 in pkg/go.mod -- the old @v1.43.0 line
+      # had inverted into a downgrade. grpc is still below the floor on 3.253.0
+      # (v1.82.0); oauth2@v0.36.0 is exactly what upstream requires (no-op).
       go get google.golang.org/grpc@v1.82.1 golang.org/x/oauth2@v0.36.0 \
-        go.opentelemetry.io/otel@v1.43.0 go.opentelemetry.io/otel/trace@v1.43.0 \
-        go.opentelemetry.io/otel/metric@v1.43.0 go.opentelemetry.io/otel/sdk@v1.43.0
+        go.opentelemetry.io/otel@v1.44.0 go.opentelemetry.io/otel/trace@v1.44.0 \
+        go.opentelemetry.io/otel/metric@v1.44.0 go.opentelemetry.io/otel/sdk@v1.44.0
       go build -trimpath -tags "osusergo grpcnotrace" \
         -ldflags "-s -w -X github.com/pulumi/pulumi/sdk/v3/go/common/version.Version=v${{package.version}}" \
         -o "${{targets.destdir}}/usr/bin/pulumi" ./cmd/pulumi

@@ -46,9 +46,15 @@ pipeline:
       # only reached via k8s.io/apiserver's CEL libs, which are source-compatible with
       # 0.29. On the 1.18.x/1.19.x tags cel-go is not in the build graph at all, so
       # `go mod tidy` drops the requirement again there.
+      # FLOOR, NOT A PIN (docs/go-module-float.md): x/text was raised 0.39.0 -> 0.40.0
+      # because cmd/<target>/go.mod on 1.21.1 already REQUIRES x/text v0.40.0 -- the old
+      # @v0.39.0 line had inverted into a downgrade there. 1.20.3/1.19.6 sit at v0.37.0,
+      # so for them the new floor is still a genuine raise.
+      # The only `replace` in cmd/<target>/go.mod is the parent cert-manager => ../../
+      # local path, which shadows no floated module.
       go get \
         golang.org/x/net@v0.56.0 \
-        golang.org/x/text@v0.39.0 \
+        golang.org/x/text@v0.40.0 \
         golang.org/x/crypto@v0.53.0 \
         google.golang.org/grpc@v1.82.1 \
         github.com/go-jose/go-jose/v4@v4.1.4 \

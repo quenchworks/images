@@ -401,6 +401,20 @@ pipeline:
       # --- force the CVE-fixed prometheus + compatible third-party deps.
       go get github.com/prometheus/prometheus@v0.312.0
       go get github.com/prometheus-community/prom-label-proxy@v0.14.0
+
+      # --- house coherent float (docs/go-module-float.md). thanos 0.42.3 requires
+      # grpc v1.81.1 and prometheus 0.312.0 requires v1.81.1 too, so MVS lands below
+      # the floor and the binary would carry grpc GHSA-hrxh-6v49-42gf (xDS RBAC +
+      # HTTP/2, HIGH, gate-blocking). x/text resolves to v0.38.0 (thanos 0.38.0 vs
+      # prometheus 0.37.0), below the v0.39.0 fix for CVE-2026-56852. x/net (0.56.0),
+      # x/crypto (0.53.0), x/sys (0.46.0), x/oauth2 (0.36.0) and otel (1.44.0, pulled
+      # up by prometheus 0.312.0) are already at or above their floors, so floating
+      # them would be a no-op at best and a downgrade at worst -- left alone.
+      # grpc@1.82.1 requires otel 1.43.0 / x/net 0.53.0 / oauth2 0.36.0, all already
+      # satisfied here, so no cascade is needed.
+      # None of thanos' `replace` directives cover a floated module (they redirect
+      # capnp, gomemcache, kuberesolver, galaxycache, kingpin, zenhack/util).
+      go get google.golang.org/grpc@v1.82.1 golang.org/x/text@v0.39.0
       go get github.com/thanos-io/promql-engine@v0.0.0-20260713055003-6e924468ac44
 
       # --- vendor + patch promql-engine (its latest commit still targets the old

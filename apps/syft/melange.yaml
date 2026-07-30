@@ -35,11 +35,17 @@ pipeline:
       export GOFLAGS=-mod=mod
       export GO111MODULE=on
       export GOTOOLCHAIN=local   # use the installed go, don't fetch go.mod's toolchain
-      # Bump vulnerable Go modules to their Trivy-listed fixed versions (0-CVE gate).
-      go get golang.org/x/net@v0.56.0 golang.org/x/sys@v0.46.0 google.golang.org/grpc@v1.82.1 golang.org/x/text@v0.39.0 golang.org/x/crypto@v0.53.0
-      go mod edit -replace golang.org/x/net=golang.org/x/net@v0.56.0
-      go mod edit -replace golang.org/x/crypto=golang.org/x/crypto@v0.53.0
-      go mod tidy || true
+      # 0-CVE module float: NOTHING TO FLOAT at 1.50.0 (docs/go-module-float.md).
+      # syft 1.50.0's own go.mod already requires x/net v0.57.0, x/crypto v0.54.0,
+      # x/sys v0.47.0, x/text v0.40.0 and grpc v1.82.1 -- every one at or ABOVE the
+      # house floor -- and it carries no `replace` directives at all.
+      # The 1.49.0 float (`go get ...@v0.56.0 ...` plus `go mod edit -replace` on
+      # x/net and x/crypto) has therefore INVERTED into a downgrade: `go get mod@vX`
+      # pins exactly vX, and the two `-replace` lines made that downgrade
+      # unconditional -- it would drag x/net 0.57.0 -> 0.56.0 and x/crypto
+      # 0.54.0 -> 0.53.0 and re-introduce the very CVEs the float was added to clear.
+      # Removed rather than raised: with upstream above every floor there is nothing
+      # left for the float to do. Re-check on the next bump.
       go build -trimpath \
         -ldflags "-s -w -X main.version=${{package.version}}" \
         -o "${{targets.destdir}}/usr/bin/syft" ./cmd/syft

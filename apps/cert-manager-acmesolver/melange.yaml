@@ -41,9 +41,15 @@ pipeline:
       # go-jose, go-ntlmssp and otel below the fixed versions; newer lines already
       # satisfy these, so the bump is a no-op there. cmd/<target> replaces the parent
       # cert-manager module (../../), so bumping here (the main module) wins via MVS.
+      # FLOOR, NOT A PIN (docs/go-module-float.md): x/text was raised 0.39.0 -> 0.40.0
+      # because cmd/<target>/go.mod on 1.21.1 already REQUIRES x/text v0.40.0 -- the old
+      # @v0.39.0 line had inverted into a downgrade there. 1.20.3/1.19.6 sit at v0.37.0,
+      # so for them the new floor is still a genuine raise.
+      # The only `replace` in cmd/<target>/go.mod is the parent cert-manager => ../../
+      # local path, which shadows no floated module.
       go get \
         golang.org/x/net@v0.56.0 \
-        golang.org/x/text@v0.39.0 \
+        golang.org/x/text@v0.40.0 \
         golang.org/x/crypto@v0.53.0 \
         google.golang.org/grpc@v1.82.1 \
         github.com/go-jose/go-jose/v4@v4.1.4 \
