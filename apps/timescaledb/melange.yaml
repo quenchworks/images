@@ -143,17 +143,39 @@ pipeline:
       # urllib3 / requests / certifi / setuptools, which routinely lag a fixable CVE.
       # Bump the affected packages to their patched releases so the 0-CVE gate passes,
       # then `pip check` to confirm the dependency graph still resolves.
+      # setuptools is pinned to 83.0.0 (not floated) because CVE-2026-59890 (MANIFEST.in
+      # exclusion bypass, MEDIUM) is only fixed there — same pin as apps/vllm. Nothing in
+      # this venv declares a setuptools upper bound (patroni/psycopg do not depend on it at
+      # all; it is here purely as build tooling for sdist-only wheels), so unlike vllm there
+      # is no `setuptools<81` constraint to exceed — `pip check` below proves the graph.
       /opt/patroni/venv/bin/pip install --no-cache-dir --upgrade \
         "urllib3>=2.5.0" \
         "requests>=2.32.4" \
         "certifi>=2025.1.31" \
-        "setuptools>=78.1.1"
+        "setuptools==83.0.0"
       /opt/patroni/venv/bin/pip check
 
       # Assert the CLIs import + run without a DCS (full failover is exercised in the
       # chart's kind gate).
       /opt/patroni/venv/bin/patroni --version
       /opt/patroni/venv/bin/patronictl version
+
+      # Drop pip itself from the SHIPPED venv. pip bundles its dependencies as source
+      # under pip/_vendor/ and declares them in pip/_vendor/vendor.txt, which the scanner
+      # reads as real packages — so every pip release drags its own vulnerable copies in:
+      #   msgpack    1.1.2  -> GHSA-6v7p-g79w-8964 (HIGH, fixed 1.2.1)
+      #   setuptools 70.3.0 -> CVE-2025-47273 (fixed 78.1.1) + CVE-2026-59890 (fixed 83.0.0)
+      # Neither is fixable by pinning: there is no top-level msgpack in this tree at all,
+      # the top-level setuptools is already 83.0.0 and scans clean, and EVERY pip release up
+      # to the current 26.2 vendors the same msgpack 1.1.2 / setuptools 70.3.0, so upgrading
+      # pip cannot clear them either. Patroni never shells out to pip at runtime (it only
+      # supervises postgres), so deleting pip removes the vulnerable code outright instead of
+      # suppressing the finding — no .trivyignore, no --skip, no VEX. Runs AFTER the installs
+      # and `pip check` above, so nothing else in this step needs pip.
+      /opt/patroni/venv/bin/pip uninstall -y pip
+      # `test !` and not `! test`: set -e is specified to IGNORE a status inverted with `!`,
+      # so `! test -e f` would never fail the build. This form does.
+      test ! -e /opt/patroni/venv/lib/python3.13/site-packages/pip/_vendor/vendor.txt
 
       # Relocate the venv into the package tree under /opt/patroni.
       install -d "${dest}/opt/patroni"

@@ -132,6 +132,7 @@ pipeline:
           "tar@7":"7.5.22",               // n8n-nodes-base pins tar 7.5.17 EXACTLY, so this copy
                                           // cannot float (CVE-2026-59873 CRIT/59874 HIGH/59871 MED,
                                           // GHSA-r292-9mhp-454m MED needs >= 7.5.21)
+          "undici@5":"6.28.0",            // ONLY the 5.x copy; see the undici note below
           "uuid":"11.1.1",
           "ws":"8.21.0"
         });
@@ -199,6 +200,37 @@ pipeline:
       done
       node -e "if (require('minimatch').braceExpand('a{b,c}').join()!=='ab,ac')
                  throw new Error('minimatch braceExpand broken');"
+
+      # --- undici 5.29.0 -> 6.x: why the scoped `undici@5` override is the right knob -----
+      # undici is NOT a dependency of n8n. Exactly ONE edge in the tree wants the 5.x line:
+      # @ai-sdk/provider-utils 4.0.41 (the `ai-v6` head, resolved from every @ai-sdk/* provider's
+      # ^4.0.27) newly added `undici: ^5.29.0` — 4.0.40 had no undici dep at all. That single
+      # edge hoists undici 5.29.0 to the tree root, where it carries 9 advisories
+      # (CVE-2026-12151 HIGH + CVE-2026-9679/6733/11525 -> 6.27.0; CVE-2026-1525/1526/1527/2229
+      # -> 6.24.0; CVE-2026-22036 -> 6.23.0). Every OTHER undici consumer in the tree already
+      # wants a patched line (n8n-nodes-base / @n8n/ai-utilities / @n8n/ai-workflow-builder /
+      # @qdrant/js-client-rest ^6.27.0; @n8n/agents / @n8n/instance-ai / @n8n/backend-network /
+      # @n8n_io/license-sdk ^7.24.0+) and scans clean, so only the 5.x copy must move — hence
+      # the version-scoped key, same style as `tar@6` / `@azure/identity@3`.
+      #
+      # PARENT-bumping does not work here: the only provider-utils line that drops undici 5 is
+      # 5.0.15 (`latest`, undici ^7.28.0), a MAJOR that every @ai-sdk/* provider in this tree
+      # peer-pins away from; and pinning DOWN to 4.0.40 would delete 4.0.41's whole reason for
+      # adding undici — createSafeNodeFetch(), which wraps fetch with a DNS-pinning Agent. So the
+      # leaf moves instead.
+      #
+      # 5 -> 6 IS A MAJOR, and it is safe for this consumer. provider-utils' entire undici surface
+      # is `const { Agent, fetch } = require("undici")`, `new Agent({ connect: { lookup } })`, and
+      # `fetch(input, { ...init, dispatcher })` — all three unchanged in 6.x (verified against the
+      # published 6.28.0 tarball: module.exports.Agent/fetch are present, connect.lookup is still
+      # honoured, and fetch still reads init.dispatcher). undici 6's one hard break, dropping
+      # Node < 18.17, is moot on Wolfi nodejs-22 (>=22.22 is already n8n's own engines floor).
+      # 6.28.0 (newest 6.x) rather than the bare 6.27.0 fix floor: it satisfies the ^6.27.0
+      # consumers above, so the tree DEDUPES onto one copy instead of keeping nested duplicates,
+      # and it is the version those consumers already floated to in the last build.
+      node -e "const v=require('undici/package.json').version, u=require('undici');
+               if (!v.startsWith('6.') || typeof u.Agent!=='function' || typeof u.fetch!=='function')
+                 throw new Error('undici override missing or incompatible: '+v);"
 
       # --- strip foreign-arch + musl prebuilt native binaries ---------------------------
       # n8n's tree VENDORS prebuilt .node/.so binaries for every platform/arch/libc inside

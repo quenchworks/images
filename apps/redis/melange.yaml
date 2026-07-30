@@ -32,8 +32,18 @@ pipeline:
       uri: https://download.redis.io/releases/redis-${{package.version}}.tar.gz
       expected-sha256: "__SHA256__"
   - runs: |
-      make BUILD_TLS=yes MALLOC=libc USE_SYSTEMD=no -j"$(nproc)"
-      make PREFIX="${{targets.destdir}}/usr" install
+      # Build the Redis CORE only, via src/ directly instead of the top-level Makefile.
+      # 8.10.0 rewrote that Makefile: `.DEFAULT_GOAL := build` now routes through
+      # scripts/build.sh, which ALSO builds every bundled module vendored in the tarball
+      # (redisbloom / redisearch / redisjson / redistimeseries) and fails the whole pipeline
+      # when any of them fails. Those modules need bash + python + rust + cmake and their
+      # own `deps/readies` submodule (absent from the release tarball), so they cannot build
+      # here — and we never shipped them: on 8.6/8.8 the top-level default was plain `all`
+      # into src/ and modules were opt-in behind BUILD_WITH_MODULES=yes. `make -C src` is
+      # exactly what both Makefile generations do for the core, so one command line builds
+      # every version in the window.
+      make -C src all BUILD_TLS=yes MALLOC=libc USE_SYSTEMD=no -j"$(nproc)"
+      make -C src PREFIX="${{targets.destdir}}/usr" install
   # The redis user and the /data directory are provided by apko (accounts + paths),
   # not by the package, to avoid conflicting with wolfi-baselayout's /etc files.
   # redis-cli stays in the main package on purpose: the chart readiness probe uses it.
