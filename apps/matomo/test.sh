@@ -62,6 +62,25 @@ echo "matomo console version:"
 docker exec -w /var/www/html "$NAME" php console --version \
   || { echo "php console --version failed (app did not boot)"; docker logs "$NAME"; exit 1; }
 
+# The swapped-in Twig must be the FIXED version AND must actually render. The
+# recipe replaces the vendored twig/twig 3.11.3 source tree with 3.28.0 and drops
+# the stale Twig rows from composer's classmap so PSR-4 resolves the new tree --
+# if that autoloading surgery were wrong, Matomo's whole UI layer would be dead,
+# and a version string alone would not catch it. So: assert the version Matomo
+# itself loads, then render a template exercising loops, filters, escaping and
+# macros through the image's own PHP.
+echo "twig (swapped to 3.28.0) loads and renders:"
+docker exec -w /var/www/html "$NAME" php -r '
+require "vendor/autoload.php";
+$v = \Twig\Environment::VERSION;
+if (version_compare($v, "3.27.0", "<")) { fwrite(STDERR, "twig too old: $v\n"); exit(1); }
+$l = new \Twig\Loader\ArrayLoader(["t" => "{% for i in [1,2] %}{{ i }}{% endfor %}|{{ \"<b>\"|escape }}|{{ \"a,b\"|split(\",\")|join(\"-\") }}"]);
+$out = (new \Twig\Environment($l, ["cache" => false]))->render("t");
+$want = "12|&lt;b&gt;|a-b";
+if ($out !== $want) { fwrite(STDERR, "twig render mismatch: got [$out] want [$want]\n"); exit(1); }
+echo "  twig $v renders correctly: $out\n";
+' || { echo "twig assertion failed (version or autoloading broken)"; exit 1; }
+
 # Required PHP extensions must be loaded in the runtime.
 mods="$(docker exec "$NAME" php -m)"
 for ext in pdo_mysql mysqli gd mbstring dom curl openssl zip gmp intl; do

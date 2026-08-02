@@ -38,6 +38,8 @@ environment:
     packages:
       - busybox
       - python3   # only to render a composer.lock from vendor/composer/installed.php (scan input)
+      - curl      # fetches the twig 3.28.0 source for the 0-CVE swap (sha256-pinned)
+      - ca-certificates-bundle   # ...so that fetch can verify TLS
 
 pipeline:
   # The tarball is the finished application (vendored deps + built assets), not source.
@@ -74,6 +76,102 @@ pipeline:
       # copy of those defaults at config-default/ so the entrypoint can seed a fresh
       # config volume from it (the same seed-if-empty pattern the chart relies on).
       cp -a "$app/config" "$app/config-default"
+
+  - name: Replace the vendored twig/twig with 3.28.0 (0-CVE gate)
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      app="$destdir/var/www/html"
+
+      # Matomo 5.10-5.12 all vendor twig/twig v3.11.3, which carries 14 fixable
+      # advisories -- CVE-2026-24425 / 46633 / 46634 / 48805 / 48806 / 48807 CRITICAL,
+      # 46638 / 48808 / 49981 HIGH, 46627 / 46628 / 46635 / 47730 / 47732 MEDIUM --
+      # fixed across 3.26.0 and 3.27.0. Upstream has not bumped it.
+      #
+      # This is a SOURCE SWAP, not a composer operation, and deliberately so: the
+      # Matomo build tarball ships NO composer.json, NO composer.lock and NO
+      # installed.json (only vendor/composer/installed.php), so there is nothing for
+      # `composer update` to resolve from. Synthesising a composer.json would make
+      # composer re-resolve the entire vendor tree and could silently drop or move
+      # packages upstream shipped. Swapping one package's source touches exactly one
+      # package. Twig 3.x is pure PHP with no build step, and 3.28 needs only
+      # php >= 8.1 (image runs 8.3) plus symfony/polyfill-mbstring and
+      # symfony/polyfill-ctype, both already vendored -- it drops the php80/php81
+      # polyfills 3.11 required, so nothing new has to be added.
+      TWIG_VER=3.28.0
+      TWIG_SHA=03c3a764e2366b33b1446f0982994bc1317f5518afe4d224aba53a5fd7a1eddd
+      TWIG_REF=597c12ed286fb9d1701a36684ce6e0cbe28ebc8b
+      cd "$(mktemp -d)"
+      curl -fsSL -o twig.tar.gz \
+        "https://github.com/twigphp/Twig/archive/refs/tags/v${TWIG_VER}.tar.gz"
+      echo "${TWIG_SHA}  twig.tar.gz" | sha256sum -c -
+      tar xzf twig.tar.gz
+      src="$PWD/Twig-${TWIG_VER}"
+      test -f "$src/src/Environment.php"
+
+      # Replace the WHOLE package directory, not just src/. Matomo's vendored copy
+      # also ships CHANGELOG and README.rst from 3.11.3; leaving those behind would
+      # keep stale version claims in the image. Only code + licence are copied
+      # forward -- the upstream CHANGELOG is documentation, and it also lists 3.11.3
+      # as a historical entry, which would make the "no 3.11.3 anywhere" assertion
+      # below impossible to satisfy for a genuinely-swapped tree.
+      rm -rf "$app/vendor/twig/twig"
+      install -d "$app/vendor/twig/twig"
+      cp -a "$src/src"            "$app/vendor/twig/twig/src"
+      cp -a "$src/composer.json"  "$app/vendor/twig/twig/composer.json"
+      cp -a "$src/LICENSE"        "$app/vendor/twig/twig/LICENSE"
+
+      # Composer's generated CLASSMAP still points every Twig class at a 3.11 file
+      # path, and 3.28 added/removed files -- a stale row would `require` a file that
+      # no longer exists. Twig is also mapped by PSR-4 ('Twig\\' => twig/twig/src),
+      # which resolves every class in the new tree, so the correct fix is to drop the
+      # Twig classmap rows and let PSR-4 do it. Only rows whose TARGET is inside
+      # twig/twig/src are removed; the PSR-4 prefix entries (which have no 'Twig\\'
+      # key on the line) are left untouched.
+      python3 - "$app" "$TWIG_VER" "$TWIG_REF" <<'PY'
+      import re, sys
+      app, ver, ref = sys.argv[1], sys.argv[2], sys.argv[3]
+      removed = {}
+      for name in ("autoload_classmap.php", "autoload_static.php"):
+          p = f"{app}/vendor/composer/{name}"
+          keep, drop = [], 0
+          for line in open(p):
+              if "'Twig\\\\" in line and "twig/twig/src" in line:
+                  drop += 1
+                  continue
+              keep.append(line)
+          open(p, "w").write("".join(keep))
+          removed[name] = drop
+          if drop == 0:
+              sys.exit(f"{name}: expected Twig classmap rows, found none -- "
+                       "composer's autoload layout changed, re-check this step")
+      # PSR-4 must still map Twig, or nothing would autoload after the rows are gone.
+      psr4 = open(f"{app}/vendor/composer/autoload_psr4.php").read()
+      if "twig/twig/src" not in psr4:
+          sys.exit("autoload_psr4.php no longer maps twig/twig/src -- swap is unsafe")
+
+      # installed.php is the ONLY dependency inventory in the tarball, and the
+      # composer.lock emitted in the next step is generated from it -- so this is what
+      # makes the scanners (and the 0-CVE gate) see the real shipped version.
+      f = f"{app}/vendor/composer/installed.php"
+      s = open(f).read()
+      new, n = re.subn(
+          r"(?s)('twig/twig' => array\(\s*'pretty_version' => ')v[0-9.]+"
+          r"(',\s*'version' => ')[0-9.]+(',\s*'reference' => ')[0-9a-f]+(')",
+          lambda m: f"{m.group(1)}v{ver}{m.group(2)}{ver}.0{m.group(3)}{ref}{m.group(4)}",
+          s, count=1)
+      if n != 1:
+          sys.exit("installed.php: could not rewrite the twig/twig entry")
+      open(f, "w").write(new)
+      print("twig swap: %s -> %s (classmap rows dropped: %s)" % ("3.11.3", ver, removed))
+      PY
+
+      # Belt and braces: the shipped tree must report the new version, and no file in
+      # it may still claim 3.11.3.
+      grep -q "VERSION = '${TWIG_VER}'" "$app/vendor/twig/twig/src/Environment.php"
+      grep -q "'pretty_version' => 'v${TWIG_VER}'" "$app/vendor/composer/installed.php"
+      ! grep -rq "3\.11\.3" "$app/vendor/twig/twig/" || {
+        echo "twig tree still references 3.11.3"; exit 1; }
 
   - name: Emit composer.lock from vendor/composer/installed.php (makes the vendored PHP deps scannable)
     runs: |
