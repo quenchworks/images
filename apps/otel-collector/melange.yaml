@@ -111,7 +111,36 @@ pipeline:
       # so no version ldflag is needed.
       (
         cd _build
-        go get golang.org/x/text@v0.39.0 golang.org/x/net@v0.56.0 golang.org/x/crypto@v0.53.0 golang.org/x/sys@v0.46.0 google.golang.org/grpc@v1.82.1
+        # ONLY-RAISE float. An unconditional `go get mod@ver` INVERTS into a downgrade
+        # the moment upstream passes the pin, and `go get` then cascades that downgrade
+        # into every dependent that required the newer version. That is exactly how
+        # 0.157.0 broke: its distribution already pulls x/net v0.57.0 / x/crypto v0.54.0
+        # / x/sys v0.47.0 / x/text v0.40.0, so pinning x/net back to v0.56.0 dragged
+        # go.opentelemetry.io/collector/* from v0.157.0 down to v0.156.0 (the newest
+        # release satisfied by x/net 0.56.0). Core 0.156.0 + contrib 0.157.0 is not a
+        # compatible pair, and the build died in k8seventsreceiver on a changed
+        # signature ("have (chan struct{}, error)" / "want (chan struct{})").
+        # So: bump ONLY the modules actually below their floor, and no-op otherwise.
+        # See images/docs/go-module-float.md, trap #2.
+        FLOOR="golang.org/x/text@v0.39.0 golang.org/x/net@v0.56.0 golang.org/x/crypto@v0.53.0 golang.org/x/sys@v0.46.0 google.golang.org/grpc@v1.82.1"
+        _mods="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+        # $NF is the EFFECTIVE version, so a `replace` cannot hide behind the require.
+        _need="$(go list -m $_mods | awk '{ print $1, $NF }' | awk -v floor="$FLOOR" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1]; next }
+            }
+          }')"
+        if [ -n "$_need" ]; then
+          echo "float: raising $_need"
+          go get $_need
+        else
+          echo "float: every floored module is already at or above its floor -- no-op"
+        fi
         go build -trimpath -tags grpcnotrace -ldflags "-s -w" -o otelcol-contrib .
       )
 

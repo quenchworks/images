@@ -102,6 +102,13 @@ pipeline:
         "  'multer@<2.2.0': 2.2.0",              # CVE-2026-5079/5038
         "  'nodemailer@<9.0.1': 9.0.1",          # GHSA-p6gq-j5cr-w38f
         "  'postcss@<8.5.23': 8.5.23",           # GHSA-r28c-9q8g-f849 (fix 8.5.18; newest 8.5.x)
+        # re2 is a NATIVE module, so the pin is only safe because a PREBUILT exists for
+        # it: node-re2 1.25.2 publishes linux-x64-127.br + linux-arm64-127.br, and ABI
+        # 127 is the Node 22 Ghost runs on (glibc, not the -musl variants). Without a
+        # matching prebuilt this would fall back to compiling re2's vendored abseil,
+        # which does NOT build under GCC 16 -- the reason `npm` is a build dep above.
+        # Staying on 1.25.x (not 1.26) keeps the same ABI set and the minimal bump.
+        "  're2@<1.25.2': 1.25.2",               # CVE-2026-67550
         "  'tar@<7.5.22': 7.5.22",               # CVE-2026-59873 CRIT/59874 HIGH/59871+59875 MED +
                                                  # GHSA-r292-9mhp-454m MED (needs >= 7.5.21)
         "  'uuid@<11': 11.1.1",                  # CVE-2026-41907 (3.x + 9.x copies)

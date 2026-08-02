@@ -30,7 +30,19 @@ esac
 echo "== uv pip list runs against the system Python (writable cache on /tmp) =="
 out="$(docker run --rm --read-only --tmpfs /tmp "$IMAGE" pip list --python /usr/bin/python3 2>&1)"
 echo "$out" | head -4
-echo "$out" | grep -qi '^pip' || { echo "uv pip list did not report the bundled pip"; exit 1; }
+# The image deliberately ships NO pip package (its vendored tree is unfixable --
+# see apko.yaml), so do NOT assert pip is listed. What matters is that uv's own
+# pip interface works against the bundled interpreter, which this proves.
+echo "$out" | grep -qiE '^(Package|[A-Za-z0-9_.-]+ +[0-9])' \
+  || { echo "uv pip list did not produce a package listing:"; echo "$out"; exit 1; }
+
+echo "== uv does pip's job natively, with no pip package present =="
+# ONE shell-free invocation (this image ships no shell): --target installs without
+# needing a venv or pip. Proves the dropped py-pip costs no real capability.
+out="$(docker run --rm --read-only --tmpfs /tmp -e HOME=/tmp -e UV_CACHE_DIR=/tmp/uvcache \
+        "$IMAGE" pip install --python /usr/bin/python3 --target /tmp/t packaging 2>&1)"
+echo "$out" | tail -3
+echo "$out" | grep -qiE 'packaging' || { echo "uv pip install --target failed:"; echo "$out"; exit 1; }
 
 echo "== runs as nonroot uid 1001 =="
 uid="$(docker run --rm --read-only --tmpfs /tmp --entrypoint /usr/bin/python3 "$IMAGE" -c 'import os; print(os.getuid())')"

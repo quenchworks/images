@@ -88,6 +88,19 @@ pipeline:
       # chart's kind gate with a bundled Postgres.)
       /opt/mlflow/venv/bin/mlflow --version | grep -q "version ${VER}$"
 
+      # Remove pip from the venv. The last two findings on this image are pip's OWN
+      # vendored copies under pip/_vendor/ -- setuptools 70.3.0 (CVE-2025-47273,
+      # CVE-2026-59890) and msgpack 1.1.2 (GHSA-6v7p-g79w-8964). Those exact versions
+      # are what pip's vendor.txt pins, so NO top-level pin can reach them and every
+      # current pip release vendors the same set. mlflow is a server, never a package
+      # installer, so deleting pip removes the vulnerable CODE rather than suppressing
+      # the finding -- no .trivyignore, no --skip, no VEX. Must run AFTER every pip
+      # install above, and nothing later in this step uses pip.
+      /opt/mlflow/venv/bin/pip uninstall -y pip
+      # `test !` and not `! test`: set -e ignores a status inverted with `!`, so
+      # `! test -e f` would never fail the build. This form does.
+      test ! -e /opt/mlflow/venv/lib/python3.12/site-packages/pip/_vendor/vendor.txt
+
       # Relocate the venv into the package tree under /opt/mlflow.
       install -d "${dest}/opt/mlflow"
       cp -a /opt/mlflow/venv "${dest}/opt/mlflow/venv"

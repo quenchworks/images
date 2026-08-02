@@ -22,7 +22,14 @@ contents:
     - ca-certificates-bundle
     - __PKG__                          # the self-contained uv binary (/usr/bin/uv)
     - python-__PYVER__            # the pinned CPython minor uv targets
-    - py__PYVER__-pip             # matching pip for this exact interpreter
+    # NO py__PYVER__-pip. pip's OWN vendored tree (pip/_vendor/) carries
+    # setuptools 70.3.0 (CVE-2025-47273, CVE-2026-59890) and msgpack 1.1.2
+    # (GHSA-6v7p-g79w-8964); those are the versions pip's vendor.txt pins, so no
+    # apk bump escapes them -- every current pip release vendors the same set.
+    # uv does not need it: `uv pip` is a native reimplementation, not a pip
+    # wrapper, and `uv venv` seeds environments itself. Dropping the package
+    # removes the vulnerable CODE instead of suppressing the finding.
+    # Consequence, deliberate: `python3 -m pip` is absent -- use `uv pip`.
 
 accounts:
   groups:

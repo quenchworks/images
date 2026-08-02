@@ -168,6 +168,15 @@ pipeline:
       #   go-git/go-billy 5.9.0 all lines pin 5.6.2 -- CVE-2026-44973 path traversal
       #   oras-go/v2 2.6.1      all lines pin 2.6.0 -- CVE-2026-50151 (HIGH) + 3 more
       #   slack-go 0.23.1       all lines pin 0.16.0 -- GHSA-gxhx-2686-5h9g
+      #   mongo-driver 1.17.7   CVE-2026-2303 (MEDIUM). PER-LINE, not universal:
+      #                         3.2 pulls v1.17.1 and 3.3 pulls v1.17.6 (both indirect,
+      #                         both below the fix), while 3.4 DROPPED the module
+      #                         entirely -- which is why float() now skips floors that
+      #                         are absent from a line's graph instead of failing it.
+      #                         This one only surfaced in CI: the advisory landed in
+      #                         Trivy's DB after the local gate had already passed all
+      #                         three lines, and 3.4.6 passed CI for the same reason it
+      #                         needs no floor.
       #
       # github.com/google/cel-go is deliberately NOT floored: it does not appear
       # in argo-cd's go.mod OR go.sum on any of the three lines, so it is not in
@@ -178,7 +187,7 @@ pipeline:
       # helm's graph has no x/oauth2, no otel and no go-git, so it gets its own
       # shorter floor list -- every module named in a floor MUST be in that
       # module's graph or `go list -m` fails the build. oras-go is in both.
-      ARGOCD_FLOOR="golang.org/x/net@v0.56.0 golang.org/x/crypto@v0.53.0 golang.org/x/sys@v0.46.0 golang.org/x/text@v0.39.0 golang.org/x/oauth2@v0.36.0 google.golang.org/grpc@v1.82.1 go.opentelemetry.io/otel@v1.43.0 go.opentelemetry.io/otel/sdk@v1.43.0 go.opentelemetry.io/otel/trace@v1.43.0 go.opentelemetry.io/otel/metric@v1.43.0 github.com/go-git/go-git/v5@v5.19.1 github.com/go-git/go-billy/v5@v5.9.0 oras.land/oras-go/v2@v2.6.1 github.com/slack-go/slack@v0.23.1"
+      ARGOCD_FLOOR="golang.org/x/net@v0.56.0 golang.org/x/crypto@v0.53.0 golang.org/x/sys@v0.46.0 golang.org/x/text@v0.39.0 golang.org/x/oauth2@v0.36.0 google.golang.org/grpc@v1.82.1 go.opentelemetry.io/otel@v1.43.0 go.opentelemetry.io/otel/sdk@v1.43.0 go.opentelemetry.io/otel/trace@v1.43.0 go.opentelemetry.io/otel/metric@v1.43.0 github.com/go-git/go-git/v5@v5.19.1 github.com/go-git/go-billy/v5@v5.9.0 oras.land/oras-go/v2@v2.6.1 github.com/slack-go/slack@v0.23.1 go.mongodb.org/mongo-driver@v1.17.7"
       HELM_FLOOR="golang.org/x/net@v0.56.0 golang.org/x/crypto@v0.53.0 golang.org/x/sys@v0.46.0 golang.org/x/text@v0.39.0 google.golang.org/grpc@v1.82.1 oras.land/oras-go/v2@v2.6.1"
 
       # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
@@ -199,7 +208,24 @@ pipeline:
       # is the EFFECTIVE version and a replace cannot hide behind the require.
       float() {
         _floor="$1"; _tag="$2"
-        _mods="$(echo "$_floor" | tr ' ' '\n' | cut -d@ -f1)"
+        # Keep only floors whose module is ACTUALLY in this line's graph. Argo CD's
+        # transitive set differs per line -- go.mongodb.org/mongo-driver is pulled by
+        # 3.2 (v1.17.1) and 3.3 (v1.17.6) but DROPPED entirely by 3.4 -- and
+        # `go list -m` hard-fails on a module that is not in the graph, which would
+        # break a line that is already clean. Skips are logged, never silent, so a
+        # floor that stops applying because upstream renamed/removed the module is
+        # visible in the build log instead of quietly doing nothing.
+        _present=""
+        for _f in $_floor; do
+          if go list -m "${_f%@*}" >/dev/null 2>&1; then
+            _present="$_present $_f"
+          else
+            echo "float: ${_f%@*} is not in the $_tag graph -- floor skipped"
+          fi
+        done
+        _floor="$_present"
+        _mods="$(echo "$_floor" | tr ' ' '\n' | grep . | cut -d@ -f1)"
+        [ -n "$_mods" ] || { echo "float: no floors apply to $_tag"; return 0; }
         go list -m $_mods
         _need="$(go list -m $_mods | awk '{ print $1, $NF }' | below_floor "$_floor" "$_tag" | awk '{ print $1 }')"
         if [ -n "$_need" ]; then go get $_need; fi
