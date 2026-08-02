@@ -28,13 +28,15 @@ case "$pver" in
 esac
 
 echo "== uv pip list runs against the system Python (writable cache on /tmp) =="
-out="$(docker run --rm --read-only --tmpfs /tmp "$IMAGE" pip list --python /usr/bin/python3 2>&1)"
-echo "$out" | head -4
 # The image deliberately ships NO pip package (its vendored tree is unfixable --
-# see apko.yaml), so do NOT assert pip is listed. What matters is that uv's own
-# pip interface works against the bundled interpreter, which this proves.
-echo "$out" | grep -qiE '^(Package|[A-Za-z0-9_.-]+ +[0-9])' \
-  || { echo "uv pip list did not produce a package listing:"; echo "$out"; exit 1; }
+# see apko.yaml), so the interpreter has NO site-packages and an EMPTY listing is
+# the correct result. Assert the command SUCCEEDS; asserting on its output would
+# be asserting that something is installed, which is no longer true.
+if out="$(docker run --rm --read-only --tmpfs /tmp "$IMAGE" pip list --python /usr/bin/python3 2>&1)"; then
+  echo "${out:-(empty listing, as expected: no pip, no site-packages)}" | head -4
+else
+  echo "uv pip list failed against the bundled interpreter:"; echo "$out"; exit 1
+fi
 
 echo "== uv does pip's job natively, with no pip package present =="
 # ONE shell-free invocation (this image ships no shell): --target installs without

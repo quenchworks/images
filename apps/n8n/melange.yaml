@@ -129,8 +129,12 @@ pipeline:
           "qs":"6.15.2",
           "sanitize-html":"2.17.5",       // transitive 2.17.4 (CVE-2026-53606 MEDIUM). Not a
                                           // direct dep of n8n, so it belongs in overrides, not
-                                          // dependencies. Exact 2.17.5 = the advisory's fix;
-                                          // 2.17.6 exists but the minimal bump is the house rule.
+                                          // dependencies. Exact 2.17.5 = the fix version; 2.17.6
+                                          // exists but the minimal bump is the house rule.
+                                          // NOTE: this whole script is passed to node inside a
+                                          // SINGLE-QUOTED shell argument, so it must contain no
+                                          // apostrophe anywhere -- one closes the quote and
+                                          // melange fails to parse the pipeline.
           "semver@<5.7.2":"5.7.2",        // only the vulnerable 5.x (tree keeps its 6.x/7.x)
           "tar@6":"7.5.22",               // only the transitive 6.2.1 (direct bumped in dependencies)
           "tar@7":"7.5.22",               // n8n-nodes-base pins tar 7.5.17 EXACTLY, so this copy
