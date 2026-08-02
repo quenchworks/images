@@ -63,7 +63,22 @@ package:
       # ssh:// and git@ repository URLs, and the ssh_known_hosts ConfigMap.
       - openssh-client
       # util/gpg/gpg.go verifies commit and tag signatures with gpg.
+      #
+      # Wolfi SPLITS gnupg: the `gnupg` package does NOT ship /usr/bin/gpg -- that
+      # lives in the separate `gpg` package. Depending on `gnupg` alone produced an
+      # image where gpg-wrapper.sh was present but the gpg binary was not, and the
+      # repo-server died at boot with
+      #   fatal: exec: "gpg": executable file not found in $PATH
+      # (found by the chart's kind gate, not by the CVE gate -- a missing binary is
+      # not a vulnerability). gpg-agent is required too: InitializeGnuPG runs
+      # `gpg --batch --gen-key` with the RSA-2048 recipe in util/gpg/gpg.go, and
+      # GnuPG 2.x delegates all secret-key operations to the agent. gpgconf is what
+      # the agent uses to resolve its socket paths. Verified as a set on a real
+      # wolfi-base container by running Argo CD's own key recipe to completion.
       - gnupg
+      - gpg
+      - gpg-agent
+      - gnupg-gpgconf
       # AppProject syncWindows carry a timeZone; without zoneinfo they fail open.
       - tzdata
       # NOT shell-free, deliberately: util/gpg/gpg.go execs `gpg-wrapper.sh` and
