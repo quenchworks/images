@@ -90,6 +90,24 @@ echo "kv roundtrip OK (value='$got')"
 
 echo "version: $(docker exec "$SRV" vault version)"
 
+# --- the web UI must really be compiled in (-tags ui) ---
+# Do NOT assert on the HTTP status: a Vault built WITHOUT the ui tag also answers /ui/
+# with 200, serving a ~1.4KB stub that reads "Vault UI is not available in this binary."
+# (Measured against the previous QuenchWorks image, which returned exactly that.) The
+# real console is a ~1MB Ember index.html referencing hashed bundles under /ui/assets/,
+# so assert on content and then fetch an asset to prove it is actually served.
+echo "web UI: GET /ui/"
+curl -sS -o /tmp/vault-ui-$$.html "http://127.0.0.1:18200/ui/"
+if grep -qi 'not available in this binary' "/tmp/vault-ui-$$.html"; then
+  echo "UI stub served -- the binary was built without -tags ui"; exit 1
+fi
+asset="$(grep -oE '/ui/assets/[A-Za-z0-9._-]+\.js' "/tmp/vault-ui-$$.html" | head -1)"
+[ -n "$asset" ] || { echo "no Ember bundle referenced in /ui/"; exit 1; }
+acode="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:18200$asset")"
+[ "$acode" = "200" ] || { echo "UI asset $asset did not serve (http $acode)"; exit 1; }
+echo "web UI OK ($(wc -c <"/tmp/vault-ui-$$.html") bytes, asset $asset serves 200)"
+rm -f "/tmp/vault-ui-$$.html"
+
 ############################################################
 # 2) DEV mode (the chart's CI gate path)
 ############################################################

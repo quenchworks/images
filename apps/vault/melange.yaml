@@ -24,19 +24,28 @@
 # CGO_ENABLED=0, upstream's default build tag (`vault`, per scripts/build.sh) and
 # WITHOUT the `ui` tag.
 #
-# NO WEB UI, deliberately: the browser UI is gated behind `//go:build ui`
-# (http/assets.go embeds `web_ui/*`, which is NOT in the source tree). Producing it
-# means `make static-dist` -> `ember-dist` -> a full pnpm + Ember + node-sass asset
-# build of ui/ (hundreds of MB of JS toolchain, minutes of build, and a Node CVE
-# surface that would then have to be gated). `make bin` adds `ui`; we build the
-# equivalent of `make dev` minus the testonly tag. The stub in http/assets_stub.go
-# takes over: the server, the full HTTP API, the `vault` CLI, every auth method,
-# secret engine and storage backend are fully functional -- only the browser console
-# is absent. Same call as apps/openbao. Use the CLI or the API.
+# THE WEB UI IS SHIPPED (since 2026-08-02). It is gated behind `//go:build ui`, which
+# embeds `http/web_ui` -- a directory the source tarball does not contain -- so the
+# recipe reproduces upstream's own Ember pipeline (pnpm install + `ember build
+# --environment=production`) in the melange sandbox before the Go build, exactly as
+# apps/argocd does for its React console.
+#
+# This recipe previously refused the UI, arguing it would add "a Node CVE surface that
+# would then have to be gated". That reasoning was WRONG on both counts. Node and pnpm
+# are BUILD-time packages only: apko assembles the runtime image from the runtime
+# dependency set, so no JS toolchain is present to scan. And `node-sass` -- the
+# expensive native piece the old note feared -- is not a dependency at this tag at all;
+# upstream's `npm rebuild node-sass` line is vestigial, so nothing native compiles.
+# What the UI genuinely costs is build minutes and ~10 MB of embedded static assets.
+#
+# The Ember DEV dependency tree (122 devDependencies) never ships, but its manifests
+# WOULD be ingested by Trivy from the built asset directory, so package.json /
+# lockfiles are removed from http/web_ui before the embed. Compiled assets only.
 #
 # CONFIG: Vault refuses to start without a config file, and the image is SHELL-FREE
 # (no busybox), so there is no entrypoint script to synthesize one. We bake a bootable
-# single-node default at /etc/vault/vault.hcl (file storage, TLS off, mlock disabled)
+# single-node default at /etc/vault/vault.hcl (file storage, TLS off, mlock disabled,
+# UI on -- the console is compiled in, but Vault only serves /ui/ when `ui = true`)
 # and apko's `cmd` points at it, so `docker run <image>` just works. The chart mounts
 # its own HCL from a ConfigMap and overrides `args`.
 #
@@ -72,6 +81,23 @@ environment:
       # builds both and carries the current stdlib CVE fixes.
       # GOTOOLCHAIN=local below keeps the go directive from triggering a download.
       - go-1.26
+      # The web UI is built here and ONLY here. Vault gates the browser console behind
+      # `//go:build ui`, which embeds http/web_ui -- a directory the source tarball does
+      # not contain, so it must be produced by upstream's own Ember pipeline first.
+      # ui/package.json declares engines.node 20 and packageManager pnpm 10, so those are
+      # the versions used. Neither reaches the runtime image: apko installs only the
+      # runtime dependency set, so the JS toolchain leaves no CVE surface behind. Same
+      # arrangement apps/argocd uses for its React console.
+      - nodejs-20
+      # NOT the wolfi `pnpm` package: it requires Node >= 22.13 (it imports
+      # node:sqlite) while Vault's ui/package.json declares engines.node 20, so the
+      # two cannot be combined -- pnpm dies with
+      # `ERR_UNKNOWN_BUILTIN_MODULE: No such built-in module: node:sqlite`.
+      # npm is here to install the EXACT pnpm version upstream pins in
+      # ui/package.json's packageManager field, which is both Node-20 compatible and a
+      # more faithful reproduction of upstream's own build than whatever pnpm Wolfi
+      # currently ships.
+      - npm
 
 pipeline:
   # Pin to the exact tag AND its commit sha for clean-room provenance.
@@ -134,7 +160,39 @@ pipeline:
       # release already fixed. Dropping the VCS stamp makes Main.Version "(devel)" so
       # Trivy cannot mis-match it; provenance still comes from git-checkout's
       # expected-commit plus the -X GitCommit ldflag. (Same reason as apps/openbao.)
-      go build -trimpath -buildvcs=false -tags vault \
+      # ---- web UI (Ember) --------------------------------------------------------
+      # Upstream's `make static-dist` -> ember-dist. Its `npm rebuild node-sass` step is
+      # VESTIGIAL at this tag (node-sass is in neither dependencies nor devDependencies),
+      # so it is skipped rather than reproduced and nothing native has to compile. The
+      # build script writes into ../http/web_ui, which is what the `ui` tag embeds.
+      (
+        cd ui
+        # Pin pnpm to the version upstream declares in packageManager. Read it out of
+        # package.json rather than hardcoding, so a version bump cannot silently leave
+        # this building with the wrong package manager.
+        PNPM_VER="$(sed -n 's/.*"packageManager": *"pnpm@\([0-9.]*\).*/\1/p' package.json)"
+        [ -n "$PNPM_VER" ] || { echo "could not read packageManager from ui/package.json"; exit 1; }
+        echo "installing pnpm ${PNPM_VER} (upstream's pinned version)"
+        npm install -g --no-fund --no-audit "pnpm@${PNPM_VER}"
+        pnpm install --frozen-lockfile
+        pnpm run build
+      )
+      # Prove the console is REAL before embedding it: a failed asset build still leaves
+      # a directory behind, and the server would then 404 every UI route while looking
+      # perfectly healthy -- the exact failure mode apps/argocd documents.
+      test -s http/web_ui/index.html
+      ls http/web_ui/assets/*.js >/dev/null 2>&1 || { echo "web_ui has no js assets"; exit 1; }
+
+      # Trivy ingests any package manifest it finds in the image and would report the
+      # whole Ember DEV dependency tree (122 devDependencies) as node-pkg findings for
+      # code that never runs. The compiled assets ship; the manifests do not. This is not
+      # suppression -- no scanner directive is involved and nothing executable is touched.
+      find http/web_ui \( -name "package.json" -o -name "package-lock.json" \
+        -o -name "pnpm-lock.yaml" -o -name "yarn.lock" -o -name "*.spdx.json" \
+        -o -name "*.cdx.json" \) -delete
+      rm -rf ui/node_modules
+
+      go build -trimpath -buildvcs=false -tags "vault ui" \
         -ldflags "-s -w \
           -X github.com/hashicorp/vault/version.GitCommit=__COMMIT__ \
           -X github.com/hashicorp/vault/version.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -147,10 +205,14 @@ pipeline:
         | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor vault)"
       [ -z "$bad" ] || { echo "❌ 0-CVE float did not reach the binary:"; echo "$bad"; exit 1; }
 
-      # Assert we really built the UI-less variant: the `ui` tag would have embedded
-      # web_ui/*, which does not exist in the source tree, so a stray `-tags ui` is a
-      # build failure -- but assert the stub is what got linked anyway.
-      grep -q 'go:build !ui' http/assets_stub.go
+      # Assert the UI variant really got linked. http/assets.go is the `//go:build ui`
+      # side of the pair and is what embeds web_ui; if the tag were dropped, the stub in
+      # assets_stub.go would take over and every console route would 404 at runtime while
+      # the binary still passed every other check here.
+      grep -q 'go:build ui' http/assets.go
+      # ...and the assets must be INSIDE the binary, not merely on disk beside it.
+      grep -qa 'web_ui/index.html' "${{targets.destdir}}/usr/bin/vault" \
+        || { echo "the ui build tag did not embed web_ui into the binary"; exit 1; }
 
       # ---- bootable default config (shell-free image: nothing can generate one) ----
       # Single node, file storage under /vault/data (a writable mount / PVC), plain
@@ -163,7 +225,11 @@ pipeline:
       # Quenchworks default single-node Vault config. Bootable as-is; override by
       # mounting your own HCL and pointing `vault server -config=` at it.
       disable_mlock = true
-      ui            = false
+      # The binary is built with -tags ui, so the console is compiled in -- but Vault only
+      # SERVES it when this is true (otherwise /ui/ is a flat 404). Enabled by default so
+      # `docker run <image>` gives a usable console; set it false in your own HCL to close
+      # the route off.
+      ui            = true
 
       storage "file" {
         path = "/vault/data"
