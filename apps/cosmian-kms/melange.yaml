@@ -1,0 +1,154 @@
+# Builds Cosmian KMS from source onto Wolfi. Output is a signed APK in Quenchworks'
+# own repo -- no upstream distro packages, no vendor container images.
+#
+# =============================================================================
+# LICENSE: BUSL-1.1, AND STRICTER THAN VAULT'S. NOT OSI-APPROVED OPEN SOURCE.
+# The Additional Use Grant permits production use only up to 2 vCPUs (or 1 physical
+# core) and bars offering the work to third parties. Scaling past that in production
+# is a licence violation. See apps/cosmian-kms/build.conf for the full text and why
+# there is no open KMIP alternative to recommend instead.
+# =============================================================================
+#
+# NOT FIPS 140-3, despite upstream's description. Upstream builds in FIPS mode by
+# default, which requires OpenSSL's FIPS provider; Wolfi's openssl does not ship one.
+# This builds with the `non-fips` feature, so the FIPS claim must NOT be repeated in
+# the catalog summary or the chart docs.
+#
+# THE OPENSSL DECISION -- the single thing that makes this 0-CVE-able:
+# crate/crypto/build.rs otherwise DOWNLOADS AND COMPILES its own OpenSSL 3.6.2 from
+# package.cosmian.com. A vendored, pinned OpenSSL that is older than Wolfi's (3.6.3)
+# is exactly the bundled-dependency pattern the 0-CVE gate exists to catch, and it
+# would also make the SBOM describe something other than what ships. build.rs checks
+# OPENSSL_DIR first and skips its own build when that directory looks like a complete
+# OpenSSL install (it calls this the "Nix environment" path), so this recipe hands it
+# a shim tree pointing at Wolfi's current openssl and no vendored copy is ever
+# fetched. The assertions below FAIL THE BUILD if the download happens anyway -- if
+# upstream ever removes that branch, this app is CVE-blocked and must be marked so
+# rather than quietly shipping a stale OpenSSL.
+package:
+  name: quench-cosmian-kms
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Cosmian KMS, built from source on Wolfi (BUSL-1.1 -- NOT OSI open source; production use capped at 2 vCPUs by the licence)"
+  copyright:
+    - license: BUSL-1.1   # NOT OSI-approved. See the header above.
+  dependencies:
+    runtime:
+      # Dynamically linked against Wolfi's openssl on purpose (see the header) --
+      # this is the whole reason the image can stay 0-CVE, so openssl is a REAL
+      # runtime dependency here, not an incidental one.
+      - openssl
+      # REQUIRED, not optional: in non-FIPS mode the server calls
+      # init_openssl_providers -> "Load legacy provider" during startup and EXITS if
+      # /usr/lib/ossl-modules/legacy.so is absent. The `openssl` package does not ship
+      # it; openssl-provider-legacy does. Without this the image builds and scans clean
+      # and then dies on first boot -- which is exactly what the smoke test caught.
+      - openssl-provider-legacy
+      - ca-certificates-bundle
+      - libgcc
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - git
+      # Toolchain is PINNED PER RELEASE in rust-toolchain.toml, read AT THE TAG.
+      # master claims 1.97.0; the shipped tags say 1.91.0. Trust the tag.
+      - rust-__RUST__
+      - openssl-dev
+      # openssl-dev alone does NOT bring /etc/ssl/openssl.cnf or /usr/lib/ossl-modules
+      # -- those live in openssl-config / openssl, and build.rs takes the OPENSSL_DIR
+      # branch only when it can see BOTH. Without these the first build failed instantly
+      # on the assertion below, which is exactly what it is there for.
+      - openssl
+      - openssl-config
+      - pkgconf
+      # openssl-sys probes with perl in some paths; cheap insurance, build-time only.
+      - perl
+
+pipeline:
+  # Pin the exact tag AND its commit for clean-room provenance.
+  #
+  # NOTE: Cosmian uses ANNOTATED tags, so the sha behind refs/tags/<v> is the TAG
+  # OBJECT, not the commit. expected-commit below is the DEREFERENCED commit
+  # (`gh api repos/Cosmian/kms/commits/<tag>`). Kong and Vault use lightweight tags
+  # where those coincide -- do not assume either way when bumping.
+  - uses: git-checkout
+    with:
+      repository: https://github.com/Cosmian/kms
+      tag: __VER__
+      expected-commit: __COMMIT__
+
+  - runs: |
+      set -eu
+
+      # ---- OpenSSL: use Wolfi's, never the vendored 3.6.2 -------------------
+      # build.rs takes the OPENSSL_DIR branch only when the directory contains
+      # ssl/openssl.cnf AND lib/ossl-modules, so build the exact shape it looks for
+      # out of symlinks to Wolfi's install. Assert the real paths exist first --
+      # a silently-missing symlink target would send build.rs straight back to
+      # downloading its own OpenSSL.
+      test -f /etc/ssl/openssl.cnf || { echo "no /etc/ssl/openssl.cnf in the build env"; exit 1; }
+      test -d /usr/lib/ossl-modules || { echo "no /usr/lib/ossl-modules in the build env"; exit 1; }
+
+      OSSL_SHIM=/home/build/ossl-shim
+      mkdir -p "$OSSL_SHIM/ssl" "$OSSL_SHIM/lib"
+      ln -sf /etc/ssl/openssl.cnf   "$OSSL_SHIM/ssl/openssl.cnf"
+      ln -sf /usr/lib/ossl-modules  "$OSSL_SHIM/lib/ossl-modules"
+      ln -sf /usr/lib               "$OSSL_SHIM/lib64"
+      ln -sf /usr/include           "$OSSL_SHIM/include"
+
+      export OPENSSL_DIR="$OSSL_SHIM"
+      export OPENSSL_NO_VENDOR=1          # belt and braces for the openssl-sys crate
+      export OPENSSL_LIB_DIR=/usr/lib
+      export OPENSSL_INCLUDE_DIR=/usr/include
+
+      echo "system openssl: $(openssl version)"
+
+      # ---- build -----------------------------------------------------------
+      # --locked: build the dependency set upstream committed, so the SBOM matches a
+      # reproducible input set rather than whatever cargo resolves today.
+      # non-fips: see the header -- Wolfi ships no OpenSSL FIPS provider.
+      export CARGO_NET_GIT_FETCH_WITH_CLI=true
+      cargo build --release --locked -p cosmian_kms_server --features non-fips
+
+      # ---- prove no vendored OpenSSL was fetched or built -------------------
+      # If build.rs ignored OPENSSL_DIR it leaves an openssl-*-<os>-<arch> tree under
+      # target/. Its presence means the image would carry a pinned OpenSSL 3.6.2 that
+      # Wolfi has already moved past -- fail loudly instead of shipping it.
+      if find target -maxdepth 1 -name "openssl*" -print -quit | grep -q .; then
+        echo "FAIL: build.rs built its own OpenSSL despite OPENSSL_DIR:"
+        find target -maxdepth 1 -name "openssl*"
+        exit 1
+      fi
+      # Report how OpenSSL ended up linked. This is DIAGNOSTIC, not a gate: the check
+      # above already proves no vendored OpenSSL was built, and openssl-sys may legally
+      # static-link Wolfi's CURRENT libssl.a, which is still the fixed 3.6.3 code.
+      #
+      # An earlier version of this used `ldd` and failed the build -- but `ldd` is not in
+      # the melange sandbox, so the pipeline aborted with "does not dynamically link
+      # libssl" on a build that was actually fine. readelf comes from binutils via
+      # build-base and is always here.
+      echo "== OpenSSL linkage of cosmian_kms =="
+      if readelf -d target/release/cosmian_kms 2>/dev/null | grep -E "NEEDED.*lib(ssl|crypto)"; then
+        echo "  -> dynamically linked against the system OpenSSL (preferred: picks up Wolfi updates)"
+      else
+        echo "  -> no NEEDED entry for libssl/libcrypto: statically linked."
+        echo "     Acceptable ONLY because the vendored-OpenSSL check above passed, so this"
+        echo "     is Wolfi's current 3.6.3 code, not upstream's pinned 3.6.2. It does mean"
+        echo "     an OpenSSL CVE fix needs a REBUILD of this image, not just an apk bump."
+      fi
+
+      install -Dm755 target/release/cosmian_kms "${{targets.destdir}}/usr/bin/cosmian_kms"
+
+      # Runtime state dir. The server defaults to SQLite under its working directory;
+      # the chart mounts a PVC here and the image runs read-only-rootfs otherwise.
+      install -d "${{targets.destdir}}/var/lib/cosmian"
+
+  - uses: strip

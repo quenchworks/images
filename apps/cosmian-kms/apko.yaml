@@ -1,0 +1,64 @@
+# Cosmian KMS runtime image: nonroot (uid 1001), multi-arch, minimal.
+#
+# LICENSE: BUSL-1.1 with a 2-vCPU production cap -- NOT OSI-approved open source.
+# See melange.yaml's header and build.conf. Not FIPS 140-3 (built non-fips).
+#
+# The server listens on 9998 (KMS_PORT); nonroot can bind it since it is >1024, so no
+# capability is granted. State lives under /var/lib/cosmian, which the chart backs with
+# a PVC -- SQLite is the default backend, so that path must be writable even though the
+# rest of the rootfs is read-only.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-cosmian-kms@local
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  - path: /var/lib/cosmian
+    type: directory
+    permissions: 0o755
+    uid: 1001
+    gid: 1001
+
+# The server creates its SQLite database RELATIVE TO THE WORKING DIRECTORY. Without
+# this the CWD is / -- read-only in this image -- and the process exits SILENTLY after
+# printing its config, with no error line at all. That is a genuinely nasty failure mode:
+# the image builds, scans 0-CVE, and dies on boot with nothing in the log to explain it.
+# /var/lib/cosmian is the volume the chart backs with a PVC.
+work-dir: /var/lib/cosmian
+
+entrypoint:
+  command: /usr/bin/cosmian_kms
+
+environment:
+  # Bind all interfaces: the default is 0.0.0.0 on Linux already, but being explicit
+  # keeps `docker run` and Kubernetes behaving identically.
+  KMS_HOSTNAME: 0.0.0.0
+  KMS_PORT: "9998"
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.title: cosmian-kms
+  org.opencontainers.image.description: "Cosmian KMS -- KMIP 2.1 key management server, hardened by QuenchWorks (BUSL-1.1, production capped at 2 vCPUs by the licence; not FIPS 140-3 in this build)"
+  org.opencontainers.image.licenses: BUSL-1.1
+  org.opencontainers.image.source: https://github.com/Cosmian/kms
+  org.opencontainers.image.vendor: QuenchWorks
