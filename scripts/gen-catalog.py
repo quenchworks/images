@@ -133,8 +133,23 @@ def versions_of(pkg: str, repo: str, with_meta: bool) -> list:
     version list always mirrors build.conf."""
     try:
         raw = gh(f"/orgs/{ORG}/packages/container/{pkg.replace('/', '%2F')}/versions?per_page=100")
-    except subprocess.CalledProcessError:
-        return []  # planned app, no GHCR package yet
+    except subprocess.CalledProcessError as exc:
+        # ONLY a 404 means "planned app, no GHCR package yet". Every other failure --
+        # rate limit, 5xx, expired token, network blip -- used to land here too and got
+        # turned into an empty version list, which then propagated into the lock and the
+        # website as a SILENTLY DELISTED APP. That really happened: a transient failure
+        # on `dragonfly` rewrote its 3 published versions to `versions: []` while the
+        # package was still public and pullable on GHCR.
+        #
+        # So: swallow 404, re-raise anything else. A loud failure costs a re-run; a
+        # silent one ships a catalog that has quietly lost an app.
+        err = (exc.stderr or "") + (exc.stdout or "")
+        if "HTTP 404" in err or "Not Found" in err:
+            return []
+        raise RuntimeError(
+            f"listing versions for {pkg} FAILED (not a 404, so the package may well "
+            f"exist -- refusing to report it as unpublished): {err.strip()[:400]}"
+        ) from exc
 
     # tag -> (digest, published) for every published version tag
     published = {}
