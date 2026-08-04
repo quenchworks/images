@@ -62,11 +62,17 @@ environment:
       # master claims 1.97.0; the shipped tags say 1.91.0. Trust the tag.
       - rust-__RUST__
       - openssl-dev
-      # openssl-dev alone does NOT bring /etc/ssl/openssl.cnf or /usr/lib/ossl-modules
-      # -- those live in openssl-config / openssl, and build.rs takes the OPENSSL_DIR
-      # branch only when it can see BOTH. Without these the first build failed instantly
-      # on the assertion below, which is exactly what it is there for.
-      - openssl
+      # openssl-config (NOT a bare `openssl` pin) brings /etc/ssl/openssl.cnf and pulls
+      # openssl itself, which build.rs needs to see alongside /usr/lib/ossl-modules before
+      # it will take the OPENSSL_DIR branch instead of downloading its own OpenSSL 3.6.2.
+      #
+      # Listing `openssl` explicitly as well is what broke the 5.24.0 arm64 leg in CI: apk
+      # resolved an OLDER libssl than the openssl CLI and cargo's curl/ngtcp2 stack expect,
+      # and the build died with
+      #   openssl: /lib/libssl.so.3: version `OPENSSL_3.4.0' not found
+      #   cargo:   /usr/lib/libssl.so.3: version `OPENSSL_3.5.0' not found
+      # Letting openssl-dev + openssl-config resolve it keeps one coherent version. Kong
+      # hit the identical failure from the identical over-pinning.
       - openssl-config
       - pkgconf
       # openssl-sys probes with perl in some paths; cheap insurance, build-time only.
