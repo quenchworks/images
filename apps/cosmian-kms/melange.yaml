@@ -73,17 +73,17 @@ environment:
       - perl
 
 pipeline:
-  # Pin the exact tag AND its commit for clean-room provenance.
-  #
-  # NOTE: Cosmian uses ANNOTATED tags, so the sha behind refs/tags/<v> is the TAG
-  # OBJECT, not the commit. expected-commit below is the DEREFERENCED commit
-  # (`gh api repos/Cosmian/kms/commits/<tag>`). Kong and Vault use lightweight tags
-  # where those coincide -- do not assume either way when bumping.
-  - uses: git-checkout
+  # Source as the release TARBALL, not a git clone: melange's git-checkout fails
+  # intermittently with "fatal: remote helper 'https' aborted session" and took out the
+  # arm64 legs for 5.24.0 and 5.25.0 in CI while 5.23.0 survived, so the merge step was
+  # skipped and nothing published. The tag is in the URL and the sha256 covers the bytes,
+  # which is the provenance expected-commit was giving us. Extracts to kms-<version>/.
+  - uses: fetch
     with:
-      repository: https://github.com/Cosmian/kms
-      tag: __VER__
-      expected-commit: __COMMIT__
+      uri: https://github.com/Cosmian/kms/archive/refs/tags/__VER__.tar.gz
+      expected-sha256: "__SHA256__"
+      extract: true
+      strip-components: 1
 
   - runs: |
       set -eu
