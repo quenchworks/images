@@ -61,18 +61,18 @@ environment:
       # Toolchain is PINNED PER RELEASE in rust-toolchain.toml, read AT THE TAG.
       # master claims 1.97.0; the shipped tags say 1.91.0. Trust the tag.
       - rust-__RUST__
-      - openssl-dev
-      # openssl-config gives /etc/ssl/openssl.cnf. The bare `openssl` package is
-      # deliberately NOT listed: pinning it alongside openssl-dev let apk resolve an
-      # inconsistent set, and the build failed NONDETERMINISTICALLY -- a different subset of
-      # the six matrix legs each run -- with
-      #   openssl: /lib/libssl.so.3: version `OPENSSL_3.4.0' not found
-      #   cargo:   /usr/lib/libssl.so.3: version `OPENSSL_3.5.0' not found
-      # build.rs only needs the ossl-modules DIRECTORY to EXIST for its check; it does not
-      # load a provider at build time. So the shim below creates that directory itself and
-      # nothing here has to pull `openssl`. The legacy provider is a RUNTIME dependency
-      # (openssl-provider-legacy) and is unaffected.
-      - openssl-config
+      # A VERSION FLOOR, not a bare name. The skew was never one bad version: across four
+      # CI runs a different subset of the six legs failed each time, because the solver was
+      # free to pick an openssl older than what cargo's bundled curl/ngtcp2 links against:
+      #   cargo: libssl.so.3: version `OPENSSL_3.5.0' not found
+      #          (required by libngtcp2_crypto_ossl.so)
+      # Constraining the floor makes the resolution deterministic instead of hoping.
+      - openssl-dev>=3.6
+      # openssl-config is NOT listed: it pulls an openssl of its own choosing, which is what
+      # reintroduced the skew after the bare `openssl` pin was removed. build.rs only needs
+      # the FILE to exist, so the shim writes a minimal openssl.cnf itself (below).
+      # The old comment about openssl-config is kept for the record:
+      #   the bare `openssl` pin caused the same class of skew and was removed first.
       - pkgconf
       # openssl-sys probes with perl in some paths; cheap insurance, build-time only.
       - perl
@@ -99,11 +99,17 @@ pipeline:
       # out of symlinks to Wolfi's install. Assert the real paths exist first --
       # a silently-missing symlink target would send build.rs straight back to
       # downloading its own OpenSSL.
-      test -f /etc/ssl/openssl.cnf || { echo "no /etc/ssl/openssl.cnf in the build env"; exit 1; }
+      # No package is relied on for these two paths -- build.rs only checks that they EXIST
+      # (it does not parse the config or load a provider at build time), and every attempt to
+      # source them from a package let apk pick a skewed openssl.
 
       OSSL_SHIM=/home/build/ossl-shim
       mkdir -p "$OSSL_SHIM/ssl" "$OSSL_SHIM/lib"
-      ln -sf /etc/ssl/openssl.cnf   "$OSSL_SHIM/ssl/openssl.cnf"
+      if [ -f /etc/ssl/openssl.cnf ]; then
+        ln -sf /etc/ssl/openssl.cnf "$OSSL_SHIM/ssl/openssl.cnf"
+      else
+        printf '%s\n' "openssl_conf = default_conf" "[default_conf]" > "$OSSL_SHIM/ssl/openssl.cnf"
+      fi
       # A real directory, not a symlink to /usr/lib/ossl-modules: build.rs only checks that
       # the path EXISTS, and depending on the `openssl` package to provide it is what caused
       # the nondeterministic libssl skew above. Providers are loaded at RUNTIME, where
