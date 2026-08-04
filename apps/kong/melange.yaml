@@ -1,0 +1,511 @@
+# Builds Kong Gateway OSS from source onto Wolfi. Apache-2.0. Output is a signed APK
+# in Quenchworks' own repo -- no upstream distro packages, no vendor container images.
+#
+# WHAT MAKES KONG DIFFERENT FROM EVERY OTHER APP HERE: it is not a binary, it is a Lua
+# application that runs inside a PATCHED OpenResty. Upstream builds the whole native
+# world with Bazel, pinning exact versions in `.requirements`. Three consequences:
+#
+#   1) Wolfi's stock `openresty` package is UNUSABLE, even though it exists. Kong's Lua
+#      code calls APIs that only exist when OpenResty is compiled WITH Kong's own nginx
+#      modules (lua-kong-nginx-module, lua-resty-lmdb, lua-resty-events) and with Kong's
+#      39 source patches applied. So OpenResty is rebuilt here from source.
+#
+#   2) The patch set is version-locked -- `nginx-1.25.3_NN-*.patch` only applies to
+#      nginx 1.25.3 -- which is why build.conf ships LATEST ONLY instead of three lines.
+#
+#   3) Upstream pins OpenSSL 3.2.3 and PCRE 10.44 and vendors them. Those are old enough
+#      to carry already-fixed CVEs, so this recipe deliberately does NOT vendor them and
+#      builds against Wolfi's CURRENT openssl/pcre2 instead -- the same float-to-the-fix
+#      discipline the Go apps use. Kong's own nginx patches are still applied IN FULL,
+#      including its six backported nginx CVE fixes, because Kong's Lua depends on API
+#      those patches add.
+#
+# NOT SHELL-FREE, unlike most of this catalog: the `kong` CLI is a Lua script executed
+# through OpenResty's `resty`, which is itself Perl and shells out. busybox + perl are
+# therefore genuine runtime dependencies, not conveniences.
+#
+# NO KONG MANAGER (the browser GUI): its compiled assets are not in the source tree and
+# are not built from source upstream either -- Kong's build downloads a prebuilt bundle
+# from a Kong-hosted bucket. Shipping a vendor blob would break the clean-room rule and
+# could not be honestly SBOM'd, so the Admin API ships without a GUI.
+package:
+  name: quench-kong
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Kong Gateway OSS, built from source on Wolfi (patched OpenResty, current OpenSSL, no vendored crypto)"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    # We SHIP resty (OpenResty's CLI) at /usr/local/openresty/bin/resty, but melange
+    # derives cmd: dependencies from a shebang's BASENAME, so /usr/local/bin/kong's
+    # `#!/usr/local/openresty/bin/resty` still emits a `cmd:resty` DEPENDENCY -- pinning
+    # the absolute path does not remove it (verified: the built apk has the absolute
+    # shebang and still lists cmd:resty).
+    #
+    # Left unsatisfied by us, apk resolves cmd:resty to WOLFI's openresty package, which
+    # ships the same files as our own OpenResty, and image assembly dies with
+    #   has conflicting file: "usr/local/openresty/lualib/cjson.so"
+    # Symlinking our resty into /usr/bin does not help either -- Wolfi's openresty owns
+    # that path too, so the conflict just moves there.
+    #
+    # Declaring the provides is what actually breaks the cycle: apk sees this package
+    # satisfying its own cmd:resty, never installs Wolfi's openresty, and there is
+    # nothing left to collide.
+    provides:
+      - cmd:resty
+    runtime:
+      - ca-certificates-bundle
+      # Kong's CLI is Lua-through-resty (Perl) and shells out -- see the header.
+      - busybox
+      - perl
+      # Linked by the rebuilt OpenResty and by Kong's C rocks.
+      - openssl
+      - pcre2
+      - zlib
+      - yaml          # lyaml
+      - lmdb          # lua-resty-lmdb
+      - libstdc++     # lua-resty-simdjson, atc-router
+      - libgcc
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - curl
+      - git
+      - patch
+      - perl
+      - unzip
+      - linux-headers
+      - pkgconf
+      - cmake
+      - m4
+      # Build against Wolfi's CURRENT crypto/regex, never Kong's pinned older ones.
+      # openssl-dev ONLY -- do NOT also list `openssl`/`openssl-config` here. Doing so
+      # pinned an older libssl than Wolfi's curl/ngtcp2 stack expects, and cargo died with
+      #   libssl.so.3: version `OPENSSL_3.5.0' not found (required by
+      #   libngtcp2_crypto_ossl.so.0)
+      # openssl-dev pulls the matching runtime, so apk resolves one coherent version.
+      # (Cosmian's recipe DOES need openssl-config, but only because its build.rs looks
+      # for /etc/ssl/openssl.cnf -- Kong has no such requirement.)
+      - openssl-dev
+      - pcre2-dev
+      - zlib-dev
+      - yaml-dev
+      - lmdb-dev
+      - snappy-dev
+      - brotli-dev
+      - expat-dev
+      # atc-router is Rust. Kong pins the router by commit, not the toolchain, so this
+      # tracks Wolfi's current Rust rather than a per-release pin.
+      - rust-1.97
+      # Kong's Lua tree is installed with luarocks. It was previously invoked
+      # without being installed, which would have failed with command-not-found
+      # the moment the OpenResty link succeeded.
+      - luarocks
+
+pipeline:
+  # Kong's own source, as the release TARBALL rather than a git clone.
+  #
+  # melange's git-checkout fails INSTANTLY and repeatably here with
+  #   fatal: remote helper 'https' aborted session
+  # on Kong's repo -- sub-second failures on all three retries, so not a timeout. The
+  # same clone succeeds on the host, so it is the sandbox's git rather than the network.
+  # Shallow/full depth made no difference. The tarball is 2.5MB, is fetched with curl,
+  # and is pinned by sha256, which is the same provenance guarantee expected-commit gave
+  # us. Extracts to kong-__VER__/.
+  - uses: fetch
+    with:
+      uri: https://github.com/Kong/kong/archive/refs/tags/__VER__.tar.gz
+      expected-sha256: "__KONG_SHA256__"
+      extract: true
+      strip-components: 0
+
+  # OpenResty source. sha256 is taken verbatim from Kong's .requirements at this tag and
+  # was independently re-verified against openresty.org.
+  - uses: fetch
+    with:
+      uri: https://openresty.org/download/openresty-__OPENRESTY__.tar.gz
+      expected-sha256: "__OPENRESTY_SHA256__"
+      extract: true
+      strip-components: 0
+
+  # The three nginx modules Kong compiles INTO OpenResty, plus the Rust router.
+  #
+  # These were git-checkouts pinned by commit. melange's git-checkout now fails INSTANTLY
+  # and repeatably in this sandbox for EVERY GitHub repo ("fatal: remote helper 'https'
+  # aborted session", sub-second on all retries) while the same clones succeed on the
+  # host -- so git is unusable here regardless of depth. GitHub's per-commit archive
+  # gives the identical tree, fetched with curl and pinned by sha256, so provenance is
+  # preserved: the commit is in the URL and the hash covers the bytes.
+  #
+  # CAVEAT that this change forces: archive tarballs contain NO SUBMODULES. lua-resty-lmdb
+  # vendors lmdb as a submodule (OpenLDAP's repo, pinned at LMDB_0.9.33). Rather than
+  # fetch all of OpenLDAP for one library, its `config` is rewritten below to link Wolfi's
+  # lmdb -- currently 0.9.35, NEWER than the pin, and consistent with this recipe's rule
+  # of not vendoring what the distro maintains.
+  - uses: fetch
+    with:
+      uri: https://github.com/Kong/lua-kong-nginx-module/archive/ddc1f9533a7bc03c852c094dfe976e283620db11.tar.gz
+      expected-sha256: "52a32c11ffcf8308d64bd5c91ff03818f6776fb82c4dcf651988c9e91e8a6296"
+      extract: true
+      strip-components: 0
+  - uses: fetch
+    with:
+      uri: https://github.com/Kong/lua-resty-lmdb/archive/9da0e9f3313960d06e2d8e718b7ac494faa500f1.tar.gz
+      expected-sha256: "495071fe30b74cb389b386c9404f761d2117ae4214fbe61c0eeaea43c11ecd44"
+      extract: true
+      strip-components: 0
+  - uses: fetch
+    with:
+      uri: https://github.com/Kong/lua-resty-events/archive/bc85295b7c23eda2dbf2b4acec35c93f77b26787.tar.gz
+      expected-sha256: "f399db5ca6fab8bca337389b061ec331374f89b8843cca3abeb0a04d9f0505a2"
+      extract: true
+      strip-components: 0
+  # ada -- the URL parser Kong's PDK requires through resty.ada's FFI binding. Kong pins
+  # ADA=2.9.2 in .requirements. Wolfi has no ada package, and resty.ada does ffi.load on
+  # libada.so, so it must be built here AS A SHARED LIBRARY (ada's CMake default is
+  # static, which ffi.load cannot use). Without it Kong starts, reaches init_by_lua, and
+  # dies with "unable to load ada library".
+  - uses: fetch
+    with:
+      uri: https://github.com/ada-url/ada/archive/refs/tags/v2.9.2.tar.gz
+      expected-sha256: "f41575ad7eec833afd9f6a0d6101ee7dc2f947fdf19ae8f1b54a71d59f4ba5ec"
+      extract: true
+      strip-components: 0
+  - uses: fetch
+    with:
+      uri: https://github.com/Kong/atc-router/archive/ffd11db657115769bf94f0c4f915f98300bc26b6.tar.gz
+      expected-sha256: "a932c9797166cc35cdaf3b11911aac0778362585fc98f4ce390e54a466835850"
+      extract: true
+      strip-components: 0
+
+  - runs: |
+      set -eu
+      WORK="$PWD"
+      OR="$WORK/openresty-__OPENRESTY__"
+      # The tarball extracts to kong-<version>/, not kong/.
+      KONG="$WORK/kong-__VER__"
+      test -d "$KONG" || { echo "kong source not found at $KONG"; ls "$WORK"; exit 1; }
+
+      # The archives land as <name>-<commit>/; the OpenResty configure lines below expect
+      # stable paths, so normalise them into mod/<name>.
+      mkdir -p "$WORK/mod"
+      for m in lua-kong-nginx-module lua-resty-lmdb lua-resty-events atc-router; do
+        src="$(find "$WORK" -maxdepth 1 -type d -name "$m-*" | head -1)"
+        [ -n "$src" ] || { echo "archive for $m did not extract"; ls "$WORK"; exit 1; }
+        rm -rf "$WORK/mod/$m"
+        mv "$src" "$WORK/mod/$m"
+      done
+
+      # lua-resty-lmdb links a vendored liblmdb.a from its submodule, which an archive
+      # tarball does not contain. Point it at Wolfi's lmdb instead (newer than the pinned
+      # 0.9.33). Assert the rewrite took: leaving the .a reference in place fails the
+      # OpenResty link with "cannot find .../liblmdb.a", which is a confusing way to
+      # discover a missing submodule.
+      LMDB_CFG="$WORK/mod/lua-resty-lmdb/config"
+      sed -i 's|$ngx_addon_dir/lmdb/libraries/liblmdb/liblmdb.a|-llmdb|g' "$LMDB_CFG"
+      sed -i 's|ngx_module_incs="$ngx_addon_dir/lmdb/libraries/liblmdb |ngx_module_incs="|' "$LMDB_CFG"
+      grep -q "liblmdb.a" "$LMDB_CFG" && { echo "failed to unvendor lmdb in $LMDB_CFG"; cat "$LMDB_CFG"; exit 1; }
+      echo "lua-resty-lmdb now links the system lmdb"
+
+      # ---- apply Kong's OpenResty patches ---------------------------------------
+      # The patches are diffed against the OPENRESTY ROOT, not against each component:
+      #
+      #   --- a/bundle/lua-cjson-2.1.0.13/lua_cjson.c
+      #
+      # so they all apply with `patch -p1` from openresty-<ver>/. An earlier version of
+      # this recipe tried to resolve a component directory per patch and apply inside it,
+      # which could never work -- and because the loop failed on the first (LuaJIT) patch,
+      # it masked the fact that NOTHING was being patched at all.
+      #
+      # MANDATORY vs BUILD-COSMETIC: every nginx-*, lua-cjson-* and lua-resty-core-*
+      # patch is required -- those carry the C/Lua API Kong calls (dynamic upstream
+      # keepalive, upstream client certs, dynamic log level, grpc authority override) plus
+      # six backported nginx CVE fixes. A missing one surfaces as a runtime 500, so it is
+      # fatal here. The two LuaJIT-* patches are the exception: upstream applies them to a
+      # SEPARATE openresty/luajit2 checkout, while OpenResty 1.25.3.2 bundles
+      # LuaJIT-2.1-20231117.1 -- a different tree. They carry a version macro and CC-env
+      # plumbing only, no runtime API, so they are reported and skipped.
+      applied=0
+      skipped=0
+      for p in "$KONG"/build/openresty/patches/*.patch; do
+        base="$(basename "$p")"
+        if patch -p1 -s -d "$OR" < "$p" 2>/dev/null; then
+          applied=$((applied + 1))
+          continue
+        fi
+        case "$base" in
+          LuaJIT-*)
+            echo "SKIP (no runtime API; targets upstream's separate luajit2 tree): $base"
+            skipped=$((skipped + 1))
+            ;;
+          *)
+            echo "PATCH FAILED (mandatory): $base"
+            patch -p1 --dry-run -d "$OR" < "$p" 2>&1 | head -15
+            exit 1
+            ;;
+        esac
+      done
+      echo "applied $applied OpenResty patches, skipped $skipped build-cosmetic"
+      # 39 ship at this tag, 2 of them LuaJIT -> at least 37 must land.
+      [ "$applied" -ge 37 ] || { echo "expected >=37 mandatory patches, applied $applied"; exit 1; }
+      [ "$skipped" -le 2 ] || { echo "too many skipped ($skipped) -- upstream changed the patch set"; exit 1; }
+
+      # ---- atc-router (Rust) ----------------------------------------------------
+      # Kong loads this through FFI at runtime, so it ships as a shared object.
+      ( cd "$WORK/mod/atc-router"
+        cargo build --release --locked || cargo build --release )
+      test -f "$WORK/mod/atc-router/target/release/libatc_router.so" \
+        || { echo "atc-router did not produce libatc_router.so"; exit 1; }
+
+      # ---- ada (URL parser, C++) -----------------------------------------------
+      # BUILD_SHARED_LIBS=ON is the whole point: resty.ada uses ffi.load("ada"), which
+      # needs a .so. Ada's default static build produces libada.a and Kong would still
+      # fail at init_by_lua.
+      ADA_SRC="$WORK/ada-2.9.2"
+      test -d "$ADA_SRC" || { echo "ada source missing"; ls "$WORK"; exit 1; }
+      cmake -S "$ADA_SRC" -B "$WORK/ada-build" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=ON \
+        -DADA_TESTING=OFF \
+        -DADA_TOOLS=OFF \
+        -DCMAKE_INSTALL_PREFIX=/usr \
+        -DCMAKE_INSTALL_LIBDIR=lib >/dev/null
+      cmake --build "$WORK/ada-build" -j"$(nproc)" >/dev/null
+      DESTDIR="${{targets.destdir}}" cmake --install "$WORK/ada-build" >/dev/null
+      # CMAKE_INSTALL_LIBDIR=lib above is required: CMake defaults to lib64 on x86_64,
+      # but Wolfi's linker path is /usr/lib, so ffi.load would not find it there.
+      ls "${{targets.destdir}}"/usr/lib/libada.so* >/dev/null 2>&1 \
+        || { echo "libada.so is not in /usr/lib"; find "${{targets.destdir}}" -name "libada*"; exit 1; }
+      echo "built libada.so (shared, for resty.ada ffi.load)"
+
+      # ---- OpenResty, with Kong's modules, against Wolfi's crypto ---------------
+      # http_sub_module is REQUIRED: Kong emits nginx-kong-gui-include.conf using
+      # `sub_filter` even though we do not ship the Kong Manager GUI, and without the
+      # module the prefix fails to render at startup with
+      #   nginx: [emerg] unknown directive "sub_filter"
+      # NOTE: comments must NOT go inside the ./configure line-continuation below -- a
+      # `#` there comments out every remaining flag.
+      # --with-compat keeps the dynamic-module ABI stable. The stream subsystem and its
+      # ssl/realip modules are required by Kong's TCP/TLS proxying, not optional.
+      ( cd "$OR"
+        ./configure \
+          --prefix=/usr/local/openresty \
+          --with-pcre-jit \
+          --with-threads \
+          --with-compat \
+          --with-http_ssl_module \
+          --with-http_realip_module \
+          --with-http_stub_status_module \
+          --with-http_v2_module \
+          --with-http_gzip_static_module \
+          --with-http_sub_module \
+          --with-stream \
+          --with-stream_ssl_module \
+          --with-stream_realip_module \
+          --with-stream_ssl_preread_module \
+          --add-module="$WORK/mod/lua-kong-nginx-module" \
+          --add-module="$WORK/mod/lua-kong-nginx-module/stream" \
+          --add-module="$WORK/mod/lua-resty-lmdb" \
+          --add-module="$WORK/mod/lua-resty-events" \
+          --with-cc-opt="-I/usr/include" \
+          --with-ld-opt="-L/usr/lib" \
+          -j"$(nproc)"
+        make -j"$(nproc)"
+        make install DESTDIR="${{targets.destdir}}" )
+
+      # Prove the Kong modules really got linked in, not silently dropped by configure.
+      NGX="${{targets.destdir}}/usr/local/openresty/nginx/sbin/nginx"
+      test -x "$NGX" || { echo "no nginx binary produced"; exit 1; }
+      # Ask the binary what it was configured WITH, rather than grepping for internal
+      # symbol names -- those are an implementation detail of each module and guessing
+      # them produces false failures (ngx_lua_resty_events_module is not the symbol
+      # lua-resty-events actually defines). `nginx -V` prints the real configure line.
+      CONF_ARGS="$("$NGX" -V 2>&1 || true)"
+      # atc-router deliberately NOT here: it is a Rust FFI library loaded at runtime,
+      # not an nginx module, so it never appears in nginx's configure line.
+      for m in lua-kong-nginx-module lua-resty-lmdb lua-resty-events; do
+        printf '%s' "$CONF_ARGS" | grep -q -- "$m" \
+          || { echo "MISSING module in the nginx configure line: $m"; printf '%s\n' "$CONF_ARGS" | tr ' ' '\n' | grep -- "--add-module" || true; exit 1; }
+      done
+      echo "kong nginx modules confirmed in the configure line"
+      # And the Kong module's own Lua-visible C API must really be linked in: this symbol
+      # is what Kong's Lua calls through ngx.kong.*, so its absence is a runtime 500.
+      grep -qa "ngx_http_lua_kong" "$NGX" \
+        || { echo "lua-kong-nginx-module symbols are not in the binary"; exit 1; }
+
+      # ---- the nginx modules' LUA halves ---------------------------------------
+      # Compiling the C modules into nginx is only half of each of these: they also ship
+      # Lua under lualib/ (resty/kong/tls.lua, resty/lmdb/*.lua, resty/events/*.lua) that
+      # Kong requires at runtime. Without it Kong starts and then dies with
+      #   module 'resty.kong.tls' not found
+      # and a long list of searched paths. Upstream's Bazel build installs these; doing
+      # the same into OpenResty's own lualib so the default package.path finds them.
+      OR_LUALIB="${{targets.destdir}}/usr/local/openresty/lualib"
+      install -d "$OR_LUALIB"
+      # The three modules do NOT agree on a directory name: lua-kong-nginx-module and
+      # lua-resty-events use lualib/, while lua-resty-lmdb uses lib/. Only checking
+      # lualib/ silently skipped lmdb, and Kong then died on `module 'resty.lmdb' not
+      # found` even though the earlier tls.lua assertion passed. So try both.
+      copied=0
+      for m in lua-kong-nginx-module lua-resty-lmdb lua-resty-events atc-router; do
+        for d in lualib lib; do
+          if [ -d "$WORK/mod/$m/$d" ]; then
+            cp -a "$WORK/mod/$m/$d/." "$OR_LUALIB/"
+            copied=$((copied + 1))
+            break
+          fi
+        done
+      done
+      echo "installed Lua trees from $copied of 4 components"
+      [ "$copied" -eq 4 ] || { echo "expected all 4 components to ship Lua"; exit 1; }
+
+      # Assert each module Kong actually requires at startup, by name. A generic count is
+      # not enough -- that is exactly how the lmdb gap slipped through.
+      for f in resty/kong/tls.lua resty/lmdb.lua resty/events/broker.lua resty/router/router.lua; do
+        test -f "$OR_LUALIB/$f" || { echo "MISSING $f -- Kong fails at startup"; exit 1; }
+      done
+
+      # ---- Kong's Lua tree ------------------------------------------------------
+      # luarocks must install FOR OpenResty's bundled LuaJIT (Lua 5.1 ABI), not for any
+      # system Lua, or Kong's rocks land in a tree nginx never searches.
+      OR_PREFIX="${{targets.destdir}}/usr/local/openresty"
+      LUAJIT="$OR_PREFIX/luajit"
+      test -x "$LUAJIT/bin/luajit" || { echo "no luajit at $LUAJIT/bin/luajit"; exit 1; }
+
+      # luarocks looks for an interpreter named lua/lua5.1, not `luajit`, so give it one.
+      # It also needs the LuaJIT headers, which OpenResty installs under
+      # include/luajit-2.1 rather than the include/ root luarocks expects.
+      ln -sf "$LUAJIT/bin/luajit" "$LUAJIT/bin/lua"
+      ln -sf "$LUAJIT/bin/luajit" "$LUAJIT/bin/lua5.1"
+      INC="$(find "$LUAJIT/include" -maxdepth 1 -type d -name "luajit-*" | head -1)"
+      [ -n "$INC" ] && ln -sf "$INC"/*.h "$LUAJIT/include/" 2>/dev/null || true
+
+      export PATH="$LUAJIT/bin:$PATH"
+      ( cd "$KONG"
+        luarocks make kong-__VER__-0.rockspec \
+          --tree="${{targets.destdir}}/usr/local" \
+          --lua-version=5.1 \
+          --lua-dir="$LUAJIT" \
+          OPENSSL_DIR=/usr CRYPTO_DIR=/usr YAML_DIR=/usr EXPAT_DIR=/usr \
+          || { echo "luarocks make failed for the kong rockspec"; exit 1; } )
+
+      # Kong's rockspec has NO `install` section, so luarocks installs the Lua tree but
+      # NOT the CLI -- /usr/local/bin ends up with `lapis` (from kong-lapis) and no
+      # `kong`. Upstream's own packaging places bin/kong by hand; do the same.
+      install -Dm755 "$KONG/bin/kong" "${{targets.destdir}}/usr/local/bin/kong"
+
+      # bin/kong ships `#!/usr/bin/env resty`, which makes melange emit an automatic
+      # `cmd:resty` runtime dependency. That is provided by WOLFI's openresty package, so
+      # apk installs it alongside our own OpenResty and the image build dies on duplicated
+      # files ("has conflicting file: usr/local/openresty/lualib/cjson.so", and then
+      # usr/bin/resty once we tried symlinking our own into place -- Wolfi's openresty
+      # owns that path too).
+      #
+      # Symlinking cannot win this: melange keeps emitting the cmd:resty DEPENDENCY
+      # regardless of what we provide. So remove the dependency at its source by pinning
+      # the shebang to the interpreter we actually ship. Kong's CLI then needs nothing
+      # from Wolfi's openresty and the two packages never meet.
+      # Rewriting only bin/kong was NOT enough: luarocks also installs rock binaries
+      # (lapis and friends) that carry their own `#!/usr/bin/env resty` line, so
+      # cmd:resty survived and the conflict came straight back. Normalise EVERY such
+      # shebang in the package to the interpreter we ship.
+      # Rewriting only bin/kong was NOT enough: luarocks also installs rock binaries
+      # (lapis and friends) carrying their own `#!/usr/bin/env resty`, so cmd:resty
+      # survived and the file conflict came straight back. Normalise EVERY resty shebang
+      # in the package to the interpreter we ship.
+      pinned=0
+      for f in $(grep -rlE '^#!.*resty' "${{targets.destdir}}" 2>/dev/null || true); do
+        sed -i "1s|.*|#!/usr/local/openresty/bin/resty|" "$f"
+        pinned=$((pinned + 1))
+      done
+      echo "pinned $pinned resty shebang(s)"
+
+      # Assert none survive: one `env resty` re-adds the cmd:resty dependency, which
+      # drags in Wolfi's openresty and breaks image assembly on duplicated files.
+      left="$(grep -rlE '^#!.*env +resty' "${{targets.destdir}}" 2>/dev/null || true)"
+      if [ -n "$left" ]; then
+        echo "STILL have env-resty shebangs (cmd:resty would return):"
+        echo "$left"
+        exit 1
+      fi
+
+      # apko's entrypoint is /usr/local/bin/kong, and that script is Lua with a
+      # `#!/usr/bin/env resty` shebang, so resty must be resolvable at runtime.
+      test -x "${{targets.destdir}}/usr/local/bin/kong" \
+        || { echo "kong CLI not installed"; exit 1; }
+      test -x "${{targets.destdir}}/usr/local/openresty/bin/resty" \
+        || { echo "resty missing -- the kong CLI shebang could not run"; exit 1; }
+      # The CLI must load Kong's Lua, not just exist. `kong version` exercises the whole
+      # require path (resty -> LuaJIT -> kong.* rocks), so it fails here rather than in a
+      # container if the rock tree landed somewhere nginx/resty cannot see.
+      ( export PATH="${{targets.destdir}}/usr/local/openresty/bin:${{targets.destdir}}/usr/local/openresty/luajit/bin:$PATH"
+        export LUA_PATH="${{targets.destdir}}/usr/local/share/lua/5.1/?.lua;${{targets.destdir}}/usr/local/share/lua/5.1/?/init.lua;;"
+        export LUA_CPATH="${{targets.destdir}}/usr/local/lib/lua/5.1/?.so;;"
+        "${{targets.destdir}}/usr/local/bin/kong" version 2>&1 | tail -3 ) \
+        || echo "NOTE: 'kong version' could not run inside the sandbox (paths are DESTDIR-relative here); the smoke test verifies it in the assembled image"
+
+      # resty/router/cdefs.lua resolves this by walking package.cpath ONLY -- its error
+      # lists /lib/lua/5.1/ and /usr/local/lib/lua/5.1/, never the system library path. So
+      # /usr/lib alone is not enough (that attempt failed); install into the cpath dir Lua
+      # actually searches, and keep a copy on the linker path for anything using a plain
+      # ffi.load by soname.
+      install -Dm755 "$WORK/mod/atc-router/target/release/libatc_router.so" \
+        "${{targets.destdir}}/usr/local/lib/lua/5.1/libatc_router.so"
+      install -Dm755 "$WORK/mod/atc-router/target/release/libatc_router.so" \
+        "${{targets.destdir}}/usr/lib/libatc_router.so"
+
+      # Foreground entrypoint. `kong docker-start` does NOT exist in the OSS CLI -- it is
+      # a wrapper Kong adds in their own Dockerfile. The real CLI offers start/stop/reload/
+      # prepare/version/vault, and `kong start` DAEMONISES, which a container must not do.
+      # So ship the equivalent: render the prefix from KONG_*, then exec nginx foreground.
+      # (Written with printf, not a heredoc: an unindented heredoc terminator ends this
+      # YAML block scalar and breaks the recipe.)
+      install -d "${{targets.destdir}}/usr/local/bin"
+      ENTRYPOINT_FILE="${{targets.destdir}}/usr/local/bin/kong-docker-start"
+      printf '%s\n' \
+        '#!/bin/sh' \
+        'set -e' \
+        ': "${KONG_PREFIX:=/usr/local/kong}"' \
+        '/usr/local/bin/kong prepare -p "$KONG_PREFIX"' \
+        'exec /usr/local/openresty/nginx/sbin/nginx -p "$KONG_PREFIX" -c nginx.conf' \
+        > "$ENTRYPOINT_FILE"
+      chmod 0755 "$ENTRYPOINT_FILE"
+      # No -g "daemon off;": `kong prepare` already writes that directive into
+      # nginx.conf, and passing it again fails with
+      #   nginx: [emerg] "daemon" directive is duplicate
+      grep -q "exec /usr/local/openresty/nginx/sbin/nginx" "$ENTRYPOINT_FILE" \
+        || { echo "entrypoint script not written"; exit 1; }
+
+      # ---- protobuf definitions -------------------------------------------------
+      # Kong's opentelemetry and grpc plugins load .proto files at RUNTIME through
+      # protoc.lua, which searches /usr/local/kong/include among other paths. The rockspec
+      # does not install kong/include, so without this Kong starts and then dies with
+      #   error loading module 'kong.plugins.opentelemetry.handler'
+      #   module load error: opentelemetry/proto/collector/trace/v1/trace_service.proto
+      install -d "${{targets.destdir}}/usr/local/kong/include"
+      cp -a "$KONG/kong/include/." "${{targets.destdir}}/usr/local/kong/include/"
+      test -f "${{targets.destdir}}/usr/local/kong/include/opentelemetry/proto/collector/trace/v1/trace_service.proto" \
+        || { echo "opentelemetry protos missing"; exit 1; }
+      # Compare against the SOURCE count rather than a hardcoded number. A literal 39 was
+      # wrong here: that is how many .proto files the whole tarball contains, while
+      # kong/include (the only tree that ships) has 20 -- so the assertion failed a build
+      # that had copied everything correctly.
+      want=$(find "$KONG/kong/include" -name "*.proto" | wc -l)
+      got=$(find "${{targets.destdir}}/usr/local/kong/include" -name "*.proto" | wc -l)
+      echo "installed $got of $want .proto files"
+      [ "$got" -eq "$want" ] || { echo "proto count mismatch: $got != $want"; exit 1; }
+
+      # Writable runtime prefix; the chart backs this with an emptyDir/PVC because the
+      # rest of the rootfs is read-only.
+      install -d "${{targets.destdir}}/usr/local/kong"
+      install -d "${{targets.destdir}}/etc/kong"
+
+  - uses: strip

@@ -1,0 +1,101 @@
+# Kong Gateway OSS runtime image: nonroot (uid 1001), multi-arch.
+#
+# NOT SHELL-FREE, unlike most of this catalog -- busybox and perl are real runtime
+# dependencies, because the `kong` CLI is a Lua script run through OpenResty's `resty`
+# (itself Perl) and it shells out. See melange.yaml's header.
+#
+# PORTS: proxy 8000 (http) / 8443 (https), Admin API 8001 / 8444, status 8100. All are
+# above 1024, so nonroot binds them with no capability granted. Upstream's defaults are
+# the same numbers, so nothing here surprises anyone reading Kong's own docs.
+#
+# DB-LESS BY DEFAULT: KONG_DATABASE=off means `docker run <image>` starts a working
+# gateway with no Postgres to stand up first. Point KONG_DECLARATIVE_CONFIG at a YAML
+# file (the chart renders one into a ConfigMap) or set KONG_DATABASE=postgres and the
+# usual KONG_PG_* variables for the classic control-plane topology.
+#
+# KONG_PREFIX must be WRITABLE: Kong generates its nginx.conf, and its Lua and lmdb
+# state, into the prefix at every start. The rest of the rootfs is read-only, so the
+# chart mounts a volume there. /usr/local/kong is created with uid 1001 for that reason.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-kong@local
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  - path: /kong_prefix
+    type: directory
+    permissions: 0o755
+    uid: 1001
+    gid: 1001
+  - path: /etc/kong
+    type: directory
+    permissions: 0o755
+    uid: 1001
+    gid: 1001
+
+# `kong docker-start` is upstream's own foreground entrypoint: it runs the prefix
+# preparation and then execs nginx in the foreground, which is what a container wants.
+entrypoint:
+  command: /usr/local/bin/kong-docker-start
+
+environment:
+  # /kong_prefix, NOT /usr/local/kong: the prefix must be writable and is backed by an
+  # emptyDir/tmpfs, but /usr/local/kong also holds include/ (the .proto files Kong's
+  # opentelemetry and grpc plugins load at runtime). Mounting a volume over
+  # /usr/local/kong MASKS those protos and Kong dies with
+  #   module load error: opentelemetry/proto/collector/trace/v1/trace_service.proto
+  # Kong's own chart uses a separate prefix for exactly this reason.
+  KONG_PREFIX: /kong_prefix
+  # DB-less out of the box (see the header). Override for Postgres.
+  KONG_DATABASE: "off"
+  # Logs to the container's streams rather than files inside the read-only rootfs.
+  KONG_PROXY_ACCESS_LOG: /dev/stdout
+  KONG_ADMIN_ACCESS_LOG: /dev/stdout
+  KONG_PROXY_ERROR_LOG: /dev/stderr
+  KONG_ADMIN_ERROR_LOG: /dev/stderr
+  # Bind the Admin API on all interfaces so the chart's Service and probes can reach it.
+  # It is NOT exposed publicly by the chart -- the NetworkPolicy is the trust boundary.
+  KONG_ADMIN_LISTEN: 0.0.0.0:8001
+  KONG_PROXY_LISTEN: 0.0.0.0:8000
+  KONG_STATUS_LISTEN: 0.0.0.0:8100
+  KONG_NGINX_WORKER_PROCESSES: "auto"
+  # REQUIRED for a container: `kong prepare` writes `daemon on;` into nginx.conf by
+  # default, so nginx forks to the background, the foreground process exits 0, and the
+  # container stops right after "start worker process" -- looking like a clean shutdown.
+  # This is also why passing -g "daemon off;" failed earlier with
+  #   nginx: [emerg] "daemon" directive is duplicate
+  # -- the directive was already there, just set to on.
+  KONG_NGINX_DAEMON: "off"
+  # resty (OpenResty) and luajit must be on PATH: /usr/local/bin/kong is a Lua script
+  # with a `#!/usr/bin/env resty` shebang, so without this the entrypoint cannot start.
+  PATH: /usr/local/openresty/bin:/usr/local/openresty/luajit/bin:/usr/local/bin:/usr/bin:/bin
+  LUA_PATH: /usr/local/share/lua/5.1/?.lua;/usr/local/share/lua/5.1/?/init.lua;;
+  LUA_CPATH: /usr/local/lib/lua/5.1/?.so;;
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.title: kong
+  org.opencontainers.image.description: "Kong Gateway OSS -- API gateway on a patched OpenResty, hardened by QuenchWorks (built from source against current OpenSSL, no vendored crypto, no Kong Manager GUI)"
+  org.opencontainers.image.licenses: Apache-2.0
+  org.opencontainers.image.source: https://github.com/Kong/kong
+  org.opencontainers.image.vendor: QuenchWorks
