@@ -193,7 +193,24 @@ def report(app, candidates, n=None, keep=None, clean=None):
     top = sorted(set(cands), key=vkey, reverse=True)[:n]
     have = vkey(cur[-1]) if cur else (0,)
     behind = [v for v in top if vkey(v) > have]
-    status = f"UPDATE -> {behind}" if behind else "ok"
+
+    # An EMPTY upstream result is a BROKEN CHECK, not "up to date".
+    #
+    # This used to print "ok" and be counted in `0 errors`, which is how mongodb sat at
+    # latest3=[] indefinitely: its checker returned nothing (upstream moved off the tag
+    # pattern it scrapes) and every run reported the app as fine. Same failure shape as
+    # gen-catalog treating an api blip as "app unpublished" -- silence read as success.
+    #
+    # Also flag have > newest-upstream: that means the checker is looking at the WRONG
+    # SOURCE (yarn's checker reads yarn 1.x classic tags while we ship berry 4.x, and
+    # coolify-app reports 4.1.2 while we ship 4.2.0). Both would hide a real update
+    # forever while printing ok.
+    if not top:
+        status = "BROKEN CHECK -- upstream returned NO candidates (not 'up to date')"
+    elif vkey(top[0]) < have:
+        status = f"BROKEN CHECK -- we ship {cur[-1]} but upstream's newest is {top[0]}; wrong source?"
+    else:
+        status = f"UPDATE -> {behind}" if behind else "ok"
     print(f"{app:20s} have={(cur[-1] if cur else '?'):>14s}  latest{n}={top}  {status}")
     return behind
 
