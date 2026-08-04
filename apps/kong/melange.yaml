@@ -473,7 +473,8 @@ pipeline:
       printf '%s\n' \
         '#!/bin/sh' \
         'set -e' \
-        ': "${KONG_PREFIX:=/usr/local/kong}"' \
+        ': "${KONG_PREFIX:=/kong_prefix}"' \
+        'rm -rf "$KONG_PREFIX"/sockets "$KONG_PREFIX"/pids "$KONG_PREFIX"/*.pid 2>/dev/null || true' \
         '/usr/local/bin/kong prepare -p "$KONG_PREFIX"' \
         'exec /usr/local/openresty/nginx/sbin/nginx -p "$KONG_PREFIX" -c nginx.conf' \
         > "$ENTRYPOINT_FILE"
@@ -483,6 +484,15 @@ pipeline:
       #   nginx: [emerg] "daemon" directive is duplicate
       grep -q "exec /usr/local/openresty/nginx/sbin/nginx" "$ENTRYPOINT_FILE" \
         || { echo "entrypoint script not written"; exit 1; }
+      # The prefix VOLUME survives container restarts, so a crashed Kong leaves its unix
+      # sockets bound and nginx can never rebind:
+      #   bind() to unix:$KONG_PREFIX/sockets/we failed (98: Address already in use)
+      # One crash then becomes a permanent CrashLoopBackOff. `kong prepare` regenerates the
+      # whole prefix, so clearing it first is safe. This is asserted because a previous
+      # attempt to add it silently did not apply, and the image shipped without it.
+      grep -q "rm -rf" "$ENTRYPOINT_FILE" \
+        || { echo "stale-socket cleanup missing from the entrypoint"; cat "$ENTRYPOINT_FILE"; exit 1; }
+      echo "entrypoint:"; cat "$ENTRYPOINT_FILE"
 
       # ---- protobuf definitions -------------------------------------------------
       # Kong's opentelemetry and grpc plugins load .proto files at RUNTIME through
