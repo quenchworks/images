@@ -74,10 +74,19 @@ pipeline:
       # separate artifact line, not flagged -- left as-is.
       # Pinned filenames match the 5.0.8 bundle; guard so older lines (which bundle
       # different jar versions) never get a mismatched swap.
-      if [ "${{package.version}}" = "5.0.8" ]; then
+      # Whole 5.0 line: 5.0.9 bundles a byte-identical jar set to 5.0.8 (verified
+      # against the published dist, not assumed). Safe as a wildcard because swap()
+      # now fails loudly if any expected jar is missing.
+      case "${{package.version}}" in 5.0.*) SWAP_5X=1 ;; *) SWAP_5X=0 ;; esac
+      if [ "$SWAP_5X" = 1 ]; then
       M=https://repo1.maven.org/maven2
       swap() { # newfile sha256 url oldglob
         local nf="$1" sha="$2" url="$3" oldglob="$4"
+        # `rm -f` on a glob that matches nothing is SILENT. If a future release
+        # renames or drops a bundled jar, the vulnerable jar would stay in lib/
+        # alongside the replacement -- so assert the match instead of trusting it.
+        set -- "$dest"/lib/$oldglob
+        [ -e "$1" ] || { echo "❌ bundled jar $oldglob not found -- the dist's jar set changed, re-triage the swap list"; exit 1; }
         rm -f "$dest"/lib/$oldglob
         wget -q -O "$dest/lib/$nf" "$url"
         echo "$sha  $dest/lib/$nf" | sha256sum -c - >/dev/null
@@ -102,13 +111,14 @@ pipeline:
       swap netty-transport-classes-epoll-$NV.jar f6a0b631b98667f131daf4ca07a9cae1072d58e259dcbc0f8c6a053d843449c6 "$M/io/netty/netty-transport-classes-epoll/$NV/netty-transport-classes-epoll-$NV.jar" 'netty-transport-classes-epoll-4.1.130.Final.jar'
       swap netty-transport-classes-kqueue-$NV.jar 4ed7ee5cb8c611e879d0d6621e8a1b4255e7ba5a31e5f7828d635682ef244a20 "$M/io/netty/netty-transport-classes-kqueue/$NV/netty-transport-classes-kqueue-$NV.jar" 'netty-transport-classes-kqueue-4.1.130.Final.jar'
       swap netty-transport-native-unix-common-$NV.jar 7e014c9b13defd9d254d4e5a5edd8ab6dde17533e1152f99699a6b28b2967a8a "$M/io/netty/netty-transport-native-unix-common/$NV/netty-transport-native-unix-common-$NV.jar" 'netty-transport-native-unix-common-4.1.130.Final.jar'
-      # netty-transport-native-epoll ships 3 files (no-classifier + 2 per-arch natives);
-      # remove all three old ones, then fetch each patched file.
-      rm -f "$dest"/lib/netty-transport-native-epoll-4.1.130.Final*.jar
+      # netty-transport-native-epoll ships 3 files (no-classifier + 2 per-arch natives).
+      # Each swap below names its exact old file, so they are removed individually --
+      # a bulk `rm -f ...Final*.jar` here would delete all three up front and leave the
+      # three swaps asserting against globs that can never match.
       swap netty-transport-native-epoll-$NV.jar 41a30e3e096091695ef7b7cf16c85802bbc05d4be94643ecc5e8a8d9759acb77 "$M/io/netty/netty-transport-native-epoll/$NV/netty-transport-native-epoll-$NV.jar" 'netty-transport-native-epoll-4.1.130.Final.jar'
       swap netty-transport-native-epoll-$NV-linux-x86_64.jar c3956f90241582bbbad5612c3159cffeb7c3533324759f3c3bd778ca9b176cae "$M/io/netty/netty-transport-native-epoll/$NV/netty-transport-native-epoll-$NV-linux-x86_64.jar" 'netty-transport-native-epoll-4.1.130.Final-linux-x86_64.jar'
       swap netty-transport-native-epoll-$NV-linux-aarch_64.jar f264cf4bcc1e97ad148cd4f0d8777eacf404cd4ed80830de3f8a2359f60edc38 "$M/io/netty/netty-transport-native-epoll/$NV/netty-transport-native-epoll-$NV-linux-aarch_64.jar" 'netty-transport-native-epoll-4.1.130.Final-linux-aarch_64.jar'
-      fi  # end 5.0.8-only jar swap
+      fi  # end 5.0.x jar swap
 
       # the dist ships conf/ and launchers with restrictive perms; the nonroot runtime
       # user must read the config (to seed the writable conf dir) and exec the launchers.
