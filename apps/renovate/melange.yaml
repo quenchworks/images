@@ -42,20 +42,25 @@ pipeline:
       # and unpacks the bundled deps under ${destdir}/usr/lib/node_modules.
       npm install -g "renovate@${{package.version}}" --prefix="${destdir}/usr"
 
-      # --- brace-expansion CVE-2026-14257 (HIGH): install the fixed 5.0.8 over every stale copy
+      # --- brace-expansion CVE-2026-14257 + CVE-2026-69152 (both HIGH): install the fixed
+      # 5.0.9 over every stale copy
       # A GLOBAL install has no project package.json, so npm `overrides` are unavailable here —
       # the fix is applied to the installed tree instead. Renovate's own top-level copy already
-      # floats to 5.0.8 (glob 13 -> minimatch 10.2.5 -> brace-expansion ^5.0.5); the stragglers
+      # floats to 5.0.9 (glob 13 -> minimatch 10.2.6 -> brace-expansion ^5.0.8); the stragglers
       # are two nested copies that CANNOT float:
       #   bunyan (optionalDep) -> mv 2.1.1 -> rimraf ~2.4.0 -> glob ^6.0.1 -> minimatch 3.1.5 -> ^1.1.7  => 1.1.16
       #   gaxios 7.x           -> rimraf ^5.0.1 -> glob 10.5.0 -> minimatch 9.0.9 -> ^2.0.2            => 2.1.2
       # Both ranges are pinned to lines that have NO fix: the advisory (GHSA-mh99-v99m-4gvg) has a
       # single affected range, `<= 5.0.7`, spanning every line, so the maintenance heads 1.1.16 and
-      # 2.1.2 are affected too and no future 1.x/2.x can sort above it — 5.0.8 is the only escape.
+      # 2.1.2 are affected too and no future 1.x/2.x can sort above it — 5.x is the only escape.
+      # 2026-08-10: CVE-2026-69152 then landed on 5.0.8 itself (fixed in 5.0.9), so the staged
+      # version moves to 5.0.9. Per-line fixes now exist (1.1.18 / 2.1.4 / 3.0.6), but forcing
+      # one 5.x copy everywhere keeps a single version to audit instead of three.
       # Parent-bumping is not available either: rimraf 6 / glob 11 are promise-only and callback-
       # style mv/rimraf 2 would break, and minimatch 9.0.9 (the newest 9.x) deliberately REVERTED
       # from brace-expansion ^5.0.2 back to ^2.0.2.
-      # 5.0.8 also changed the CJS entry to a NAMED-only export (`exports.expand`, `__esModule`,
+      # 5.0.8 also changed the CJS entry to a NAMED-only export (5.0.9 keeps that shape,
+      # verified against the published package.json: same exports map, same balanced-match dep) (`exports.expand`, `__esModule`,
       # no callable default) while minimatch 3.1.5 does `require("brace-expansion")(pattern)` and
       # 9.0.9 does `__importDefault(...).default(pattern)` — so each copy gets a one-line
       # re-export of the function as module.exports (named props kept). The patched
@@ -66,9 +71,9 @@ pipeline:
       # cannot hoist into (and rewrite) the tree we just installed.
       mkdir -p .be-stage
       echo '{"name":"quench-be-stage","private":true}' > .be-stage/package.json
-      ( cd .be-stage && npm install --no-audit --no-fund --no-package-lock brace-expansion@5.0.8 )
+      ( cd .be-stage && npm install --no-audit --no-fund --no-package-lock brace-expansion@5.0.9 )
       # Enumerate with `find`, NOT fs.readdirSync({recursive:true}). The readdir walker
-      # matched only the hoisted top-level copy — which already floats to 5.0.8 on its
+      # matched only the hoisted top-level copy — which already floats to 5.0.9 on its
       # own — so it replaced nothing and the two NESTED copies shipped vulnerable
       # (mv/node_modules/brace-expansion 1.1.16 and rimraf/node_modules/... 2.1.2,
       # confirmed by extracting the built layer). find cannot miss a nesting depth.
