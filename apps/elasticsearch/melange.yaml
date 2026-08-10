@@ -111,6 +111,20 @@ pipeline:
       find "$dest/modules" -name 'jackson-databind-2.18.8.jar'    -exec sh -c 'cp "$1" "$(dirname "$2")/jackson-databind-2.18.9.jar";    rm -f "$2"' _ "$DL/jackson-databind-2.18.9.jar" {} \;
       find "$dest/modules" -name 'jackson-annotations-2.18.8.jar' -exec sh -c 'cp "$1" "$(dirname "$2")/jackson-annotations-2.18.9.jar"; rm -f "$2"' _ "$DL/jackson-annotations-2.18.9.jar" {} \;
 
+      # --- (b2) NEW in 9.5.0: a SECOND jackson line. 9.5.0 adds modules built against
+      #     jackson 2.21.4 (x-pack-esql, esql-datasource-*), and databind 2.21.4 carries
+      #     CVE-2026-54515 + CVE-2026-59889 + GHSA-mhm7-754m-9p8w. Fix on that line is
+      #     2.21.5 (patch, same minor -- NOT the 2.18.9 used above, which would be a
+      #     downgrade here). Only databind is flagged; core/annotations/dataformat at
+      #     2.21.4 are clean, and 2.21.5 databind is compatible with 2.21.4 core.
+      getj "$MC/com/fasterxml/jackson/core/jackson-databind/2.21.5/jackson-databind-2.21.5.jar" jackson-databind-2.21.5.jar 507418c0fafd38b2b2cfb704521630da613a8e4cc8381195a6f418017883e2c0
+      find "$dest/modules" -name 'jackson-databind-2.21.4.jar' -exec sh -c 'cp "$1" "$(dirname "$2")/jackson-databind-2.21.5.jar"; rm -f "$2"' _ "$DL/jackson-databind-2.21.5.jar" {} \;
+
+      # --- (b3) NEW in 9.5.0: jsoup 1.21.2 -> 1.23.1 (ingest-attachment).
+      #     CVE-2026-71497. Built for JDK 17, and ES bundles a newer JDK, so it loads.
+      getj "$MC/org/jsoup/jsoup/1.23.1/jsoup-1.23.1.jar" jsoup-1.23.1.jar 8b15e2b28eeb1e0a88a9b7dab4dc0c23524491c56959785dea22f7846897b668
+      find "$dest/modules" -name 'jsoup-1.21.2.jar' -exec sh -c 'cp "$1" "$(dirname "$2")/jsoup-1.23.1.jar"; rm -f "$2"' _ "$DL/jsoup-1.23.1.jar" {} \;
+
       # --- (c) commons-lang3 3.9 -> 3.18.0 (x-pack-ent-search; other modules already 3.18+)
       getj "$MC/org/apache/commons/commons-lang3/3.18.0/commons-lang3-3.18.0.jar" commons-lang3-3.18.0.jar 4eeeae8d20c078abb64b015ec158add383ac581571cddc45c68f0c9ae0230720
       find "$dest/modules" -name 'commons-lang3-3.9.jar' -exec sh -c 'cp "$1" "$(dirname "$2")/commons-lang3-3.18.0.jar"; rm -f "$2"' _ "$DL/commons-lang3-3.18.0.jar" {} \;
