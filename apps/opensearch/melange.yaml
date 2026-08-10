@@ -58,8 +58,19 @@ pipeline:
       #       * opensearch-security-analytics -> security-analytics-commons shades netty
       #     Core OpenSearch (index/search/cluster) runs without either; security is off by
       #     construction (see the entrypoint note). Trade-off documented in build.conf.
+      #       * opensearch-skills          -> spark-core_2.13-3.5.8.jar shades
+      #                                      jetty-security 9.4.58 (CVE-2026-10050, HIGH).
+      #         3.8.0 still bundles the SAME spark 3.5.8 / jetty 9.4.58 as 3.7.0 (verified
+      #         from the dist, not assumed), so the recorded ">= 9.4.63" unblock condition
+      #         is still unmet. Skills is an OPTIONAL agent/SQL-tooling plugin, not core
+      #         index/search, and it drags in all of Apache Spark. Dropping it is the same
+      #         trade-off already accepted for the two plugins above, and the honest
+      #         alternative was shipping NO opensearch image at all (3.8.0 unpublished;
+      #         3.7.0's published image now carries this same HIGH). RE-ADD the plugin the
+      #         moment opensearch-skills ships a spark whose shaded jetty >= 9.4.63.
       rm -rf "$dest/plugins/opensearch-security" \
-             "$dest/plugins/opensearch-security-analytics"
+             "$dest/plugins/opensearch-security-analytics" \
+             "$dest/plugins/opensearch-skills"
       # (2) The remaining vulnerable jackson-databind copies are STANDALONE plugin/module
       #     jars -> same-minor drop-in swap (2.21.3 -> 2.21.5 for the com.fasterxml line;
       #     3.1.3 -> 3.1.4 for the tools.jackson 3.x line; 2.21.5 needed for CVE-2026-54515).
@@ -84,6 +95,22 @@ pipeline:
       find "$dest" -name 'jackson-databind-3.1.3.jar'  -exec cp "$jd3" {} \;
       find "$dest" -name 'jackson-core-3.1.3.jar'      -exec cp "$jc3" {} \;
       rm -f "$jd2" "$jc2" "$jd3" "$jc3"
+      # (2b) jsoup 1.15.3 -> 1.23.1 in opensearch-reports-scheduler (CVE-2026-71497).
+      #      Standalone plugin jar, so a content swap keeping the filename (same
+      #      convention as the jackson swaps above: the plugin classloader scans the dir
+      #      and Trivy reads the jar's internal pom.properties). NOTE this is an 8-minor
+      #      jump, unlike the 1.21.2 -> 1.23.1 hop the elasticsearch recipe needed --
+      #      jsoup keeps 1.x source-compatible, and the boot + reports path is exercised
+      #      by the smoke test, but re-check here first if reports ever misbehave.
+      js=$(mktemp -d)
+      curl -fsSL -o "$js/jsoup.jar" "$MC/org/jsoup/jsoup/1.23.1/jsoup-1.23.1.jar"
+      echo "8b15e2b28eeb1e0a88a9b7dab4dc0c23524491c56959785dea22f7846897b668  $js/jsoup.jar" | sha256sum -c -
+      found=$(find "$dest" -name 'jsoup-1.15.3.jar' | wc -l)
+      [ "$found" -gt 0 ] || { echo "❌ jsoup-1.15.3.jar not found -- the dist's jsoup version moved"; exit 1; }
+      find "$dest" -name 'jsoup-1.15.3.jar' -exec cp "$js/jsoup.jar" {} \;
+      rm -rf "$js"
+      echo "jsoup: replaced $found copy/copies with 1.23.1 content"
+
       # (3) opensearch-sql/opensearch-skills bundle Apache Calcite 1.41.0, whose
       #     calcite-core carries CVE-2026-46718 (unsafe reflection, MEDIUM). The fix is
       #     calcite-core 1.42.0 -- BUT 1.42's CALCITE-7351 made RelDataTypeSystemImpl's
@@ -144,10 +171,18 @@ pipeline:
       for zi in infos: zo.writestr(zi,data[zi.filename])
       zo.close(); print(f"calcite-core: cleared ACC_FINAL on {ch} methods")
       PY
+      # opensearch-skills is dropped above, so only patch plugin dirs that survive --
+      # an unconditional cp into a removed dir fails the whole build. Assert we patched
+      # at least one, so a future rename cannot silently skip the calcite fix entirely.
+      patched=0
       for pdir in opensearch-sql opensearch-skills; do
+        [ -d "$dest/plugins/$pdir" ] || continue
         rm -f "$dest/plugins/$pdir"/calcite-*-1.41.0.jar
         cp "$cal"/calcite-*-1.42.0.jar "$dest/plugins/$pdir/"
+        patched=$((patched+1))
       done
+      [ "$patched" -gt 0 ] || { echo "❌ no plugin dir received the patched calcite -- layout changed"; exit 1; }
+      echo "calcite 1.42.0 installed into $patched plugin dir(s)"
       rm -rf "$cal"
       # (4) netty 4.2.15.Final -> 4.2.16.Final (Jul-2026 netty wave). Standalone io.netty jars
       #     in transport-netty4 + the ml/notifications/performance-analyzer plugins (the
