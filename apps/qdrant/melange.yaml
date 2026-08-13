@@ -1,7 +1,7 @@
 # Builds Qdrant (high-performance vector database / similarity search engine) FROM
 # SOURCE on Wolfi with melange. Qdrant is a Rust project (Cargo workspace, edition
-# 2024, MSRV 1.94); we build it with Wolfi's rust-1.96 toolchain, the same toolchain
-# version upstream pins in its own Dockerfile (cargo-chef rust-1.96.0). Built from
+# 2024, MSRV 1.97 as of 1.19.0); we build it with Wolfi's rust-1.97 toolchain, the
+# same version upstream pins in its own Dockerfile (cargo-chef rust-1.97.1). Built from
 # source (not an upstream binary) so the Trivy scan attributes the vendored crates
 # correctly and we can `cargo update` to clear any fixable CVE.
 #
@@ -53,7 +53,10 @@ environment:
       - pkgconf
       - protobuf-dev            # provides protoc for the tonic gRPC codegen
       - openssl-dev
-      - rust-1.96               # Wolfi rust toolchain (matches upstream's pinned 1.96)
+      # 1.19.0 raised MSRV to 1.97 (edition 2024) and upstream pins cargo-chef
+      # rust-1.97.1 -- bumping VERSIONS without this fails on the MSRV, not on anything
+      # that looks version-related. Keep this aligned with upstream's Dockerfile pin.
+      - rust-1.97               # Wolfi rust toolchain (matches upstream's pinned 1.97.1)
 
 pipeline:
   - uses: git-checkout
