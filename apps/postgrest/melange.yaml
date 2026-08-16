@@ -34,13 +34,23 @@ environment:
 
 pipeline:
   # PostgREST publishes separate amd64/arm64 builds, so fetch the tarball matching the
-  # build arch by uname -m (x86_64->linux-static-x86-64, aarch64->ubuntu-aarch64) with
-  # the arch-matching sha256 — using the wrong arch yields a wrong-arch binary.
+  # build arch by uname -m with the arch-matching sha256 — the wrong arch yields a
+  # wrong-arch binary.
+  #
+  # The arm64 ASSET NAME CHANGED AT v16: 14.x ships `ubuntu-aarch64` (dynamically linked
+  # against glibc), 16.x ships `linux-static-aarch64` (fully static). Hardcoding either
+  # name 404s on the other line, which is what broke the 16.0/16.1 arm64 legs. amd64 kept
+  # its name across both.
   - runs: |
       VER="${{package.version}}"
       case "$(uname -m)" in
         x86_64)  asset="linux-static-x86-64"; sha=__SHA_AMD__ ;;
-        aarch64) asset="ubuntu-aarch64";      sha=__SHA_ARM__ ;;
+        aarch64)
+          case "${VER%%.*}" in
+            1[0-5]) asset="ubuntu-aarch64" ;;      # <= v15: glibc-linked
+            *)      asset="linux-static-aarch64" ;; # v16+: fully static
+          esac
+          sha=__SHA_ARM__ ;;
         *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
       esac
 
