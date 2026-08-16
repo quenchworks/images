@@ -79,6 +79,11 @@ pipeline:
       swap "$OT/opentelemetry-sdk-logs/1.62.0/opentelemetry-sdk-logs-1.62.0.jar" io.opentelemetry.opentelemetry-sdk-logs-1.57.0.jar 51c94329bc8e335ed79027d29d49c075c11b91b39e48679edf590e784a392406
       swap "$OT/opentelemetry-sdk-metrics/1.62.0/opentelemetry-sdk-metrics-1.62.0.jar" io.opentelemetry.opentelemetry-sdk-metrics-1.57.0.jar 50b057fbf063f6801f623212f4b51b6a3fefc77837314a1316b2f54894c8b5d4
       swap "$OT/opentelemetry-sdk-trace/1.62.0/opentelemetry-sdk-trace-1.62.0.jar" io.opentelemetry.opentelemetry-sdk-trace-1.57.0.jar fb6c0953b229a6da1db813135ae11a621bf9da56b7356c1e93049ed4b088c232
+      # micrometer-core 1.16.3 -> 1.16.6: CVE-2026-40983. Same keep-the-filename trick as
+      # the otel swaps above -- the classes are the patched ones and Trivy reads the jar's
+      # internal pom.properties, so the gate sees 1.16.6.
+      MM="https://repo1.maven.org/maven2/io/micrometer"
+      swap "$MM/micrometer-core/1.16.6/micrometer-core-1.16.6.jar" io.micrometer.micrometer-core-1.16.3.jar 1957ef2deaffbc1fb98cebfd0f5b3109ecf19c994d7e5378598c20747ba8d68b
       swap "https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-databind/2.21.5/jackson-databind-2.21.5.jar" com.fasterxml.jackson.core.jackson-databind-2.21.2.jar 507418c0fafd38b2b2cfb704521630da613a8e4cc8381195a6f418017883e2c0
       # (3) jackson-core 2.21.2 -> 2.21.5 (same Jul-2026 cluster; databind 2.21.5 above needs a
       #     matching-or-newer jackson-core). Content-swap keeping the 2.21.2 filename.
