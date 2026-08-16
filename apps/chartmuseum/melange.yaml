@@ -50,6 +50,10 @@ pipeline:
       go get helm.sh/helm/v3@v3.20.2
       go get oras.land/oras-go/v2@v2.6.1
       go mod tidy
+      # oras.land/oras-go/v2 2.6.1 -> 2.6.2: CVE-2026-50163 (HIGH), arbitrary file
+      # access via crafted tarball hardlinks. Same advisory trivy hit this round.
+      go get oras.land/oras-go/v2@v2.6.2
+      go mod tidy
       go build -trimpath \
         -ldflags "-s -w -X main.Version=${{package.version}}" \
         -o "${{targets.destdir}}/usr/bin/chartmuseum" ./cmd/chartmuseum

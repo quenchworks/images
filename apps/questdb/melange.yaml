@@ -12,7 +12,11 @@ package:
     - license: Apache-2.0
   dependencies:
     runtime:
-      - openjdk-25-jre     # the JRE QuestDB runs on (the scanned CVE surface); 9.4.x jars target class v69 (JDK 25)
+      # The JRE QuestDB runs on, and the CVE surface the gate scans. Verified from the
+      # published jars: BOTH 9.4.x and 10.0.0 target class-file v69 (Build-Jdk 25.0.2), so
+      # the major bump needs no JRE change. Re-check this on any major -- a jar targeting
+      # v70 would die with UnsupportedClassVersionError at boot, which the CVE gate cannot see.
+      - openjdk-25-jre
       - libstdc++          # QuestDB unpacks a bundled libquestdb.so that links libstdc++.so.6
       - bash               # the baked docker-entrypoint.sh is bash
 
