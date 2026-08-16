@@ -86,6 +86,30 @@ pipeline:
         "starlette>=1.3.1" \
         "tornado>=6.5.7" \
         "aiosmtplib>=5.1.1"
+      # --- pip-vendored msgpack (GHSA-6v7p-g79w-8964, HIGH) --------------------
+      # pip 26.2.1 vendors msgpack 1.1.2 and no fixed pip RELEASE exists yet, so the venv
+      # inherits it. Same four-part fix as apps/python and apps/ansible: sources, BYTECODE,
+      # vendor.txt, and the CycloneDX -- fixing fewer leaves the finding live, and fixing
+      # only the sources is worse (Wolfi pyc are hash-based UNCHECKED, so the interpreter
+      # keeps running the OLD vulnerable bytecode while scanners read the new sources).
+      # Fetch + SBOM edits are single-line `python -c`: no curl/wget here, and a multi-line
+      # heredoc would need column 0, which terminates this YAML block scalar.
+      VENV=/opt/airflow-venv
+      SP="$VENV/lib/python3.12/site-packages"
+      if grep -q '^msgpack==1\.1\.2$' "$SP/pip/_vendor/vendor.txt" 2>/dev/null; then
+        mp=$(mktemp -d)
+        "$VENV/bin/python" -c "import hashlib,sys,tarfile,urllib.request as u; b=u.urlopen('https://files.pythonhosted.org/packages/31/f9/c0a1c127f9049db9155afc316952ea571720dd01833ff5e4d7e8e6352dbb/msgpack-1.2.1.tar.gz',timeout=300).read(); assert hashlib.sha256(b).hexdigest()=='04c721c2c7448767e9e3f2520a475663d8ee0f09c31890f6d2bd70fd636a9647','msgpack sdist sha mismatch'; open(sys.argv[1]+'/m.tgz','wb').write(b); tarfile.open(sys.argv[1]+'/m.tgz').extractall(sys.argv[1],filter='data')" "$mp"
+        for f in __init__.py exceptions.py ext.py fallback.py; do
+          install -m0644 "$mp/msgpack-1.2.1/msgpack/$f" "$SP/pip/_vendor/msgpack/$f"
+        done
+        "$VENV/bin/python" -m compileall -q --invalidation-mode unchecked-hash "$SP/pip/_vendor/msgpack"
+        sed -i -e 's/^msgpack==1\.1\.2$/msgpack==1.2.1/' -e '/^setuptools==/d' "$SP/pip/_vendor/vendor.txt"
+        "$VENV/bin/python" -c "import json;p='$SP/pip/_vendor/bom.cdx.json';d=json.load(open(p));c=[x for x in d.get('components',[]) if x.get('name')!='setuptools'];[x.update(version='1.2.1',purl='pkg:pypi/msgpack@1.2.1') for x in c if x.get('name')=='msgpack'];d.__setitem__('components',c);json.dump(d,open(p,'w'),indent=2);print('corrected pip bom.cdx.json')"
+        "$VENV/bin/python" -c "from pip._vendor import msgpack; assert msgpack.__version__=='1.2.1', msgpack.__version__; print('vendored msgpack ->', msgpack.__version__)"
+        rm -rf "$mp"
+      else
+        echo "pip no longer vendors msgpack 1.1.2 -- drop this block"; exit 1
+      fi
       # Fail the build if the bumps broke Airflow's declared dependency graph.
       /opt/airflow-venv/bin/pip check
 
