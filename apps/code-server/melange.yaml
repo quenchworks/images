@@ -83,6 +83,8 @@ pipeline:
       # gzip-bomb DoS + CVE-2026-59874/59871 + GHSA-r292-9mhp-454m mapHas/filesFilter
       # uncontrolled-recursion DoS), js-yaml 4.3.0 (CVE-2026-59869), shell-quote
       # 1.9.0 (CVE-2026-13311), body-parser 2.3.0 (CVE-2026-12590). npm tarballs extract
+      # 2026-08-17: js-yaml moved 4.3.0 -> 4.3.1 -- the 4.3.0 pin placed for
+      # CVE-2026-59869 had itself become the finding. These pins age; re-check each round.
       # under package/. sha256 pinned (version-independent of the code-server release).
       patch_pkg() {  # <target-node_modules-dir> <name> <url> <sha256>
         curl -fsSL -o pkg.tgz "$3"
@@ -93,7 +95,11 @@ pipeline:
       }
       patch_pkg "$dest/lib/vscode/node_modules" tar         https://registry.npmjs.org/tar/-/tar-7.5.21.tgz                bcedf25a21daecd1a18fb5e19ab855b7d79ec8ef1da175e8ba85cfc0ed0069d1
       patch_pkg "$dest/lib/vscode/node_modules" shell-quote https://registry.npmjs.org/shell-quote/-/shell-quote-1.9.0.tgz 5d3b53eba647dee6d8c8465b57937e59798710eb728af66d5e21ab0977824d05
-      patch_pkg "$dest/node_modules"            js-yaml     https://registry.npmjs.org/js-yaml/-/js-yaml-4.3.0.tgz         8594ee34496dd2e41ec934fd202843dc993be9ab2d7d5d47579146962fbdfae6
+      patch_pkg "$dest/node_modules"            js-yaml     https://registry.npmjs.org/js-yaml/-/js-yaml-4.3.1.tgz         08d6282b77a3e7242061f6dd5516c019b25c53041ad267bca3b790d79ddd5f34
+      # ip-address 10.2.0 -> 10.3.1 and undici 7.28.0 -> 7.29.0, both vendored under
+      # lib/vscode/node_modules (Trivy PkgPath named the exact tree).
+      patch_pkg "$dest/lib/vscode/node_modules" ip-address  https://registry.npmjs.org/ip-address/-/ip-address-10.3.1.tgz   ad1790063beea11a312c801df30d58e147de762f4f77787552376eb7424623e5
+      patch_pkg "$dest/lib/vscode/node_modules" undici      https://registry.npmjs.org/undici/-/undici-7.29.0.tgz           ec2005d822734765fc08c3ee5d50b1f720bf1c3fc6235ab028e5cc61c85a3a70
       patch_pkg "$dest/node_modules"            body-parser https://registry.npmjs.org/body-parser/-/body-parser-2.3.0.tgz 031d7f6c5142e31be91d36a43f541f02a505943e3b871aa44ef5fb6939be258e
 
 test:
