@@ -165,6 +165,8 @@ environment:
       # Node 24 toolchain for the Vite frontend build.
       - nodejs-24
       - npm
+      # Needed to rebuild git-lfs from source; see the git-lfs step in the pipeline.
+      - go
 
 pipeline:
   - uses: git-checkout
@@ -606,6 +608,39 @@ pipeline:
       EOF
       chmod 0755 "$destdir/usr/bin/coolify-entrypoint.sh"
 
+  - name: Build git-lfs from source (Wolfi apk carries a vulnerable golang.org/x/net)
+    runs: |
+      set -eu
+      # Wolfi's git-lfs-3.7.1-r19 -- the NEWEST revision Wolfi publishes -- is built
+      # against golang.org/x/net v0.55.0, which carries CVE-2026-46600 (HIGH, DoS in
+      # dns/dnsmessage via invalid DNS record parsing), fixed in 0.56.0. Wolfi has not
+      # rebuilt it, so `- git-lfs` in apko.yaml fails our 0-CVE gate on both arches.
+      #
+      # git-lfs is NOT optional decoration here: coolify does git-based application
+      # deploys and LFS repositories are a real user-facing case, so dropping the feature
+      # (the instrument used for elasticsearch's optional APM module) is not appropriate.
+      # Instead we build the same upstream version ourselves with x/net floated past the
+      # fix, and REMOVE `git-lfs` from apko.yaml so there is no file conflict.
+      #
+      # The float is a FLOOR, not a pin (docs/go-module-float.md): `go mod edit -require`
+      # raises the minimum, and MVS may select higher if another dep asks for more.
+      cd "$(mktemp -d)"
+      git clone --depth 1 --branch v3.7.1 https://github.com/git-lfs/git-lfs.git src
+      cd src
+      go mod edit -require=golang.org/x/net@v0.56.0
+      go mod tidy
+      # Match upstream's own ldflags so `git lfs version` reports a real version rather
+      # than the "" it prints when these are unset.
+      go build -trimpath -buildvcs=false \
+        -ldflags "-s -w -X github.com/git-lfs/git-lfs/v3/config.GitCommit=v3.7.1" \
+        -o "$destdir"/usr/bin/git-lfs ./
+      chmod 0755 "$destdir"/usr/bin/git-lfs
+      # Prove the float actually landed in the binary, so a silent MVS downgrade or a
+      # `go mod tidy` that drops the requirement cannot ship quietly.
+      go version -m "$destdir"/usr/bin/git-lfs | grep -E 'golang.org/x/net[[:space:]]+v0\.(5[6-9]|[6-9][0-9])' \
+        || { echo "FATAL: x/net float did not land in git-lfs"; \
+             go version -m "$destdir"/usr/bin/git-lfs | grep golang.org/x/net; exit 1; }
+
   - name: Sanity-check the assembled tree
     runs: |
       set -eu
@@ -619,6 +654,7 @@ pipeline:
       test -f "$destdir/etc/coolify/supervisord.conf"
       test -x "$destdir/usr/bin/coolify-entrypoint.sh"
       test -x "$destdir/usr/bin/coolify-bootstrap.sh"
+      test -x "$destdir/usr/bin/git-lfs"
 
 test:
   pipeline:
@@ -639,4 +675,6 @@ test:
                  /var/www/html/storage/framework/sessions \
                  /var/www/html/storage/framework/views \
                  /var/www/html/bootstrap/cache
+        # git-lfs is ours now, not the apk's -- prove it runs.
+        git-lfs version
         cd /var/www/html && php artisan --version

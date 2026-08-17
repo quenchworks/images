@@ -92,7 +92,10 @@ contents:
     - postgresql-18-client          # pg_dump/psql for DB backups (upstream uses pg18 client)
     - openssh-client                # coolify connects to target servers over ssh
     - git                           # git-based application deploys
-    - git-lfs                       # large-file git deploys
+    # git-lfs is NOT taken from Wolfi: git-lfs-3.7.1-r19 (Wolfi's newest) is built
+    # against golang.org/x/net v0.55.0 = CVE-2026-46600 (HIGH), unfixed upstream.
+    # quench-coolify-app builds the same v3.7.1 from source with x/net >= 0.56.0 and
+    # installs /usr/bin/git-lfs itself, so listing the apk here would file-conflict.
 
 accounts:
   groups:
