@@ -632,9 +632,14 @@ pipeline:
       # Verify the tag resolves to the commit we reviewed. A tag is mutable upstream, and
       # every other source in this repo is pinned by expected-commit / expected-sha256, so
       # an unverified clone would be the weakest link in the image.
+      #
+      # NOTE: v3.7.1 is an ANNOTATED tag, so `git ls-remote refs/tags/v3.7.1` returns the
+      # TAG OBJECT sha (a94294cc...), NOT the commit. The commit is what gets checked out,
+      # so the expected value must come from `refs/tags/v3.7.1^{}`. Comparing against the
+      # tag-object sha fails 100%% of the time -- which is how this was caught.
       got="$(git rev-parse HEAD)"
-      test "$got" = "a94294cc43168621a7d9609bebef62dbbd2804dd" \
-        || { echo "FATAL: git-lfs v3.7.1 is $got, expected a94294cc43168621a7d9609bebef62dbbd2804dd"; exit 1; }
+      test "$got" = "b84b33847fe6458f36ef521534dc0eac953cb379" \
+        || { echo "FATAL: git-lfs v3.7.1 is $got, expected b84b33847fe6458f36ef521534dc0eac953cb379"; exit 1; }
       go mod edit -require=golang.org/x/net@v0.56.0
       go mod tidy
       # Match upstream's own ldflags so `git lfs version` reports a real version rather
