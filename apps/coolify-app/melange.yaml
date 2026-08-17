@@ -640,7 +640,10 @@ pipeline:
       got="$(git rev-parse HEAD)"
       test "$got" = "b84b33847fe6458f36ef521534dc0eac953cb379" \
         || { echo "FATAL: git-lfs v3.7.1 is $got, expected b84b33847fe6458f36ef521534dc0eac953cb379"; exit 1; }
-      go mod edit -require=golang.org/x/net@v0.56.0
+      # Float the golang.org/x/* family COHERENTLY, not one module at a time. Raising
+      # x/net alone produced a binary whose x/text was v0.38.0 = CVE-2026-56852 (HIGH,
+      # DoS on invalid UTF-8), so the gate just moved the finding instead of clearing it.
+      go mod edit -require=golang.org/x/net@v0.56.0 -require=golang.org/x/text@v0.39.0
       go mod tidy
       # Match upstream's own ldflags so `git lfs version` reports a real version rather
       # than the "" it prints when these are unset.
@@ -650,9 +653,15 @@ pipeline:
       chmod 0755 "$destdir"/usr/bin/git-lfs
       # Prove the float actually landed in the binary, so a silent MVS downgrade or a
       # `go mod tidy` that drops the requirement cannot ship quietly.
-      go version -m "$destdir"/usr/bin/git-lfs | grep -E 'golang.org/x/net[[:space:]]+v0\.(5[6-9]|[6-9][0-9])' \
-        || { echo "FATAL: x/net float did not land in git-lfs"; \
-             go version -m "$destdir"/usr/bin/git-lfs | grep golang.org/x/net; exit 1; }
+      for want in "golang.org/x/net v0.56.0" "golang.org/x/text v0.39.0"; do
+        mod="${want% *}"; min="${want#* }"
+        got="$(go version -m "$destdir"/usr/bin/git-lfs | awk -v m="$mod" '$2==m{print $3}' | head -1)"
+        test -n "$got" || { echo "FATAL: $mod absent from the git-lfs build info"; exit 1; }
+        # A float is a FLOOR: accept the wanted version or anything newer, reject older.
+        low="$(printf '%s\n%s\n' "${min#v}" "${got#v}" | sort -V | head -1)"
+        test "$low" = "${min#v}" || { echo "FATAL: $mod is $got, need >= $min"; exit 1; }
+        echo "ok $mod $got (>= $min)"
+      done
 
   - name: Sanity-check the assembled tree
     runs: |
