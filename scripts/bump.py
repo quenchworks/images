@@ -252,7 +252,13 @@ def main() -> int:
                     return 3
                 a = "amd" if m == "SHA_AMD" else "arm"
                 au = melange_uris(app, v, a) or [per_arch(uris[0], a)]
-                entries[m][v] = fetch_sha(au[0])
+                # Recipes that fetch BOTH a source archive and per-arch binaries list the
+                # source first, so au[0] is the wrong artifact -- it yields a valid sha of
+                # the SOURCE tarball, which only fails much later as a checksum mismatch.
+                # Prefer a url that actually carries this arch's token.
+                tok = ("amd64", "x86_64", "x86-64", "x64") if a == "amd" else ("arm64", "aarch64", "arm_64")
+                picked = next((u for u in au if any(t in u for t in tok)), au[0])
+                entries[m][v] = fetch_sha(picked)
             elif m == "COMMIT":
                 c = tag_commit(app, v)
                 if not c:
