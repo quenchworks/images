@@ -114,9 +114,12 @@ jobs:
       - name: Boot test the single-arch image (must start and serve before publish)
         working-directory: apps/elasticsearch
         run: |
-          docker load < image.tar
-          docker tag "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" es-boot:local
-          bash test.sh es-boot:local
+          # Take the tag from `docker load`: apko appends the arch, so a tar built
+          # as `:scan-amd64` loads as `:scan-amd64-amd64`.
+          img="$(docker load < image.tar | sed -n 's/^Loaded image: //p' | head -1)"
+          test -n "$img" || { echo "FATAL: docker load reported no image"; exit 1; }
+          docker tag "$img" es-boot:local
+          bash test.sh es-boot:local "${{ matrix.ver }}"
 
       - name: Log in to GHCR
         uses: docker/login-action@v4

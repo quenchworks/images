@@ -115,8 +115,13 @@ jobs:
       # optional $2 and the ones that ignore it are unaffected.
       - name: Boot test the single-arch image (must run before publish)
         run: |
-          docker load < image.tar
-          docker tag "${{ env.GHCR_IMAGE }}:scan-${{ matrix.arch.platform }}" velero-boot:local
+          # Take the tag from `docker load` rather than reconstructing it: apko
+          # appends the arch to the tag it was given, so a tar built as
+          # `:scan-amd64` loads as `:scan-amd64-amd64`. Reconstructing that
+          # suffix by hand is what broke the first cut of this step.
+          img="$(docker load < image.tar | sed -n 's/^Loaded image: //p' | head -1)"
+          test -n "$img" || { echo "FATAL: docker load reported no image"; exit 1; }
+          docker tag "$img" velero-boot:local
           bash test.sh velero-boot:local "${{ matrix.ver }}"
 
       - name: Log in to GHCR
