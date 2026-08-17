@@ -198,7 +198,10 @@ pipeline:
           "ws": "7.5.11",
           "mysql2": "3.9.8",
           "ip": "1.1.9",
-          "brace-expansion": "5.0.8",   // CVE-2026-14257 HIGH; see the interop step below
+          "brace-expansion": "5.0.9",   // CVE-2026-14257 then CVE-2026-69152 (which landed
+                                        // ON 5.0.8, the version pinned to fix the first);
+                                        // see the interop step below
+          "js-yaml": "4.3.1",           // CVE in 4.3.0
           "minimatch": "3.1.5",
           "braces": "3.0.3",
           "lodash": "4.18.1"
@@ -222,17 +225,20 @@ pipeline:
       npm install --omit=dev --ignore-scripts --no-audit --no-fund
       npm prune --omit=dev
 
-      # --- brace-expansion CVE-2026-14257 (HIGH): 5.0.8 + the CJS interop it broke -------
+      # --- brace-expansion CVE-2026-14257 + CVE-2026-69152 (HIGH): 5.0.9 + CJS interop ---
       # Path in this tree: bullmq 1.91.1 -> glob ^8.0.3 -> minimatch (5.1.8, glob-scoped
       # override) -> brace-expansion. The advisory (GHSA-mh99-v99m-4gvg) declares a SINGLE
       # affected range, `<= 5.0.7`, spanning EVERY line -- so the maintenance heads (1.1.16 =
       # maintenance-v1, 2.1.2 = maintenance-v2) are themselves affected and no future 1.x/2.x
-      # can ever sort above it. 5.0.8 is the only escape, and the blunt global pin above is the
+      # can ever sort above it. Only 5.x escapes, and the blunt global pin above is the
+      # 2026-08-17: the pin moved 5.0.8 -> 5.0.9. CVE-2026-69152 landed ON 5.0.8 -- the very
+      # version pinned to fix the first advisory -- so this pin is itself a thing that ages
+      # and must be re-checked every round (renovate hit the identical trap).
       # only way to reach it: parent-bumping needs minimatch >= 9.0.6/10.1.3, but 9.0.9 (newest
       # 9.x) REVERTED to brace-expansion ^2.0.2 and minimatch 10 is ESM-first with a changed CJS
       # shape that glob 8 (bullmq's pin) cannot consume.
       #
-      # 5.0.8 rewrote the CJS entry to a NAMED-only export (`exports.expand`, `__esModule: true`,
+      # 5.0.8 rewrote the CJS entry to a NAMED-only export (5.0.9 keeps that shape) (`exports.expand`, `__esModule: true`,
       # no callable default), while minimatch 3.1.5 and 5.1.8 both do
       # `require("brace-expansion")(pattern)` -> "expand is not a function" at soketi LOAD time.
       # So re-export the function AS module.exports with the named props kept: `function expand`

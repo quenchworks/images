@@ -82,6 +82,9 @@ pipeline:
         test -s "$dest/lib/${dg}-${art}-${new}.jar"
         [ -z "$sha" ] || echo "$sha  $dest/lib/${dg}-${art}-${new}.jar" | sha256sum -c - >/dev/null
       }
+      # log4j-api 2.25.4 -> 2.25.5 (same 2.25 line, no behaviour change). Standalone jar,
+      # so a straight swap; the 2.26 line is a bigger jump than this fix needs.
+      swap org/apache/logging/log4j log4j-api 2.25.4 2.25.5
       # jackson core trio: 2.18.8 -> 2.18.9 (clears CVE-2026-54515 on the standalone databind)
       swap com/fasterxml/jackson/core jackson-databind  2.18.8 2.18.9
       swap com/fasterxml/jackson/core jackson-core       2.18.8 2.18.9
