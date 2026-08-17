@@ -624,9 +624,17 @@ pipeline:
       #
       # The float is a FLOOR, not a pin (docs/go-module-float.md): `go mod edit -require`
       # raises the minimum, and MVS may select higher if another dep asks for more.
+      destdir="${{targets.destdir}}"
+      mkdir -p "$destdir"/usr/bin
       cd "$(mktemp -d)"
       git clone --depth 1 --branch v3.7.1 https://github.com/git-lfs/git-lfs.git src
       cd src
+      # Verify the tag resolves to the commit we reviewed. A tag is mutable upstream, and
+      # every other source in this repo is pinned by expected-commit / expected-sha256, so
+      # an unverified clone would be the weakest link in the image.
+      got="$(git rev-parse HEAD)"
+      test "$got" = "a94294cc43168621a7d9609bebef62dbbd2804dd" \
+        || { echo "FATAL: git-lfs v3.7.1 is $got, expected a94294cc43168621a7d9609bebef62dbbd2804dd"; exit 1; }
       go mod edit -require=golang.org/x/net@v0.56.0
       go mod tidy
       # Match upstream's own ldflags so `git lfs version` reports a real version rather
