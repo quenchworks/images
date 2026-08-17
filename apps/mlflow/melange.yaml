@@ -59,6 +59,12 @@ pipeline:
   # GHSA-3rp5-jjmw-4wv2 (3.1.53), GHSA-fjr4-x663-mwxc + GHSA-6p8h-3wgx-97gf +
   # GHSA-r9mr-m37c-5fr3 (3.1.54) and GHSA-94p4-4cq8-9g67 (3.1.55) -- so nothing lower
   # (including the 3.1.52 this recipe used to pin) is enough.
+  # 2026-08-17: switched from `==` to a FLOOR (>=3.1.59). This exact pin has had to move
+  # three times (3.1.52 -> 3.1.55 -> 3.1.57 -> 3.1.59), each time because a new HIGH
+  # landed on the version pinned to fix the last one. A floor lets a rebuild pick up the
+  # next patch on its own, and matches the convention the airflow recipe already uses for
+  # security bumps ("cryptography>=48.0.1"). mlflow-skinny declares gitpython<4,>=3.1.9,
+  # so the floor stays inside upstream's range and the resolver still governs the ceiling.
   - runs: |
       VER="${{package.version}}"
       dest="${{targets.destdir}}"
@@ -67,7 +73,7 @@ pipeline:
       /opt/mlflow/venv/bin/pip install --no-cache-dir --upgrade pip
       /opt/mlflow/venv/bin/pip install --no-cache-dir \
         "mlflow-skinny==${VER}" \
-        "GitPython==3.1.55" \
+        "GitPython>=3.1.59" \
         flask \
         flask-cors \
         sqlalchemy \
@@ -82,6 +88,30 @@ pipeline:
         aiohttp \
         psycopg2-binary \
         boto3
+      # --- pip-vendored msgpack (GHSA-6v7p-g79w-8964, HIGH) --------------------
+      # pip 26.2.1 vendors msgpack 1.1.2 and no fixed pip RELEASE exists yet, so the venv
+      # inherits it. Same four-part fix as apps/python and apps/ansible: sources, BYTECODE,
+      # vendor.txt, and the CycloneDX -- fixing fewer leaves the finding live, and fixing
+      # only the sources is worse (Wolfi pyc are hash-based UNCHECKED, so the interpreter
+      # keeps running the OLD vulnerable bytecode while scanners read the new sources).
+      # Fetch + SBOM edits are single-line `python -c`: no curl/wget here, and a multi-line
+      # heredoc would need column 0, which terminates this YAML block scalar.
+      VENV=/opt/mlflow/venv
+      SP="$VENV/lib/python3.12/site-packages"
+      if grep -q '^msgpack==1\.1\.2$' "$SP/pip/_vendor/vendor.txt" 2>/dev/null; then
+        mp=$(mktemp -d)
+        "$VENV/bin/python" -c "import hashlib,sys,tarfile,urllib.request as u; b=u.urlopen('https://files.pythonhosted.org/packages/31/f9/c0a1c127f9049db9155afc316952ea571720dd01833ff5e4d7e8e6352dbb/msgpack-1.2.1.tar.gz',timeout=300).read(); assert hashlib.sha256(b).hexdigest()=='04c721c2c7448767e9e3f2520a475663d8ee0f09c31890f6d2bd70fd636a9647','msgpack sdist sha mismatch'; open(sys.argv[1]+'/m.tgz','wb').write(b); tarfile.open(sys.argv[1]+'/m.tgz').extractall(sys.argv[1],filter='data')" "$mp"
+        for f in __init__.py exceptions.py ext.py fallback.py; do
+          install -m0644 "$mp/msgpack-1.2.1/msgpack/$f" "$SP/pip/_vendor/msgpack/$f"
+        done
+        "$VENV/bin/python" -m compileall -q --invalidation-mode unchecked-hash "$SP/pip/_vendor/msgpack"
+        sed -i -e 's/^msgpack==1\.1\.2$/msgpack==1.2.1/' -e '/^setuptools==/d' "$SP/pip/_vendor/vendor.txt"
+        "$VENV/bin/python" -c "import json;p='$SP/pip/_vendor/bom.cdx.json';d=json.load(open(p));c=[x for x in d.get('components',[]) if x.get('name')!='setuptools'];[x.update(version='1.2.1',purl='pkg:pypi/msgpack@1.2.1') for x in c if x.get('name')=='msgpack'];d.__setitem__('components',c);json.dump(d,open(p,'w'),indent=2);print('corrected pip bom.cdx.json')"
+        "$VENV/bin/python" -c "from pip._vendor import msgpack; assert msgpack.__version__=='1.2.1', msgpack.__version__; print('vendored msgpack ->', msgpack.__version__)"
+        rm -rf "$mp"
+      else
+        echo "pip no longer vendors msgpack 1.1.2 -- drop this block"; exit 1
+      fi
 
       # mlflow --version must work without a DB; assert it at build time. (The full
       # server-boot HTTP check runs in test.sh against the assembled image, and in the
