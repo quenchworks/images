@@ -99,6 +99,17 @@ pipeline:
       #     OLD reactor-core 3.4.38, incompatible with the fixed reactor-netty 1.2.8 (which
       #     needs reactor-core >= 3.6), so it cannot be cleanly swapped. Drop it.
       rm -rf "$dest"/modules/repository-azure
+      # --- (a2) DROP modules/apm ------------------------------------------------------
+      # The Elastic APM agent (elastic-apm-agent-java8-*.jar) SHADES log4j-api 2.25.4,
+      # flagged and fixed only in 2.25.5+. It is an optional self-monitoring module -- ES
+      # indexes and serves without it -- so dropping it is cheaper and far safer than
+      # overlaying classes into a shaded agent jar.
+      #
+      # That choice is deliberate: the graylog recipe attempted exactly such an overlay on
+      # its httpcomponents set this round, passed the 0-CVE gate AND the image smoke test,
+      # and then CrashLoopBackOff'd in the chart gate because the replacement changed
+      # runtime behaviour. Prefer removing an optional component over patching a shaded one.
+      rm -rf "$dest"/modules/apm
 
       # --- (b) standalone jackson 2.18.8 -> 2.18.9 (core+databind+annotations, consistent
       #     set; databind fix = 2.18.9 (for -54515 and CVE-2026-59889), core fix >= 2.18.6).
@@ -124,6 +135,15 @@ pipeline:
       #     CVE-2026-71497. Built for JDK 17, and ES bundles a newer JDK, so it loads.
       getj "$MC/org/jsoup/jsoup/1.23.1/jsoup-1.23.1.jar" jsoup-1.23.1.jar 8b15e2b28eeb1e0a88a9b7dab4dc0c23524491c56959785dea22f7846897b668
       find "$dest/modules" -name 'jsoup-1.21.2.jar' -exec sh -c 'cp "$1" "$(dirname "$2")/jsoup-1.23.1.jar"; rm -f "$2"' _ "$DL/jsoup-1.23.1.jar" {} \;
+
+      # --- (b4) httpclient5 5.6.1 -> 5.6.3 and log4j-api 2.25.4 -> 2.25.5. Both are
+      #     same-line patches, so they carry no API change. Note the httpclient5 bump is
+      #     SAFE here, unlike graylog: this is Elastic's own client, not the OpenSearch
+      #     storage plugin whose gzip handling the 5.6.x line broke.
+      getj "$MC/org/apache/httpcomponents/client5/httpclient5/5.6.3/httpclient5-5.6.3.jar" httpclient5-5.6.3.jar 80712ff129210d7c73d9fcc1195cbee5c3c34744965c7a05ea107b3648922f18
+      find "$dest" -name 'httpclient5-5.6.1.jar' -exec sh -c 'cp "$1" "$(dirname "$2")/httpclient5-5.6.3.jar"; rm -f "$2"' _ "$DL/httpclient5-5.6.3.jar" {} \;
+      getj "$MC/org/apache/logging/log4j/log4j-api/2.25.5/log4j-api-2.25.5.jar" log4j-api-2.25.5.jar 64777f73ea0b3104c04eb82befbdccc30a425a19e83ad06cb2f93aa303511863
+      find "$dest" -name 'log4j-api-2.25.4.jar' -exec sh -c 'cp "$1" "$(dirname "$2")/log4j-api-2.25.5.jar"; rm -f "$2"' _ "$DL/log4j-api-2.25.5.jar" {} \;
 
       # --- (c) commons-lang3 3.9 -> 3.18.0 (x-pack-ent-search; other modules already 3.18+)
       getj "$MC/org/apache/commons/commons-lang3/3.18.0/commons-lang3-3.18.0.jar" commons-lang3-3.18.0.jar 4eeeae8d20c078abb64b015ec158add383ac581571cddc45c68f0c9ae0230720

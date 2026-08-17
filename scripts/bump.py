@@ -41,8 +41,9 @@ HEX40 = re.compile(r"[0-9a-f]{40}")
 SHAPES = {
     "SHA256": re.compile(r"[0-9a-f]{64}"),
     "SHA512": re.compile(r"[0-9a-f]{128}"),
-    "SHA_AMD": re.compile(r"[0-9a-f]{64}"),
-    "SHA_ARM": re.compile(r"[0-9a-f]{64}"),
+    # 64 OR 128: some recipes (elasticsearch) verify sha512 in these maps.
+    "SHA_AMD": re.compile(r"[0-9a-f]{64}([0-9a-f]{64})?"),
+    "SHA_ARM": re.compile(r"[0-9a-f]{64}([0-9a-f]{64})?"),
     "COMMIT": HEX40,
     "PIN": re.compile(r"[\w.+~-]+-r\d+"),
     "PKG": re.compile(r"[a-z][\w.+-]*"),
@@ -258,7 +259,17 @@ def main() -> int:
                 # Prefer a url that actually carries this arch's token.
                 tok = ("amd64", "x86_64", "x86-64", "x64") if a == "amd" else ("arm64", "aarch64", "arm_64")
                 picked = next((u for u in au if any(t in u for t in tok)), au[0])
-                entries[m][v] = fetch_sha(picked)
+                # The DIGEST ALGORITHM is per-recipe, not per-map-name: elasticsearch keeps
+                # sha512 values in SHA_AMD/SHA_ARM. Hardcoding sha256 writes a 64-char hash
+                # the recipe then fails to verify, surfacing only as a checksum FAILED.
+                #
+                # Read it from the RECIPE (which sha*sum it pipes into), not from the value
+                # already in the map -- once a wrong-width value has been written, inferring
+                # from it just reproduces the same mistake.
+                melp = ROOT / "apps" / app / "melange.yaml"
+                mtext = melp.read_text() if melp.exists() else ""
+                algo = "sha512" if "sha512sum -c" in mtext else "sha256"
+                entries[m][v] = fetch_sha(picked, algo)
             elif m == "COMMIT":
                 c = tag_commit(app, v)
                 if not c:
