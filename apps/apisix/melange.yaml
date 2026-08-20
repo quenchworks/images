@@ -89,7 +89,7 @@ environment:
       - bash
       - ca-certificates-bundle
       - curl
-      - wget            # see the wget shim note in the saml stage
+      - wget            # luarocks fetches rocks over http
       - git
       - patch
       - perl
@@ -421,11 +421,13 @@ pipeline:
       # Assert the rocks APISIX cannot start without, by name. The C ones are the ones
       # that actually fail (a pure-Lua rock that failed to download would surface as a
       # per-plugin load error, but these break init_worker or the CLI outright).
+      # resty/saml.lua is NOT in this list: saml-auth is deliberately not shipped
+      # (see the "Stage 2 REMOVED" block above).
       for f in lyaml/init.lua resty/radixtree.lua resty/etcd/init.lua resty/ngxvar.lua \
-               jsonschema/init.lua resty/expr/init.lua resty/saml.lua; do
+               jsonschema/init.lua resty/expr/init.lua; do
         test -f "$AX/deps/share/lua/5.1/$f" || { echo "MISSING rock file $f"; exit 1; }
       done
-      for f in yaml.so librestyradixtree.so lfs.so saml.so rex_pcre.so pb.so; do
+      for f in yaml.so librestyradixtree.so lfs.so rex_pcre.so pb.so; do
         test -f "$AX/deps/lib/lua/5.1/$f" || { echo "MISSING rock C library $f"; exit 1; }
       done
 
