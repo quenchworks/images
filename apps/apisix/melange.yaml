@@ -390,7 +390,27 @@ pipeline:
       # every *_DIR points at /usr (Wolfi) instead of the vendored
       # /usr/local/openresty/openssl3 tree that this recipe deliberately does not build.
       # --only-deps: the rockspec's own build stage is run by `make install` below.
-      # lua-resty-saml is already in the tree from stage 2, so luarocks skips it.
+      #
+      # Drop lua-resty-saml from the rockspec first. We do not ship saml-auth (see the
+      # "Stage 2 REMOVED" block above), and leaving the dependency in makes luarocks
+      # build it anyway, which FAILS: its saml.c passes a non-const xmlError* where
+      # current libxml2 declares xmlStructuredErrorFunc as taking `const xmlError *`,
+      #   src/saml.c:44: 'ingoreStructuredError' declared here
+      #   make: *** [Makefile:41: saml.o] Error 1
+      # That the rock no longer compiles against a current libxml2 at all is further
+      # evidence for dropping it rather than carrying api7's 2019 fork.
+      #
+      # Assert exactly one line went, so an upstream rockspec reshuffle cannot turn this
+      # into a silent no-op that reintroduces the dependency.
+      ( cd "$AX"
+        before="$(grep -c . apisix-master-0.rockspec)"
+        sed -i '/lua-resty-saml/d' apisix-master-0.rockspec
+        after="$(grep -c . apisix-master-0.rockspec)"
+        test "$((before - after))" -eq 1 \
+          || { echo "FATAL: expected to drop exactly 1 lua-resty-saml line, dropped $((before - after))"; exit 1; }
+        grep -q 'lua-resty-saml' apisix-master-0.rockspec \
+          && { echo "FATAL: lua-resty-saml still present in the rockspec"; exit 1; } || true )
+
       ( cd "$AX"
         luarocks install apisix-master-0.rockspec --tree deps --only-deps \
           --lua-version=5.1 --lua-dir="$LUAJIT" \
