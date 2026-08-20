@@ -44,7 +44,10 @@ environment:
       - build-base
       - busybox
       - ca-certificates-bundle
-      - go-1.25
+      # go-1.26: the go-1.25 line tops out at 1.25.12 in Wolfi, and CVE-2026-33818
+      # (encoding/asn1 DoS) is fixed only in 1.25.13 / 1.26.6+. Same reasoning that
+      # moved this off go-1.24 earlier, one line further along.
+      - go-1.26
 
 pipeline:
   - uses: fetch
