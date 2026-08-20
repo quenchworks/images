@@ -49,6 +49,30 @@
 # APISIX_DASHBOARD_COMMIT, and apisix/cli/ngx_tpl.lua serves `location ^~ /ui/` with
 # `root <apisix_home>/ui`. It is a pnpm/Vite TypeScript SPA with no backend at all
 # (the old Go manager-api is gone), so it is built from source in a second stage here.
+# WHAT THE 0-CVE GATE DOES AND DOES NOT COVER HERE -- read before trusting a green run.
+#
+# Trivy has no Lua/luarocks analyzer. On this image it reports:
+#     [wolfi] Detecting vulnerabilities...  pkg_num=40
+#     Number of language-specific files     num=0
+# So a clean result covers the 40 Wolfi apks and NOTHING ELSE. The ~58 Lua rocks installed
+# by luarocks, and the nginx + LuaJIT built into apisix-runtime, are not scanned at all.
+#
+# This is the same blind spot as a statically linked C library or a bundled JS file (see
+# docs/go-module-float.md): the gate cannot inspect the component, so a green scan is not
+# evidence about it. It is the reason saml-auth was dropped rather than shipped behind a
+# green tick, and the reason the rock set is pinned by sha256 from upstream's own
+# .requirements rather than floated.
+#
+# Mitigations actually in place, none of them a substitute for a scanner:
+#   * every rock version comes from APISIX's own rockspec at the tag, not a floating spec
+#   * OpenResty, nginx, LuaJIT and the 7 nginx modules are sha256-pinned source builds
+#   * openssl/pcre2/zlib/libxml2/libxslt/openldap/brotli/yaml come from Wolfi apks, which
+#     ARE scanned, instead of upstream's vendored copies
+#   * the boot test asserts zero unexpected plugin load failures, which catches a rock that
+#     silently failed to install
+#
+# If a Lua advisory matters to you, it has to be tracked by hand against the rockspec.
+
 package:
   name: quench-apisix
   version: __VER__
@@ -512,8 +536,12 @@ pipeline:
         '    scgi_temp_path        /tmp/apisix-scgi-temp;' \
         > "$D/conf.default/config.yaml"
       printf '%s\n' \
-        'routes:' \
-        '  -' \
+        '# routes: [] -- an EMPTY LIST, not a list with one empty item. A bare `-` here' \
+        '# parses as a null route, which APISIX normalises to {"status":1,"priority":0}' \
+        '# and then rejects at startup:' \
+        '#   config_yaml.lua:323: failed to check item data of [routes]' \
+        '#   err:allOf 1 failed: value should match only one schema, but matches none' \
+        'routes: []' \
         '#END' \
         > "$D/conf.default/apisix.yaml"
       # `#END` is not decoration: APISIX refuses to load conf/apisix.yaml without it.

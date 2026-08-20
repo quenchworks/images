@@ -209,3 +209,29 @@ A nightly that runs only Trivy will report bundled apps clean forever while thei
 dependencies rot. Those apps need their own audit step run on a schedule, not just at build
 time. Catalog apps in this shape today: `adc`. Node apps worth re-checking for the same
 pattern: `ghost`, `excalidraw`, `coolify-realtime`, `xyops`, `apisix` (its dashboard stage).
+
+## Third instance: Lua rocks are invisible too (2026-08-20)
+
+Trivy has no Lua/luarocks analyzer. On the apisix image it reports:
+
+    [wolfi] Detecting vulnerabilities...  pkg_num=40
+    Number of language-specific files     num=0
+
+A clean scan there covers 40 Wolfi apks and nothing else. The ~58 Lua rocks and the nginx +
+LuaJIT built into apisix-runtime are not looked at.
+
+So the running list of components our gate cannot inspect is:
+
+| shape | example | substitute gate |
+|---|---|---|
+| statically linked C library | api7's xmlsec1 fork in lua-resty-saml | none -- component dropped |
+| bundled/inlined JS | adc's single main.cjs | `pnpm audit --prod` as a hard build step |
+| Lua rocks | apisix's luarocks tree | none available; pin versions from upstream's rockspec |
+
+The general rule stands and is worth stating once more: **a green scan is only evidence
+about the components the scanner could parse.** Before trusting one, check what it actually
+counted. `pkg_num` and `Number of language-specific files` are printed on every run and are
+the fastest way to notice that a whole dependency tree was skipped.
+
+Where no substitute gate exists, say so in the recipe rather than letting the tick imply
+coverage it does not have.
