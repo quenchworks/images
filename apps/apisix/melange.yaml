@@ -421,11 +421,19 @@ pipeline:
       # Assert the rocks APISIX cannot start without, by name. The C ones are the ones
       # that actually fail (a pure-Lua rock that failed to download would surface as a
       # per-plugin load error, but these break init_worker or the CLI outright).
-      # resty/saml.lua is NOT in this list: saml-auth is deliberately not shipped
-      # (see the "Stage 2 REMOVED" block above).
-      for f in lyaml/init.lua resty/radixtree.lua resty/etcd/init.lua resty/ngxvar.lua \
-               jsonschema/init.lua resty/expr/init.lua; do
-        test -f "$AX/deps/share/lua/5.1/$f" || { echo "MISSING rock file $f"; exit 1; }
+      # Check by MODULE, accepting either Lua layout. A rock may ship a module as
+      # `foo.lua` or as `foo/init.lua`, and which one it uses is the rock author's
+      # choice and changes between versions. Asserting one spelling produced a false
+      # failure here: lua-resty-etcd 1.10.6 installs resty/etcd.lua, while this list
+      # demanded resty/etcd/init.lua, so a correctly installed rock read as missing.
+      #
+      # resty.saml is NOT in this list: saml-auth is deliberately not shipped (see the
+      # "Stage 2 REMOVED" block above).
+      for m in lyaml resty/radixtree resty/etcd resty/ngxvar jsonschema resty/expr; do
+        d="$AX/deps/share/lua/5.1"
+        test -f "$d/$m.lua" || test -f "$d/$m/init.lua" \
+          || { echo "MISSING rock module $m (looked for $m.lua and $m/init.lua)"; \
+               echo "installed under $d:"; ls "$d" 2>/dev/null | head -30; exit 1; }
       done
       for f in yaml.so librestyradixtree.so lfs.so rex_pcre.so pb.so; do
         test -f "$AX/deps/lib/lua/5.1/$f" || { echo "MISSING rock C library $f"; exit 1; }
