@@ -58,11 +58,16 @@ echo "== the React console was BUILT, not left as the gitkeep placeholder"
 names="$(docker run --rm --entrypoint /usr/bin/strings "$IMAGE" -n 8 /usr/bin/argocd 2>/dev/null \
           || docker run --rm --entrypoint /bin/sh "$IMAGE" -c \
                "tr -c '[:print:]' '\n' < /usr/bin/argocd")"
-echo "$names" | grep -q 'dist/app/index.html' \
+# Here-strings, NOT `echo ... | grep -q`. Under `set -o pipefail`, grep -q exits the
+# moment it matches, echo takes SIGPIPE (141), and the pipeline reports failure BECAUSE
+# the match succeeded. It is size-dependent, which is why the smaller check_cmd greps
+# above survive: $names is the strings output of a ~190MB binary, so echo is still
+# writing when grep leaves. This reported "the UI was not built" for a correctly built UI.
+grep -q 'dist/app/index.html' <<<"$names" \
   || { echo "no dist/app/index.html embedded -- the UI was not built"; exit 1; }
-echo "$names" | grep -q 'dist/app/assets/images/resources/' \
+grep -q 'dist/app/assets/images/resources/' <<<"$names" \
   || { echo "no embedded resource icons -- the UI bundle is incomplete"; exit 1; }
-nchunk="$(echo "$names" | grep -c 'dist/app/[0-9a-z.]*chunk\.js' || true)"
+nchunk="$(grep -c 'dist/app/[0-9a-z.]*chunk\.js' <<<"$names" || true)"
 [ "$nchunk" -ge 10 ] || { echo "only $nchunk embedded js chunks; expected >=10"; exit 1; }
 echo "  index.html + resource icons + $nchunk js chunks embedded"
 
