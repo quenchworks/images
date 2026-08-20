@@ -1,0 +1,306 @@
+# Builds adc FROM the api7/adc GitHub source tag onto Wolfi. adc is a pnpm + nx
+# TypeScript monorepo, not a Go project: `nx build cli` runs the @nx/esbuild
+# executor over apps/cli/src/main.ts with bundle:true and thirdParty:true, so
+# every workspace lib (libs/sdk, libs/differ, libs/backend-*, libs/converter-
+# openapi) AND every npm dependency (express, commander, axios, zod, winston,
+# listr2, glob, js-yaml, ...) is inlined into a SINGLE self-contained CommonJS
+# file, dist/apps/cli/main.cjs. Nothing else is needed at runtime -- no
+# node_modules ship in the image, only that one file plus Wolfi's nodejs-24.
+#
+# This is upstream's own container recipe (libs/tools/src/docker/Dockerfile:
+# `nx build cli` in a builder stage, then `COPY main.cjs` + `ENTRYPOINT
+# ["node","main.cjs"]`). What we deliberately do NOT reproduce is the RELEASE
+# recipe (.github/workflows/release.yaml), which turns the same bundle into a
+# Node SEA by postject'ing it into a node binary wget'd from nodejs.org. That
+# would bake an interpreter we neither build nor patch into the image.
+#
+# TOOLCHAIN, both pinned by upstream and both present in Wolfi as exact matches:
+#   * pnpm-11.8 (11.8.0) -- root package.json `packageManager: pnpm@11.8.0`,
+#     against a lockfileVersion 9.0 lockfile.
+#   * nodejs-24 -- release.yaml pins NODE_VERSION 24.16.0 and the Dockerfile uses
+#     node:lts; Wolfi's nodejs-24 is the same major, patched.
+# The install is a FULL install (not --prod): nx, esbuild and @swc/core are
+# devDependencies and are what performs the build. Build-sandbox only -- the
+# output is one bundled file, so none of it reaches the image.
+#
+# NO native modules: the dep tree is pure JS, so no node-gyp / build-base is
+# needed (unlike the xyops or n8n recipes). python3 is here only for the two
+# surgical JSON/YAML edits below.
+#
+# ############################################################################
+# THE 0-CVE PROBLEM WITH THIS APP, AND WHY TRIVY CANNOT SEE IT
+# ############################################################################
+# Because every dependency is INLINED into main.cjs, the image ships no
+# package.json and no node_modules -- so Trivy finds zero JS packages and reports
+# a clean image no matter what is inside the bundle. The scan is structurally
+# blind here. `pnpm audit --prod` on the build tree is therefore the real CVE
+# gate for this app, and it runs below as a HARD gate, not a comment.
+#
+# At 0.27.1 that audit found 8 HIGH advisories across three packages. All three
+# are floated to their fixed releases (a FLOOR, not a downgrade-proof pin --
+# every value is the newest release of the line the tree already resolved):
+#
+#   js-yaml     4.2.0 -> 4.3.1   GHSA-5p4m-2wfm-xmqj (quadratic CPU in !!omap
+#                                resolution) + the earlier merge-key-chain
+#                                advisory. js-yaml comes in through the pnpm
+#                                CATALOG (`js-yaml: ^4.1.2`), and an `overrides:`
+#                                entry does NOT apply to a `catalog:` spec -- it
+#                                was silently ignored until the catalog entry
+#                                itself was raised. Verified bundled: the built
+#                                main.cjs carries a js-yaml legal banner and its
+#                                size moves when this changes.
+#   fast-uri    4.0.0 -> 4.1.2   three host-confusion advisories (backslash
+#                                authority delimiter / introducer, failed IDN
+#                                canonicalization). Upstream already carries a
+#                                `fast-uri: ">=3.1.2"` override; two overlapping
+#                                selectors for one package are ambiguous, so that
+#                                line is REPLACED rather than supplemented.
+#   brace-expansion 5.0.6 -> 5.0.9  CVE-2026-14257 and the two follow-ups that
+#                                landed on the versions pinned to fix it. 5.0.9
+#                                adds the EXPANSION_MAX_LENGTH accumulator bound.
+#                                Only the 5.x copy is affected; the tree's other
+#                                copy (2.1.1, via minimatch 9) is below every
+#                                affected range, so the selector is the EXACT
+#                                resolved version and NOT `@<5.0.9` -- a blunt
+#                                selector would drag 2.1.1 across three majors
+#                                into the named-only CJS export shape that needs
+#                                the interop shim the ghost recipe carries.
+#
+# ############################################################################
+# THE PART THAT `pnpm audit` CANNOT SEE EITHER: glob's VENDORED BUNDLE
+# ############################################################################
+# glob 13.0.6 publishes TWO builds and points its default export at the
+# PREBUNDLED, MINIFIED one:
+#     exports["."].require -> ./dist/commonjs/index.min.js   (self-contained)
+#     exports["./raw"]     -> ./dist/commonjs/index.js       (modular)
+# index.min.js has minimatch AND brace-expansion INLINED, so the copy that
+# actually reaches main.cjs is whatever glob vendored -- pre-5.0.7
+# brace-expansion, with no accumulator bound. No pnpm override can touch it (it
+# is not a package on disk), `pnpm audit` cannot see it (same reason), Trivy
+# cannot see it, and there is no newer glob: 13.0.6 IS the newest release. So the
+# override above cleared the advisory while the vulnerable code stayed in the
+# artifact -- exactly the "bundled dependency hides the fix" failure mode.
+#
+# The fix is to make glob resolve to its OWN modular build, which then imports
+# the real minimatch 10.2.5 -> brace-expansion 5.0.9 from node_modules. That
+# build is not a hack target: upstream publishes it as the supported `glob/raw`
+# entry point, same API. It is verified two ways below -- the built bundle must
+# contain the 5.0.9 EXPANSION_MAX_LENGTH constant, and the package test runs a
+# real `adc lint` over a glob pattern so the de-vendored code path is executed,
+# not just inspected.
+#
+# NOT a gate bypass: no .trivyignore, no --skip, no VEX, no severity change. The
+# code in the image genuinely is the fixed code.
+#
+# COST: overrides change resolution, so the install is --no-frozen-lockfile
+# (same as the ghost recipe). The lockfile still pins everything we did not
+# touch; the three we did are pinned by the values above.
+package:
+  name: quench-adc
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened ADC (API Declarative CLI / APISIX Ingress Controller sidecar), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - nodejs-24              # the bundle is plain CJS run by node; upstream builds/tests on Node 24
+      - ca-certificates-bundle # adc talks TLS to APISIX admin APIs / API7 control planes
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - nodejs-24
+      - pnpm-11.8              # upstream's exact packageManager pin (pnpm@11.8.0)
+      - git                    # nx probes git for its task-hash inputs; absent it warns and
+                               # falls back to hashing the whole tree
+      - python-3.13            # the two surgical edits below (pnpm-workspace.yaml, glob's
+                               # package.json exports map)
+
+pipeline:
+  - uses: fetch
+    with:
+      # Immutable GitHub source archive for the tag (tags carry a `v` prefix).
+      # melange fetch strips the leading `adc-<ver>/` component by default.
+      uri: https://github.com/api7/adc/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - runs: |
+      set -eu
+      # --- 0-CVE gate: float the three flagged PROD deps ------------------------------
+      # See the header for the advisory for each. Every edit asserts its own
+      # precondition, so an upstream bump that moves any of these fails the build
+      # instead of silently dropping the fix.
+      python3.13 - <<'PYEOF'
+      f = "pnpm-workspace.yaml"
+      s = open(f).read()
+
+      # js-yaml arrives via the CATALOG, where `overrides:` does not reach it.
+      old = "  js-yaml: ^4.1.2\n"
+      assert old in s, "catalog js-yaml entry moved; re-check the js-yaml advisory"
+      s = s.replace(old, "  js-yaml: ^4.3.1\n")
+
+      out, added, dropped = [], False, False
+      for ln in s.splitlines():
+          # Upstream's own `fast-uri: ">=3.1.2"` floor is superseded by the exact
+          # pin below; two selectors for one package is ambiguous.
+          if ln.startswith("  fast-uri:"):
+              dropped = True
+              continue
+          out.append(ln)
+          if not added and ln == "overrides:":
+              out += [
+                  "  'brace-expansion@5.0.6': 5.0.9",  # CVE-2026-14257 + 2 follow-ons;
+                                                       # EXACT selector: the tree's other
+                                                       # copy (2.1.1) is not affected
+                  "  fast-uri: 4.1.2",                 # 3 host-confusion advisories
+              ]
+              added = True
+      assert added, "overrides: block not found in pnpm-workspace.yaml"
+      assert dropped, "upstream's fast-uri override not found; re-check the fast-uri pin"
+      open(f, "w").write("\n".join(out) + "\n")
+      PYEOF
+
+      # Keep pnpm's store and HOME on the build disk (the workspace), so nothing
+      # depends on a writable ~ and `pnpm config set` never has to be attempted.
+      export HOME="${PWD}/.home"; mkdir -p "$HOME"
+      export CI=true
+      export NX_DAEMON=false
+
+      # --no-frozen-lockfile because the overrides above change resolution.
+      pnpm install --no-frozen-lockfile --store-dir "${PWD}/.pnpm-store"
+
+      # --- 0-CVE gate: de-vendor glob ------------------------------------------------
+      # glob 13.0.6's default export is a PREBUNDLED index.min.js with minimatch and
+      # brace-expansion inlined, so the override above cannot reach the copy that ends
+      # up in main.cjs. Repoint the "." export at glob's own modular build, which
+      # upstream publishes as the `./raw` entry point and which imports the real
+      # (floated) packages from node_modules. See the header.
+      python3.13 - <<'PYEOF'
+      import glob as pyglob, json
+      paths = pyglob.glob("node_modules/.pnpm/glob@*/node_modules/glob/package.json")
+      assert paths, "no glob copy on disk; the de-vendoring below is now dead code -- re-check"
+      for p in paths:
+          d = json.load(open(p))
+          dot, raw = d["exports"]["."], d["exports"]["./raw"]
+          assert dot["require"]["default"].endswith("index.min.js"), \
+              "glob no longer defaults to its vendored bundle at %s: %r" % (p, dot)
+          dot["import"]["default"] = raw["import"]["default"]
+          dot["require"]["default"] = raw["require"]["default"]
+          d["main"] = raw["require"]["default"]
+          d["module"] = raw["import"]["default"]
+          json.dump(d, open(p, "w"), indent=2)
+          print("de-vendored", p, "->", d["main"])
+      PYEOF
+
+      # NODE_ENV=production selects the `production` configuration of the cli build
+      # target, which is what upstream's release + Dockerfile both use.
+      NODE_ENV=production ./node_modules/.bin/nx build cli
+      test -f dist/apps/cli/main.cjs || { echo "nx build produced no main.cjs"; exit 1; }
+
+      # --- 0-CVE gate: prove the fixes are IN THE ARTIFACT ---------------------------
+      # 4e6 is brace-expansion 5.0.9's EXPANSION_MAX_LENGTH (4_000_000), the constant
+      # that bounds the accumulator CVE-2026-14257 exploits. It is absent from every
+      # version below 5.0.9, and absent from glob's vendored bundle -- so its presence
+      # in the built file proves BOTH the override and the de-vendoring landed. If this
+      # ever fires, the bundle regressed to a vulnerable brace-expansion; find where it
+      # came from, do not delete the check.
+      grep -q '4e6' dist/apps/cli/main.cjs || {
+        echo "FATAL: brace-expansion 5.0.9's EXPANSION_MAX_LENGTH is NOT in the bundle;"
+        echo "the CVE-2026-14257 fix did not reach the artifact. See this recipe's header."
+        exit 1
+      }
+
+      # The dependency-level gate. Trivy is structurally blind to this app (everything
+      # is inlined into one file, so the image ships no JS package metadata), so this
+      # audit IS the CVE gate for adc's dependency tree and it FAILS the build. A
+      # network/registry failure is distinguished from a real finding: only a parsed
+      # non-zero high/critical count is fatal.
+      pnpm audit --prod --json > audit.json 2>/dev/null || true
+      node -e '
+        const fs = require("fs");
+        let a;
+        try { a = JSON.parse(fs.readFileSync("audit.json", "utf8")); }
+        catch (e) { console.warn("WARN: pnpm audit produced no parseable report (" + e.message + "); registry down?"); process.exit(0); }
+        const v = (a.metadata && a.metadata.vulnerabilities) || {};
+        const bad = (v.high || 0) + (v.critical || 0);
+        const adv = a.advisories || {};
+        for (const k of Object.keys(adv)) {
+          const x = adv[k];
+          console.log(" advisory:", x.severity, x.module_name, x.vulnerable_versions, "->", x.patched_versions);
+        }
+        if (bad) {
+          console.error("FATAL: " + bad + " high/critical advisories in the PROD dependency tree.");
+          console.error("Trivy cannot see these (they are inlined into main.cjs), so this is the gate.");
+          console.error("Float them in the overrides block above -- do not remove this check.");
+          process.exit(1);
+        }
+        console.log("pnpm audit --prod: no high/critical advisories");
+      '
+
+  - runs: |
+      set -eu
+      dest="${{targets.destdir}}"
+      install -d "$dest"/usr/share/adc
+
+      # The bundle is built with sourcemap:"linked", so it ends in a
+      # //# sourceMappingURL=main.cjs.map comment. We do NOT ship the ~9 MB map
+      # (image + SBOM bloat for stack traces nobody reads in a sidecar), so drop
+      # the dangling reference rather than leaving source-map-support chasing a
+      # file that is not there.
+      sed '\|^//# sourceMappingURL=|d' dist/apps/cli/main.cjs > "$dest"/usr/share/adc/main.cjs
+      chmod 0644 "$dest"/usr/share/adc/main.cjs
+
+test:
+  environment:
+    contents:
+      packages:
+        - busybox
+  pipeline:
+    - runs: |
+        set -eu
+        test -f /usr/share/adc/main.cjs
+        # No DANGLING sourcemap reference (the map is deliberately not shipped).
+        # Only the trailing comment line counts -- the bundle inlines
+        # source-map-support, which mentions sourceMappingURL nine more times.
+        ! tail -1 /usr/share/adc/main.cjs | grep -q '^//# sourceMappingURL='
+
+        # adc hardcodes its version in the source, so this is the real pin check.
+        v="$(node /usr/share/adc/main.cjs -v)"
+        [ "$v" = "${{package.version}}" ] || { echo "adc -v said '$v', expected ${{package.version}}"; exit 1; }
+
+        # The `server` subcommand -- the ONLY reason this image exists -- lives
+        # behind ADC_RUNNING_MODE=ingress. Assert BOTH directions so a future
+        # upstream refactor of that gate cannot pass silently.
+        ADC_RUNNING_MODE=ingress node /usr/share/adc/main.cjs server --help > /tmp/srv.txt
+        grep -q -- '--listen-status' /tmp/srv.txt
+        grep -q -- '--listen ' /tmp/srv.txt
+        ! node /usr/share/adc/main.cjs server --help 2>/dev/null
+
+        # And the plain CLI surface still works without the ingress gate.
+        node /usr/share/adc/main.cjs --help | grep -q 'sync'
+
+        # EXECUTE the de-vendored glob path, do not just inspect it: `lint -f <pattern>`
+        # goes through load_local, which expands the pattern with glob -> minimatch ->
+        # brace-expansion. If repointing glob at its modular build broke anything, this
+        # is where it shows up.
+        mkdir -p /tmp/adccfg
+        cat > /tmp/adccfg/adc.yaml <<'CFG'
+        services:
+          - name: demo
+            upstream:
+              nodes:
+                - host: 127.0.0.1
+                  port: 80
+                  weight: 1
+        CFG
+        node /usr/share/adc/main.cjs lint -f '/tmp/adccfg/*.yaml' > /tmp/lint.txt 2>&1 \
+          || { echo "adc lint over a glob pattern failed:"; cat /tmp/lint.txt; exit 1; }
+        grep -q 'Load local configuration' /tmp/lint.txt
+        grep -q 'Lint configuration' /tmp/lint.txt

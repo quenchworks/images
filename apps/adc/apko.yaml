@@ -1,0 +1,99 @@
+# Assembles the ADC runtime image: ONE esbuild-bundled CommonJS file
+# (/usr/share/adc/main.cjs, produced by quench-adc) plus Wolfi's nodejs-24 to run
+# it. No node_modules, no shell, nonroot, multi-arch, SBOM by apko. This is
+# upstream's own container shape (libs/tools/src/docker/Dockerfile is
+# `COPY main.cjs` + `ENTRYPOINT ["node","main.cjs"]`) on a hardened interpreter.
+#
+# WHAT THIS IMAGE IS FOR
+# It is the `adc-server` SIDECAR of apisix-ingress-controller. Upstream's
+# Deployment (config/manager/manager.yaml at controller tag 2.2.0) runs manager +
+# this container in one pod, sharing an emptyDir at /sockets.
+#
+# THE CHART MUST SET ALL THREE OF THESE -- read before writing the Deployment:
+#
+#  1. env ADC_RUNNING_MODE=ingress. NOT OPTIONAL and NOT cosmetic. main.ts
+#     branches on it: `setupIngressCommands()` when it is exactly "ingress",
+#     `setupCommands()` otherwise -- and only the ingress program registers the
+#     `server` subcommand. Without it the container dies with
+#     `error: unknown command 'server'`. We deliberately do NOT bake it into the
+#     image (upstream does not either) so the same image stays usable as the
+#     plain `adc` CLI (ping/dump/diff/sync/convert/lint/validate); test.sh pins
+#     both directions so this can never regress silently.
+#  2. args: server --listen unix:/sockets/adc.sock --listen-status 3001.
+#     No default args are baked in: the socket path is the chart's choice and it
+#     must match the controller's ADC_SERVER_URL exactly.
+#  3. pod securityContext fsGroup: 2000 (upstream's value, and the comment in
+#     upstream's own manifest is "fsGroup lets both containers share the ADC Unix
+#     socket").
+#
+# WHY fsGroup IS LOAD-BEARING (this is the thing that breaks in a chart)
+# adc chmods the socket to 0660 the moment it binds -- apps/cli/src/server/
+# index.ts: `server.listen(path, () => fs.chmodSync(path, 0o660))`, verified by
+# `stat` on a real boot. 0660 means owner-or-GROUP only, no world bit, so the
+# controller container can reach it ONLY if it shares the uid or the gid. fsGroup
+# 2000 makes the kubelet set the emptyDir group-owned by 2000 with setgid, so the
+# socket adc creates inherits gid 2000 and the controller (which gets 2000 as a
+# supplementary group) can connect. Drop fsGroup and you get a socket owned
+# 1001:1001 0660 and a controller that cannot dial it -- the pod comes up, both
+# probes pass, and every sync fails with EACCES. adc also unlinks a stale socket
+# before binding, so the DIRECTORY must be group-writable too, which fsGroup also
+# arranges.
+#
+# PORTS / PROBES the chart should use:
+#   * 3001/tcp "http-status" -- GET /healthz/ready -> 200 "OK". This is upstream's
+#     liveness AND readiness probe for the sidecar.
+#   * the Unix socket carries the DATA plane only: PUT /sync and PUT /validate.
+#     /healthz/ready is NOT served there, and /sync is NOT served on 3001 --
+#     probing the wrong listener 404s. test.sh asserts that split.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - nodejs-24
+    - quench-adc@local
+
+accounts:
+  groups:
+    - groupname: adc
+      gid: 1001
+  users:
+    - username: adc
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# Exec the bundle THROUGH node: there is no shell in this image, so a shebang
+# launcher could not self-exec, and `docker run <img> server --listen ...` args
+# still append. Same pattern as quench-renovate and quench-xyops.
+entrypoint:
+  command: /usr/bin/node /usr/share/adc/main.cjs
+
+paths:
+  # The socket directory. In-cluster the chart mounts an emptyDir over this and
+  # the mount's ownership (fsGroup) wins, so this exists for two other reasons:
+  # it documents the mount point, and it lets the image run standalone
+  # (`docker run` in test.sh) without a writable-dir dance -- a shell-free image
+  # cannot mkdir for itself. 0770, owned by the runtime user, matching the 0660
+  # socket adc will create inside it.
+  - path: /sockets
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o770
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-adc"
+  org.opencontainers.image.licenses: "Apache-2.0"

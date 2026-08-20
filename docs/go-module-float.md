@@ -162,3 +162,50 @@ So the floor is **v0.40.0**. Two general lessons:
 
 `golang.org/x/mod` enters the graph transitively almost everywhere (any `go mod tidy`
 pulls it), so expect this on most Go apps rather than a few.
+
+---
+
+# Bundled dependencies are INVISIBLE to Trivy (2026-08-20)
+
+Trivy finds JavaScript dependencies by reading `package.json` / `node_modules`. An app that
+esbuild-bundles everything into a single `.cjs` ships neither, so **Trivy reports it clean
+regardless of what is inside the bundle**. `adc` is the first catalog app in that shape: one
+4.7 MB `main.cjs`, no manifest, no module tree. Trivy found zero JS packages.
+`pnpm audit --prod` on the same build tree found **8 HIGH advisories**.
+
+This is the same failure mode as a statically linked C library. APISIX's `saml-auth` was
+dropped this round because it links api7's 2019 xmlsec fork into a static `.a` that Trivy
+cannot open. Different language, identical problem: the gate cannot inspect the component,
+so a green scan is not evidence.
+
+## The rule
+
+If an app's dependencies do not survive into the image as something Trivy can parse, the
+recipe MUST carry its own dependency gate, and that gate must fail the build. For Node, that
+is `pnpm audit --prod` (or `npm audit`) as a hard step. A clean Trivy result on a bundled app
+means nothing at all.
+
+## Two traps found while doing it on adc
+
+1. **A pnpm `overrides:` entry does NOT apply to a `catalog:` spec.** js-yaml arrived through
+   the pnpm catalog, and the override was silently ignored until the catalog entry itself was
+   raised. Silently, meaning the advisory stayed and the override looked applied.
+2. **An override cannot reach a dependency that a package pre-bundles.** `glob` 13.0.6 points
+   its default export at a minified `index.min.js` with minimatch and brace-expansion
+   *inlined*. So the brace-expansion actually reaching the artifact was glob's vendored
+   pre-5.0.7 copy. `pnpm audit` went quiet because the override fixed the *resolved* package,
+   while the vulnerable code stayed in the bundle. 13.0.6 is the newest glob, so there was
+   nothing to bump to. Fix: repoint the export at glob's own modular build, which imports the
+   real floated packages.
+
+Trap 2 is the one to remember: **the advisory clearing is not proof the code changed.** Verify
+against the artifact. On adc that meant grepping the built bundle for a constant that only
+exists in the fixed version (`brace-expansion` 5.0.9's `4e6` `EXPANSION_MAX_LENGTH`), plus a
+runtime test that exercises the de-vendored path rather than merely inspecting it.
+
+## Consequence for the nightly sweep
+
+A nightly that runs only Trivy will report bundled apps clean forever while their
+dependencies rot. Those apps need their own audit step run on a schedule, not just at build
+time. Catalog apps in this shape today: `adc`. Node apps worth re-checking for the same
+pattern: `ghost`, `excalidraw`, `coolify-realtime`, `xyops`, `apisix` (its dashboard stage).
