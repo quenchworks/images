@@ -84,7 +84,7 @@ set -eu
 # becomes a DOWNGRADE once upstream requires more than vX -- re-introducing
 # the CVE it was added to clear. So float only what is below the floor, then
 # assert the SHIPPED BINARY carries nothing below it.
-FLOOR="golang.org/x/net@v0.56.0 golang.org/x/text@v0.39.0 google.golang.org/grpc@v1.82.1"
+FLOOR="golang.org/x/net@v0.56.0 golang.org/x/text@v0.39.0 golang.org/x/mod@v0.40.0 google.golang.org/grpc@v1.82.1"
 MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
 # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
 below_floor() {
@@ -138,3 +138,27 @@ Notes:
 
 Live examples: `apps/authelia` (replace dropped), `apps/spicedb` (upstream above
 the floor), `apps/tekton` (vendored), `apps/perses` (multi-binary).
+
+
+## golang.org/x/mod: use v0.40.0, NOT the version Trivy names (2026-08-20)
+
+Trivy reports `golang.org/x/mod` as fixed in **v0.37.0**. Floating to v0.37.0 clears the
+Trivy row and still ships a vulnerable module: govulncheck `-mode=binary` on a real binary
+flags GO-2026-6180 / GO-2026-6179 against v0.37.0, fixed in v0.40.0. This surfaced on
+krakend, where upstream requires v0.36.0 and `go mod tidy` after any other float pulls
+v0.37.0 on its own.
+
+So the floor is **v0.40.0**. Two general lessons:
+
+1. **The "fixed" version a scanner names is not always clean.** Same trap as the
+   Elasticsearch APM agent, where log4j-api 2.26.0 was the newer version AND was still
+   vulnerable (fixes were 2.25.5 / 2.26.1). Check that the version you float TO is itself
+   clear, rather than trusting the Fixed Version column.
+2. **Trivy and govulncheck disagree, and both are useful.** Trivy reads the module list;
+   govulncheck in binary mode reasons about what the binary actually reaches. When they
+   differ, take the higher floor. Do not try to prove a module safe with a throwaway
+   `main.go` that imports a package without calling it: govulncheck finds nothing because
+   nothing is reachable, which looks like a clean result and is not one.
+
+`golang.org/x/mod` enters the graph transitively almost everywhere (any `go mod tidy`
+pulls it), so expect this on most Go apps rather than a few.
