@@ -31,13 +31,17 @@ check_cmd() {
     || { echo "  $1 did not dispatch to its own command (looked for '$2')"; echo "$out" | head -20; exit 1; }
   echo "  $1 -> ok"
 }
-check_cmd argocd-server                     "Run the ArgoCD API server"
-check_cmd argocd-repo-server                "Run ArgoCD Repository Server"
-check_cmd argocd-application-controller     "Run ArgoCD Application Controller"
+# NOTE: match on the Long description, not the Short one. cobra prints Long when it
+# is set and Short only when it is not, so grepping the Short string ("Run the
+# ArgoCD API server") never matches for a command that has a Long -- which
+# argocd-server does. That is a stale-expectation false failure, not a broken image.
+check_cmd argocd-server                     "gRPC/REST server which exposes the API"
+check_cmd argocd-repo-server                "maintains a local cache of the Git repository"
+check_cmd argocd-application-controller     "continuously monitors running applications"
 check_cmd argocd-applicationset-controller  "applicationset"
 check_cmd argocd-notifications              "notification"
-check_cmd argocd-cmp-server                 "ConfigManagementPlugin Server"
-check_cmd argocd-commit-server              "Commit Server"
+check_cmd argocd-cmp-server                 "runs as sidecar container in reposerver"
+check_cmd argocd-commit-server              "commits and pushes hydrated manifests"
 check_cmd argocd-dex                        "dex"
 check_cmd argocd-k8s-auth                   "argocd-k8s-auth"
 check_cmd argocd-git-ask-pass               "git credential helper"
