@@ -615,7 +615,9 @@ pipeline:
       rm -rf "$D/usr/local/apisix/deps/lib/luarocks"
       # Prove the deployed tree survived the pruning.
       test -f "$D/usr/local/apisix/deps/share/lua/5.1/lyaml/init.lua" || { echo "pruning removed a live rock"; exit 1; }
-      test -f "$D/usr/local/apisix/deps/lib/lua/5.1/saml.so" || { echo "pruning removed a live rock C library"; exit 1; }
+      # saml.so is gone with saml-auth; use a C library we actually ship. pb.so is
+      # lua-protobuf, which the etcd v3 client needs, so it is load-bearing.
+      test -f "$D/usr/local/apisix/deps/lib/lua/5.1/pb.so" || { echo "pruning removed a live rock C library"; exit 1; }
       # Header/static-lib leftovers from the OpenResty build; not needed at runtime.
       rm -rf "$D/usr/local/openresty/luajit/include" \
              "$D/usr/local/openresty/luajit/lib/libluajit-5.1.a" \
