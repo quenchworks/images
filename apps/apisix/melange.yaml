@@ -497,6 +497,19 @@ pipeline:
         '  role: data_plane' \
         '  role_data_plane:' \
         '    config_provider: yaml' \
+        'nginx_config:' \
+        '  # nginx creates its temp dirs under the APISIX prefix at startup, which is' \
+        '  # read-only here, so it dies with' \
+        '  #   mkdir() "/usr/local/apisix/client_body_temp" failed (30: Read-only file system)' \
+        '  # APISIX does not template these paths, but it does expose an http snippet, so' \
+        '  # point all five at /tmp, which is a tmpfs in the boot test and an emptyDir in' \
+        '  # the chart. Keep them together: nginx needs every one it is configured to use.' \
+        '  http_configuration_snippet: |' \
+        '    client_body_temp_path /tmp/apisix-client-body-temp;' \
+        '    proxy_temp_path       /tmp/apisix-proxy-temp;' \
+        '    fastcgi_temp_path     /tmp/apisix-fastcgi-temp;' \
+        '    uwsgi_temp_path       /tmp/apisix-uwsgi-temp;' \
+        '    scgi_temp_path        /tmp/apisix-scgi-temp;' \
         > "$D/conf.default/config.yaml"
       printf '%s\n' \
         'routes:' \

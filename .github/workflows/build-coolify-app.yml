@@ -183,6 +183,27 @@ jobs:
           output-file: sbom.spdx.json
           upload-artifact: false
 
+      - name: Trim the SBOM to packages only
+        # actions/attest-sbom rejects a predicate over 16 MiB, and this image's SBOM is
+        # past it: "SBOM file exceeds maximum allowed size: 16777216 bytes". A PHP app
+        # with a large vendor/ tree plus a Vite build produces tens of thousands of
+        # per-file entries. Drop those; the package list, which is the security-relevant
+        # part and what the 0-CVE gate reads, stays intact.
+        run: |
+          before=$(wc -c < sbom.spdx.json)
+          jq 'del(.files) | del(.relationships)' sbom.spdx.json > sbom.trimmed.json
+          mv sbom.trimmed.json sbom.spdx.json
+          after=$(wc -c < sbom.spdx.json)
+          echo "SBOM trimmed: ${before} -> ${after} bytes"
+          # Fail here rather than in the attest step, which reports only the raw byte
+          # count with no indication that trimming already ran.
+          test "$after" -lt 16777216 \
+            || { echo "SBOM is still ${after} bytes after trimming, over the 16 MiB cap"; exit 1; }
+          # A trim that removed everything would also be under the cap, so prove packages survived.
+          n=$(jq '(.packages // []) | length' sbom.spdx.json)
+          test "$n" -gt 0 || { echo "trimming left no packages in the SBOM"; exit 1; }
+          echo "SBOM retains ${n} packages"
+
       - name: Attest the SBOM (keyless, pushed to GHCR)
         uses: actions/attest-sbom@v4
         with:

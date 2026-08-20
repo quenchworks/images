@@ -47,7 +47,7 @@ check_cmd argocd-k8s-auth                   "argocd-k8s-auth"
 check_cmd argocd-git-ask-pass               "git credential helper"
 # ... and $ARGOCD_BINARY_NAME is the other documented selector.
 docker run --rm -e ARGOCD_BINARY_NAME=argocd-server --entrypoint /usr/bin/argocd "$IMAGE" \
-  --help 2>&1 | grep -q "Run the ArgoCD API server" \
+  --help 2>&1 | grep -q "gRPC/REST server which exposes the API" \
   || { echo "ARGOCD_BINARY_NAME override does not select the server"; exit 1; }
 echo "  ARGOCD_BINARY_NAME override -> ok"
 

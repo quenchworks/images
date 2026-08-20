@@ -190,6 +190,8 @@ pipeline:
       #        urllib3      2.6.3  -> 2.7.0   CVE-2026-44431/44432
       #        httplib2     0.31.2 -> 0.32.0  CVE-2026-59939 (HIGH; pure-python,
       #                                       only new dep is pyparsing<4,>=3.1)
+      #        django       <5.2.15 -> 5.2.15  (patch within the 5.2 line authentik targets)
+      #        h2           <4.3.0  -> 4.3.0
       #      The two python-3.14 / python-3.14-base rows (CVE-2026-15308, fixed in
       #      3.14.6-r4) need NO edit: apko.yaml lists `python-3.14` UNPINNED, so a
       #      plain rebuild resolves Wolfi's newest (r4 is published on both arches).
@@ -210,13 +212,15 @@ pipeline:
           '  "pyasn1==0.6.4",\n'
           '  "setuptools==83.0.0",\n'
           '  "httplib2==0.32.0",\n'
+          '  "django==5.2.15",\n'
+          '  "h2==4.3.0",\n'
           ']\n'
       )
       t, n = re.subn(r'(?m)^\[tool\.uv\]\s*$', overrides, t, count=1)
       assert n == 1, "did not find a [tool.uv] table to extend with override-dependencies"
       p.write_text(t)
       PYFIX
-      grep -n "no-binary-package\|override-dependencies\|cryptography==\|pyjwt==\|aiohttp==\|idna==\|msgpack==\|urllib3==\|httplib2==" pyproject.toml || true
+      grep -n "no-binary-package\|override-dependencies\|cryptography==\|pyjwt==\|aiohttp==\|idna==\|msgpack==\|urllib3==\|httplib2==\|django==\|h2==" pyproject.toml || true
       # Clearing the pin makes uv re-resolve, so we don't pass --locked.
       uv venv --python "$UV_PYTHON" "$VENV_PATH"
       # --no-editable: authentik is a uv WORKSPACE with local path members under
