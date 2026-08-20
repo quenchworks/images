@@ -1,0 +1,107 @@
+# Builds the Envoy Gateway control plane from source onto Wolfi. Single static Go
+# binary, no CGO. Upstream's tools/make/golang.mk builds ./cmd/envoy-gateway with
+# CGO_ENABLED=0 and stamps two -X vars into internal/cmd/version
+# (envoyGatewayVersion from `git describe --tags`, gitCommitID from `git rev-parse
+# HEAD`); the tarball has no .git, so both come from build.conf instead. Output is a
+# signed APK in Quenchworks' own repo. No upstream distro binaries.
+#
+# Only `envoy-gateway` is installed, matching upstream's own image
+# (tools/docker/envoy-gateway/Dockerfile ships exactly that one binary). egctl is a
+# developer CLI and is not part of the runtime.
+package:
+  name: quench-envoy-gateway
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Envoy Gateway control plane, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go-1.26
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/envoyproxy/gateway/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      # go.mod asks for go 1.26.5 (1.8.x) / 1.26.6 (1.9.x); Wolfi's go-1.26 is 1.26.7,
+      # so the installed toolchain satisfies both and must not fetch another one.
+      export GOTOOLCHAIN=local
+
+      # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
+      # FLOOR is a FLOOR, not a pin. A bare `go get mod@vX` fails silently in two
+      # directions: it is a NO-OP when an upstream `replace` overrides it, and it
+      # becomes a DOWNGRADE once upstream requires more than vX -- re-introducing
+      # the CVE it was added to clear. So float only what is below the floor, then
+      # assert the SHIPPED BINARY carries nothing below it.
+      #
+      # cel-go: GHSA-gcjh-h69q-9w9g (MEDIUM, json:"-" fields readable from user CEL
+      #   expressions), first fixed in 0.29.0. Reached via k8s.io/apiserver's CEL libs.
+      #   1.8.3 requires 0.26.0 (floated); 1.9.0 already requires 0.30.0 (no-op there).
+      # x/mod: CVE-2026-56864 / CVE-2026-56865 (HIGH, malicious GOSUMDB/GOPROXY).
+      #   Floor is v0.40.0, NOT the v0.37.0 Trivy names -- see the dated note at the
+      #   bottom of docs/go-module-float.md. Both lines require v0.38.0.
+      # oras-go: CVE-2026-50163 (HIGH), fixed in 2.6.2. 1.8.3 requires 2.6.1; 1.9.0
+      #   already requires 2.6.2. NOT currently linked into the binary (it sits in the
+      #   module graph via helm), so the image scan does not see it today -- the floor
+      #   is here so a future patch that does link it cannot fail the gate on publish
+      #   day. Drop it once no line requires oras below 2.6.2.
+      # Neither tag carries any `replace` directive, so nothing shadows the float.
+      # x/net, x/text, x/crypto and grpc are already at or above the house floors on
+      # both lines (0.57.0 / 0.40.0 / 0.54.0 / 1.82.1), so they are not listed: an
+      # unnecessary floor is dead weight that inverts into a downgrade later.
+      FLOOR="github.com/google/cel-go@v0.29.2 golang.org/x/mod@v0.40.0 oras.land/oras-go/v2@v2.6.2"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is
+      # the EFFECTIVE version and a replace cannot hide behind the require line.
+      go list -m $MODS
+      need="$(go list -m $MODS | awk '{ print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
+      go mod tidy
+
+      go build -trimpath \
+        -ldflags "-s -w \
+          -X github.com/envoyproxy/gateway/internal/cmd/version.envoyGatewayVersion=v${{package.version}} \
+          -X github.com/envoyproxy/gateway/internal/cmd/version.gitCommitID=__COMMIT__" \
+        -o "${{targets.destdir}}/usr/bin/envoy-gateway" ./cmd/envoy-gateway
+
+      # The float is only real if it reached the BINARY. Every `dep`/`=>` line of
+      # `go version -m` must be at or above its floor -- the `=>` line is what
+      # catches a replace-shadowed float. Fail the build rather than ship it.
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/envoy-gateway" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor envoy-gateway)"
+      [ -z "$bad" ] || { echo "0-CVE float did not reach the binary:"; echo "$bad"; exit 1; }
+
+      # Wasm module cache dir. Upstream's Dockerfile creates /var/lib/eg 0777; the
+      # chart mounts an emptyDir over /var/lib/eg/wasm, but the controller also runs
+      # with readOnlyRootFilesystem, so the tree must exist. apko owns it to 1001.
+      mkdir -p "${{targets.destdir}}/var/lib/eg/wasm"

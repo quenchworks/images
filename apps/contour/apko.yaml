@@ -1,0 +1,48 @@
+# Assembles the Contour runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+#
+# ONE image, several roles -- the chart picks the role with args, the image picks none:
+#   contour serve ...                 the xDS control plane (Deployment)
+#   contour bootstrap <path> ...      writes the Envoy bootstrap config (Envoy pod initContainer)
+#   contour envoy shutdown-manager    sidecar in the Envoy pod; `contour envoy shutdown` is its preStop
+#   contour certgen ...               the contour<->envoy xDS mTLS cert Job
+#   contour gateway-provisioner ...   the Gateway API provisioner (a.k.a. contour-provisioner)
+#   contour cli {cds,eds,lds,rds,sds} xDS debug client
+#   contour version
+# So the entrypoint is the BARE binary, with no default subcommand: a default of `serve`
+# would make every non-serve role need a command override. The image ships no shell, so
+# every one of those must be passed in exec form.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-contour@local
+
+accounts:
+  groups:
+    - groupname: contour
+      gid: 1001
+  users:
+    - username: contour
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/contour
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-contour"
+  org.opencontainers.image.licenses: "Apache-2.0"

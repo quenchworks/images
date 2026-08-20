@@ -1,0 +1,98 @@
+# Apache APISIX runtime image: nonroot (uid 1001), multi-arch.
+#
+# NOT SHELL-FREE, like apps/kong -- busybox and bash are real runtime dependencies:
+# /usr/bin/apisix is a bash script that resolves `openresty` off PATH and shells out,
+# and apisix/cli/env.lua runs `ulimit -n` through a shell. See melange.yaml's header.
+#
+# PORTS: proxy 9080 (http) / 9443 (https), Admin API 9180, control 9090, prometheus
+# 9091. Every one of those is APISIX's OWN default and every one is above 1024, so
+# nonroot binds them with no capability granted and nothing here surprises anyone
+# reading APISIX's docs. (Control and prometheus bind 127.0.0.1 by default; the chart
+# sets apisix.control.ip / plugin_attr.prometheus.export_addr.ip to 0.0.0.0 so probes
+# and scrapes can reach them.)
+#
+# STANDALONE BY DEFAULT: the shipped conf.default/config.yaml sets
+# deployment.role=data_plane + role_data_plane.config_provider=yaml, APISIX's
+# file-driven standalone mode. `docker run <image>` is therefore a working gateway with
+# no etcd to stand up first, routes come from conf/apisix.yaml, and etcd is never
+# contacted -- the same posture as apps/kong's KONG_DATABASE=off. For the etcd-backed
+# topology the chart renders its own config.yaml into conf/ and sets
+# APISIX_STAND_ALONE=false so the entrypoint also runs `apisix init_etcd`.
+#
+# TWO WRITABLE DIRECTORIES, both shipped EMPTY and owned by 1001:
+#   /usr/local/apisix/conf  -- `apisix init` regenerates nginx.conf here on EVERY start
+#   /usr/local/apisix/logs  -- error/access logs plus the worker_events unix sockets
+# They are empty on purpose. A volume mounted over a populated directory MASKS what was
+# shipped there, and nginx then dies with `open() ".../conf/mime.types" failed`. The
+# pristine tree lives read-only at conf.default/ and the entrypoint re-seeds conf/ from
+# it with `cp -rn`, so a chart-mounted config.yaml or cert wins and everything else is
+# filled in. /usr/local/apisix itself (apisix/, deps/, ui/) stays read-only.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-apisix@local
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  - path: /usr/local/apisix/conf
+    type: directory
+    permissions: 0o755
+    uid: 1001
+    gid: 1001
+  - path: /usr/local/apisix/logs
+    type: directory
+    permissions: 0o755
+    uid: 1001
+    gid: 1001
+
+# REQUIRED, not cosmetic. bin/apisix selects its entry point by testing
+# `-s ./apisix/cli/apisix.lua`, and only that relative-path branch makes
+# apisix/cli/env.lua add `deps/share/lua/5.1/?/init.lua` to package.path. Several rocks
+# (lyaml first among them) install as a DIRECTORY with an init.lua, so from any other
+# cwd the CLI dies on `module 'lyaml' not found`. Upstream's own Dockerfile sets the
+# same WORKDIR; LUA_PATH below covers the other branch as a belt-and-braces measure.
+work-dir: /usr/local/apisix
+
+entrypoint:
+  command: /usr/bin/apisix-docker-start
+
+environment:
+  # openresty and luajit MUST be on PATH: /usr/bin/apisix is bash and does
+  # `command -v openresty` plus `openresty -V`, failing with "Please check the version
+  # of OpenResty and Lua" if they are not found.
+  PATH: /usr/local/openresty/bin:/usr/local/openresty/nginx/sbin:/usr/local/openresty/luajit/bin:/usr/local/bin:/usr/bin:/bin
+  # Makes the CLI's rock tree resolvable regardless of cwd (see work-dir). The trailing
+  # `;;` expands to LuaJIT's own default path, so nothing is lost.
+  LUA_PATH: /usr/local/apisix/deps/share/lua/5.1/?.lua;/usr/local/apisix/deps/share/lua/5.1/?/init.lua;;
+  LUA_CPATH: /usr/local/apisix/deps/lib/lua/5.1/?.so;;
+  # Standalone (file-driven) out of the box, so the entrypoint skips `apisix init_etcd`,
+  # which would otherwise block on an etcd that is not there. Set to "false" for the
+  # etcd-backed topology; the chart does.
+  APISIX_STAND_ALONE: "true"
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.title: apisix
+  org.opencontainers.image.description: "Apache APISIX -- cloud-native API gateway on OpenResty/LuaJIT, hardened by QuenchWorks (apisix-runtime rebuilt from source against current OpenSSL, no vendored crypto, no prebuilt wasmtime, admin UI built from source)"
+  org.opencontainers.image.licenses: Apache-2.0
+  org.opencontainers.image.source: https://github.com/apache/apisix
+  org.opencontainers.image.vendor: QuenchWorks

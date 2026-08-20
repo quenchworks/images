@@ -1,0 +1,50 @@
+# Assembles the KrakenD CE runtime image. Minimal, nonroot, multi-arch, SBOM by
+# apko, read-only-rootfs friendly.
+#
+# KrakenD will not start without a config file, and this image has no shell, so
+# the entrypoint cannot be a wrapper that writes one. The melange package bakes a
+# minimal bootable config at /etc/krakend/krakend.json and the entrypoint points
+# at it, so `docker run <image>` alone brings up a working gateway serving lura's
+# built-in /__health on :8080. A chart mounts its own krakend.json over that path
+# (same path upstream's deb/rpm/docker packaging uses) and needs no arg change.
+#
+# 8080 is lura's default port (config.defaultPort) and is unprivileged, so the
+# image runs as nonroot with no capabilities. KrakenD is stateless and writes
+# nothing at runtime -- no volumes, no writable paths.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-krakend@local
+
+accounts:
+  groups:
+    - groupname: krakend
+      gid: 1001
+  users:
+    - username: krakend
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/krakend run -c /etc/krakend/krakend.json
+
+work-dir: /etc/krakend
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-krakend"
+  org.opencontainers.image.licenses: "Apache-2.0"

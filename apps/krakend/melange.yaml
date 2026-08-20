@@ -1,0 +1,176 @@
+# Builds KrakenD Community Edition (krakend/krakend-ce) from source onto Wolfi.
+# Single static Go binary, no CGO. Output is a signed APK in Quenchworks' own
+# repo. No upstream distro binaries.
+#
+# HOW UPSTREAM ACTUALLY BUILDS CE (from its Makefile `build` target, not guessed):
+#   krakend-ce is the community *distribution*: the repo root is a library that
+#   wires the KrakenD framework (github.com/luraproject/lura/v2) together with
+#   ~30 bundled krakend/* middleware modules (jose, lua, cel, martian, cors,
+#   botdetector, amqp, pubsub, lambda, metrics, opencensus, ...). The runnable
+#   main package is `./cmd/krakend-ce`, and that is the only build target:
+#     go build -ldflags "-X ${MODULE}/pkg.Version=${VERSION} \
+#                        -X github.com/luraproject/lura/v2/core.KrakendVersion=${VERSION} \
+#                        -X github.com/luraproject/lura/v2/core.GlibcVersion=${GLIBC_VERSION}" \
+#              -o krakend ./cmd/krakend-ce
+#   All the middleware is compiled IN; there is nothing to assemble afterwards.
+#
+# VERSION LDFLAGS -- only lura's matters. Upstream's `${MODULE}/pkg.Version`
+# target does not exist in the tree (there is no `pkg/` package in the tag
+# tarball), so that -X is silently dropped by the linker. The var that `krakend
+# version` and the X-KRAKEND response header actually read is
+# github.com/luraproject/lura/v2/core.KrakendVersion, which defaults to
+# "undefined". Verified against the built binary: it reports
+# "KrakenD Version: 2.13.9".
+#
+# GlibcVersion is documented upstream as "the version of the glibc used by CGO
+# at build time". We build with CGO off and link nothing, so stamping a glibc
+# release here would be a lie; it is stamped NONE-CGO_DISABLED instead of
+# running upstream's find_glibc.sh.
+#
+# CGO / PLUGINS: KrakenD's plugin loader (plugin.go -> lura's
+# proxy/plugin + transport/http/{client,server}/plugin) uses Go's `plugin`
+# package, which on Linux needs CGO in BOTH the host binary and the .so. That is
+# why upstream's Alpine Dockerfile installs gcc/musl-dev/binutils-gold. We build
+# CGO_ENABLED=0 deliberately: a loadable Go plugin must be compiled against a
+# byte-identical toolchain and dependency graph, which is why upstream ships a
+# dedicated `krakend/builder:<ver>` image -- we do not ship one, so plugin
+# support would be unusable here even with CGO on. The loader degrades safely
+# (logPluginLoaderErrors logs at DEBUG and continues), so `krakend run` is
+# unaffected; only external .so plugins and `krakend test-plugin` are not
+# available. Everything users normally reach for (Lua, CEL, martian, JWT/JOSE,
+# CORS, rate limiting, circuit breaker, telemetry) is compiled in.
+#
+# CONFIG SCHEMA: `cmd/krakend-ce/main.go` does `//go:embed schema` and upstream's
+# Makefile wgets cmd/krakend-ce/schema/schema.json from the krakend-schema repo's
+# main BRANCH before building. That URL is mutable (no v2.13 tag exists in
+# krakend/krakend-schema -- its tags stop at v2.11), so it cannot be pinned by
+# sha256 and is not fetched here. main.go tolerates the absence (`if err == nil`),
+# so `krakend check` still parses and validates the config, just without the
+# extra JSON-schema pass.
+#
+# go.mod declares go 1.25.3; we build with go-1.26 (newest, clears the stdlib CVE
+# batch) and GOTOOLCHAIN=local so go.mod's directive does not trigger a toolchain
+# download in the sandbox.
+package:
+  name: quench-krakend
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened KrakenD API gateway (Community Edition), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go-1.26
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/krakend/krakend-ce/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Build the KrakenD CE binary (static, CGO off)
+    runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOTOOLCHAIN=local
+      export GOFLAGS=-mod=mod
+      # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
+      #   golang.org/x/mod            GO-2026-6180 / GO-2026-6179 (sumdb Lookup
+      #                               accepts unrelated hashes; tlog tile
+      #                               verification bypass) -- fixed in v0.40.0.
+      #                               NOTE: upstream requires v0.36.0, but
+      #                               `go mod tidy` after any other float pulls
+      #                               v0.37.0, which is also affected.
+      #   github.com/google/cel-go    GO-2026-6094 (JSON private fields exposed
+      #                               via NativeTypes/ParseStructTag) -- fixed in
+      #                               v0.30.0. Pulled in via krakend-cel.
+      #   github.com/klauspost/compress GO-2026-5841 (OOB read in s2) -- v1.18.7.
+      #   golang.org/x/text           CVE-2026-56852 (infinite loop on invalid
+      #                               input) -- v0.39.0.
+      # The remaining house floors (x/net, x/sys, x/crypto, x/oauth2, grpc) are
+      # already satisfied by upstream's go.mod at 2.13.9; they stay listed so a
+      # future version bump cannot silently drop below them.
+      # krakend-ce 2.13.9 has NO `replace` directives, so nothing can shadow the
+      # float (docs/go-module-float.md case 1).
+      #
+      # FLOOR is a FLOOR, not a pin. A bare `go get mod@vX` fails silently in two
+      # directions: it is a NO-OP when an upstream `replace` overrides it, and it
+      # becomes a DOWNGRADE once upstream requires more than vX -- re-introducing
+      # the CVE it was added to clear. So float only what is below the floor, then
+      # assert the SHIPPED BINARY carries nothing below it.
+      FLOOR="golang.org/x/net@v0.56.0 golang.org/x/sys@v0.46.0 golang.org/x/crypto@v0.53.0 golang.org/x/text@v0.39.0 golang.org/x/oauth2@v0.36.0 golang.org/x/mod@v0.40.0 google.golang.org/grpc@v1.82.1 github.com/google/cel-go@v0.30.0 github.com/klauspost/compress@v1.18.7"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is
+      # the EFFECTIVE version and a replace cannot hide behind the require line.
+      go list -m $MODS
+      need="$(go list -m $MODS | awk '{ print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
+      go mod tidy
+      go build -trimpath \
+        -ldflags "-s -w -X github.com/luraproject/lura/v2/core.KrakendVersion=${{package.version}} -X github.com/luraproject/lura/v2/core.GlibcVersion=NONE-CGO_DISABLED" \
+        -o "${{targets.destdir}}/usr/bin/krakend" ./cmd/krakend-ce
+      # The float is only real if it reached the BINARY. Every `dep`/`=>` line of
+      # `go version -m` must be at or above its floor -- the `=>` line is what
+      # catches a replace-shadowed float. Fail the build rather than ship it.
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/krakend" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor krakend)"
+      [ -z "$bad" ] || { echo "0-CVE float did not reach the binary:"; echo "$bad"; exit 1; }
+
+  - name: Bake a minimal working default config
+    runs: |
+      set -eu
+      # KrakenD refuses to start without a config file, and a shell-free hardened
+      # image cannot run a wrapper script to synthesise one, so a bootable default
+      # ships in the image. Upstream's official Dockerfile does the same thing
+      # (`echo '{ "version": 3 }' > /etc/krakend/krakend.json`); this is that, plus
+      # an explicit port and stdout logging so the image is legible in a container.
+      # No endpoints: with none declared KrakenD still serves lura's built-in
+      # /__health (router/gin enables it unless disable_health is set) and answers
+      # 404 elsewhere, which is exactly what a gateway with nothing routed yet
+      # should do. /etc/krakend is the path upstream's deb/rpm/docker packaging
+      # uses, so a chart mounting its own krakend.json over this needs no new path.
+      # Nothing is written at runtime -- read-only rootfs friendly.
+      mkdir -p "${{targets.destdir}}/etc/krakend"
+      cat > "${{targets.destdir}}/etc/krakend/krakend.json" <<'JSON'
+      {
+        "version": 3,
+        "name": "quench-krakend",
+        "port": 8080,
+        "timeout": "3s",
+        "cache_ttl": "300s",
+        "extra_config": {
+          "telemetry/logging": {
+            "level": "INFO",
+            "prefix": "[KRAKEND]",
+            "syslog": false,
+            "stdout": true
+          }
+        },
+        "endpoints": []
+      }
+      JSON

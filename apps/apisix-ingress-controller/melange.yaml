@@ -1,0 +1,70 @@
+# Builds the Apache APISIX Ingress Controller from the official ASF source release
+# onto Wolfi. Single static Go binary, no CGO (upstream's own Makefile builds with
+# CGO_ENABLED=0; its distroless/cc base is habit, not a requirement).
+#
+# main package: cmd/main.go (module github.com/apache/apisix-ingress-controller).
+# Deps are NOT vendored in the release tarball, so the build resolves them from the
+# module proxy with -mod=mod, exactly like upstream's `make build`.
+#
+# The four -X symbols are upstream's GO_LDFLAGS verbatim (Makefile VERSYM /
+# GITSHASYM / BUILDOSSYM / MINK8SVERSYM), so `apisix-ingress-controller version
+# --long` reports the real release, the real tag commit and the Kubernetes floor
+# instead of empty strings. version.Short() is "<ver>-<gitsha>-<goversion>", so
+# leaving the revision unset would also corrupt `--version`.
+#
+# No golang.org/x/* float is needed: 2.2.0 shipped "chore(deps): upgrade
+# dependencies flagged by security advisories" and already resolves x/net v0.56.0,
+# x/text v0.40.0, x/crypto v0.54.0, x/sys v0.47.0, grpc v1.82.1, cel-go v0.29.0.
+# A comprehensive trivy scan of a locally built binary reported ZERO module
+# findings; the only findings were stdlib CVEs of the local go1.26.5 toolchain,
+# all fixed in 1.26.6 = Wolfi's go-1.26 (pinned below).
+#
+# NOTE for the chart: upstream runs this controller with an `adc` SIDECAR
+# (ghcr.io/api7/adc, pinned at 0.27.1 by this release) sharing a Unix socket; the
+# controller reaches it via ADC_SERVER_URL. adc is a SEPARATE image and is not
+# bundled here.
+package:
+  name: quench-apisix-ingress-controller
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Apache APISIX Ingress Controller, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go-1.26
+
+pipeline:
+  - uses: fetch
+    with:
+      # ASF source release. archive.apache.org is permanent; downloads.apache.org
+      # only serves the current release and 404s once this one is superseded.
+      uri: https://archive.apache.org/dist/apisix/ingress-controller/${{package.version}}/apache-apisix-ingress-controller-${{package.version}}-src.tgz
+      expected-sha256: __SHA256__
+      strip-components: 1
+  - runs: |
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's directive
+      export GO111MODULE=on
+      V="github.com/apache/apisix-ingress-controller/internal/version"
+      M="github.com/apache/apisix-ingress-controller/internal/manager"
+      go build -trimpath \
+        -ldflags "-s -w \
+          -X=${V}._buildVersion=${{package.version}} \
+          -X=${V}._buildGitRevision=__COMMIT__ \
+          -X=${V}._buildOS=linux/$(go env GOARCH) \
+          -X=${M}._minK8sVersion=__MIN_K8S__" \
+        -o "${{targets.destdir}}/usr/bin/apisix-ingress-controller" ./cmd/main.go

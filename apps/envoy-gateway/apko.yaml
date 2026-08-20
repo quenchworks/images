@@ -1,0 +1,60 @@
+# Assembles the Envoy Gateway control-plane runtime image. Minimal, nonroot,
+# multi-arch, SBOM by apko. The entrypoint is the BARE binary, deliberately: this one
+# image plays two roles in a cluster and each supplies its own argv.
+#   1. the control-plane Deployment runs `envoy-gateway server`
+#   2. every managed Envoy pod gets a `shutdown-manager` sidecar that the controller
+#      generates as Command ["envoy-gateway"] + Args ["envoy","shutdown-manager"]
+#      (internal/infrastructure/kubernetes/proxy/resource.go), using the image from
+#      EnvoyGateway `provider.kubernetes.shutdownManager.image` -- i.e. THIS image.
+# A baked-in `server` subcommand would still be overridden in k8s, but it would break
+# role 2 in a plain `docker run` and hide it from the boot test. `envoy-gateway` is on
+# PATH via /usr/bin, which is what the generated bare Command needs.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-envoy-gateway@local
+
+accounts:
+  groups:
+    - groupname: envoy-gateway
+      gid: 1001
+  users:
+    - username: envoy-gateway
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  # Wasm module cache. Writable for a read-only rootfs; the chart may mount an
+  # emptyDir or a PVC over /var/lib/eg/wasm.
+  - path: /var/lib/eg
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/lib/eg/wasm
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /usr/bin/envoy-gateway
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-envoy-gateway"
+  org.opencontainers.image.licenses: "Apache-2.0"

@@ -1881,3 +1881,48 @@ catalog:
     license: MIT
     tier: standard
     status: built
+
+  - name: apisix
+    category: Gateway
+    summary: 'Cloud-native API gateway on OpenResty/LuaJIT with dynamic routing, auth, rate limiting, observability and a 100+ plugin ecosystem. Built from source including api7''s apisix-runtime, which rebuilds OpenResty against current OpenSSL rather than upstream''s pinned older crypto, plus the admin dashboard SPA that upstream now embeds by commit id instead of releasing separately. Runs file-driven standalone by default, so no etcd is required. Ships no prebuilt wasmtime, so proxy-wasm plugins are unavailable, and omits saml-auth because it statically links a 2019 xmlsec fork our scanner cannot inspect.'
+    source: https://github.com/apache/apisix
+    upstream: https://apisix.apache.org
+    license: Apache-2.0
+    tier: standard
+    status: built
+
+  - name: apisix-ingress-controller
+    category: Gateway
+    summary: 'The Apache APISIX Ingress Controller, the Kubernetes operator that drives an APISIX data plane. Reconciles Gateway API resources, native Ingress and APISIX''s own CRDs such as ApisixRoute, ApisixUpstream and ApisixPluginConfig into APISIX configuration. Built from the ASF source release; tracks Gateway API 1.6 and needs Kubernetes 1.31 or newer.'
+    source: https://github.com/apache/apisix-ingress-controller
+    upstream: https://apisix.apache.org/docs/ingress-controller/overview/
+    license: Apache-2.0
+    tier: standard
+    status: built
+
+  - name: envoy-gateway
+    category: Gateway
+    summary: 'Gateway API control plane from the Envoy project. Watches Gateway, HTTPRoute and its own policy CRDs and programs Envoy over xDS, provisioning and managing the proxy fleet. Drives the QuenchWorks envoy image as its data plane. Ships two minor lines because 1.7.x carries a docker/docker advisory whose stated fix version has no corresponding Go module.'
+    source: https://github.com/envoyproxy/gateway
+    upstream: https://gateway.envoyproxy.io
+    license: Apache-2.0
+    tier: standard
+    status: built
+
+  - name: contour
+    category: Gateway
+    summary: 'Project Contour, the CNCF Kubernetes ingress controller that programs Envoy over xDS. Serves HTTPProxy and Ingress plus Gateway API, and one binary covers every role, including the xDS control plane, Envoy bootstrap generation, certgen, shutdown-manager and the Gateway provisioner. Pairs with the QuenchWorks envoy data plane.'
+    source: https://github.com/projectcontour/contour
+    upstream: https://projectcontour.io
+    license: Apache-2.0
+    tier: standard
+    status: built
+
+  - name: krakend
+    category: Gateway
+    summary: 'Stateless, declarative API gateway that aggregates and transforms backend responses from a single JSON config. Built from the community distribution''s own target, so the Lua, CEL, martian, JWT/JOSE, CORS, rate-limiting and telemetry middleware are compiled in, and ships a minimal bootable config so the image starts standalone. CGO is off, which trades external plugin loading for a hardened nonroot base.'
+    source: https://github.com/krakend/krakend-ce
+    upstream: https://www.krakend.io
+    license: Apache-2.0
+    tier: standard
+    status: built

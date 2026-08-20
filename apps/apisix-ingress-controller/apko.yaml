@@ -1,0 +1,44 @@
+# Assembles the APISIX Ingress Controller runtime image. Minimal, nonroot,
+# multi-arch, SBOM by apko. The entrypoint is the bare controller binary: with no
+# arguments it runs on built-in defaults (health probes :8081, leader election on),
+# and the chart adds `-c /etc/apisix-ingress-controller/config.yaml` the way
+# upstream's Deployment does. There is no server to start standalone -- the
+# controller needs a Kubernetes API server -- so no default args are baked in.
+#
+# Ports the chart should expose: 8080 metrics (off unless metrics_addr is set),
+# 8081 health/readiness probes, 9443 the validating webhook (off by default).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-apisix-ingress-controller@local
+
+accounts:
+  groups:
+    - groupname: apisix-ingress-controller
+      gid: 1001
+  users:
+    - username: apisix-ingress-controller
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/apisix-ingress-controller
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-apisix-ingress-controller"
+  org.opencontainers.image.licenses: "Apache-2.0"

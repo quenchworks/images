@@ -1,0 +1,597 @@
+# Builds Apache APISIX from source onto Wolfi. Apache-2.0. Output is a signed APK in
+# QuenchWorks' own repo -- no upstream distro packages, no vendor container images.
+#
+# WHAT MAKES APISIX DIFFERENT FROM EVERY OTHER APP HERE except apps/kong: it is not a
+# binary, it is a Lua application that runs inside a PATCHED OpenResty ("apisix-runtime",
+# api7's distribution) with ~58 LuaRocks dependencies. Five consequences:
+#
+#   1) Wolfi's stock `openresty` package is UNUSABLE, even though it exists and is
+#      NEWER (1.31.1.1) than the version APISIX pins. Two independent reasons:
+#        - APISIX's Lua calls resty.apisix.* / resty.events.* / resty.ngxvar, which only
+#          exist when OpenResty is compiled WITH api7's nginx modules. apisix/cli/env.lua
+#          greps `openresty -V` for the string "apisix-nginx-module" and flips
+#          `use_apisix_base` off when it is absent, degrading the generated nginx.conf
+#          (no dynamic upstream keepalive, no `lua {}` meta subsystem -- which is where
+#          the standalone-config and stream-prometheus shared dicts live -- no
+#          `grpc_set_header :authority`, no mirror-on-demand, no request-id log field).
+#        - apisix/events.lua UNCONDITIONALLY requires resty.events.compat, whose
+#          resty/events/disable_listening.lua does an FFI call to
+#          `ngx_lua_ffi_disable_listening_unix_socket`. That symbol comes from
+#          lua-resty-events' nginx CORE module. Without it every worker dies in
+#          init_worker, so "run on stock OpenResty" is not an option, it is a crash.
+#      OpenResty is therefore rebuilt here from source with api7's module set.
+#
+#   2) The patch set is version-locked. apisix-nginx-module ships patches in
+#      per-OpenResty directories and its patch.sh matches the version EXACTLY
+#      (`*openresty-1.29.2.4`); 1.29.2.5 already fails with "can't detect OpenResty
+#      version". That is why build.conf ships LATEST ONLY, exactly as apps/kong does.
+#
+#   3) Upstream vendors OpenSSL 3.4.1 configured with `enable-weak-ssl-ciphers
+#      enable-md2 enable-rc5`, plus its own zlib and pcre, under
+#      /usr/local/openresty/openssl3. This recipe vendors NONE of them and links
+#      Wolfi's current openssl/pcre2/zlib -- the same float-to-the-fix discipline the
+#      Go apps use. Verified: the full runtime builds and APISIX boots and proxies
+#      against Wolfi OpenSSL 3.6.3.
+#
+#   4) NO WASM. api7's build adds wasm-nginx-module, whose install-wasmtime.sh
+#      downloads a PREBUILT wasmtime C-API tarball from a GitHub release. That is a
+#      vendored binary blob, it cannot be honestly SBOM'd, and it breaks the
+#      clean-room rule -- so the module is dropped. Consequence: the `wasm` config key
+#      and proxy-wasm plugins are unavailable. Nothing in APISIX's default plugin list
+#      needs them (`wasm_vm wasmtime;` is emitted only under `{% if wasm then %}`).
+#
+#   5) NOT SHELL-FREE, like apps/kong. `/usr/bin/apisix` is a BASH script that shells
+#      out to `openresty -V`/`command -v`, and apisix/cli/env.lua runs `ulimit -n`
+#      through a shell. busybox + bash are genuine runtime dependencies.
+#
+# THE ADMIN UI IS PART OF THIS IMAGE, not a separate app. apache/apisix-dashboard
+# stopped cutting releases and is now embedded by commit id: `.requirements` pins
+# APISIX_DASHBOARD_COMMIT, and apisix/cli/ngx_tpl.lua serves `location ^~ /ui/` with
+# `root <apisix_home>/ui`. It is a pnpm/Vite TypeScript SPA with no backend at all
+# (the old Go manager-api is gone), so it is built from source in a second stage here.
+package:
+  name: quench-apisix
+  version: __VER__
+  epoch: 0
+  description: "QuenchWorks hardened Apache APISIX, built from source on Wolfi (apisix-runtime OpenResty rebuilt against current OpenSSL, no vendored crypto, no prebuilt wasmtime)"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    # /usr/bin/apisix carries `#!/bin/bash`, so melange emits a `cmd:bash` runtime
+    # dependency. We do not ship a competing bash, so unlike apps/kong's cmd:resty
+    # there is nothing to `provides:` our way out of -- just declare it.
+    runtime:
+      - ca-certificates-bundle
+      # The CLI is bash and shells out; env.lua runs `ulimit -n` through a shell.
+      - busybox
+      - bash
+      # Linked by the rebuilt OpenResty and by the C rocks.
+      - openssl
+      - pcre2       # OpenResty
+      - pcre        # lrexlib-pcre (a jsonschema dependency) is PCRE1-only
+      - zlib
+      - yaml        # lyaml
+      - libxml2     # xml2lua
+      - openldap    # lua-resty-ldap / ldap-auth
+      - brotli      # brotli-ffi, the gzip/brotli plugins
+      - libstdc++   # api7-lua-rapidjson (C++)
+      - libgcc
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - bash
+      - ca-certificates-bundle
+      - curl
+      - wget            # see the wget shim note in the saml stage
+      - git
+      - patch
+      - perl
+      - unzip
+      - findutils
+      - linux-headers
+      - pkgconf
+      - cmake
+      - m4
+      - automake
+      - autoconf
+      - libtool
+      # Build against Wolfi's CURRENT crypto/regex/compression, never api7's pinned
+      # older ones. openssl-dev ONLY -- listing `openssl`/`openssl-config` here pinned
+      # an older libssl than the rest of the toolchain expects in apps/kong.
+      - openssl-dev
+      - pcre2-dev
+      # PCRE **1**, not a typo: jsonschema -> lrexlib-pcre needs pcre.h, and there is
+      # no pcre2 build of that rock. Without it the whole rock tree fails on
+      # "Could not find header file for PCRE".
+      - pcre-dev
+      - zlib-dev
+      - yaml-dev
+      - libxml2-dev
+      - libxslt-dev
+      - openldap-dev
+      - brotli-dev
+      - expat-dev
+      - luarocks
+      # The admin SPA stage (pnpm/Vite). npm is here to install pinned pnpm; python3
+      # and build-base cover any node-gyp fallback in the dependency tree.
+      - nodejs
+      - npm
+      - python3
+
+pipeline:
+  # ---- APISIX itself --------------------------------------------------------
+  # Release TARBALL, not a git clone: melange's git-checkout fails instantly and
+  # repeatably in this sandbox on GitHub repos ("fatal: remote helper 'https' aborted
+  # session"), which is why apps/kong made the same switch. The tag is in the URL and
+  # the sha256 covers the bytes, so provenance is equal to expected-commit.
+  - uses: fetch
+    with:
+      uri: https://github.com/apache/apisix/archive/refs/tags/__VER__.tar.gz
+      expected-sha256: "__SHA256__"
+      extract: true
+      strip-components: 0
+
+  # ---- the apisix-runtime roster, version-for-version from
+  #      api7/apisix-build-tools @ apisix-runtime/__RUNTIME__ -----------------
+  - uses: fetch
+    with:
+      uri: https://openresty.org/download/openresty-__OPENRESTY__.tar.gz
+      expected-sha256: "__OPENRESTY_SHA256__"
+      extract: true
+      strip-components: 0
+  - uses: fetch
+    with:
+      uri: https://github.com/api7/apisix-nginx-module/archive/refs/tags/__ANM__.tar.gz
+      expected-sha256: "__ANM_SHA256__"
+      extract: true
+      strip-components: 0
+  - uses: fetch
+    with:
+      uri: https://github.com/api7/ngx_multi_upstream_module/archive/refs/tags/__NMUM__.tar.gz
+      expected-sha256: "__NMUM_SHA256__"
+      extract: true
+      strip-components: 0
+  - uses: fetch
+    with:
+      uri: https://github.com/api7/mod_dubbo/archive/refs/tags/__DUBBO__.tar.gz
+      expected-sha256: "__DUBBO_SHA256__"
+      extract: true
+      strip-components: 0
+  - uses: fetch
+    with:
+      uri: https://github.com/api7/lua-var-nginx-module/archive/refs/tags/v__LVAR__.tar.gz
+      expected-sha256: "__LVAR_SHA256__"
+      extract: true
+      strip-components: 0
+  - uses: fetch
+    with:
+      uri: https://github.com/Kong/lua-resty-events/archive/refs/tags/__LRE__.tar.gz
+      expected-sha256: "__LRE_SHA256__"
+      extract: true
+      strip-components: 0
+  - uses: fetch
+    with:
+      uri: https://github.com/api7/ngx_http_ffi_client/archive/refs/tags/v__FFIC__.tar.gz
+      expected-sha256: "__FFIC_SHA256__"
+      extract: true
+      strip-components: 0
+  - uses: fetch
+    with:
+      uri: https://github.com/api7/lua-resty-limit-traffic/archive/refs/tags/v__LIMIT__.tar.gz
+      expected-sha256: "__LIMIT_SHA256__"
+      extract: true
+      strip-components: 0
+
+  # ---- the admin SPA, by the commit `.requirements` pins -------------------
+  - uses: fetch
+    with:
+      uri: https://github.com/apache/apisix-dashboard/archive/__DASHBOARD_COMMIT__.tar.gz
+      expected-sha256: "__DASHBOARD_SHA256__"
+      extract: true
+      strip-components: 0
+
+  # ======================================================================
+  # Stage 1: apisix-runtime -- OpenResty + api7's modules + api7's patches
+  # ======================================================================
+  - runs: |
+      set -eu
+      WORK="$PWD"
+      OR="$WORK/openresty-__OPENRESTY__"
+      AX="$WORK/apisix-__VER__"
+      test -d "$OR" || { echo "openresty source missing"; ls "$WORK"; exit 1; }
+      test -d "$AX" || { echo "apisix source missing"; ls "$WORK"; exit 1; }
+
+      # GitHub archives of a `vX.Y.Z` tag extract to <name>-X.Y.Z (the v is stripped),
+      # which is what the configure line below expects. Assert every module directory up
+      # front rather than letting ./configure fail 20 minutes in with a path error; if a
+      # future tag stops stripping the v, this is where it says so.
+      for d in "apisix-nginx-module-__ANM__" "ngx_multi_upstream_module-__NMUM__" \
+               "mod_dubbo-__DUBBO__" "lua-var-nginx-module-__LVAR__" \
+               "lua-resty-events-__LRE__" "ngx_http_ffi_client-__FFIC__" \
+               "lua-resty-limit-traffic-__LIMIT__"; do
+        if [ ! -d "$WORK/$d" ]; then
+          echo "module source directory not found: $WORK/$d"
+          echo "what actually extracted:"; ls "$WORK"
+          exit 1
+        fi
+      done
+
+      # api7's fork of lua-resty-limit-traffic REPLACES OpenResty's bundled copy. The
+      # limit-req / limit-conn / limit-count plugins are written against the fork's API,
+      # and api7's build script hard-fails if the bundled directory is absent, so assert
+      # rather than skip: a silent no-op here surfaces later as a runtime 500.
+      OR_LIMIT="$OR/bundle/lua-resty-limit-traffic-0.09"
+      test -d "$OR_LIMIT" || { echo "OpenResty no longer bundles lua-resty-limit-traffic-0.09"; ls "$OR/bundle" | head -40; exit 1; }
+      rm -rf "$OR_LIMIT"
+      mv "$WORK/lua-resty-limit-traffic-__LIMIT__" "$OR_LIMIT"
+      test -f "$OR_LIMIT/lib/resty/limit/count.lua" || { echo "limit-traffic fork did not land"; exit 1; }
+
+      # ---- api7's OpenResty patches ------------------------------------------
+      # Order matters and is api7's own: ngx_multi_upstream_module first (it patches
+      # bundle/nginx-1.29.2), then apisix-nginx-module (which patches nginx,
+      # lua-resty-core, ngx_lua and ngx_stream_lua). Both patch.sh scripts select their
+      # patch directory by an EXACT OpenResty version match and exit non-zero with
+      # "can't detect OpenResty version" otherwise -- that exact-match is the reason
+      # build.conf is latest-only, and it means a bumped OpenResty fails loudly here
+      # rather than silently shipping an unpatched runtime.
+      ( cd "$WORK/ngx_multi_upstream_module-__NMUM__" && bash ./patch.sh "$OR" )
+      ( cd "$WORK/apisix-nginx-module-__ANM__/patch" && bash ./patch.sh "$OR" )
+      # Assert the patch set really was the one we expect. 37 patches ship in
+      # apisix-nginx-module's 1.29.2.4 directory; a shrunk set means upstream moved the
+      # goalposts and the recipe needs re-reading, not a silent pass.
+      npatch=$(ls "$WORK/apisix-nginx-module-__ANM__/patch/1.29.2.4"/*.patch | wc -l)
+      echo "apisix-nginx-module patch set: $npatch patches"
+      [ "$npatch" -ge 37 ] || { echo "expected >=37 patches, found $npatch"; exit 1; }
+
+      # ngx_http_ffi_client compiles against lua-nginx-module's public headers, which it
+      # reaches through OpenResty's BUNDLED copy rather than a separate checkout.
+      NGX_LUA_DIR="$(find "$OR/bundle" -maxdepth 1 -type d -name 'ngx_lua-*' | head -1)"
+      test -n "$NGX_LUA_DIR" || { echo "no bundled ngx_lua in $OR/bundle"; exit 1; }
+      export NGX_HTTP_LUA_MODULE_DIR="$NGX_LUA_DIR"
+
+      # ---- configure/build ---------------------------------------------------
+      # Flags are api7's build-apisix-runtime.sh line, minus the wasm module (see the
+      # header) and minus the vendored openssl3/zlib/pcre include+rpath soup, which is
+      # replaced by Wolfi's /usr/include + /usr/lib.
+      #
+      # -DAPISIX_RUNTIME_VER is load-bearing, not cosmetic: it is how APISIX's Makefile
+      # and t/cli identify the runtime, and it is what `openresty -V` reports.
+      # --with-http_stub_status_module is MANDATORY: apisix/cli/ops.lua greps
+      # `openresty -V` for it and calls util.die() if it is missing.
+      # NOTE: no comments inside the ./configure continuation below -- a `#` there
+      # comments out every remaining flag.
+      ( cd "$OR"
+        ./configure --prefix=/usr/local/openresty \
+          --with-cc-opt="-DAPISIX_RUNTIME_VER=__RUNTIME__ -DNGX_LUA_ABORT_AT_PANIC -I/usr/include" \
+          --with-ld-opt="-L/usr/lib" \
+          --add-module="$WORK/mod_dubbo-__DUBBO__" \
+          --add-module="$WORK/ngx_multi_upstream_module-__NMUM__" \
+          --add-module="$WORK/apisix-nginx-module-__ANM__" \
+          --add-module="$WORK/apisix-nginx-module-__ANM__/src/stream" \
+          --add-module="$WORK/apisix-nginx-module-__ANM__/src/meta" \
+          --add-module="$WORK/lua-var-nginx-module-__LVAR__" \
+          --add-module="$WORK/lua-resty-events-__LRE__" \
+          --add-module="$WORK/ngx_http_ffi_client-__FFIC__" \
+          --with-poll_module \
+          --with-pcre-jit \
+          --without-http_rds_json_module \
+          --without-http_rds_csv_module \
+          --without-lua_rds_parser \
+          --with-stream \
+          --with-stream_ssl_module \
+          --with-stream_ssl_preread_module \
+          --with-stream_realip_module \
+          --with-http_v2_module \
+          --with-http_v3_module \
+          --without-mail_pop3_module \
+          --without-mail_imap_module \
+          --without-mail_smtp_module \
+          --with-http_stub_status_module \
+          --with-http_realip_module \
+          --with-http_addition_module \
+          --with-http_auth_request_module \
+          --with-http_secure_link_module \
+          --with-http_random_index_module \
+          --with-http_gzip_static_module \
+          --with-http_sub_module \
+          --with-http_dav_module \
+          --with-http_flv_module \
+          --with-http_mp4_module \
+          --with-http_gunzip_module \
+          --with-threads \
+          --with-compat \
+          --with-luajit-xcflags="-DLUAJIT_NUMMODE=2 -DLUAJIT_ENABLE_LUA52COMPAT" \
+          -j"$(nproc)"
+        make -j"$(nproc)"
+        make install )
+
+      # Prove the modules really got linked in rather than silently dropped by
+      # configure. Ask the binary what it was configured WITH -- grepping for internal
+      # symbol names is each module's implementation detail and produces false failures.
+      NGX=/usr/local/openresty/nginx/sbin/nginx
+      test -x "$NGX" || { echo "no nginx binary produced"; exit 1; }
+      CONF_ARGS="$("$NGX" -V 2>&1 || true)"
+      for m in apisix-nginx-module lua-resty-events lua-var-nginx-module ngx_http_ffi_client ngx_multi_upstream_module mod_dubbo; do
+        printf '%s' "$CONF_ARGS" | grep -q -- "$m" \
+          || { echo "MISSING module in the nginx configure line: $m"; printf '%s\n' "$CONF_ARGS" | tr ' ' '\n' | grep -- '--add-module' || true; exit 1; }
+      done
+      # These two strings are what APISIX's own CLI greps for. apisix/cli/env.lua
+      # flips use_apisix_base off without "apisix-nginx-module" (degrading the whole
+      # generated nginx.conf), and apisix/cli/ops.lua util.die()s without
+      # http_stub_status_module. Assert them by the same test APISIX uses.
+      printf '%s' "$CONF_ARGS" | grep -q "APISIX_RUNTIME_VER=__RUNTIME__" \
+        || { echo "APISIX_RUNTIME_VER not stamped into the runtime"; exit 1; }
+      printf '%s' "$CONF_ARGS" | grep -q "http_stub_status_module" \
+        || { echo "http_stub_status_module missing -- apisix start would die"; exit 1; }
+      echo "apisix-runtime __RUNTIME__ built: $(printf '%s' "$CONF_ARGS" | head -1)"
+
+      # ---- the modules' LUA halves ------------------------------------------
+      # Compiling the C modules into nginx is only half of each: lua-resty-events,
+      # ngx_http_ffi_client and apisix-nginx-module each also ship Lua that APISIX
+      # requires at runtime, and OpenResty's `make install` does not place it.
+      # Without resty/events/compat/init.lua every worker dies in init_worker with
+      #   module 'resty.events.compat' not found
+      OR_LUALIB=/usr/local/openresty/lualib
+      install -d "$OR_LUALIB/resty/events/compat"
+      install -m644 "$WORK/lua-resty-events-__LRE__"/lualib/resty/events/*.lua "$OR_LUALIB/resty/events/"
+      install -m644 "$WORK/lua-resty-events-__LRE__"/lualib/resty/events/compat/*.lua "$OR_LUALIB/resty/events/compat/"
+      # The C module needs its FFI binding on the runtime's lua_package_path too.
+      install -m644 "$WORK/ngx_http_ffi_client-__FFIC__"/lib/resty/ngx_http_ffi_client.lua "$OR_LUALIB/resty/"
+      ( cd "$WORK/apisix-nginx-module-__ANM__" && OPENRESTY_PREFIX=/usr/local/openresty make install )
+
+      # Assert each module APISIX requires by NAME. A generic count is not enough --
+      # that is exactly how a missing lmdb tree slipped through apps/kong.
+      for f in resty/events/compat/init.lua resty/events/init.lua resty/ngx_http_ffi_client.lua \
+               resty/apisix/client.lua resty/apisix/patch.lua resty/apisix/request.lua \
+               resty/apisix/response.lua resty/apisix/upstream.lua resty/apisix/ssl.lua \
+               resty/apisix/process.lua resty/apisix/stream/upstream.lua \
+               resty/apisix/stream/metrics.lua resty/apisix/stream/xrpc/socket.lua; do
+        test -f "$OR_LUALIB/$f" || { echo "MISSING $OR_LUALIB/$f -- APISIX fails at startup"; exit 1; }
+      done
+      echo "runtime Lua halves installed"
+
+  # ======================================================================
+  # Stage 2 REMOVED: lua-resty-saml / the saml-auth plugin
+  # ======================================================================
+  # saml-auth needs api7's lua-resty-saml, which statically links api7's xmlsec1
+  # FORK at 1.2.28 -- a 2019 XML-security library. It cannot be swapped for Wolfi's
+  # xmlsec 1.3.x because the fork is compiled -DXMLSEC_NO_SIZE_T, an ABI change.
+  #
+  # Dropped deliberately, and NOT because a CVE is known against 1.2.28 (none is).
+  # The problem is that Trivy cannot see inside a static .a, so shipping it would mean
+  # asserting 0-CVE while carrying seven-year-old XML-signature crypto that our own
+  # gate is structurally blind to. XML signature handling is exactly where wrapping
+  # bugs live, and a gate that cannot inspect a component cannot vouch for it.
+  #
+  # Cost: saml-auth is in APISIX's DEFAULT plugin list (apisix/cli/config.lua), so it
+  # will report as a load failure unless removed from plugins{} -- see the config
+  # generated below. Everything else in the default list still loads.
+  #
+  # To restore: git show this file before this commit. The fetch blocks, the hand-built
+  # rock stage and the matching build.conf version/sha pins are recoverable together.
+  # ======================================================================
+  # Stage 3: APISIX's ~58 LuaRocks dependencies, then APISIX itself
+  # ======================================================================
+  - runs: |
+      set -eu
+      WORK="$PWD"
+      LUAJIT=/usr/local/openresty/luajit
+      AX="$WORK/apisix-__VER__"
+      export PATH="$LUAJIT/bin:/usr/local/openresty/bin:$PATH"
+
+      # This is `make deps` with the variables APISIX's own Makefile would set, except
+      # every *_DIR points at /usr (Wolfi) instead of the vendored
+      # /usr/local/openresty/openssl3 tree that this recipe deliberately does not build.
+      # --only-deps: the rockspec's own build stage is run by `make install` below.
+      # lua-resty-saml is already in the tree from stage 2, so luarocks skips it.
+      ( cd "$AX"
+        luarocks install apisix-master-0.rockspec --tree deps --only-deps \
+          --lua-version=5.1 --lua-dir="$LUAJIT" \
+          OPENSSL_DIR=/usr OPENSSL_LIBDIR=/usr/lib OPENSSL_INCDIR=/usr/include \
+          CRYPTO_DIR=/usr YAML_DIR=/usr EXPAT_DIR=/usr XML2_DIR=/usr LDAP_DIR=/usr \
+          PCRE_DIR=/usr PCRE_INCDIR=/usr/include PCRE_LIBDIR=/usr/lib )
+
+      # Assert the rocks APISIX cannot start without, by name. The C ones are the ones
+      # that actually fail (a pure-Lua rock that failed to download would surface as a
+      # per-plugin load error, but these break init_worker or the CLI outright).
+      for f in lyaml/init.lua resty/radixtree.lua resty/etcd/init.lua resty/ngxvar.lua \
+               jsonschema/init.lua resty/expr/init.lua resty/saml.lua; do
+        test -f "$AX/deps/share/lua/5.1/$f" || { echo "MISSING rock file $f"; exit 1; }
+      done
+      for f in yaml.so librestyradixtree.so lfs.so saml.so rex_pcre.so pb.so; do
+        test -f "$AX/deps/lib/lua/5.1/$f" || { echo "MISSING rock C library $f"; exit 1; }
+      done
+
+      # ---- install APISIX in upstream's own layout --------------------------
+      # ENV_INST_LUADIR=/usr/local/apisix is what upstream's Dockerfile uses, and it is
+      # not cosmetic: apisix/cli/apisix.lua HARDCODES apisix_home = "/usr/local/apisix"
+      # and derives the rock search path from it, so the tree cannot move.
+      install -d "${{targets.destdir}}/usr/local/apisix"
+      cp -a "$AX/deps" "${{targets.destdir}}/usr/local/apisix/deps"
+      ( cd "$AX" && ENV_INST_LUADIR="${{targets.destdir}}/usr/local/apisix" \
+          DESTDIR="${{targets.destdir}}" make install )
+      test -f "${{targets.destdir}}/usr/local/apisix/apisix/cli/apisix.lua" \
+        || { echo "APISIX Lua tree did not install"; exit 1; }
+
+      # `make install` writes conf/ into the REAL /usr/local/apisix (its paths are
+      # absolute, not DESTDIR-relative), so relocate whatever landed there.
+      if [ -d /usr/local/apisix/conf ]; then
+        install -d "${{targets.destdir}}/usr/local/apisix"
+        cp -a /usr/local/apisix/conf "${{targets.destdir}}/usr/local/apisix/conf"
+      fi
+      test -f "${{targets.destdir}}/usr/local/apisix/conf/mime.types" \
+        || { echo "conf/ tree missing -- nginx.conf would fail on mime.types"; exit 1; }
+
+      # Move the pristine conf/ aside as conf.default and leave conf/ EMPTY. Rationale
+      # in apko.yaml: `apisix init` regenerates conf/nginx.conf on every start, so conf/
+      # has to be a writable volume on a read-only rootfs, and a volume mounted over a
+      # populated directory MASKS the shipped mime.types / debug.yaml / cert placeholders
+      # (nginx then dies with `open() ".../conf/mime.types" failed`). The entrypoint
+      # re-seeds conf/ from conf.default without clobbering anything the chart mounted.
+      D="${{targets.destdir}}/usr/local/apisix"
+      mv "$D/conf" "$D/conf.default"
+      install -d "$D/conf" "$D/logs"
+      # nginx.conf and apisix.uid are RUNTIME artefacts of `apisix init`, not shipped
+      # files. A clean sandbox produces neither, but shipping a build-time nginx.conf
+      # rendered from the wrong config.yaml would be a real and very confusing bug.
+      rm -f "$D/conf.default/nginx.conf" "$D/conf.default/apisix.uid"
+
+      # Ship a standalone-by-default config, so `docker run <image>` is a working
+      # gateway with no etcd to stand up first (same posture as apps/kong's
+      # KONG_DATABASE=off). deployment.role=data_plane + config_provider=yaml is
+      # APISIX's file-driven standalone mode: routes come from conf/apisix.yaml and
+      # etcd is never contacted. The chart overrides this whole file for the
+      # etcd-backed topology. Ports are APISIX's own defaults and are all >1024, so
+      # nonroot binds them with no capability granted.
+      # (printf, not a heredoc: an unindented heredoc terminator would end this YAML
+      # block scalar and silently truncate the recipe.)
+      printf '%s\n' \
+        '# QuenchWorks default: standalone (file-driven), no etcd required.' \
+        '# Override this file (the chart renders it from a ConfigMap) for the' \
+        '# etcd-backed control-plane topology.' \
+        'apisix:' \
+        '  node_listen:' \
+        '    - 9080' \
+        '  enable_admin: false' \
+        'deployment:' \
+        '  role: data_plane' \
+        '  role_data_plane:' \
+        '    config_provider: yaml' \
+        > "$D/conf.default/config.yaml"
+      printf '%s\n' \
+        'routes:' \
+        '  -' \
+        '#END' \
+        > "$D/conf.default/apisix.yaml"
+      # `#END` is not decoration: APISIX refuses to load conf/apisix.yaml without it.
+      grep -q '^#END$' "$D/conf.default/apisix.yaml" || { echo "apisix.yaml needs a #END terminator"; exit 1; }
+
+      # ---- the CLI ----------------------------------------------------------
+      # bin/apisix is bash and resolves openresty/luajit off PATH; apko sets that PATH.
+      install -Dm755 "$AX/bin/apisix" "${{targets.destdir}}/usr/bin/apisix"
+
+      # Foreground entrypoint, modelled on upstream's docker-entrypoint.sh. `apisix
+      # start` DAEMONISES, which a container must not do, so this renders the prefix and
+      # then execs openresty in the foreground with `daemon off` -- the generated
+      # nginx.conf carries no daemon directive, so passing -g here is correct (unlike
+      # apps/kong, where `kong prepare` already writes one and -g duplicated it).
+      #
+      # cwd MUST be /usr/local/apisix. bin/apisix picks its entry point by testing
+      # `-s ./apisix/cli/apisix.lua`, and only the relative-path branch makes
+      # apisix/cli/env.lua add `deps/share/lua/5.1/?/init.lua` to package.path. Run it
+      # from anywhere else and the CLI dies on `module 'lyaml' not found`, because lyaml
+      # (and several other rocks) install as a DIRECTORY with an init.lua. This is
+      # upstream's own behaviour -- their Dockerfile sets WORKDIR /usr/local/apisix --
+      # and apko.yaml sets both work-dir and a LUA_PATH that covers the other branch.
+      printf '%s\n' \
+        '#!/bin/sh' \
+        'set -e' \
+        'PREFIX=/usr/local/apisix' \
+        '# Prepend the runtime bin dirs even though apko already puts them on PATH.' \
+        '# /usr/bin/apisix resolves openresty with `command -v` and, when it fails,' \
+        '# PRINTS an error and EXITS 0 -- so a stripped PATH makes `apisix init` a' \
+        '# silent no-op and nginx then dies on a missing conf/nginx.conf.' \
+        'PATH=/usr/local/openresty/bin:/usr/local/openresty/nginx/sbin:/usr/local/openresty/luajit/bin:$PATH' \
+        'export PATH' \
+        '# Re-seed the writable conf/ volume from the read-only defaults. `cp -rn` with' \
+        '# a GLOB, not `dir/.`: busybox cp silently copies NOTHING for `dir/.` (checked).' \
+        '# -n keeps anything the chart mounted in (config.yaml, apisix.yaml, certs).' \
+        'cp -rn "$PREFIX/conf.default"/* "$PREFIX/conf"/ 2>/dev/null || true' \
+        'test -f "$PREFIX/conf/config.yaml" || { echo "FATAL: $PREFIX/conf is not writable and holds no config.yaml"; exit 1; }' \
+        '# A crashed worker leaves these unix sockets bound; nginx can then never' \
+        '# rebind and one crash becomes a permanent CrashLoopBackOff.' \
+        'rm -f "$PREFIX"/logs/worker_events.sock "$PREFIX"/logs/stream_worker_events.sock' \
+        'cd "$PREFIX"' \
+        '/usr/bin/apisix init' \
+        '# `apisix init` is the step that RENDERS conf/nginx.conf from config.yaml, and' \
+        '# several of its failure modes exit 0. Assert its output rather than letting' \
+        '# nginx report a confusing missing-file error.' \
+        'test -s "$PREFIX/conf/nginx.conf" || { echo "FATAL: apisix init produced no conf/nginx.conf"; exit 1; }' \
+        '# init_etcd pre-creates the /apisix key prefix and BLOCKS on an etcd that is' \
+        '# not there, so it runs only when the deployment is actually etcd-backed.' \
+        '# APISIX_STAND_ALONE is upstream'"'"'s own env contract for this.' \
+        'if [ "${APISIX_STAND_ALONE:-true}" != "true" ]; then /usr/bin/apisix init_etcd; fi' \
+        'exec /usr/local/openresty/bin/openresty -p "$PREFIX" -c "$PREFIX/conf/nginx.conf" -g '"'"'daemon off;'"'"'' \
+        > "${{targets.destdir}}/usr/bin/apisix-docker-start"
+      chmod 0755 "${{targets.destdir}}/usr/bin/apisix-docker-start"
+      grep -q 'exec /usr/local/openresty/bin/openresty' "${{targets.destdir}}/usr/bin/apisix-docker-start" \
+        || { echo "entrypoint not written"; exit 1; }
+      grep -q 'cp -rn "\$PREFIX/conf.default"/\*' "${{targets.destdir}}/usr/bin/apisix-docker-start" \
+        || { echo "conf re-seed missing from the entrypoint"; cat "${{targets.destdir}}/usr/bin/apisix-docker-start"; exit 1; }
+
+      # ---- relocate the runtime into the package ----------------------------
+      # Stage 1 installed OpenResty to the real /usr/local/openresty because api7's
+      # patch/install scripts use absolute paths; move it under DESTDIR now.
+      install -d "${{targets.destdir}}/usr/local"
+      cp -a /usr/local/openresty "${{targets.destdir}}/usr/local/openresty"
+      test -x "${{targets.destdir}}/usr/local/openresty/bin/openresty" \
+        || { echo "openresty did not land in the package"; exit 1; }
+      test -f "${{targets.destdir}}/usr/local/openresty/lualib/resty/events/compat/init.lua" \
+        || { echo "runtime lualib did not land in the package"; exit 1; }
+      # Drop the sample docroot and the .default config copies OpenResty ships; they are
+      # dead weight and the html/ tree is an unnecessary served-content surface.
+      rm -rf "${{targets.destdir}}/usr/local/openresty/nginx/html"
+      rm -f "${{targets.destdir}}"/usr/local/openresty/nginx/conf/*.default
+
+  # ======================================================================
+  # Stage 4: the admin SPA (apache/apisix-dashboard @ __DASHBOARD_COMMIT__)
+  # ======================================================================
+  # APISIX serves this itself from <apisix_home>/ui (apisix/cli/ngx_tpl.lua,
+  # `location ^~ /ui/`), which is why there is no separate apisix-dashboard image.
+  # Upstream's own recipe is `pnpm install --frozen-lockfile && pnpm run build`, with
+  # pnpm's version pinned by package.json's packageManager field.
+  - runs: |
+      set -eu
+      WORK="$PWD"
+      DASH="$WORK/apisix-dashboard-__DASHBOARD_COMMIT__"
+      test -d "$DASH" || { echo "dashboard source missing"; ls "$WORK"; exit 1; }
+      PNPM_VER="$(sed -n 's/.*"packageManager": *"pnpm@\([0-9.]*\).*/\1/p' "$DASH/package.json" | head -1)"
+      test -n "$PNPM_VER" || { echo "could not read the pinned pnpm version"; exit 1; }
+      echo "building the admin SPA with pnpm $PNPM_VER"
+      npm install -g "pnpm@$PNPM_VER" >/dev/null
+      export CI=1
+      ( cd "$DASH"
+        pnpm install --frozen-lockfile
+        pnpm run build )
+      test -f "$DASH/dist/index.html" || { echo "the SPA build produced no dist/index.html"; ls "$DASH"; exit 1; }
+      D="${{targets.destdir}}/usr/local/apisix/ui"
+      install -d "$D"
+      cp -a "$DASH/dist/." "$D/"
+      test -f "$D/index.html" || { echo "ui/ did not land"; exit 1; }
+      echo "admin SPA installed: $(find "$D" -type f | wc -l) files, $(du -sh "$D" | cut -f1)"
+      # node_modules is a build artifact and must never reach the package; it is the
+      # single biggest cause of an oversized SBOM (>16MB breaks actions/attest-sbom).
+      rm -rf "$DASH/node_modules"
+
+  # ======================================================================
+  # Stage 5: tidy
+  # ======================================================================
+  - runs: |
+      set -eu
+      D="${{targets.destdir}}"
+      # luarocks leaves a full second copy of every rock (sources, docs, HTML API refs)
+      # under deps/lib/luarocks/rocks-5.1 next to the deployed copy on the Lua path.
+      # Nothing loads from there; it roughly doubles both the image and the SBOM.
+      rm -rf "$D/usr/local/apisix/deps/lib/luarocks"
+      # Prove the deployed tree survived the pruning.
+      test -f "$D/usr/local/apisix/deps/share/lua/5.1/lyaml/init.lua" || { echo "pruning removed a live rock"; exit 1; }
+      test -f "$D/usr/local/apisix/deps/lib/lua/5.1/saml.so" || { echo "pruning removed a live rock C library"; exit 1; }
+      # Header/static-lib leftovers from the OpenResty build; not needed at runtime.
+      rm -rf "$D/usr/local/openresty/luajit/include" \
+             "$D/usr/local/openresty/luajit/lib/libluajit-5.1.a" \
+             "$D/usr/local/openresty/pod" "$D/usr/local/openresty/site/pod"
+      # `apisix version` needs nothing from the pruned paths -- assert the CLI's whole
+      # require chain still resolves rather than discovering it in a container.
+      ( cd "$D/usr/local/apisix" && \
+        PATH="$D/usr/local/openresty/bin:$D/usr/local/openresty/luajit/bin:$PATH" \
+        "$D/usr/local/openresty/luajit/bin/luajit" -e 'print("luajit ok")' ) \
+        || { echo "the packaged luajit does not run"; exit 1; }
+
+  - uses: strip
