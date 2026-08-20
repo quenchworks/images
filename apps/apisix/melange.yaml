@@ -429,7 +429,10 @@ pipeline:
       #
       # resty.saml is NOT in this list: saml-auth is deliberately not shipped (see the
       # "Stage 2 REMOVED" block above).
-      for m in lyaml resty/radixtree resty/etcd resty/ngxvar jsonschema resty/expr; do
+      # resty/expr/v1, NOT resty/expr: lua-resty-expr 1.3.2 ships only
+      # lib/resty/expr/v1.lua, and APISIX requires "resty.expr.v1". There has never
+      # been a resty/expr.lua or resty/expr/init.lua to find.
+      for m in lyaml resty/radixtree resty/etcd resty/ngxvar jsonschema resty/expr/v1; do
         d="$AX/deps/share/lua/5.1"
         test -f "$d/$m.lua" || test -f "$d/$m/init.lua" \
           || { echo "MISSING rock module $m (looked for $m.lua and $m/init.lua)"; \
