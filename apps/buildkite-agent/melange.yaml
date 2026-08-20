@@ -38,6 +38,11 @@ pipeline:
       # 0-CVE float: bundled github.com/DataDog/dd-trace-go/v2 v2.7.1 carries
       # CVE-2026-50274 (HIGH), fixed in v2.8.1. Bump the module and re-resolve.
       go get github.com/DataDog/dd-trace-go/v2@v2.8.1
+      # golang.org/x/mod CVE-2026-56864/56865 (HIGH, malicious GOSUMDB/GOPROXY able to
+      # forge module content). Arrives transitively -- there is no direct import -- so it
+      # needs an explicit floor. v0.40.0, NOT the v0.37.0/v0.38.0 Trivy names as fixed:
+      # those are themselves affected (see docs/go-module-float.md).
+      go get golang.org/x/mod@v0.40.0
       # grpc GHSA-hrxh-6v49-42gf (xDS RBAC + HTTP/2, HIGH): still needed, upstream pins
       # grpc v1.82.0. grpc@1.82.1 requires the otel family + x/oauth2@0.36.0, so keep
       # that cascade floated too.

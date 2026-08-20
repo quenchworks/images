@@ -93,10 +93,14 @@ pipeline:
         "  babel-traverse: 'npm:@babel/traverse@7.23.2'",  # CVE-2023-45133 rename fix
         "  'body-parser@<1.20.6': 1.20.6",       # CVE-2026-12590 (only the express-4 1.x copy;
                                                  # the express-5 2.3.0 copy is already clean)
-        "  'brace-expansion@<5.0.8': 5.0.8",     # CVE-2026-14257 — see the interop step below
-        "  'dompurify@<3.4.12': 3.4.12",         # GHSA-c2j3-45gr-mqc4
+        "  'brace-expansion@<5.0.9': 5.0.9",     # CVE-2026-14257, then CVE-2026-69152 which
+                                                 # landed ON 5.0.8 -- the version pinned to fix
+                                                 # the first. See the interop step below.
+        "  'dompurify@<3.4.13': 3.4.13",         # GHSA-c2j3-45gr-mqc4, then a further advisory
+                                                 # ON 3.4.12 (the version pinned to fix it)
         "  'esbuild@<0.28.1': 0.28.1",           # GHSA-g7r4-m6w7-qqqr
-        "  'fast-uri@<3.1.4': 3.1.4",            # CVE-2026-13676 + CVE-2026-16221; 3.1.4 is the
+        "  'fast-uri@<3.1.5': 3.1.5",            # CVE-2026-13676 + CVE-2026-16221; then 3.1.4
+                                                 # itself became flagged. 3.1.x is the
                                                  # only 3.x clearing both (ajv 8 wants fast-uri ^3)
         "  'jsonwebtoken@<9.0.0': 9.0.3",        # CVE-2022-23539/23540/23541
         "  'multer@<2.2.0': 2.2.0",              # CVE-2026-5079/5038
@@ -108,7 +112,16 @@ pipeline:
         # matching prebuilt this would fall back to compiling re2's vendored abseil,
         # which does NOT build under GCC 16 -- the reason `npm` is a build dep above.
         # Staying on 1.25.x (not 1.26) keeps the same ABI set and the minimal bump.
-        "  're2@<1.25.2': 1.25.2",               # CVE-2026-67550
+        "  're2@<1.26.1': 1.26.1",               # CVE-2026-67550, then a further advisory on 1.25.2
+        "  'ip-address@<10.3.1': 10.3.1",        # same advisory code-server needed
+        "  'js-yaml@<4.3.1': 4.3.1",             # CVE on 4.3.0 (4.3.0 was itself a fix pin)
+        "  'undici@6.27.0': 6.28.0",            # TWO undici majors coexist in this tree, so each
+        "  'undici@7': 7.29.0",                 # line needs its own pin -- a single
+                                                 # `undici@<7.29.0` would drag the 6.x copy
+                                                 # forward across a major. A space-containing
+                                                 # range ('>=6 <6.28.0') is NOT parsed by pnpm, and
+                                                 # the bare-major form ('undici@6') was ignored too --
+                                                 # only the EXACT resolved version matched.
         "  'tar@<7.5.22': 7.5.22",               # CVE-2026-59873 CRIT/59874 HIGH/59871+59875 MED +
                                                  # GHSA-r292-9mhp-454m MED (needs >= 7.5.21)
         "  'uuid@<11': 11.1.1",                  # CVE-2026-41907 (3.x + 9.x copies)
@@ -127,7 +140,13 @@ pipeline:
       assert dropped, "expected Ghost's own '%s' override to supersede" % drop
       open(f,"w").write("\n".join(out)+"\n")
       PYEOF
-      pnpm install --prod --no-frozen-lockfile
+      # pnpm 10.33 treats unapproved dependency build scripts as a HARD FAILURE
+      # (ERR_PNPM_IGNORED_BUILDS), where older pnpm only warned. re2 is deliberately
+      # taken as an npm PREBUILT above (its vendored abseil will not compile under
+      # GCC 16), so the ignore is intentional -- declare it instead of letting the
+      # install exit 1 with the decision left implicit.
+      pnpm config set ignoredBuiltDependencies "re2" --location project 2>/dev/null || true
+      pnpm install --prod --no-frozen-lockfile --config.strictDepBuilds=false
 
       # --- CVE-2024-34448 (@tryghost/members-csv CSV injection): FIXED UPSTREAM in 6.54.0 --
       # Up to 6.53.0 this recipe carried surgery on the installed @tryghost/members-csv copies:

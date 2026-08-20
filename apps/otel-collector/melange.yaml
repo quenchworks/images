@@ -122,7 +122,7 @@ pipeline:
         # signature ("have (chan struct{}, error)" / "want (chan struct{})").
         # So: bump ONLY the modules actually below their floor, and no-op otherwise.
         # See images/docs/go-module-float.md, trap #2.
-        FLOOR="golang.org/x/text@v0.39.0 golang.org/x/net@v0.56.0 golang.org/x/crypto@v0.53.0 golang.org/x/sys@v0.46.0 google.golang.org/grpc@v1.82.1"
+        FLOOR="golang.org/x/text@v0.41.0 golang.org/x/net@v0.58.0 golang.org/x/crypto@v0.55.0 golang.org/x/sys@v0.47.0 google.golang.org/grpc@v1.82.1"
         _mods="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
         # $NF is the EFFECTIVE version, so a `replace` cannot hide behind the require.
         _need="$(go list -m $_mods | awk '{ print $1, $NF }' | awk -v floor="$FLOOR" '
