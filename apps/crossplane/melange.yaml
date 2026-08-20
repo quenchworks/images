@@ -91,9 +91,29 @@ pipeline:
       need="$(go list -m $MODS | awk '{ print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
       if [ -n "$need" ]; then go get $need; go mod tidy; fi
 
+      # The version symbol MOVED between releases, so the path cannot be hardcoded:
+      #   2.1.x / 2.2.x  cmd/crossplane imports github.com/crossplane/crossplane/v2/internal/version
+      #   2.3.x+         it imports    github.com/crossplane/crossplane-runtime/v2/pkg/version
+      # crossplane-runtime v2.1.7 has no pkg/version package at all, so the old hardcoded
+      # -X was silently dropped by the linker on 2.1.8 and 2.2.4 and `crossplane --version`
+      # printed nothing. `-X` on a package that is not linked is not an error, which is why
+      # this was invisible until test.sh started running in CI.
+      #
+      # Resolve the path from the source we are building instead of assuming either one.
+      vpkg="$(grep -oE '"github.com/crossplane/[a-z0-9/-]*version"' ./cmd/crossplane/main.go \
+              | tr -d '"' | head -1)"
+      test -n "$vpkg" || { echo "FATAL: cannot find the version package imported by cmd/crossplane"; exit 1; }
+      echo "stamping version into $vpkg"
+
       go build -trimpath \
-        -ldflags "-s -w -X=github.com/crossplane/crossplane-runtime/v2/pkg/version.version=v${{package.version}}" \
+        -ldflags "-s -w -X=${vpkg}.version=v${{package.version}}" \
         -o "${{targets.destdir}}/usr/bin/crossplane" ./cmd/crossplane
+
+      # Assert the stamp actually landed. A silently-dropped -X is exactly the bug this
+      # replaces, so failing the build here is cheaper than failing the boot test later.
+      got="$("${{targets.destdir}}/usr/bin/crossplane" --version 2>&1 | tr -d '\r')"
+      test "$got" = "v${{package.version}}" \
+        || { echo "FATAL: version stamp is '$got', expected v${{package.version}}"; exit 1; }
 
       # The float is only real if it reached the BINARY. Every `dep`/`=>` line of
       # `go version -m` must be at or above its floor -- the `=>` line is what
