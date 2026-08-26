@@ -6,10 +6,13 @@
 #
 # TOOLCHAIN: upstream pins channel 1.76 in quickwit/rust-toolchain.toml, but Wolfi's
 # cargo is a real toolchain (no rustup), so rust-toolchain.toml is ignored and we pick
-# the Wolfi rust package explicitly. We use rust-1.78 -- the earliest Wolfi rust that
-# BUNDLES rustfmt, which tonic's gRPC codegen requires (upstream's Dockerfile does the
-# equivalent `rustup component add rustfmt`). 1.78 (May 2024) is contemporaneous with
-# the 0.8.2 tag, so the Cargo.lock resolves cleanly.
+# the Wolfi rust package explicitly. We use rust-1.82 -- the OLDEST rust still
+# published by Wolfi (rust-1.78, the previous pin, was retired 2026-08 and now fails
+# apk resolution with "nothing provides rust-1.78"); like 1.78 it bundles rustfmt,
+# which tonic's gRPC codegen requires (upstream's Dockerfile does the equivalent
+# `rustup component add rustfmt`). rustc >= 1.80 breaks type inference in the locked
+# `time` 0.3.34 crate (the well-known E0282 "type annotations needed" break), so the
+# pipeline bumps `time` to 0.3.36, the patch release that fixed it.
 #
 # BUILD DEPS mirror upstream's Dockerfile bin-builder: protobuf-dev (protoc) for the
 # tonic/prost .proto codegen, clang + llvm + cmake for the native deps (the release
@@ -68,7 +71,9 @@ environment:
       - perl                    # openssl-sys build scripts probe with perl
       - nodejs-20               # React UI build (matches upstream's node:20 ui-builder)
       - yarn                    # React UI build (yarn install + yarn build)
-      - rust-1.78               # Wolfi rust toolchain that bundles rustfmt (tonic codegen)
+      - rust-1.82               # Wolfi rust toolchain that bundles rustfmt (tonic codegen);
+                                # 1.78 was retired from Wolfi (2026-08), 1.82 is now the
+                                # oldest available and still bundles rustfmt
 
 pipeline:
   # Fetch the pinned source tarball. melange extracts it and cd's into the single
@@ -144,6 +149,12 @@ pipeline:
       # cmake >= 3.31 reads this from the environment, so it applies to every cmake-based
       # -sys build (librdkafka, zstd, ...) without patching their CMakeLists.
       export CMAKE_POLICY_VERSION_MINIMUM=3.5
+      # The committed Cargo.lock pins `time` 0.3.34; rustc >= 1.80 (we now build with
+      # Wolfi rust-1.82 since 1.78 was retired) breaks type inference in time <= 0.3.35
+      # (E0282 "type annotations needed" in format_description). Bump JUST that crate to
+      # 0.3.36, the upstream patch release that fixed the inference break -- minimal,
+      # semver-compatible lock drift; the Trivy gate still enforces 0 fixable CVEs.
+      cargo update -p time --precise 0.3.36
       cargo build --release -p quickwit-cli --bin quickwit \
         --features jemalloc,openssl-support,quickwit-indexing/kafka,quickwit-indexing/kinesis,quickwit-indexing/vrl,quickwit-storage/azure,quickwit-storage/gcs,quickwit-metastore/postgres,quickwit-doc-mapper/multilang
       install -Dm0755 target/release/quickwit "${{targets.destdir}}/usr/bin/quickwit"

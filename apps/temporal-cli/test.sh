@@ -14,10 +14,13 @@
 #   - the container runs as nonroot uid 1001
 set -euo pipefail
 
-IMAGE="${1:?usage: test.sh <image-ref>}"
+IMAGE="${1:?usage: test.sh <image-ref> <version>}"
 
-# Expected pinned version (the melange package version).
-EXPECTED="$(awk '/^  version:/{print $2; exit}' "$(dirname "$0")/melange.yaml")"
+# Expected pinned version comes from $2 (the workflow passes matrix.ver). Reading it out
+# of melange.yaml looks equivalent and is not: that file is the TEMPLATE, whose version
+# line is the literal __VER__ placeholder -- render() writes melange.rendered.yaml, not
+# this file -- so the awk produced EXPECTED="__VER__" and the check could never pass.
+EXPECTED="${2:?usage: test.sh <image-ref> <version>}"
 
 echo "checking temporal --version prints the pinned tag (${EXPECTED})"
 ver="$(docker run --rm "$IMAGE" --version)"

@@ -60,15 +60,26 @@ environment:
       - proj-dev
       - libxml2-dev
       - json-c-dev
+  environment:
+    # git.launchpad.net is intermittently slow/flaky from CI runners (observed:
+    # a transfer crawling for ~23 min before the server killed it with an SSL
+    # "unexpected eof"). Abort any git transfer below 1 KB/s for 60s so the
+    # git-checkout retry loop gets a fresh attempt instead of hanging.
+    GIT_HTTP_LOW_SPEED_LIMIT: "1000"
+    GIT_HTTP_LOW_SPEED_TIME: "60"
 
 pipeline:
   # 1. Intel Decimal Floating-Point Math Library (libbid) — documentdb links it statically.
+  #    Cloned from launchpad (no GitHub mirror carries this exact Ubuntu-patched
+  #    commit); the host flakes intermittently, so retry harder than the default 3.
   - uses: git-checkout
     with:
       repository: https://git.launchpad.net/ubuntu/+source/intelrdfpmath
       tag: applied/2.0u3-1
       expected-commit: e2d24068229825f109c7f38a3be123f029174601
       destination: intelmath
+      max-retries: "8"
+      max-backoff: "120"
   - runs: |
       make -C intelmath/LIBRARY -j"$(nproc)" \
         _CFLAGS_OPT=-fPIC CC=gcc CALL_BY_REF=0 GLOBAL_RND=0 GLOBAL_FLAGS=0 UNCHANGED_BINARY_FLAGS=0

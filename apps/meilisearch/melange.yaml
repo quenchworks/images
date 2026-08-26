@@ -14,8 +14,8 @@
 # Meilisearch's `default` features are ["meilisearch-types/all-tokenizations",
 # "mini-dashboard"]. The `mini-dashboard` feature runs crates/meilisearch/build.rs,
 # which by default DOWNLOADS a prebuilt web-UI build.zip from GitHub at `cargo build`
-# time (the pinned meilisearch/mini-dashboard release in [package.metadata.mini-dashboard]:
-# assets-url v0.4.1/build.zip, sha1 c4de9bfd4bd4ddb87a62cbe00a4150bdf0b6f9d1) and
+# time (the pinned meilisearch/mini-dashboard release in [package.metadata.mini-dashboard],
+# e.g. v0.4.1/build.zip for 1.52.x/1.53.0, v0.4.2/build.zip for 1.53.1) and
 # verifies its sha1, then `static_files::resource_dir(..).build()` embeds the assets
 # into $OUT_DIR/generated.rs (included by src/lib.rs). melange builds with NO network,
 # so that fetch cannot succeed in a hermetic build.
@@ -26,7 +26,7 @@
 # local file it reads the zip from disk instead of fetching over the network; the
 # upstream sha1 integrity assert is left UNTOUCHED, so a tampered local copy is
 # rejected exactly as a tampered download would be. We pre-download that build.zip
-# with `curl` and verify its sha256 (75f1f8b4...) before the build, then enable the
+# with `curl` and verify its sha256 (per-version pin in build.conf) before the build, then enable the
 # `mini-dashboard` + `meilisearch-types/all-tokenizations` features. Result: the
 # dashboard is compiled INTO the binary (served at GET /), reproducibly, with zero
 # build-time internet access. The bundled web UI is a vendored prebuilt upstream
@@ -47,11 +47,13 @@ package:
 
 vars:
   # Pinned meilisearch/mini-dashboard release whose build.zip we vendor into the
-  # binary. Matches [package.metadata.mini-dashboard] in crates/meilisearch/Cargo.toml
-  # for this tag. Pure static web assets, arch-agnostic, so one checksum covers both.
-  dashboard-tag: v0.4.1
+  # binary. Must match [package.metadata.mini-dashboard] in crates/meilisearch/
+  # Cargo.toml for THIS tag (it changes across meilisearch releases: 1.52.x/1.53.0
+  # pin v0.4.1, 1.53.1 pins v0.4.2), so it is a per-version pin rendered from
+  # build.conf. Pure static web assets, arch-agnostic, so one checksum covers both.
+  dashboard-tag: __DASHTAG__
   # sha256 of the pinned build.zip (its upstream sha1 is verified again by build.rs).
-  dashboard-sha256: 75f1f8b4fee7ff60179f519b853fa2f0cef347df95b24d9fc705e433797ac64d
+  dashboard-sha256: __DASHSHA256__
 
 environment:
   contents:
