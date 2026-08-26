@@ -1,0 +1,44 @@
+name: catalog-lock
+
+# Regenerates catalog.lock.yaml (per-app published versions + digests) and commits it
+# when it changed. Exists because listing org package versions needs read:packages,
+# which the Actions token has and a default local `gh auth` token does not. Run it
+# after a rebuild campaign so the website's security scan reads CURRENT digests --
+# scan-images.mjs scans whatever src/data/images.json says, and that file is synced
+# from this lock.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: read
+
+concurrency:
+  group: catalog-lock
+  cancel-in-progress: false
+
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - name: Regenerate catalog.lock.yaml
+        run: uv run scripts/gen-catalog.py --meta
+      - name: Commit if changed
+        run: |
+          set -euo pipefail
+          if git diff --quiet catalog.lock.yaml; then
+            echo "catalog.lock.yaml unchanged -- nothing to commit."
+            exit 0
+          fi
+          git config user.name "quenchworks-bot"
+          git config user.email "info@quench-works.com"
+          git add catalog.lock.yaml
+          git commit -m "chore(catalog): regenerate catalog.lock.yaml from published digests" \
+            -m "Co-Authored-By: QuenchWorks <info@quench-works.com>"
+          git push
