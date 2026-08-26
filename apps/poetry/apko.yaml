@@ -16,14 +16,19 @@
 contents:
   keyring:
     - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
   repositories:
     - https://packages.wolfi.dev/os
+    - "@local ./packages"
   packages:
     - wolfi-baselayout
     - ca-certificates-bundle
     - python-__PYVER__            # the pinned CPython minor Poetry runs on
     - py__PYVER__-pip             # matching pip for this exact interpreter
-    - __PKG__      # Poetry + the /usr/bin/poetry console-script
+    - __PKG__
+    # Replaces pip's vendored msgpack 1.1.2 (GHSA-6v7p-g79w-8964) and drops the phantom
+    # setuptools==70.3.0 vendor.txt line. See melange.yaml.
+    - quench-pip-vendor-fix@local      # Poetry + the /usr/bin/poetry console-script
 
 accounts:
   groups:

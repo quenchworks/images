@@ -1,0 +1,294 @@
+# COPIED from apps/python/melange.yaml and rendered with __VER__=3.13 (the python minor
+# this image ships). poetry was FROM_SOURCE=0 and its 2 findings (msgpack 1.1.2,
+# setuptools 70.3.0) come from py3.13-pip's VENDORED tree, not from the poetry apk --
+# verified from the apk SBOMs. The shim is the same one python/ansible/airflow/mlflow
+# carry; it fails the build the day pip fixes this upstream, so it cannot outlive its
+# purpose silently.
+# pip-vendor shim: replaces pip's vendored msgpack with a fixed release.
+#
+# WHY THIS EXISTS
+# pip vendors msgpack under pip/_vendor/msgpack/ and records it in
+# pip/_vendor/vendor.txt. pip 26.2.1 -- the newest RELEASE, and the one Wolfi
+# packages -- vendors msgpack 1.1.2, which carries GHSA-6v7p-g79w-8964 (HIGH,
+# out-of-bounds read on Unpacker reuse, fixed in 1.2.1). pip's main branch has
+# already bumped to 1.2.1, but until that ships in a release and Wolfi packages
+# it, every image carrying pip inherits the finding.
+#
+# This package ships the real upstream msgpack 1.2.1 sources over the vendored
+# copy AND rewrites the vendor.txt entry to match. Both halves are required and
+# neither is sufficient:
+#   - files only  -> scanners read vendor.txt, so the finding would persist
+#     even though the code is fixed (a false ALARM).
+#   - vendor.txt only -> the scanner goes quiet while the vulnerable code is
+#     still on disk. That is gate-weakening and is never acceptable.
+# We replace the code first, then make the manifest tell the truth about it.
+#
+# The four vendored .py files are verbatim upstream msgpack releases (diffed
+# against the 1.1.2 sdist: only the version string and genuine upstream fixes
+# differ), so a straight file swap is safe -- pip applies no patches of its own
+# to them.
+#
+# SELF-EXPIRING: the pipeline asserts pip still vendors 1.1.2. The day Wolfi
+# ships a pip that has fixed this, the build FAILS instead of silently shipping
+# a pointless shim, and this whole file should be deleted.
+package:
+  name: quench-pip-vendor-fix
+  version: 1.2.1
+  epoch: 0
+  description: "msgpack 1.2.1 over pip's vendored 1.1.2 (GHSA-6v7p-g79w-8964)"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    # We take ownership of files installed by the pip package. Without this apk
+    # refuses to overwrite another package's files.
+    # The vendored tree is owned by py<ver>-pip-base (which provides py3-pip),
+    # NOT by the py<ver>-pip metapackage -- naming the wrong one still fails.
+    replaces:
+      - py__VER__-pip-base
+      - py3-pip
+      # The seed wheel used by `python -m venv` carries its OWN second copy of
+      # the vendored tree, so it has to be rewritten as well.
+      - py3-pip-wheel
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - python-__VER__
+      - py__VER__-pip
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://files.pythonhosted.org/packages/31/f9/c0a1c127f9049db9155afc316952ea571720dd01833ff5e4d7e8e6352dbb/msgpack-1.2.1.tar.gz
+      expected-sha256: 04c721c2c7448767e9e3f2520a475663d8ee0f09c31890f6d2bd70fd636a9647
+      strip-components: 1
+
+  - name: Verify the shim is still needed
+    runs: |
+      set -e
+      SP=/usr/lib/python__VER__/site-packages
+      VT="$SP/pip/_vendor/vendor.txt"
+      test -f "$VT" || { echo "❌ no vendor.txt at $VT"; exit 1; }
+
+      # If pip has fixed this upstream, stop shipping the shim.
+      if ! grep -q '^msgpack==1\.1\.2$' "$VT"; then
+        echo "❌ pip no longer vendors msgpack 1.1.2:"
+        grep -i msgpack "$VT" || true
+        echo "   The shim has served its purpose -- delete apps/python/melange.yaml"
+        echo "   and drop quench-pip-vendor-fix from apko.yaml."
+        exit 1
+      fi
+
+      # vendor.txt lists setuptools==70.3.0, but pip ships NO setuptools under
+      # _vendor -- the line is vestigial. Scanners read it as a lockfile and
+      # report a phantom CVE against code that is not in the image. We drop the
+      # line so the manifest matches the filesystem, but ONLY after proving the
+      # directory really is absent. If pip ever starts genuinely vendoring
+      # setuptools, this fails rather than hiding a real finding.
+      if [ -e "$SP/pip/_vendor/setuptools" ]; then
+        echo "❌ pip now really vendors setuptools -- the line is no longer phantom."
+        echo "   Do NOT strip it; pin the fixed version instead."
+        exit 1
+      fi
+
+  - name: Install msgpack 1.2.1 over the vendored copy
+    runs: |
+      set -e
+      SP=/usr/lib/python__VER__/site-packages
+      DEST="${{targets.destdir}}$SP/pip/_vendor/msgpack"
+      install -d "$DEST"
+      for f in __init__.py exceptions.py ext.py fallback.py; do
+        test -f "msgpack/$f" || { echo "❌ msgpack/$f missing from sdist"; exit 1; }
+        install -m0644 "msgpack/$f" "$DEST/$f"
+      done
+      install -m0644 COPYING "$DEST/COPYING"
+
+      # Sanity: the file we just installed must report the fixed version.
+      grep -q '__version__ = "1.2.1"' "$DEST/__init__.py" \
+        || { echo "❌ installed __init__.py is not 1.2.1"; exit 1; }
+
+      # Wolfi ships hash-based pyc files in UNCHECKED mode (PEP 552), which
+      # means the interpreter never compares them against the source -- it just
+      # runs the bytecode. Replacing only the .py files therefore changes
+      # nothing at runtime: the stale 1.1.2 bytecode still executes, while every
+      # scanner reads the new sources and reports the image as clean. That is
+      # the worst possible outcome, so the bytecode must be regenerated too.
+      # -s/-p rewrite the recorded path so tracebacks point at the real install
+      # location rather than the build destdir.
+      python3 -m compileall -q --invalidation-mode unchecked-hash \
+        -s "${{targets.destdir}}" -p / "$DEST"
+
+      PYC="$DEST/__pycache__/__init__.cpython-$(echo __VER__ | tr -d .).pyc"
+      test -f "$PYC" || { echo "❌ no regenerated pyc at $PYC"; exit 1; }
+      grep -q "1\.2\.1" "$PYC" || { echo "❌ regenerated pyc does not carry 1.2.1"; exit 1; }
+      ! grep -q "1\.1\.2" "$PYC" || { echo "❌ regenerated pyc still carries 1.1.2"; exit 1; }
+
+  - name: Rewrite vendor.txt to match what is now on disk
+    runs: |
+      set -e
+      SP=/usr/lib/python__VER__/site-packages
+      DEST="${{targets.destdir}}$SP/pip/_vendor"
+      install -d "$DEST"
+      # Derived from the pip actually present in the build environment, so this
+      # never carries a stale copy of some other pip release's manifest.
+      sed -e 's/^msgpack==1\.1\.2$/msgpack==1.2.1/' \
+          -e '/^setuptools==/d' \
+          "$SP/pip/_vendor/vendor.txt" > "$DEST/vendor.txt"
+      chmod 0644 "$DEST/vendor.txt"
+
+      grep -q '^msgpack==1\.2\.1$' "$DEST/vendor.txt" || { echo "❌ msgpack line not rewritten"; exit 1; }
+      ! grep -q '^setuptools==' "$DEST/vendor.txt" || { echo "❌ setuptools line still present"; exit 1; }
+
+  # Two bundled bills-of-materials are generated FROM vendor.txt at package
+  # build time and then shipped inside the image: pip's own CycloneDX
+  # (pip/_vendor/bom.cdx.json) and Wolfi's SPDX for py<ver>-pip-base. Scanners
+  # read them directly, so they -- not the source files -- are what actually
+  # drives the reported finding. Now that the code and vendor.txt are fixed,
+  # these two documents are simply stale, and correcting them is what makes the
+  # manifest agree with the filesystem. This is the last place 1.1.2 survives.
+  - name: Correct the bundled SBOMs
+    runs: |
+      set -e
+      export DESTDIR="${{targets.destdir}}"
+      export PYMINOR="__VER__"
+      python3 - <<'PYEOF'
+      import glob, json, os, pathlib
+
+      destdir = pathlib.Path(os.environ["DESTDIR"])
+      minor = os.environ["PYMINOR"]
+
+      def out(rel):
+          p = destdir / rel.lstrip("/")
+          p.parent.mkdir(parents=True, exist_ok=True)
+          return p
+
+      # --- pip's own CycloneDX -------------------------------------------
+      cdx_rel = f"usr/lib/python{minor}/site-packages/pip/_vendor/bom.cdx.json"
+      cdx = json.loads(pathlib.Path("/", cdx_rel).read_text())
+      comps = cdx.get("components", [])
+      assert any(c.get("name") == "msgpack" and c.get("version") == "1.1.2" for c in comps), \
+          "CycloneDX no longer lists msgpack 1.1.2 -- drop this shim"
+
+      kept = []
+      for c in comps:
+          if c.get("name") == "setuptools":
+              continue  # not vendored on disk; see the earlier assertion
+          if c.get("name") == "msgpack":
+              c["version"] = "1.2.1"
+              c["purl"] = "pkg:pypi/msgpack@1.2.1"
+              c["bom-ref"] = "pkg:pypi/msgpack@1.2.1"
+          kept.append(c)
+      cdx["components"] = kept
+      dropped_refs = {"pkg:pypi/setuptools@70.3.0"}
+      if "dependencies" in cdx:
+          cdx["dependencies"] = [
+              d for d in cdx["dependencies"] if d.get("ref") not in dropped_refs
+          ]
+          for d in cdx["dependencies"]:
+              if "dependsOn" in d:
+                  d["dependsOn"] = [r for r in d["dependsOn"] if r not in dropped_refs]
+      out(cdx_rel).write_text(json.dumps(cdx, indent=2) + "\n")
+
+      # --- Wolfi's SPDX for the pip package ------------------------------
+      spdx_src = glob.glob(f"/var/lib/db/sbom/py{minor}-pip-base-*.spdx.json")
+      assert len(spdx_src) == 1, f"expected one pip-base SPDX, got {spdx_src}"
+      spdx_src = spdx_src[0]
+      spdx = json.loads(pathlib.Path(spdx_src).read_text())
+
+      drop_ids, kept_pkgs = set(), []
+      for p in spdx.get("packages", []):
+          if p.get("name") == "setuptools" and p.get("versionInfo") == "70.3.0":
+              drop_ids.add(p.get("SPDXID"))
+              continue
+          if p.get("name") == "msgpack" and p.get("versionInfo") == "1.1.2":
+              p["versionInfo"] = "1.2.1"
+              for ref in p.get("externalRefs", []):
+                  if ref.get("referenceType") == "purl":
+                      ref["referenceLocator"] = "pkg:pypi/msgpack@1.2.1"
+          kept_pkgs.append(p)
+      spdx["packages"] = kept_pkgs
+
+      # Leaving relationships that point at a removed package makes the
+      # document invalid, so prune them alongside it.
+      if "relationships" in spdx:
+          spdx["relationships"] = [
+              r for r in spdx["relationships"]
+              if r.get("relatedSpdxElement") not in drop_ids
+              and r.get("spdxElementId") not in drop_ids
+          ]
+      out(f"var/lib/db/sbom/{os.path.basename(spdx_src)}").write_text(json.dumps(spdx, indent=2) + "\n")
+      print("corrected bundled SBOMs (CycloneDX + SPDX)")
+      PYEOF
+
+  # `python -m venv` seeds the new environment from a bundled pip wheel, and
+  # that wheel embeds its own copy of pip/_vendor -- vulnerable msgpack sources
+  # included. Fixing only the installed site-packages would leave every venv
+  # created from this image carrying msgpack 1.1.2, so the wheel is rewritten
+  # with the same fixed sources and its RECORD hashes recomputed to match.
+  - name: Rewrite the venv seed wheel
+    runs: |
+      set -e
+      export DESTDIR="${{targets.destdir}}"
+      python3 - <<'PYEOF'
+      import base64, glob, hashlib, pathlib, os, zipfile
+
+      src = glob.glob("/usr/share/python-wheels/pip-*-py3-none-any.whl")
+      assert len(src) == 1, f"expected exactly one pip seed wheel, got {src}"
+      src = src[0]
+
+      dest = pathlib.Path(os.environ["DESTDIR"]) / "usr/share/python-wheels" / os.path.basename(src)
+      dest.parent.mkdir(parents=True, exist_ok=True)
+
+      fixed = {}
+      for name in ("__init__.py", "exceptions.py", "ext.py", "fallback.py"):
+          fixed[f"pip/_vendor/msgpack/{name}"] = pathlib.Path("msgpack", name).read_bytes()
+
+      def record_line(path, data):
+          digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode()
+          return f"{path},sha256={digest},{len(data)}"
+
+      with zipfile.ZipFile(src) as zin:
+          names = set(zin.namelist())
+          missing = [p for p in fixed if p not in names]
+          assert not missing, f"wheel layout changed, missing {missing}"
+
+          vendor_txt = zin.read("pip/_vendor/vendor.txt").decode()
+          assert "msgpack==1.1.2" in vendor_txt, "seed wheel no longer pins msgpack 1.1.2 -- drop this shim"
+          new_vendor = "".join(
+              l for l in vendor_txt.replace("msgpack==1.1.2", "msgpack==1.2.1").splitlines(keepends=True)
+              if not l.startswith("setuptools==")
+          )
+          fixed["pip/_vendor/vendor.txt"] = new_vendor.encode()
+
+          record_name = next(n for n in names if n.endswith(".dist-info/RECORD"))
+          record = {}
+          for line in zin.read(record_name).decode().splitlines():
+              if line:
+                  record[line.split(",")[0]] = line
+
+          for path, data in fixed.items():
+              record[path] = record_line(path, data)
+          record[record_name] = f"{record_name},,"
+
+          # Deterministic: fixed timestamp, original member order preserved.
+          with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zout:
+              for item in zin.infolist():
+                  if item.filename == record_name:
+                      data = ("\n".join(record[n] for n in record) + "\n").encode()
+                  else:
+                      data = fixed.get(item.filename) or zin.read(item.filename)
+                  info = zipfile.ZipInfo(item.filename, date_time=(1980, 1, 1, 0, 0, 0))
+                  info.external_attr = item.external_attr
+                  info.compress_type = zipfile.ZIP_DEFLATED
+                  zout.writestr(info, data)
+
+      with zipfile.ZipFile(dest) as z:
+          assert b'__version__ = "1.2.1"' in z.read("pip/_vendor/msgpack/__init__.py")
+          assert b"msgpack==1.2.1" in z.read("pip/_vendor/vendor.txt")
+      print(f"rewrote seed wheel -> {dest}")
+      PYEOF
