@@ -46,6 +46,10 @@ pipeline:
       # 0.54.0 -> 0.53.0 and re-introduce the very CVEs the float was added to clear.
       # Removed rather than raised: with upstream above every floor there is nothing
       # left for the float to do. Re-check on the next bump.
+      # 1.51.0 re-check: one new floor. golang.org/x/mod v0.38.0 -> v0.40.0
+      # (CVE-2026-56864/56865: sumdb/tlog transparency-log verification bypass).
+      go get golang.org/x/mod@v0.40.0
+      go mod tidy
       go build -trimpath \
         -ldflags "-s -w -X main.version=${{package.version}}" \
         -o "${{targets.destdir}}/usr/bin/syft" ./cmd/syft
