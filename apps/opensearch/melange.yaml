@@ -111,6 +111,72 @@ pipeline:
       rm -rf "$js"
       echo "jsoup: replaced $found copy/copies with 1.23.1 content"
 
+      # --- (2c) httpcomponents5 + netty-codec-http + log4j-api -------------------------
+      # HIGH findings on the published 3.7.0 image:
+      #   httpclient5      5.6.1        -> 5.6.3
+      #   httpcore5        5.4          -> 5.4.3
+      #   httpcore5-h2     5.4          -> 5.4.3
+      #   netty-codec-http 4.2.x        -> 4.2.17.Final
+      #   log4j-api        2.25.4       -> 2.25.5
+      #
+      # READ THIS BEFORE TOUCHING THE httpcomponents PART. The 5.6.x httpclient5 line is
+      # exactly what broke graylog this cycle: overlaid into graylog's OpenSearch storage
+      # plugin it cleared the CVE gate AND the image smoke test, then CrashLoopBackOff'd in
+      # the chart gate with `java.util.zip.ZipException: Not in GZIP format` from the
+      # OpenSearch client's JSON parser.
+      #
+      # Here the jars sit in modules/reindex (the REST client used for REMOTE reindex),
+      # modules/opensearch-dashboards, and the alerting / anomaly-detection plugins. So the
+      # same client code path exists in this image, and neither the smoke test nor the
+      # chart's kind gate exercised it -- index/get, cluster health and _plugins/_sql all
+      # go through the transport layer, not httpclient5.
+      #
+      # So test.sh now performs a REMOTE reindex against the node's own HTTP endpoint. That
+      # is a real remote reindex as far as OpenSearch is concerned: it goes through the REST
+      # client and httpclient5, including the gzip handling that failed in graylog. If this
+      # bump is going to break, that assertion is what catches it.
+      #
+      # httpcore5-reactive is bumped too even though it was not flagged: it is versioned in
+      # lockstep with httpcore5 upstream, and leaving 5.4 beside 5.4.3 mixes two builds of
+      # one library for no benefit.
+      hc=$(mktemp); hcore=$(mktemp); hch2=$(mktemp); hcre=$(mktemp); nch=$(mktemp); l4j=$(mktemp)
+      curl -fsSL -o "$hc"    "$MC/org/apache/httpcomponents/client5/httpclient5/5.6.3/httpclient5-5.6.3.jar"
+      echo "80712ff129210d7c73d9fcc1195cbee5c3c34744965c7a05ea107b3648922f18  $hc"    | sha256sum -c -
+      curl -fsSL -o "$hcore" "$MC/org/apache/httpcomponents/core5/httpcore5/5.4.3/httpcore5-5.4.3.jar"
+      echo "18bfbbabb478dfb67f31aeaf428c387f3c3df654582e1309f708ee1f3086830a  $hcore" | sha256sum -c -
+      curl -fsSL -o "$hch2"  "$MC/org/apache/httpcomponents/core5/httpcore5-h2/5.4.3/httpcore5-h2-5.4.3.jar"
+      echo "c7db7026b8e2dea39132b04a6069f6671e2858309b20a146ec5c7dd6ed73a0b6  $hch2"  | sha256sum -c -
+      curl -fsSL -o "$hcre"  "$MC/org/apache/httpcomponents/core5/httpcore5-reactive/5.4.3/httpcore5-reactive-5.4.3.jar"
+      echo "f3b7c80d6021fee8ad42628d41eb826905fb3b595c211f001fdffa7fa1ecec3d  $hcre"  | sha256sum -c -
+      curl -fsSL -o "$nch"   "$MC/io/netty/netty-codec-http/4.2.17.Final/netty-codec-http-4.2.17.Final.jar"
+      echo "a5bde91ac82ab90579df6559c0bd7ea6ae37460e3f18116ab4122194283b3669  $nch"   | sha256sum -c -
+      curl -fsSL -o "$l4j"   "$MC/org/apache/logging/log4j/log4j-api/2.25.5/log4j-api-2.25.5.jar"
+      echo "64777f73ea0b3104c04eb82befbdccc30a425a19e83ad06cb2f93aa303511863  $l4j"   | sha256sum -c -
+
+      # Rename rather than content-swap: unlike the jackson jars these carry the version in
+      # paths the classloader logs, and an honest filename makes `find` verifiable below.
+      swapjar() {  # <glob> <new-basename> <src>
+        local n=0
+        while IFS= read -r j; do
+          cp "$3" "$(dirname "$j")/$2"; rm -f "$j"; n=$((n+1))
+        done < <(find "$dest" -name "$1")
+        test "$n" -gt 0 || { echo "FATAL: no jar matched $1 -- the dist's version moved"; exit 1; }
+        echo "  $1 -> $2 ($n copy/copies)"
+      }
+      swapjar 'httpclient5-5.6.1.jar'      httpclient5-5.6.3.jar      "$hc"
+      swapjar 'httpcore5-5.4.jar'          httpcore5-5.4.3.jar        "$hcore"
+      swapjar 'httpcore5-h2-5.4.jar'       httpcore5-h2-5.4.3.jar     "$hch2"
+      swapjar 'httpcore5-reactive-5.4.jar' httpcore5-reactive-5.4.3.jar "$hcre"
+      swapjar 'netty-codec-http-4.2.*.Final.jar' netty-codec-http-4.2.17.Final.jar "$nch"
+      swapjar 'log4j-api-2.25.4.jar'       log4j-api-2.25.5.jar       "$l4j"
+      rm -f "$hc" "$hcore" "$hch2" "$hcre" "$nch" "$l4j"
+      # Nothing may be left behind at an old version, or the classloader sees both.
+      for stale in 'httpclient5-5.6.1.jar' 'httpcore5-5.4.jar' 'httpcore5-h2-5.4.jar' \
+                   'httpcore5-reactive-5.4.jar' 'log4j-api-2.25.4.jar'; do
+        n=$(find "$dest" -name "$stale" | wc -l)
+        test "$n" -eq 0 || { echo "FATAL: $n stale $stale survived the swap"; exit 1; }
+      done
+
       # (3) opensearch-sql/opensearch-skills bundle Apache Calcite 1.41.0, whose
       #     calcite-core carries CVE-2026-46718 (unsafe reflection, MEDIUM). The fix is
       #     calcite-core 1.42.0 -- BUT 1.42's CALCITE-7351 made RelDataTypeSystemImpl's
