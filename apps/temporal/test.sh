@@ -50,7 +50,12 @@ docker run -d --name "$NAME" \
 ok=0
 for i in $(seq 1 90); do
   logs="$(docker logs "$NAME" 2>&1 || true)"
-  if echo "$logs" | grep -qiE 'frontend started|Service resources started|Starting to serve'; then
+  # Here-string, NOT `echo "$logs" | grep -q`. $logs is temporal's whole log output --
+  # thousands of JSON lines -- so echo is still writing when grep -q leaves at the first
+  # match, takes SIGPIPE, and under pipefail the `if` condition reads FALSE even though the
+  # pattern matched. The loop then spun all 90 iterations and timed out on a healthy server,
+  # printing "echo: write error: Broken pipe" 90 times as the only clue.
+  if grep -qiE 'frontend started|Service resources started|Starting to serve' <<<"$logs"; then
     ok=1
     break
   fi

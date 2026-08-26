@@ -275,6 +275,35 @@ pipefail. 193 are `echo "$var" | grep -q`, which is safe -- echo of a small vari
 before grep can leave. **137 have a command on the left** (docker run, docker logs, curl,
 strings) and are the real exposure.
 
-Those 137 are deliberately NOT mass-rewritten. Most involve small outputs that never trip,
-a blanket edit of 137 assertion lines across 150 recipes is its own risk, and the failure is
-recognisable now that it is written down. Fix them on contact, and never write a new one.
+### Correction: the "echo is safe" split was wrong (same day)
+
+The 193/137 split above claimed `echo "$var" | grep -q` is safe because a small echo
+finishes before grep can leave. That reasoning is right and the conclusion is wrong, because
+the variable is not always small. temporal's test did:
+
+    logs="$(docker logs "$NAME" 2>&1 || true)"
+    if echo "$logs" | grep -qiE 'frontend started|...'; then
+
+`$logs` is temporal's entire log output, thousands of JSON lines. echo was still writing,
+grep left at the first match, and under pipefail the `if` condition read FALSE **because the
+pattern matched**. The poll loop then ran all 90 iterations and timed out against a
+perfectly healthy server, emitting `echo: write error: Broken pipe` 90 times as its only
+clue.
+
+So the real split is not echo-vs-command, it is small-vs-large output, and that cannot be
+determined by reading the line. Re-counted on the actual dangerous shape (left side is
+`docker logs`, `strings`, `find`, `cat`, or a variable named logs/names/out/body/dump):
+**115 sites**.
+
+### Do NOT try to fix these in bulk
+
+A mechanical rewrite of `A | grep -qX P` to `grep -qX P <<<"$(A)"` looks safe and is not.
+Applied across 28 files it produced:
+
+    grep -qi "Usage:" || { echo "..."; exit 1; } <<<"$(echo "$out")"
+
+The here-string binds to the `{ ... }` group, not to grep, so grep reads nothing and the
+assertion is silently inverted. `bash -n` passes: it is valid shell and wrong shell. Reverted.
+
+Fix these ONE AT A TIME, by hand, where a failure actually points at one, and re-run the
+test afterwards to confirm the assertion still passes for the right reason.

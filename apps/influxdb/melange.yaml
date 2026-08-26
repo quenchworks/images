@@ -39,9 +39,17 @@ environment:
       - go-1.26          # newer than upstream's go 1.23: clears all stdlib CVE advisories
       - go-bindata       # embeds the UI assets into static_gen.go
       # libflux (Rust) toolchain + cgo deps.
-      # Pin Rust 1.72: the vendored flux v0.196.1 crate predates lints that newer
-      # rustc (1.87+) promotes to hard errors (e.g. mismatched_lifetime_syntaxes),
-      # which break `cargo build` on rust-1.89. 1.72 compiles the crate cleanly.
+      # Rust is pinned per VERSION (see build.conf RUST), because the vendored flux
+      # crate is version-specific about which rustc it tolerates.
+      #
+      # 2.7.12 needs 1.72: its flux v0.196.1 predates lints that newer rustc promotes to
+      # hard errors (mismatched_lifetime_syntaxes and friends).
+      #
+      # 2.9.1 was pinned 1.83 and that became UNBUILDABLE: Wolfi retired the package and
+      # the build died with `nothing provides "rust-1.83"`. Retested on rust-1.93 (Wolfi's
+      # oldest surviving line) and 2.9.1's flux compiles cleanly -- 0 fixable CVEs on a
+      # local both-stage build. So the "newer rustc breaks flux" warning above applies to
+      # the OLD flux only; do not generalise it to 2.9.x.
       - rust-__RUST__
       - clang
       - pkgconf
