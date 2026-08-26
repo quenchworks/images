@@ -29,7 +29,9 @@ environment:
       - build-base
       - busybox
       - ca-certificates-bundle
-      - go-1.25
+      # go-1.26: stdlib 1.25.12 findings are fixed only in 1.25.13/1.26.6+, and Wolfi's
+      # go-1.25 line tops out at 1.25.12 (same reasoning as cadence, harbor-registry).
+      - go-1.26
 
 pipeline:
   - uses: fetch

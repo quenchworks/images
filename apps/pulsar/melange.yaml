@@ -108,7 +108,11 @@ pipeline:
       # are not flagged and stay on 4.1.135 -- same 4.1.x line, ABI-compatible.
       swap io/netty netty-codec         4.1.135.Final 4.1.136.Final
       swap io/netty netty-codec-haproxy 4.1.135.Final 4.1.136.Final
-      swap io/netty netty-codec-http    4.1.135.Final 4.1.136.Final
+      # codec-http goes to 4.1.137 (CVE-2026-59903 fixed there; the rest of the family
+      # is clean at 4.1.136). An earlier duplicate swap for this jar was removed: THIS
+      # line runs later and re-downloaded 4.1.136 after it, leaving both jars on the
+      # classpath -- the last-swap-wins twin of the last-float-wins module lesson.
+      swap io/netty netty-codec-http    4.1.135.Final 4.1.137.Final 0535bb5a736472bef5c948d15eb273c4ab9f796656fc7c5d6b982ad92bddbd49
       swap io/netty netty-codec-http2   4.1.135.Final 4.1.136.Final
       swap io/netty netty-codec-dns     4.1.135.Final 4.1.136.Final 89bddc4ec42756c41a0195a50a1323a324836162b6712a843c3de5c29096c93b
       # at.yawk.lz4:lz4-java 1.10.3 -> 1.11.1 (CVE-2026-59949: the native XXHash
