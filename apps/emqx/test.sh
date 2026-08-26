@@ -27,8 +27,11 @@ for i in $(seq 1 60); do
 done
 [ -n "$ok" ] || { echo "EMQX /status never returned 200"; docker logs "$NAME" | tail -40 || true; exit 1; }
 
-# version sanity via emqx_ctl
-ver="$(docker exec "$NAME" /opt/emqx/bin/emqx_ctl broker 2>/dev/null | awk -F': ' '/version/{print $2; exit}')"
+# version sanity via emqx_ctl. Capture first, THEN parse: piping emqx_ctl
+# straight into `awk ... exit` SIGPIPEs emqx_ctl when awk quits on the first
+# match, and under pipefail that fails the whole script with 141.
+broker_out="$(docker exec "$NAME" /opt/emqx/bin/emqx_ctl broker 2>/dev/null || true)"
+ver="$(awk -F': ' '/version/{print $2; exit}' <<<"$broker_out")"
 echo "broker version: ${ver:-unknown}"
 
 echo "smoke test passed (nonroot user: $user, dashboard /status healthy)"

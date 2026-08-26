@@ -101,7 +101,9 @@ pipeline:
       go get golang.org/x/crypto@v0.55.0
       go get golang.org/x/image@v0.43.0
       go get github.com/go-chi/chi/v5@v5.2.4
-      go get github.com/Azure/go-ntlmssp@v0.1.1
+      #   github.com/labstack/echo/v5 v5.0.3 -> v5.2.0 (URL path decoding info disclosure, CVE-2026-55677)
+      #   golang.org/x/mod            v0.38.0 -> v0.40.0 (GOSUMDB/tlog verification bypass, CVE-2026-56864/56865)
+      go get github.com/Azure/go-ntlmssp@v0.1.1 github.com/labstack/echo/v5@v5.2.0 golang.org/x/mod@v0.40.0
       go mod tidy
       # Mirror upstream's release ldflags/tags so `vikunja version` reports the real
       # release. netgo+osusergo keep DNS/os-user pure-Go; sqlite stays CGO (mattn).

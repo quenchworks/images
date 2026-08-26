@@ -169,8 +169,12 @@ echo "== plugin load check =="
 # second half matters: if saml-auth ever loads cleanly, the removal silently stopped
 # working and we are shipping the unscannable static library again.
 expected_fail="saml-auth"
-failed="$(docker exec "$C" sh -c 'grep "failed to load plugin" /usr/local/apisix/logs/error.log 2>/dev/null | grep -cv "'"$expected_fail"'" || echo 0' | tr -d ' \r')"
-saml_failed="$(docker exec "$C" sh -c 'grep -c "failed to load plugin.*'"$expected_fail"'" /usr/local/apisix/logs/error.log 2>/dev/null || echo 0' | tr -d ' \r')"
+# `|| true`, NOT `|| echo 0`: grep -c prints "0" itself AND exits 1 when nothing
+# matched, so `|| echo 0` emitted a SECOND 0 ("0\n0") and the numeric checks below
+# misfired on the multiline value. A missing error.log leaves the var empty and the
+# ${var:-0} defaults cover that.
+failed="$(docker exec "$C" sh -c 'grep "failed to load plugin" /usr/local/apisix/logs/error.log 2>/dev/null | grep -cv "'"$expected_fail"'" || true' | tr -d ' \r')"
+saml_failed="$(docker exec "$C" sh -c 'grep -c "failed to load plugin.*'"$expected_fail"'" /usr/local/apisix/logs/error.log 2>/dev/null || true' | tr -d ' \r')"
 if [ "${saml_failed:-0}" -eq 0 ]; then
   echo "FAIL: $expected_fail loaded, but this image deliberately omits lua-resty-saml."
   echo "      Either the removal regressed, or the plugin is no longer in the default list."
