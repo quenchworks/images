@@ -101,7 +101,16 @@ pipeline:
       ( cd /internal/obi-src
         go mod edit -require=github.com/cilium/ebpf@v0.22.0
         grep -q 'github.com/cilium/ebpf v0.22.0' go.mod \
-          || { echo "FATAL: ebpf floor did not land in obi-src/go.mod"; exit 1; } )
+          || { echo "FATAL: ebpf floor did not land in obi-src/go.mod"; exit 1; }
+        # ebpf v0.22.0 REMOVED btf.FlushKernelSpec along with the global kernel-BTF
+        # cache it flushed (LoadKernelSpec no longer caches), so the two calls obi
+        # makes after loading its tracers have nothing left to flush -- drop them
+        # and the then-unused btf import. Verified: obi-src compiles cleanly
+        # against v0.22.0 with only this change.
+        f=pkg/ebpf/tracer_linux.go
+        n="$(grep -c 'btf\.FlushKernelSpec()' "$f" || true)"
+        [ "$n" = "2" ] || { echo "FATAL: expected 2 FlushKernelSpec calls in $f, found $n"; exit 1; }
+        sed -i '/btf\.FlushKernelSpec()/d; /"github\.com\/cilium\/ebpf\/btf"$/d' "$f" )
 
       # Install the OpenTelemetry Collector Builder (ocb) pinned to the exact
       # version used to cut the official otelcol-contrib 0.154.0 release.
@@ -126,6 +135,13 @@ pipeline:
       # so no version ldflag is needed.
       (
         cd _build
+        # The official manifest itself carries
+        #   replaces: github.com/cilium/ebpf => github.com/cilium/ebpf v0.21.0
+        # which ocb copies into _build/go.mod. A replace OVERRIDES every require,
+        # so the v0.22.0 floor in obi-src/go.mod above was selected by MVS and then
+        # replaced straight back down to v0.21.0 (the built binary's buildinfo
+        # showed "dep cilium/ebpf v0.22.0 => v0.21.0"). Raise the replace itself.
+        go mod edit -replace='github.com/cilium/ebpf=github.com/cilium/ebpf@v0.22.0'
         # ONLY-RAISE float. An unconditional `go get mod@ver` INVERTS into a downgrade
         # the moment upstream passes the pin, and `go get` then cascades that downgrade
         # into every dependent that required the newer version. That is exactly how
