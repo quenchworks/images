@@ -14,10 +14,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "starting $IMAGE (read-only rootfs, tmpfs /quickwit + /tmp)"
+echo "starting $IMAGE (read-only rootfs, tmpfs /quickwit/qwdata + /tmp)"
+# tmpfs the DATA DIR only. Mounting tmpfs on /quickwit shadows the whole directory,
+# including the shipped /quickwit/config/quickwit.yaml, and the node dies with
+# "failed to read file file:///quickwit/config/quickwit.yaml". The chart's emptyDir
+# is likewise mounted at qwdata, not at /quickwit.
 docker run -d --name "$NAME" \
   --read-only \
-  --tmpfs /quickwit:rw,mode=1777 \
+  --tmpfs /quickwit/qwdata:rw,mode=1777 \
   --tmpfs /tmp:rw,mode=1777 \
   -p 127.0.0.1:7280:7280 \
   -p 127.0.0.1:7281:7281 \
