@@ -77,7 +77,24 @@ pipeline:
       swap() { # <maven-group-path> <artifact> <oldver> <newver> [sha256]
         grp="$1"; art="$2"; old="$3"; new="$4"; sha="${5:-}"
         dg="$(printf '%s' "$grp" | tr '/' '.')"
-        rm -f "$dest/lib/${dg}-${art}-${old}.jar"
+        # Three cases, decided by what the dist actually ships:
+        #   old present            -> real swap (rm + download new)
+        #   old absent, new SHIPPED -> the dist caught up; the line is a no-op. Warn so the
+        #                              dead line gets cleaned up, but do not duplicate or die.
+        #   neither present        -> the dist moved somewhere ELSE entirely; downloading
+        #                              blind would add a jar beside an unknown version. FATAL.
+        # This exists because blind rm+download silently ADDED netty 4.1.137 beside the
+        # natively-shipped 4.1.136 when the old= said 4.1.135.
+        if [ -f "$dest/lib/${dg}-${art}-${old}.jar" ]; then
+          rm -f "$dest/lib/${dg}-${art}-${old}.jar"
+        elif [ -f "$dest/lib/${dg}-${art}-${new}.jar" ]; then
+          echo "note: dist already ships ${art}-${new}; swap line for ${old} is dead, remove it"
+          return 0
+        else
+          echo "FATAL: ${art}: neither ${old} nor ${new} shipped -- dist moved, re-audit this line"
+          ls "$dest/lib/" | grep -F "${art}" || true
+          exit 1
+        fi
         curl -fsSL "$MC/${grp}/${art}/${new}/${art}-${new}.jar" -o "$dest/lib/${dg}-${art}-${new}.jar"
         test -s "$dest/lib/${dg}-${art}-${new}.jar"
         [ -z "$sha" ] || echo "$sha  $dest/lib/${dg}-${art}-${new}.jar" | sha256sum -c - >/dev/null
@@ -106,15 +123,11 @@ pipeline:
       # netty-codec-dns carries GHSA-mfg7-5gfp-c4w3 (MEDIUM, DNS record-decoder memory leak
       # on malformed domain names); its consumers (netty-resolver-dns + the macos variants)
       # are not flagged and stay on 4.1.135 -- same 4.1.x line, ABI-compatible.
-      swap io/netty netty-codec         4.1.135.Final 4.1.136.Final
-      swap io/netty netty-codec-haproxy 4.1.135.Final 4.1.136.Final
       # codec-http goes to 4.1.137 (CVE-2026-59903 fixed there; the rest of the family
       # is clean at 4.1.136). An earlier duplicate swap for this jar was removed: THIS
       # line runs later and re-downloaded 4.1.136 after it, leaving both jars on the
       # classpath -- the last-swap-wins twin of the last-float-wins module lesson.
-      swap io/netty netty-codec-http    4.1.135.Final 4.1.137.Final 0535bb5a736472bef5c948d15eb273c4ab9f796656fc7c5d6b982ad92bddbd49
-      swap io/netty netty-codec-http2   4.1.135.Final 4.1.136.Final
-      swap io/netty netty-codec-dns     4.1.135.Final 4.1.136.Final 89bddc4ec42756c41a0195a50a1323a324836162b6712a843c3de5c29096c93b
+      swap io/netty netty-codec-http    4.1.136.Final 4.1.137.Final 0535bb5a736472bef5c948d15eb273c4ab9f796656fc7c5d6b982ad92bddbd49
       # at.yawk.lz4:lz4-java 1.10.3 -> 1.11.1 (CVE-2026-59949: the native XXHash
       # implementations can crash the JVM on invalid byte-array ranges). Backs the lz4
       # compression type for producers/consumers. at.yawk.lz4 publishes a SINGLE artifact
