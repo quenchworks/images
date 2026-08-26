@@ -62,6 +62,7 @@ pipeline:
       # swappable; the module (Kafka-based cross-datacenter mirror) is niche/optional.
       rm -rf "$dest/modules/cross-dc"
       M=https://repo1.maven.org/maven2
+      MCV="https://repo1.maven.org/maven2"
       swap() { # reldir newfile sha256 url oldfile
         local rd="$1" nf="$2" sha="$3" url="$4" old="$5"
         rm -f "$dest/$rd/$old"
@@ -70,9 +71,33 @@ pipeline:
       }
       swap modules/analysis-extras/lib opennlp-tools-2.5.9.jar bc2d28082607b211fdf3185c1496ea8e130fa1fe1bead85622d38487920017e2 "https://repo1.maven.org/maven2/org/apache/opennlp/opennlp-tools/2.5.9/opennlp-tools-2.5.9.jar" opennlp-tools-2.5.6.jar
       swap modules/gcs-repository/lib grpc-netty-shaded-1.75.0.jar d33d47a9720a392512c4e4ceaa17a458a0e3ed6188d17e98d6c4faf0679374d7 "https://repo1.maven.org/maven2/io/grpc/grpc-netty-shaded/1.75.0/grpc-netty-shaded-1.75.0.jar" grpc-netty-shaded-1.65.1.jar
+
+      # --- 2026-08-26 gate wave -------------------------------------------------------
+      # httpcomponents: 5.2.x -> the only fixed line (5.6.3 / 5.4.3). NOTE the jump crosses
+      # the 5.5->5.6 behaviour change that broke graylog's OpenSearch client; here the
+      # consumer is SolrJ in the sql module, and the boot test's core-create + query path
+      # is the guard. licenses/ carries scan-visible duplicate jars, so both copies move.
+      swap modules/sql/lib httpclient5-5.6.3.jar 80712ff129210d7c73d9fcc1195cbee5c3c34744965c7a05ea107b3648922f18 "$MCV/org/apache/httpcomponents/client5/httpclient5/5.6.3/httpclient5-5.6.3.jar" httpclient5-5.2.1.jar
+      swap modules/sql/lib httpcore5-5.4.3.jar 18bfbbabb478dfb67f31aeaf428c387f3c3df654582e1309f708ee1f3086830a "$MCV/org/apache/httpcomponents/core5/httpcore5/5.4.3/httpcore5-5.4.3.jar" httpcore5-5.2.3.jar
+      swap modules/sql/lib httpcore5-h2-5.4.3.jar c7db7026b8e2dea39132b04a6069f6671e2858309b20a146ec5c7dd6ed73a0b6 "$MCV/org/apache/httpcomponents/core5/httpcore5-h2/5.4.3/httpcore5-h2-5.4.3.jar" httpcore5-h2-5.2.jar
+      swap licenses httpclient5-5.6.3.jar 80712ff129210d7c73d9fcc1195cbee5c3c34744965c7a05ea107b3648922f18 "$MCV/org/apache/httpcomponents/client5/httpclient5/5.6.3/httpclient5-5.6.3.jar" httpclient5-5.2.1.jar
+      swap licenses httpcore5-5.4.3.jar 18bfbbabb478dfb67f31aeaf428c387f3c3df654582e1309f708ee1f3086830a "$MCV/org/apache/httpcomponents/core5/httpcore5/5.4.3/httpcore5-5.4.3.jar" httpcore5-5.2.3.jar
+      swap licenses httpcore5-h2-5.4.3.jar c7db7026b8e2dea39132b04a6069f6671e2858309b20a146ec5c7dd6ed73a0b6 "$MCV/org/apache/httpcomponents/core5/httpcore5-h2/5.4.3/httpcore5-h2-5.4.3.jar" httpcore5-h2-5.2.jar
+      # log4j-api 2.25.4 -> 2.25.5 on the classpath; licenses/ carried a mismatched 2.25.3.
+      swap server/lib/ext log4j-api-2.25.5.jar 64777f73ea0b3104c04eb82befbdccc30a425a19e83ad06cb2f93aa303511863 "$MCV/org/apache/logging/log4j/log4j-api/2.25.5/log4j-api-2.25.5.jar" log4j-api-2.25.3.jar
+      swap licenses log4j-api-2.25.5.jar 64777f73ea0b3104c04eb82befbdccc30a425a19e83ad06cb2f93aa303511863 "$MCV/org/apache/logging/log4j/log4j-api/2.25.5/log4j-api-2.25.5.jar" log4j-api-2.25.3.jar
+      # netty-codec-http 4.2.16 has NO standalone jar here: it is bundled inside
+      # grpc-netty-shaded. 1.83.1 scans 0 findings (verified with trivy rootfs on the jar
+      # itself before pinning), so the shaded artifact moves rather than any netty file.
+      swap modules/gcs-repository/lib grpc-netty-shaded-1.83.1.jar fc7a54cca004df57d8d416f335e851d53b188926b598151c5714498ff60dced5 "$MCV/io/grpc/grpc-netty-shaded/1.83.1/grpc-netty-shaded-1.83.1.jar" grpc-netty-shaded-1.75.0.jar
+      swap licenses grpc-netty-shaded-1.83.1.jar fc7a54cca004df57d8d416f335e851d53b188926b598151c5714498ff60dced5 "$MCV/io/grpc/grpc-netty-shaded/1.83.1/grpc-netty-shaded-1.83.1.jar" grpc-netty-shaded-1.65.1.jar
       swap modules/langid/lib opennlp-tools-2.5.9.jar bc2d28082607b211fdf3185c1496ea8e130fa1fe1bead85622d38487920017e2 "https://repo1.maven.org/maven2/org/apache/opennlp/opennlp-tools/2.5.9/opennlp-tools-2.5.9.jar" opennlp-tools-2.5.6.jar
       swap modules/opentelemetry/lib netty-codec-compression-4.2.16.Final.jar 13c8565414dd2115281303ef4ad1f7cc69bd7771d8d12c7d2fb31307dff26d11 "https://repo1.maven.org/maven2/io/netty/netty-codec-compression/4.2.16.Final/netty-codec-compression-4.2.16.Final.jar" netty-codec-compression-4.2.6.Final.jar
-      swap modules/opentelemetry/lib netty-codec-http-4.2.16.Final.jar 0d16f981de8d0d304a2ab1a81f0a674892089fbaa8a583100aebb4a5b00456ec "https://repo1.maven.org/maven2/io/netty/netty-codec-http/4.2.16.Final/netty-codec-http-4.2.16.Final.jar" netty-codec-http-4.2.6.Final.jar
+      # codec-http goes straight to 4.2.17 (CVE fixed there). An earlier duplicate swap
+      # above this block was removed: THIS line runs later and re-downloaded 4.2.16
+      # after it -- the last-swap-wins ordering bug, third instance (pulsar netty,
+      # solr log4j, this).
+      swap modules/opentelemetry/lib netty-codec-http-4.2.17.Final.jar a5bde91ac82ab90579df6559c0bd7ea6ae37460e3f18116ab4122194283b3669 "https://repo1.maven.org/maven2/io/netty/netty-codec-http/4.2.17.Final/netty-codec-http-4.2.17.Final.jar" netty-codec-http-4.2.6.Final.jar
       swap modules/opentelemetry/lib netty-codec-http2-4.2.16.Final.jar fe1ffc7ed6bfb40f91c4e265fe76e3be7f9049deef0e8cf5a992420e4f02b542 "https://repo1.maven.org/maven2/io/netty/netty-codec-http2/4.2.16.Final/netty-codec-http2-4.2.16.Final.jar" netty-codec-http2-4.2.6.Final.jar
       swap modules/opentelemetry/lib netty-codec-socks-4.2.16.Final.jar e5230b4c467755bb570c846c8e3c0ffadcb1b568c1cd9a3a4ee946734baae54d "https://repo1.maven.org/maven2/io/netty/netty-codec-socks/4.2.16.Final/netty-codec-socks-4.2.16.Final.jar" netty-codec-socks-4.2.6.Final.jar
       swap modules/opentelemetry/lib netty-handler-proxy-4.2.16.Final.jar c53706ebaffd2fcef17b5f675b81eab4be13a714886cb4b2a7d0b73275cd39fe "https://repo1.maven.org/maven2/io/netty/netty-handler-proxy/4.2.16.Final/netty-handler-proxy-4.2.16.Final.jar" netty-handler-proxy-4.2.6.Final.jar
@@ -89,7 +114,6 @@ pipeline:
       swap server/lib/ext jetty-io-12.0.36.jar b191d45e3c48711cc784d509a8dec50112816af392b2b7c76d9e42324b5064da "https://repo1.maven.org/maven2/org/eclipse/jetty/jetty-io/12.0.36/jetty-io-12.0.36.jar" jetty-io-12.0.27.jar
       swap server/lib/ext jetty-server-12.0.36.jar f0eb8d1e71d67d0f937c45752546cf479ba55ad3135cf600d3bf723f52cd53fe "https://repo1.maven.org/maven2/org/eclipse/jetty/jetty-server/12.0.36/jetty-server-12.0.36.jar" jetty-server-12.0.27.jar
       swap server/lib/ext jetty-util-12.0.36.jar e16c145dd761168133d1505b6f7cf05343f5e3e3ff03333757c8a6312896ab48 "https://repo1.maven.org/maven2/org/eclipse/jetty/jetty-util/12.0.36/jetty-util-12.0.36.jar" jetty-util-12.0.27.jar
-      swap server/lib/ext log4j-api-2.25.4.jar c4b642a7f047275215de117e0e3847eb2c7711d84a0aa7433e7b3c096daf341d "https://repo1.maven.org/maven2/org/apache/logging/log4j/log4j-api/2.25.4/log4j-api-2.25.4.jar" log4j-api-2.25.3.jar
       swap server/lib/ext log4j-core-2.25.4.jar 10fee2c0485d54fa44ee75d314f6295508f7b932281873db61a91b88073200e6 "https://repo1.maven.org/maven2/org/apache/logging/log4j/log4j-core/2.25.4/log4j-core-2.25.4.jar" log4j-core-2.25.3.jar
       swap server/lib/ext log4j-1.2-api-2.25.4.jar 7b1a61507950ea67b3d6b11437ee37fad9db06f855c92c25c08aee074c757395 "https://repo1.maven.org/maven2/org/apache/logging/log4j/log4j-1.2-api/2.25.4/log4j-1.2-api-2.25.4.jar" log4j-1.2-api-2.25.3.jar
       swap server/lib/ext log4j-layout-template-json-2.25.4.jar a2f8d03f39ff62de75d4524c9ee085f167e201da91652141097a60643ce22e85 "https://repo1.maven.org/maven2/org/apache/logging/log4j/log4j-layout-template-json/2.25.4/log4j-layout-template-json-2.25.4.jar" log4j-layout-template-json-2.25.3.jar
