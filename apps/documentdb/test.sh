@@ -47,7 +47,12 @@ run_mongosh() {
 
 echo "ping through the gateway"
 for i in $(seq 1 30); do
-  if run_mongosh 'db.runCommand({ping:1}).ok' 2>/dev/null | grep -q 1; then
+  # Exact "1", not `grep -q 1`. The loose form matches any output containing the digit, and
+  # mongosh's failure text is full of them (MongoNetworkError ... 127.0.0.1:27017), so the
+  # loop broke on a FAILED ping and every later assertion ran against a gateway that was not
+  # ready. Same bug found in apps/mongodb the same day.
+  out="$(run_mongosh 'db.runCommand({ping:1}).ok' 2>/dev/null || true)"
+  if [ "$(printf '%s' "$out" | tr -d '[:space:]')" = "1" ]; then
     break
   fi
   [ "$i" = 30 ] && { echo "ping failed"; docker logs "$NAME" | tail -60; exit 1; }

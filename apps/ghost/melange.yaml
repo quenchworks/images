@@ -116,12 +116,19 @@ pipeline:
         "  'ip-address@<10.3.1': 10.3.1",        # same advisory code-server needed
         "  'js-yaml@<4.3.1': 4.3.1",             # CVE on 4.3.0 (4.3.0 was itself a fix pin)
         "  'undici@6.27.0': 6.28.0",            # TWO undici majors coexist in this tree, so each
-        "  'undici@7': 7.29.0",                 # line needs its own pin -- a single
+        "  'undici@7.28.0': 7.29.0",            # line needs its own pin -- a single
                                                  # `undici@<7.29.0` would drag the 6.x copy
                                                  # forward across a major. A space-containing
                                                  # range ('>=6 <6.28.0') is NOT parsed by pnpm, and
                                                  # the bare-major form ('undici@6') was ignored too --
                                                  # only the EXACT resolved version matched.
+                                                 # 2026-08-26: the 7.x line WAS 'undici@7', which is
+                                                 # that same ignored bare-major form, so it never
+                                                 # applied. Read the real resolved versions out of the
+                                                 # published image (6.27.0 and 7.28.0) and pinned both
+                                                 # exactly. The assertion below is what makes a future
+                                                 # resolved-version change fail loudly instead of
+                                                 # quietly reverting to an unpatched copy.
         "  'tar@<7.5.22': 7.5.22",               # CVE-2026-59873 CRIT/59874 HIGH/59871+59875 MED +
                                                  # GHSA-r292-9mhp-454m MED (needs >= 7.5.21)
         "  'uuid@<11': 11.1.1",                  # CVE-2026-41907 (3.x + 9.x copies)
@@ -147,6 +154,38 @@ pipeline:
       # install exit 1 with the decision left implicit.
       pnpm config set ignoredBuiltDependencies "re2" --location project 2>/dev/null || true
       pnpm install --prod --no-frozen-lockfile --config.strictDepBuilds=false
+
+      # Prove every override that names an EXACT resolved version actually applied. pnpm
+      # silently ignores a selector it cannot match (a bare major like 'undici@7', a
+      # space-containing range, or a `catalog:` spec), so an override that does nothing looks
+      # exactly like one that worked. That is how 'undici@7' sat here shipping an unpatched
+      # 7.28.0 while the recipe read as if it were pinned.
+      #
+      # pnpm's real copies live in the hidden store as node_modules/.pnpm/<name>@<version>,
+      # so the store directory names ARE the resolved versions.
+      python3 - <<'ASSERT'
+      import pathlib, re, sys
+      store = pathlib.Path("node_modules/.pnpm")
+      have = {}
+      for d in store.iterdir() if store.is_dir() else []:
+          # pnpm appends a peer-dependency suffix after "_" (vite@7.3.5_@types+node@22.0.0),
+          # so cut that off FIRST. Parsing the raw name matches the trailing peer version
+          # instead of the package's own, which would let a peer-suffixed copy of a banned
+          # version slip through as a false pass.
+          base = d.name.split("_", 1)[0]
+          m = re.match(r"^(.+)@(\d[^@]*)$", base)
+          if m:
+              have.setdefault(m.group(1).replace("+", "/"), set()).add(m.group(2))
+      # (package, version that must NOT survive) for every exact-version override above
+      banned = [("undici", "6.27.0"), ("undici", "7.28.0")]
+      bad = [f"{p}@{v}" for p, v in banned if v in have.get(p, ())]
+      if bad:
+          print("FATAL: override did not apply, these resolved versions survived:", ", ".join(bad))
+          for p, _ in banned:
+              print(f"  {p} present:", sorted(have.get(p, ())) or "none")
+          sys.exit(1)
+      print("override check: no banned resolved version survived")
+      ASSERT
 
       # --- CVE-2024-34448 (@tryghost/members-csv CSV injection): FIXED UPSTREAM in 6.54.0 --
       # Up to 6.53.0 this recipe carried surgery on the installed @tryghost/members-csv copies:

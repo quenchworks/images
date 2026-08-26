@@ -45,8 +45,16 @@ EXEC="docker exec -e HOME=/data/log $NAME mongosh --quiet"
 echo "waiting for authenticated ping"
 ok=""
 for i in $(seq 1 90); do
-  if $EXEC "mongodb://${ROOT_USER}:${ROOT_PASS}@localhost:27017/admin?authSource=admin" \
-       --eval 'db.runCommand({ping:1}).ok' 2>/dev/null | grep -q 1; then
+  # Match the output EXACTLY "1". `| grep -q 1` matched any output containing the digit,
+  # and mongosh's own failure text contains several:
+  #   MongoNetworkError: connect ECONNREFUSED 127.0.0.1:27017
+  # so the loop reported "authenticated ping ok after 2s" while mongod was still starting
+  # (the comment above says bootstrap takes 10-25s), and the first real query then failed on
+  # a closed port. Capturing also avoids piping into grep -q, which under pipefail fails
+  # when the pattern matches.
+  out="$($EXEC "mongodb://${ROOT_USER}:${ROOT_PASS}@localhost:27017/admin?authSource=admin" \
+           --eval 'db.runCommand({ping:1}).ok' 2>/dev/null || true)"
+  if [ "$(printf '%s' "$out" | tr -d '[:space:]')" = "1" ]; then
     ok=1; echo "authenticated ping ok after ${i}s"; break
   fi
   if [ "$i" = 90 ]; then
