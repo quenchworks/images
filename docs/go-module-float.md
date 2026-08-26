@@ -250,3 +250,31 @@ succeeds, and workflow_dispatch calls issued in the same window still queue and 
 
 So: after flipping visibility, retry the push once before concluding anything about the
 account. Do not go looking at billing, and do not assume the campaign has been throttled.
+
+## `cmd | grep -q` under `set -o pipefail` fails when the pattern MATCHES (2026-08-20)
+
+`grep -q` exits the instant it finds a match. If the writer is still producing output it
+takes SIGPIPE and exits 141, and `pipefail` makes that the pipeline's status. So:
+
+    cmd | grep -q PATTERN || { echo "not found"; exit 1; }   # fires ON SUCCESS
+    if cmd | grep -q PATTERN; then ...                       # takes the WRONG branch
+
+Both forms are wrong; the first is loud and the second is silent. It is size- and
+timing-dependent, which is what makes it nasty: the same line passes for a page of `--help`
+output and fails for the `strings` dump of a 190MB binary.
+
+Seen twice in `apps/argocd/test.sh` on the same day. The UI greps were fixed and the
+`ARGOCD_BINARY_NAME` check three lines above was missed, so it reported "override does not
+select the server" for an image where the override demonstrably works.
+
+**Fix:** capture, then match. `out="$(cmd)"` then `grep -q PATTERN <<<"$out"`. No pipe, no
+SIGPIPE, and the captured output is available to print on failure.
+
+**Scale, measured rather than guessed:** 330 `| grep -q` sites across the test scripts under
+pipefail. 193 are `echo "$var" | grep -q`, which is safe -- echo of a small variable finishes
+before grep can leave. **137 have a command on the left** (docker run, docker logs, curl,
+strings) and are the real exposure.
+
+Those 137 are deliberately NOT mass-rewritten. Most involve small outputs that never trip,
+a blanket edit of 137 assertion lines across 150 recipes is its own risk, and the failure is
+recognisable now that it is written down. Fix them on contact, and never write a new one.

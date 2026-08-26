@@ -46,9 +46,15 @@ check_cmd argocd-dex                        "dex"
 check_cmd argocd-k8s-auth                   "argocd-k8s-auth"
 check_cmd argocd-git-ask-pass               "git credential helper"
 # ... and $ARGOCD_BINARY_NAME is the other documented selector.
-docker run --rm -e ARGOCD_BINARY_NAME=argocd-server --entrypoint /usr/bin/argocd "$IMAGE" \
-  --help 2>&1 | grep -q "gRPC/REST server which exposes the API" \
-  || { echo "ARGOCD_BINARY_NAME override does not select the server"; exit 1; }
+# Capture first, then grep. Piping into `grep -q` under `set -o pipefail` fails when the
+# pattern MATCHES: grep exits at the first hit, the writer takes SIGPIPE, and pipefail
+# propagates that. Same bug as the UI greps below, which were fixed while this line was
+# missed -- so it reported "override does not select the server" for an image where the
+# override works (verified against the published 3.4.6).
+akout="$(docker run --rm -e ARGOCD_BINARY_NAME=argocd-server \
+           --entrypoint /usr/bin/argocd "$IMAGE" --help 2>&1 || true)"
+grep -q "gRPC/REST server which exposes the API" <<<"$akout" \
+  || { echo "ARGOCD_BINARY_NAME override does not select the server"; echo "$akout" | head -5; exit 1; }
 echo "  ARGOCD_BINARY_NAME override -> ok"
 
 echo "== the React console was BUILT, not left as the gitkeep placeholder"
