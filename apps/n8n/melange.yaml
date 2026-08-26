@@ -110,7 +110,12 @@ pipeline:
           "xlsx":"npm:@e965/xlsx@0.20.3",
           "adm-zip":"0.6.0",              // transitive 0.5.18 < 0.6.0 (CVE-2026-39244 HIGH)
           "@anthropic-ai/sdk":"0.91.1",
-          "brace-expansion":"5.0.8",      // CVE-2026-14257 HIGH; see the interop step below
+          "brace-expansion":"5.0.9",      // CVE-2026-14257 + follow-ons; 5.0.9 is the same
+                                          // major as the 5.0.8 this was pinned to, so the CJS
+                                          // interop step below still applies unchanged
+          "nanoid@3":"3.3.18",            // transitive 3.3.8 flagged; scoped @3 so any 5.x
+                                          // copy is not dragged DOWN across majors
+          "vm2":"3.11.6",                 // 3.11.5 flagged, 3.11.6 is the fix
           "@azure/identity@3":"4.2.1",    // only the transitive 3.4.2 (direct is 4.13.0, safe)
           "@opentelemetry/core":"2.8.0",
           "@opentelemetry/exporter-prometheus":"0.217.0",

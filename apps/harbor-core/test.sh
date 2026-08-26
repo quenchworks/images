@@ -13,9 +13,14 @@ set -euo pipefail
 IMAGE="${1:?usage: test.sh <image-ref>}"
 BIN=/usr/bin/harbor_core
 
-echo "checking the stamped release version is v2.14.4"
-docker run --rm --entrypoint /bin/sh "$IMAGE" -c "strings $BIN | grep -q 'v2.14.4'" \
-  || { echo "release string v2.14.4 not found in $BIN"; exit 1; }
+# The expected release comes from $2 (the workflow passes matrix.ver). This hardcoded
+# v2.14.4 while build.conf moved to 2.15.2, so a correctly stamped 2.15.2 binary failed --
+# the same stale-literal class as harbor-trivy-adapter's trivy pin and the elasticsearch
+# chart gate.
+APPVER="${2:?usage: test.sh <image-ref> <app-version>}"
+echo "checking the stamped release version is v${APPVER}"
+docker run --rm --entrypoint /bin/sh "$IMAGE" -c "strings $BIN | grep -q 'v${APPVER}'" \
+  || { echo "release string v${APPVER} not found in $BIN"; exit 1; }
 
 echo "checking the binary is a static ELF (no dynamic linker)"
 docker run --rm --entrypoint /bin/sh "$IMAGE" -c "

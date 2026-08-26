@@ -130,6 +130,9 @@ pipeline:
       # In shiro 2.2.x the argon2/bcrypt hash providers moved to group org.apache.shiro.crypto.
       swap org/apache/shiro/crypto shiro-hashes-argon2 2.1.0 2.2.1
       swap org/apache/shiro/crypto shiro-hashes-bcrypt 2.1.0 2.2.1
+      # 2026-08-26 gate: netty-codec-http 4.2.16 and log4j-api 2.25.4 flagged.
+      swap io/netty netty-codec-http 4.2.16.Final 4.2.17.Final
+      swap org/apache/logging/log4j log4j-api 2.25.4 2.25.5
       # DROP the shaded parquet-jackson uber-jar: it SHADES jackson-databind 2.21.3
       # (CVE-2026-54512..54518) as relocated classes, so a standalone swap cannot reach it,
       # and no newer parquet-jackson shades a fixed jackson. It is used ONLY by the niche
