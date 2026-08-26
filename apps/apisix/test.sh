@@ -124,6 +124,15 @@ echo "== declarative route + proxy round trip =="
 docker exec -i "$C" sh -c 'cat > /usr/local/apisix/conf/apisix.yaml' <<YAML
 routes:
   - uri: /echo
+    # proxy-rewrite is load-bearing, not decoration. The upstream is nginx:alpine, which
+    # serves "Welcome to nginx" at / and NOTHING at /echo, so proxying the path through
+    # unchanged makes the UPSTREAM return its own 404 page. That reads as "traffic never
+    # traversed the proxy" when in fact it traversed correctly and hit a path that does not
+    # exist. Rewriting to / also proves a plugin actually executes on the request path,
+    # which a bare upstream proxy would not.
+    plugins:
+      proxy-rewrite:
+        uri: /
     upstream:
       nodes:
         "$UP:80": 1
