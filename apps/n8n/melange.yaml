@@ -103,6 +103,15 @@ pipeline:
           "tar":"7.5.22",                 // direct ^7.5.16 (CVE-2026-59873 CRIT +3, GHSA-r292 MED -> 7.5.21;
                                           // 7.5.22 is the newest 7.5.x, so the weekly node-tar
                                           // advisories have some headroom before the next bump)
+          "nanoid":"3.3.18",              // direct 3.3.8 flagged; MUST be bumped here, not
+                                          // only in overrides -- npm EOVERRIDEs when an
+                                          // override hits a direct-dependency edge with a
+                                          // different spec ("Override for nanoid@3.3.8
+                                          // conflicts with direct dependency"), which is
+                                          // exactly how the first nanoid@3 override broke
+                                          // the install. The @3-scoped override below now
+                                          // agrees with this spec (same value), so it only
+                                          // moves the TRANSITIVE 3.x copies.
           "ws":"8.21.0"                   // direct 8.20.1 < 8.21.0 (fix)
         });
         // transitive copies (+ direct deps already AT the fix: langsmith/uuid/@azure/identity/tar)
@@ -114,7 +123,8 @@ pipeline:
                                           // major as the 5.0.8 this was pinned to, so the CJS
                                           // interop step below still applies unchanged
           "nanoid@3":"3.3.18",            // transitive 3.3.8 flagged; scoped @3 so any 5.x
-                                          // copy is not dragged DOWN across majors
+                                          // copy is not dragged DOWN across majors. Value
+                                          // matches the direct-dep bump above (npm rule)
           "vm2":"3.11.6",                 // 3.11.5 flagged, 3.11.6 is the fix
           "@azure/identity@3":"4.2.1",    // only the transitive 3.4.2 (direct is 4.13.0, safe)
           "@opentelemetry/core":"2.8.0",

@@ -88,7 +88,12 @@ pipeline:
       # Ghost's own tar entry (`tar@<7.5.11: ^7.5.11`) is SUPERSEDED by our exact pin below:
       # two overlapping selectors for one package is ambiguous, and its caret let the locked
       # 7.5.16 (CVE-2026-59873 CRITICAL) survive. Drop it, and fail if it ever moves.
-      drop="tar@<7.5.11:"
+      # Ghost's own undici entry (`undici@<6.24.0: ^6.24.0`) is likewise superseded: its
+      # selector catches @elastic/transport@8.4.1's declared `^5.22.1` and rewrites it to a
+      # CARET ^6.24.0, which the shipped lockfile already satisfies at the flagged 6.27.0 --
+      # so the stale copy survived every install. Dropped here; the exact-target
+      # 'undici@<6.28.0': 6.28.0 below covers that edge and forces the re-resolution.
+      drops=("tar@<7.5.11:", "undici@<6.24.0:")
       add=[
         "  babel-traverse: 'npm:@babel/traverse@7.23.2'",  # CVE-2023-45133 rename fix
         "  'body-parser@<1.20.6': 1.20.6",       # CVE-2026-12590 (only the express-4 1.x copy;
@@ -115,20 +120,25 @@ pipeline:
         "  're2@<1.26.1': 1.26.1",               # CVE-2026-67550, then a further advisory on 1.25.2
         "  'ip-address@<10.3.1': 10.3.1",        # same advisory code-server needed
         "  'js-yaml@<4.3.1': 4.3.1",             # CVE on 4.3.0 (4.3.0 was itself a fix pin)
-        "  'undici@6.27.0': 6.28.0",            # TWO undici majors coexist in this tree, so each
+        "  'undici@<6.28.0': 6.28.0",           # TWO undici majors coexist in this tree, so each
         "  'undici@7.28.0': 7.29.0",            # line needs its own pin -- a single
                                                  # `undici@<7.29.0` would drag the 6.x copy
-                                                 # forward across a major. A space-containing
-                                                 # range ('>=6 <6.28.0') is NOT parsed by pnpm, and
-                                                 # the bare-major form ('undici@6') was ignored too --
-                                                 # only the EXACT resolved version matched.
-                                                 # 2026-08-26: the 7.x line WAS 'undici@7', which is
-                                                 # that same ignored bare-major form, so it never
-                                                 # applied. Read the real resolved versions out of the
-                                                 # published image (6.27.0 and 7.28.0) and pinned both
-                                                 # exactly. The assertion below is what makes a future
-                                                 # resolved-version change fail loudly instead of
-                                                 # quietly reverting to an unpatched copy.
+                                                 # forward across a major.
+                                                 # 2026-08-26 (2nd fix): the 6.x line WAS the exact
+                                                 # 'undici@6.27.0', but pnpm matches a selector
+                                                 # against the spec a dependent DECLARES, never the
+                                                 # resolved version. @elastic/transport@8.4.1
+                                                 # declares ^5.22.1; Ghost's own
+                                                 # 'undici@<6.24.0: ^6.24.0' caught that edge first
+                                                 # and rewrote it to a caret the shipped lockfile
+                                                 # already satisfied at the flagged 6.27.0 -- so
+                                                 # 6.27.0 survived while 7.28.0 moved. Ghost's own
+                                                 # line is dropped above; '<6.28.0' catches BOTH
+                                                 # declaring edges (^5.22.1, ^6.21.1) with an exact
+                                                 # target that forces re-resolution. Verified on a
+                                                 # fresh local install: only 6.28.0/7.29.0/8.10.0
+                                                 # remain. The assertion below makes future drift
+                                                 # fail loudly instead of quietly reverting.
         "  'tar@<7.5.22': 7.5.22",               # CVE-2026-59873 CRIT/59874 HIGH/59871+59875 MED +
                                                  # GHSA-r292-9mhp-454m MED (needs >= 7.5.21)
         "  'uuid@<11': 11.1.1",                  # CVE-2026-41907 (3.x + 9.x copies)
@@ -136,15 +146,16 @@ pipeline:
         "  'vite@<7.3.5': 7.3.5",                # CVE-2026-53571/53632
       ]
       out=[]
-      done=dropped=False
+      done=False; dropped=set()
       for ln in lines:
-          if ln.strip().startswith(drop):
-              dropped=True; continue
+          hit=[d for d in drops if ln.strip().startswith(d)]
+          if hit:
+              dropped.add(hit[0]); continue
           out.append(ln)
           if not done and ln=="overrides:":
               out.extend(add); done=True
       assert done, "overrides: block not found in pnpm-workspace.yaml"
-      assert dropped, "expected Ghost's own '%s' override to supersede" % drop
+      assert dropped==set(drops), "expected Ghost overrides to supersede, missing: %s" % (set(drops)-dropped)
       open(f,"w").write("\n".join(out)+"\n")
       PYEOF
       # pnpm 10.33 treats unapproved dependency build scripts as a HARD FAILURE

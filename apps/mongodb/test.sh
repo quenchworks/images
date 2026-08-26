@@ -45,13 +45,23 @@ EXEC="docker exec -e HOME=/data/log $NAME mongosh --quiet"
 echo "waiting for authenticated ping"
 ok=""
 for i in $(seq 1 90); do
+  # The entrypoint first boots a TEMPORARY no-auth mongod on the SAME port (127.0.0.1)
+  # to create the root user, then shuts it down and exec's the real mongod with --auth.
+  # A ping alone matches that bootstrap instance -- exactly what happened: "ok after 2s"
+  # while bootstrap takes 10-25s, and the first real query then hit the restart gap
+  # (MongoNetworkError: connect ECONNREFUSED 127.0.0.1:27017). Only start pinging once
+  # the entrypoint has logged its FINAL start line; the bootstrap instance is already
+  # dead by then, so a successful ping can only be the --auth mongod.
+  # (logs captured, not piped: `docker logs | grep -q` under pipefail dies on SIGPIPE
+  # when the pattern matches.)
+  logs="$(docker logs "$NAME" 2>&1 || true)"
+  if ! grep -q 'starting mongod WITH --auth' <<<"$logs"; then
+    [ "$i" = 90 ] && { echo "FAIL: entrypoint never reached the final --auth start"; docker logs "$NAME" 2>&1 | tail -80; exit 1; }
+    sleep 1; continue
+  fi
   # Match the output EXACTLY "1". `| grep -q 1` matched any output containing the digit,
-  # and mongosh's own failure text contains several:
-  #   MongoNetworkError: connect ECONNREFUSED 127.0.0.1:27017
-  # so the loop reported "authenticated ping ok after 2s" while mongod was still starting
-  # (the comment above says bootstrap takes 10-25s), and the first real query then failed on
-  # a closed port. Capturing also avoids piping into grep -q, which under pipefail fails
-  # when the pattern matches.
+  # and mongosh's own failure text contains several. Capturing also avoids piping into
+  # grep -q, which under pipefail fails when the pattern matches.
   out="$($EXEC "mongodb://${ROOT_USER}:${ROOT_PASS}@localhost:27017/admin?authSource=admin" \
            --eval 'db.runCommand({ping:1}).ok' 2>/dev/null || true)"
   if [ "$(printf '%s' "$out" | tr -d '[:space:]')" = "1" ]; then
