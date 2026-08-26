@@ -135,9 +135,15 @@ pipeline:
       #     to float because n8n packages pin tar EXACTLY; 7.5.22 is the newest 7.5.x.
       node -e '
         const fs=require("fs");const p=JSON.parse(fs.readFileSync("package.json","utf8"));
+        // nanoid is a DIRECT dep here (pinned 3.3.8), and npm refuses an override that
+        // conflicts with a direct dependency (EOVERRIDE) -- bump the dep itself; the
+        // scoped overrides below still cover every transitive copy per major.
+        if (p.dependencies && p.dependencies.nanoid) p.dependencies.nanoid="3.3.18";
         p.overrides=Object.assign(p.overrides||{},{
-          "brace-expansion":"5.0.8",
+          "brace-expansion":"5.0.9",
           "fast-xml-parser":"5.7.0",
+          "nanoid@3":"3.3.18",
+          "nanoid@5":"5.1.6",
           "tar":"7.5.22",
           "uuid":"11.1.1"
         });
