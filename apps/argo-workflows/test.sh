@@ -19,6 +19,23 @@ echo "$wc_out"
 echo "$wc_out" | grep -qiE 'v?[0-9]+\.[0-9]+\.[0-9]+' \
   || { echo "workflow-controller version not stamped"; exit 1; }
 
+# argoexec must be present AND resolvable through $PATH: the controller injects
+# it into every workflow pod as `argoexec init` / `argoexec wait`, and the
+# emissary executor finds it with exec.LookPath("argoexec"). Ship the image
+# without it and every workflow pod fails with
+# `exec: "argoexec": executable file not found in $PATH`.
+echo "argoexec version (resolved via PATH):"
+ex_out="$(docker run --rm --entrypoint argoexec "$IMAGE" version 2>&1)"
+echo "$ex_out"
+grep -qiE 'v?[0-9]+\.[0-9]+\.[0-9]+' <<<"$ex_out" \
+  || { echo "argoexec version not stamped"; exit 1; }
+# it must also expose the executor subcommands the controller invokes.
+ex_help="$(docker run --rm --entrypoint argoexec "$IMAGE" --help 2>&1)"
+for sub in init wait emissary; do
+  grep -qE "^[[:space:]]+${sub}([[:space:]]|$)" <<<"$ex_help" \
+    || { echo "argoexec is missing the '${sub}' subcommand"; exit 1; }
+done
+
 # must run as the nonroot argo user (uid 1001)
 user="$(docker inspect "$IMAGE" --format '{{.Config.User}}')"
 [ "$user" = "1001" ] || { echo "expected user 1001, got '$user'"; exit 1; }

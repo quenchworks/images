@@ -1,9 +1,18 @@
 # Builds Argo Workflows (argoproj/argo-workflows) from source onto Wolfi.
-# Image-only (no chart). Two static Go binaries, CGO disabled (matches upstream
+# Three static Go binaries, CGO disabled (matches upstream
 # Makefile: CGO_ENABLED=0 ... -extldflags -static):
 #   * workflow-controller  (./cmd/workflow-controller) -- the controller
 #   * argo                 (./cmd/argo) -- the multi-call CLI *and* API server
 #                          (`argo server` binds the UI/API on 2746)
+#   * argoexec             (./cmd/argoexec) -- the executor. NOT optional: the
+#                          controller injects it into EVERY workflow pod as the
+#                          `init` and `wait` containers and as the wrapper around
+#                          the step's own command (it copies itself from $PATH to
+#                          /var/run/argo/argoexec). Without it in this image every
+#                          workflow pod dies with
+#                          `exec: "argoexec": executable file not found in $PATH`,
+#                          and the only alternative is pulling upstream's
+#                          quay.io/argoproj/argoexec, which we do not build or sign.
 # Output is a signed APK in Quenchworks' own repo. No upstream distro binaries.
 #
 # The `argo` binary embeds the React UI via `//go:embed dist/app` (ui/embed.go),
@@ -91,3 +100,5 @@ pipeline:
         -o "${{targets.destdir}}/usr/bin/workflow-controller" ./cmd/workflow-controller
       go build -trimpath -ldflags "${LDFLAGS}" \
         -o "${{targets.destdir}}/usr/bin/argo" ./cmd/argo
+      go build -trimpath -ldflags "${LDFLAGS}" \
+        -o "${{targets.destdir}}/usr/bin/argoexec" ./cmd/argoexec

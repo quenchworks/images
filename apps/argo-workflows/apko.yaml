@@ -1,7 +1,10 @@
 # Assembles the Argo Workflows runtime image. Minimal, nonroot, multi-arch,
-# read-only-rootfs friendly, SBOM by apko. Ships both static Go binaries on PATH:
+# read-only-rootfs friendly, SBOM by apko. Ships all three static Go binaries on PATH:
 #   * workflow-controller -- the default entrypoint (the workflow controller)
 #   * argo                -- the multi-call CLI + API/UI server (`argo server`)
+#   * argoexec            -- the executor the controller injects into every
+#                            workflow pod; it must be resolvable via $PATH
+#                            (exec.LookPath("argoexec")) or no workflow can run
 # The argo-server serves the embedded UI/API over 2746 when run as `argo server`;
 # a chart/deployment overrides the command for that role. Runs as nonroot uid 1001
 # with no writable state required on disk (read-only rootfs compatible).
