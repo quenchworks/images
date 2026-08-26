@@ -27,7 +27,14 @@ curl -fsS http://127.0.0.1:8181/v1/data >/dev/null \
   || { echo "data API did not respond"; docker logs "$NAME"; exit 1; }
 
 # version must be stamped (built from the tag, not "0.0.0")
-ver="$(docker run --rm "$IMAGE" version | awk '/^Version:/{print $2}')"
+# --entrypoint is required. The image's entrypoint is
+#   /usr/bin/opa run --server --addr=0.0.0.0:8181
+# so a bare `docker run "$IMAGE" version` appends "version" to THAT, where opa reads it as
+# a bundle path and dies with
+#   error: load error: stat version: no such file or directory
+# The bare form therefore never worked; it only surfaced when this workflow started running
+# test.sh at all.
+ver="$(docker run --rm --entrypoint /usr/bin/opa "$IMAGE" version | awk '/^Version:/{print $2}')"
 echo "reported version: $ver"
 case "$ver" in
   ""|0.0.0|*dev*) echo "version not stamped: '$ver'"; exit 1 ;;
