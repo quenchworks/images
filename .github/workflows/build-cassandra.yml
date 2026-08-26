@@ -120,8 +120,18 @@ jobs:
           # appends the arch to the tag it was given, so a tar built as
           # `:scan-amd64` loads as `:scan-amd64-amd64`. Reconstructing that
           # suffix by hand is what broke the first cut of this step.
-          img="$(docker load < image.tar | sed -n 's/^Loaded image: //p' | head -1)"
-          test -n "$img" || { echo "FATAL: docker load reported no image"; exit 1; }
+          # Keep the load output: the previous version piped it straight into sed, so a
+          # failure printed "no image" and threw away the only evidence of WHY.
+          out="$(docker load < image.tar 2>&1)" || true
+          printf '%s\n' "$out"
+          # Two forms exist. A tagged tar prints "Loaded image: repo:tag"; an untagged one
+          # prints "Loaded image ID: sha256:...", and that id is a perfectly good ref.
+          img="$(printf '%s\n' "$out" | sed -n -e 's/^Loaded image: //p' -e 's/^Loaded image ID: //p' | head -1)"
+          if [ -z "$img" ]; then
+            echo "FATAL: docker load produced no usable image ref (output above)"
+            echo "image.tar: $(ls -l image.tar 2>&1)"
+            exit 1
+          fi
           docker tag "$img" cassandra-boot:local
           bash test.sh cassandra-boot:local "${{ matrix.ver }}"
 
