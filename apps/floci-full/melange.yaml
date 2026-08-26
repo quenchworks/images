@@ -70,6 +70,14 @@ pipeline:
       sed -i 's|<apicurio.version>2.6.9.Final</apicurio.version>|<apicurio.version>3.3.0</apicurio.version>|' pom.xml
       grep -q '<apicurio.version>3.3.0</apicurio.version>' pom.xml
 
+      # QuenchWorks CVE-2026-50559 (HIGH): quarkus-vertx-http 3.36.0 auth bypass,
+      # fixed in 3.36.3. Same-minor platform micro-bump keeps the quarkus runtime
+      # and deployment artifacts version-aligned (a lone vertx-http pin would not).
+      # NOTE: upstream 1.6.0 (the apps/floci version) already ships quarkus 3.36.3;
+      # this finding exists only because floci-full is held at 1.5.29.
+      sed -i 's|<quarkus.platform.version>3.36.0</quarkus.platform.version>|<quarkus.platform.version>3.36.3</quarkus.platform.version>|' pom.xml
+      grep -q '<quarkus.platform.version>3.36.3</quarkus.platform.version>' pom.xml
+
       # apicurio 3.3.0 is compiled against protobuf-java 4.x (its
       # FileDescriptorUtils references com.google.protobuf.GeneratedFile, which
       # does not exist in 3.25.x -- verified NoClassDefFoundError otherwise), so
@@ -89,7 +97,7 @@ pipeline:
         echo '            <dependency><groupId>com.fasterxml.jackson.core</groupId><artifactId>jackson-databind</artifactId><version>2.21.5</version></dependency>'
         echo '            <dependency><groupId>com.fasterxml.jackson.core</groupId><artifactId>jackson-core</artifactId><version>2.21.5</version></dependency>'
         for a in buffer codec codec-dns codec-haproxy codec-http codec-http2 codec-mqtt codec-socks common handler handler-proxy resolver resolver-dns transport transport-native-unix-common; do
-          echo "            <dependency><groupId>io.netty</groupId><artifactId>netty-$a</artifactId><version>4.1.136.Final</version></dependency>"
+          echo "            <dependency><groupId>io.netty</groupId><artifactId>netty-$a</artifactId><version>4.1.137.Final</version></dependency>"
         done
         # QuenchWorks CVE-2026-54291 (HIGH): pin the postgresql JDBC driver.
         echo '            <dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId><version>42.7.12</version></dependency>'
@@ -97,6 +105,12 @@ pipeline:
         # invalid byte-array ranges (pulled in transitively by the kafka client).
         # at.yawk.lz4 publishes a SINGLE artifact, so there is no sibling to align.
         echo '            <dependency><groupId>at.yawk.lz4</groupId><artifactId>lz4-java</artifactId><version>1.11.1</version></dependency>'
+        # QuenchWorks httpcomponents5 pins (same rationale as apps/floci):
+        # httpclient5 5.5.1 (CVE-2026-64607) -> 5.6.3; httpcore5/-h2 5.3.6
+        # (CVE-2026-54399/-54428) have NO 5.3.x fix, so the core pair -> 5.4.3.
+        echo '            <dependency><groupId>org.apache.httpcomponents.client5</groupId><artifactId>httpclient5</artifactId><version>5.6.3</version></dependency>'
+        echo '            <dependency><groupId>org.apache.httpcomponents.core5</groupId><artifactId>httpcore5</artifactId><version>5.4.3</version></dependency>'
+        echo '            <dependency><groupId>org.apache.httpcomponents.core5</groupId><artifactId>httpcore5-h2</artifactId><version>5.4.3</version></dependency>'
       } > /tmp/dm-pins.xml
       # Insert before the FIRST </dependencies> in the pom -- that is the closer
       # of <dependencyManagement><dependencies> (it precedes the main deps list).
@@ -105,6 +119,8 @@ pipeline:
       grep -q 'netty-codec-haproxy' pom.xml
       grep -q '<version>42.7.12</version>' pom.xml
       grep -q '<artifactId>lz4-java</artifactId>' pom.xml
+      grep -q '<artifactId>httpclient5</artifactId>' pom.xml
+      grep -q '<artifactId>httpcore5-h2</artifactId>' pom.xml
 
       # apicurio 3.x API port of floci's single apicurio consumer (the Glue
       # schema-registry adapter). Three deltas, all mechanical:
