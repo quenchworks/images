@@ -80,8 +80,11 @@ for _ in range(40):
         last = e; time.sleep(3)
 else:
     print("FAIL: could not connect to CQL:", last); sys.exit(1)
+# NetworkTopologyStrategy, not SimpleStrategy: Scylla 2026.x creates keyspaces
+# with tablets enabled by default and rejects SimpleStrategy outright
+# ("SimpleStrategy doesn't support tablet replication").
 s.execute("CREATE KEYSPACE IF NOT EXISTS smoke WITH replication = "
-          "{'class': 'SimpleStrategy', 'replication_factor': 1}")
+          "{'class': 'NetworkTopologyStrategy', 'replication_factor': 1}")
 s.execute("CREATE TABLE IF NOT EXISTS smoke.t (id int PRIMARY KEY, name text)")
 s.execute("INSERT INTO smoke.t (id, name) VALUES (1, %s)", ("alpha",))
 s.execute("INSERT INTO smoke.t (id, name) VALUES (2, %s)", ("beta",))
