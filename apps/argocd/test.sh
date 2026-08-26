@@ -73,7 +73,10 @@ grep -q 'dist/app/index.html' <<<"$names" \
   || { echo "no dist/app/index.html embedded -- the UI was not built"; exit 1; }
 grep -q 'dist/app/assets/images/resources/' <<<"$names" \
   || { echo "no embedded resource icons -- the UI bundle is incomplete"; exit 1; }
-nchunk="$(grep -c 'dist/app/[0-9a-z.]*chunk\.js' <<<"$names" || true)"
+# grep -c counts matching LINES, not matches. `strings` runs many names together on one
+# line, so ~80 embedded chunks were counted as 4 and this failed on a fully built UI.
+# -o then wc -l counts occurrences.
+nchunk="$(grep -oE 'dist/app/[0-9a-z.]*chunk\.js' <<<"$names" | wc -l | tr -d ' ')"
 [ "$nchunk" -ge 10 ] || { echo "only $nchunk embedded js chunks; expected >=10"; exit 1; }
 echo "  index.html + resource icons + $nchunk js chunks embedded"
 
@@ -99,8 +102,13 @@ docker run --rm --entrypoint /usr/bin/gpg "$IMAGE" --version >/dev/null \
 # that the image really does have a working /bin/sh.
 docker run --rm --entrypoint /usr/bin/gpg-wrapper.sh "$IMAGE" --version >/dev/null \
   || { echo "gpg-wrapper.sh not runnable (missing shell?)"; exit 1; }
-docker run --rm --entrypoint /usr/bin/git-verify-wrapper.sh "$IMAGE" 2>&1 \
-  | grep -q "Wrong usage" || { echo "git-verify-wrapper.sh not runnable"; exit 1; }
+# Third pipe-into-grep-q in this file. Demonstrated locally: the wrapper prints
+# "Wrong usage of git-verify-wrapper.sh", the pipe form still reports failure, and the
+# here-string form matches. grep -q leaves at the first hit, docker takes SIGPIPE, and
+# pipefail turns the successful match into a non-zero pipeline.
+gvw="$(docker run --rm --entrypoint /usr/bin/git-verify-wrapper.sh "$IMAGE" 2>&1 || true)"
+grep -q "Wrong usage" <<<"$gvw" \
+  || { echo "git-verify-wrapper.sh not runnable: '$gvw'"; exit 1; }
 echo "  git-lfs, gpg and both sh wrappers ok"
 
 echo "== the repo server actually STARTS and reports itself healthy"
@@ -108,9 +116,16 @@ echo "== the repo server actually STARTS and reports itself healthy"
 # (metrics + /healthz); /healthz answers 200 only after the gRPC server is up, so
 # this is a liveness answer rather than an open port. Also proves the read-only
 # rootfs layout is complete: same flags the chart uses.
+# mode=1777 on every tmpfs. `docker --tmpfs /path` mounts root-owned 0755 by default, so
+# uid 1001 cannot write, and the repo server died at startup with
+#   fatal: stat /app/config/gpg/keys/trustdb.gpg: permission denied
+# after InitializeGnuPG. The chart gets this for free from an emptyDir plus fsGroup; a bare
+# docker run has to say it. Verified locally: without the modes it exits 20, with them
+# /healthz answers.
 cid="$(docker run -d --rm --read-only \
-        --tmpfs /tmp --tmpfs /helm-working-dir --tmpfs /app/config/gpg/keys \
-        --tmpfs /home/argocd -p 18084:8084 \
+        --tmpfs /tmp:rw,mode=1777 --tmpfs /helm-working-dir:rw,mode=1777 \
+        --tmpfs /app/config/gpg/keys:rw,mode=1777 \
+        --tmpfs /home/argocd:rw,mode=1777 -p 18084:8084 \
         --entrypoint /usr/bin/argocd-repo-server "$IMAGE" --port 8081 --metrics-port 8084)"
 trap 'docker logs "$cid" 2>&1 | tail -30; docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
 ok=0
