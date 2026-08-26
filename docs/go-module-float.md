@@ -235,3 +235,18 @@ the fastest way to notice that a whole dependency tree was skipped.
 
 Where no substitute gate exists, say so in the recipe rather than letting the tick imply
 coverage it does not have.
+
+## Gotcha: pushing right after a visibility flip can report the repo "disabled" (2026-08-20)
+
+    gh repo edit quenchworks/images --visibility public ...
+    git push origin main
+    ERROR: Repository 'quenchworks/images' is disabled.
+            Please ask the owner to check their account.
+
+That message reads like a billing or abuse suspension, and it is neither. The visibility
+change is not instantaneous, and a push landing inside that window gets refused with a
+message about the ACCOUNT rather than about timing. A plain retry a few seconds later
+succeeds, and workflow_dispatch calls issued in the same window still queue and run.
+
+So: after flipping visibility, retry the push once before concluding anything about the
+account. Do not go looking at billing, and do not assume the campaign has been throttled.
