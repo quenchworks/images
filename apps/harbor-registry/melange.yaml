@@ -23,8 +23,8 @@
 # the legacy GOPATH path github.com/docker/distribution; the repo vendors its
 # deps (vendor/), so the build is hermetic-ish (modules from vendor, not proxy).
 #
-# go.mod requires go 1.25.x -> use the Wolfi go-1.25 toolchain for the latest
-# stdlib CVE fixes. The fork is on the old v2.8.3 line so its vendored deps are
+# go.mod requires go 1.25.x -> use the Wolfi go-1.26 toolchain (go-1.25 tops
+# out at 1.25.12 with fixable stdlib CVEs) for the latest stdlib CVE fixes. The fork is on the old v2.8.3 line so its vendored deps are
 # stale; we bump the FIXABLE-CVE deps in a controlled `go get` step that keeps
 # the Harbor redis/storage patches intact, then re-vendor, before the make build.
 package:
@@ -55,8 +55,10 @@ environment:
       - git
       - make
       - python3   # used only to apply the source patch that drops letsencrypt
-      # go.mod requires go >= 1.25.x; use the current go-1.25 toolchain.
-      - go-1.25
+      # go.mod requires go >= 1.25.x. Wolfi go-1.25 tops out at 1.25.12, whose
+      # stdlib carries fixable CVEs (fixed in 1.25.13/1.26.6); go-1.26 satisfies
+      # the go directive and ships a fixed stdlib.
+      - go-1.26
 
 pipeline:
   # Pin the Harbor fork at the exact commit that is release/2.8 HEAD

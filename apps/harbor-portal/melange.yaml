@@ -102,7 +102,9 @@ pipeline:
       # `ng serve`), never by the production `ng build`, so skipping its native
       # build costs us nothing. Same family of fix as the alertmanager elm case:
       # skip the problematic install scripts and run only the one we need below.
-      npm install --unsafe-perm --ignore-scripts
+      # (NO --unsafe-perm: npm 12 removed the flag -- unknown config is a hard
+      # EUNKNOWNCONFIG error -- and it has been a no-op since npm 7 anyway.)
+      npm install --ignore-scripts
 
       # --ignore-scripts also skipped the harbor package's own `postinstall`, which
       # we DO need: it generates the typed Angular API client from the OpenAPI
@@ -137,7 +139,7 @@ pipeline:
       # --ignore-scripts here too: app-swagger-ui has no needed postinstall, and
       # this avoids any transitive node-gyp build on arm64. The webpack build runs
       # fine without lifecycle scripts.
-      npm install --unsafe-perm --ignore-scripts
+      npm install --ignore-scripts
       npm run build
       cd ..
 
