@@ -22,9 +22,27 @@ NAME="quench-harbor-trivy-adapter-smoke-$$"
 cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
-echo "checking bundled trivy CLI version (must be the pinned TRIVYVERSION 0.70.0)"
-docker run --rm --entrypoint /usr/bin/trivy "$IMAGE" --version
-docker run --rm --entrypoint /usr/bin/trivy "$IMAGE" --version | grep -q "0.70.0"
+# Derive the expected trivy version from build.conf's TRIVY map keyed on the app version,
+# instead of hardcoding it. The hardcoded "0.70.0" was correct for 2.14.4 and silently wrong
+# for 2.15.2, which bundles 0.72.0: the test failed on a perfectly good image. Same failure
+# shape as the elasticsearch chart gate, which asserted a literal version and stalled a
+# release for two weeks.
+APPVER="${2:-}"
+BC="$(dirname "$0")/build.conf"
+if [ -n "$APPVER" ] && [ -f "$BC" ]; then
+  # Scope to the TRIVY map line. build.conf also has a SCANNER map with the SAME keys, and
+  # an unscoped match returns the scanner version (0.38.0 for 2.15.2) -- a plausible-looking
+  # wrong answer that would make this assertion check nothing.
+  WANT_TRIVY="$(grep -E 'declare -A TRIVY=' "$BC" \
+                 | sed -n "s/.*\[$APPVER\]=\([0-9][0-9.]*\).*/\1/p" | head -1)"
+fi
+: "${WANT_TRIVY:?cannot determine the expected trivy version; pass the app version as \$2}"
+echo "checking bundled trivy CLI version (expecting $WANT_TRIVY for app $APPVER)"
+tv="$(docker run --rm --entrypoint /usr/bin/trivy "$IMAGE" --version 2>&1)"
+echo "$tv"
+# capture-then-match, no pipe into grep -q
+grep -q "$WANT_TRIVY" <<<"$tv" \
+  || { echo "bundled trivy is not $WANT_TRIVY"; exit 1; }
 
 echo "checking /usr/bin/trivy is present, executable, and resolvable on PATH"
 docker run --rm --entrypoint /bin/sh "$IMAGE" -c '
@@ -95,4 +113,4 @@ echo "/probe/healthy -> 200 OK"
 user="$(docker inspect "$IMAGE" --format '{{.Config.User}}')"
 [ "$user" = "1001" ] || { echo "expected user 1001, got '$user'"; exit 1; }
 
-echo "smoke test passed (nonroot uid: $user, read-only rootfs, trivy 0.70.0 bundled, /probe/healthy 200)"
+echo "smoke test passed (nonroot uid: $user, read-only rootfs, trivy $WANT_TRIVY bundled, /probe/healthy 200)"
