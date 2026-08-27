@@ -111,9 +111,12 @@ jobs:
       # it more, not less. Rules enforced (scripts/check-vex.py): status not_affected
       # only, an OpenVEX justification value, an impact_statement that says how the
       # claim was verified, and no duplicate (CVE, product) pairs.
-      - name: Validate the VEX clearance
+      - name: Install uv (for the VEX validator)
         uses: astral-sh/setup-uv@v7
       - name: Check VEX
+        # The job's default working-directory is apps/jenkins-inbound-agent, so this needs an
+        # absolute path -- exactly the mistake the local gate hook made first.
+        working-directory: ${{ github.workspace }}
         run: uv run scripts/check-vex.py jenkins-inbound-agent
 
       - name: Scan, the hard 0-CVE gate (before publish)
