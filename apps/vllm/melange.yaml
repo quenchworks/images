@@ -97,6 +97,21 @@ pipeline:
       # (import vllm + the version check run in test.sh against the assembled image.)
       /opt/vllm/venv/bin/vllm --version | tail -1 | grep -q "^${VER}+cpu$"
 
+      # Remove pip from the venv. After the bumps above, the LAST fixable findings on this
+      # image are pip's OWN vendored copies under pip/_vendor/ -- setuptools 70.3.0
+      # (CVE-2025-47273 HIGH, CVE-2026-59890 MEDIUM) and msgpack 1.1.2
+      # (GHSA-6v7p-g79w-8964 HIGH). Trivy reads them from pip's bundled CycloneDX
+      # (pip/_vendor/bom.cdx.json), so they carry no PkgPath and no top-level pin can
+      # reach them: those exact versions are what pip's vendor.txt pins, and every current
+      # pip release vendors the same set. vLLM is an inference server, never a package
+      # installer, so deleting pip removes the vulnerable CODE rather than suppressing the
+      # finding -- no .trivyignore, no --skip, no VEX. Must run AFTER every pip install
+      # above; nothing later in this step uses pip. (Same fix as apps/mlflow.)
+      /opt/vllm/venv/bin/pip uninstall -y pip
+      # `test !` and not `! test`: set -e ignores a status inverted with `!`, so
+      # `! test -e f` would never fail the build. This form does.
+      test ! -e /opt/vllm/venv/lib/python3.12/site-packages/pip/_vendor/vendor.txt
+
       # Relocate the venv into the package tree under /opt/vllm.
       install -d "${dest}/opt/vllm"
       cp -a /opt/vllm/venv "${dest}/opt/vllm/venv"

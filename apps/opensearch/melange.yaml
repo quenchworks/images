@@ -169,13 +169,163 @@ pipeline:
       swapjar 'httpcore5-reactive-5.4.jar' httpcore5-reactive-5.4.3.jar "$hcre"
       swapjar 'netty-codec-http-4.2.*.Final.jar' netty-codec-http-4.2.17.Final.jar "$nch"
       swapjar 'log4j-api-2.25.4.jar'       log4j-api-2.25.5.jar       "$l4j"
-      rm -f "$hc" "$hcore" "$hch2" "$hcre" "$nch" "$l4j"
+      rm -f "$hch2" "$hcre" "$nch" "$l4j"   # $hc/$hcore are reused by block (2d)
       # Nothing may be left behind at an old version, or the classloader sees both.
       for stale in 'httpclient5-5.6.1.jar' 'httpcore5-5.4.jar' 'httpcore5-h2-5.4.jar' \
                    'httpcore5-reactive-5.4.jar' 'log4j-api-2.25.4.jar'; do
         n=$(find "$dest" -name "$stale" | wc -l)
         test "$n" -eq 0 || { echo "FATAL: $n stale $stale survived the swap"; exit 1; }
       done
+
+      # --- (2d) the SAME httpcomponents fix, inside the RELOCATED copy -----------------
+      # The swaps above only reach STANDALONE jars. opensearch-notifications-core-spi
+      # additionally carries httpcore5 5.4 + httpclient5 5.6.1 as SHADED classes that
+      # upstream's Gradle shadow step RELOCATED to
+      #   org/opensearch/notifications/core/repackage/org/apache/hc/...
+      # with the bytecode rewritten to the repackaged names. There is no jar to swap and
+      # no upstream release to wait for: 3.8.0 is the newest OpenSearch (2026-08-05), so
+      # the only honest fix is to do upstream's relocation ourselves against the FIXED
+      # releases -- httpcore5 5.4.3 (CVE-2026-54399) / httpclient5 5.6.3 (CVE-2026-64607).
+      #
+      # An earlier attempt at this was REJECTED and must not come back: copying the
+      # vanilla 5.x classes to the relocated PATH leaves each class declaring its original
+      # package (path and name disagree -> the plugin dies at load), and editing only the
+      # bundled pom.properties makes Trivy go quiet while the running code stays 5.6.1 --
+      # the exact trap docs/go-module-float.md warns about. So this does the real thing.
+      #
+      # Relocating a jar is a pure constant-pool UTF8 rewrite: a class file holds no
+      # absolute byte offsets and the entry count/order is untouched, so every index stays
+      # valid and everything after the pool copies verbatim. That is what shadow's
+      # ClassRemapper does. The transform was VERIFIED against upstream's own output: run
+      # over 5.4 + 5.6.1 it produces, for all 1272 shaded entries, exactly the UTF8
+      # constant set shadow produced -- zero names present in shadow's output and absent
+      # from ours (it differs only by ~231 dead pool entries ASM prunes, which reference
+      # nothing). 5.4 -> 5.4.3 and 5.6.1 -> 5.6.3 are also purely ADDITIVE at the entry
+      # level (3 new classes, none removed), so nothing the shaded copy or the plugin's
+      # own code links against disappears -- asserted below rather than assumed.
+      python3 - "$dest" "$hcore" "$hc" <<'PY'
+      import glob, struct, sys, zipfile
+
+      dest, core_jar, client_jar = sys.argv[1:4]
+      SPI    = "plugins/opensearch-notifications-core/opensearch-notifications-core-spi-*.jar"
+      PREFIX = "org/opensearch/notifications/core/repackage/"
+      HC     = PREFIX + "org/apache/hc/"
+      SUBS   = [(b"org/apache/hc/", HC.encode()),
+                (b"org.apache.hc.", HC.replace("/", ".").encode())]
+      # constant-pool tag -> payload size; only tag 1 (Utf8) is variable, tags 5/6 eat 2 slots
+      FIXED  = {3:4,4:4,5:8,6:8,7:2,8:2,9:4,10:4,11:4,12:4,15:3,16:2,17:4,18:4,19:2,20:2}
+      PRISTINE = {"org.apache.httpcomponents.core5/httpcore5":    "5.4",
+                  "org.apache.httpcomponents.client5/httpclient5": "5.6.1"}
+      FIX      = {"org.apache.httpcomponents.core5/httpcore5":    "5.4.3",
+                  "org.apache.httpcomponents.client5/httpclient5": "5.6.3"}
+      # classes that exist ONLY in the fixed releases -- these are what make the difference
+      # between "we relocated the fixed bytecode" and "we edited some metadata".
+      PROOF  = [(HC + "core5/io/SocketSupport.class", "httpcore5 5.4.3"),
+                (HC + "client5/http/entity/compress/DecompressingEntity$LazyDecompressingInputStream.class",
+                 "httpclient5 5.6.3")]
+
+      def sub(b):
+          for old, new in SUBS:
+              b = b.replace(old, new)
+          return b
+
+      def relocate_class(b):
+          count = struct.unpack_from(">H", b, 8)[0]
+          out = bytearray(b[:10]); off = 10; i = 1
+          while i < count:
+              tag = b[off]; out.append(tag); off += 1
+              if tag == 1:
+                  ln = struct.unpack_from(">H", b, off)[0]; off += 2
+                  s = sub(bytes(b[off:off+ln])); off += ln
+                  assert len(s) <= 0xFFFF, "utf8 entry overflows u2 after relocation"
+                  out += struct.pack(">H", len(s)) + s
+              else:
+                  out += b[off:off+FIXED[tag]]; off += FIXED[tag]
+              i += 2 if tag in (5, 6) else 1
+          return bytes(out) + bytes(b[off:])
+
+      def relocate(path):
+          """org/apache/hc/** relocated, plus the fixed artifact's OWN maven metadata."""
+          out = {}
+          with zipfile.ZipFile(path) as z:
+              for n in z.namelist():
+                  if n.endswith("/"):
+                      continue
+                  if n.startswith("org/apache/hc/"):
+                      d = z.read(n)
+                      out[PREFIX + n] = relocate_class(d) if n.endswith(".class") else sub(d)
+                  elif n.startswith("META-INF/maven/"):
+                      out[n] = z.read(n)
+          return out
+
+      new = {}
+      for j in (core_jar, client_jar):
+          new.update(relocate(j))
+      for p, why in PROOF:
+          assert p in new, f"{p} absent -- {why} is not what was downloaded"
+
+      jars = sorted(glob.glob(f"{dest}/{SPI}"))
+      assert jars, f"no {SPI} -- the notifications-core plugin layout changed"
+      for spi in jars:
+          with zipfile.ZipFile(spi) as z:
+              infos = z.infolist()
+              data = {i.filename: z.read(i.filename) for i in infos}
+
+          # three-case guard: already fixed -> skip, pristine -> patch, anything else -> stop.
+          def ver(a):
+              p = f"META-INF/maven/{a}/pom.properties"
+              assert p in data, f"{spi}: {p} missing -- shading layout changed"
+              return dict(l.split("=", 1) for l in data[p].decode().split() if "=" in l)["version"]
+          have = {a: ver(a) for a in FIX}
+          if have == FIX:
+              print(f"  {spi.split('/')[-1]}: already at the fixed versions")
+              continue
+          assert have == PRISTINE, (f"{spi}: shaded httpcomponents is {have}, expected pristine "
+                                   f"{PRISTINE} or fixed {FIX} -- re-check this by hand")
+
+          shaded = {n for n in data if n.startswith(HC) and not n.endswith("/")}
+          gone = shaded - set(new)
+          assert not gone, (f"the fixed releases dropped {len(gone)} class(es) the shaded copy "
+                            f"links against: {sorted(gone)[:5]}")
+
+          # Rewrite: every shaded hc entry replaced, the fixed artifacts' pom metadata
+          # replaced with theirs, and the rest of the jar left byte-identical.
+          keep = [i for i in infos if not i.filename.startswith(HC)]
+          seen = {i.filename for i in keep}
+          with zipfile.ZipFile(spi, "w", zipfile.ZIP_DEFLATED) as zo:
+              for i in keep:
+                  zo.writestr(i, new.get(i.filename, data[i.filename]))
+              for n in sorted(set(new) - seen):
+                  zi = zipfile.ZipInfo(n, date_time=(1980, 2, 1, 0, 0, 0))
+                  zi.compress_type = zipfile.ZIP_DEFLATED
+                  zo.writestr(zi, new[n])
+
+          # Verify the artifact on disk, not our intentions: the scanner-visible metadata,
+          # the RUNTIME-visible version (VersionInfo reads these version.properties through
+          # the relocated package name), and the fixed-release-only classes must all agree.
+          with zipfile.ZipFile(spi) as z:
+              names = set(z.namelist())
+              for a, v in FIX.items():
+                  got = dict(l.split("=", 1) for l in
+                             z.read(f"META-INF/maven/{a}/pom.properties").decode().split()
+                             if "=" in l)["version"]
+                  assert got == v, f"{a}: pom.properties says {got}, expected {v}"
+              for mod, v in (("core5", FIX["org.apache.httpcomponents.core5/httpcore5"]),
+                             ("client5", FIX["org.apache.httpcomponents.client5/httpclient5"])):
+                  props = z.read(f"{HC}{mod}/version.properties").decode()
+                  rel = [l.split("=", 1)[1].strip() for l in props.splitlines()
+                         if l.startswith("info.release")]
+                  assert rel == [v], f"{mod} version.properties reports {rel}, expected {v}"
+              for p, why in PROOF:
+                  assert p in names, f"{p} missing from the rewritten jar ({why})"
+              stray = [n for n in names if n.startswith("org/apache/hc/")]
+              assert not stray, f"{len(stray)} entries left UNrelocated: {stray[:5]}"
+          print(f"  {spi.split('/')[-1]}: shaded httpcomponents relocated at "
+                f"httpcore5 {FIX['org.apache.httpcomponents.core5/httpcore5']} / "
+                f"httpclient5 {FIX['org.apache.httpcomponents.client5/httpclient5']} "
+                f"({len(shaded)} entries replaced, {len(set(new)-seen)} added)")
+      PY
+      rm -f "$hc" "$hcore"
 
       # (3) opensearch-sql/opensearch-skills bundle Apache Calcite 1.41.0, whose
       #     calcite-core carries CVE-2026-46718 (unsafe reflection, MEDIUM). The fix is

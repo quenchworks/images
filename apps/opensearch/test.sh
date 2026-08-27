@@ -9,11 +9,15 @@ cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
 echo "starting $IMAGE"
-# reindex.remote.whitelist is set so the remote-reindex assertion below can run. That
-# assertion is the only thing here that goes through httpclient5 (see melange block 2c);
-# everything else uses the transport layer.
+# The remote-reindex assertion below needs its target host allowlisted. Two traps here,
+# both of which used to make that assertion fail 400 before any HTTP client was involved:
+#   * the setting is reindex.remote.ALLOWlist on OpenSearch 3.x (it was whitelist), and
+#   * OpenSearch only reads node settings from opensearch.yml / -E, NOT from -D JVM
+#     properties -- so passing it in OPENSEARCH_JAVA_OPTS silently did nothing (and
+#     clobbered the image's own -Xms/-Xmx while it was at it).
+# OPENSEARCH_CONFIG_EXTRA is the entrypoint's documented escape hatch: raw opensearch.yml.
 docker run -d --name "$NAME" -p 127.0.0.1:9200:9200 \
-  -e "OPENSEARCH_JAVA_OPTS=-Dreindex.remote.whitelist=127.0.0.1:9200,localhost:9200" \
+  -e 'OPENSEARCH_CONFIG_EXTRA=reindex.remote.allowlist: ["127.0.0.1:9200", "localhost:9200"]' \
   "$IMAGE" >/dev/null
 
 # OpenSearch + JVM start takes a while; poll the HTTP API for a green/yellow status
@@ -76,5 +80,34 @@ esac
 curl -fsS 'http://127.0.0.1:9200/smoke-remote/_doc/1' 2>/dev/null | grep -q '"quench"' \
   || { echo "remote-reindexed doc did not round-trip"; exit 1; }
 echo "  reindexed document round-tripped"
+
+# --- notifications webhook: the ONE path that exercises the SHADED httpclient5 -------
+# The reindex above uses the STANDALONE httpclient5 jar. melange block (2d) additionally
+# relocates fixed httpcore5/httpclient5 bytecode into opensearch-notifications-core-spi,
+# where upstream shades its own copy -- a different set of class files that nothing above
+# touches. A webhook notification is what drives that copy, so send one and require the
+# sink's own HTTP answer to come back: a bad relocation cannot produce an HTTP reason
+# phrase, it produces NoClassDefFoundError/VerifyError instead. This is the assertion
+# that distinguishes "the shaded code was really replaced" from "the scanner went quiet".
+echo "checking a webhook notification (exercises the SHADED httpclient5 in notifications-core)"
+curl -fsS -XPOST 'http://127.0.0.1:9200/_plugins/_notifications/configs' \
+  -H 'Content-Type: application/json' -d '{
+    "config_id": "smoke-webhook",
+    "config": { "name": "smoke", "description": "smoke test webhook",
+                "config_type": "webhook", "is_enabled": true,
+                "webhook": { "url": "http://localhost:9200/hooksink/_doc/1" } } }' >/dev/null
+# The canned test message is plain text, so the sink (this node) answers 400 Bad Request.
+# That reason phrase travelling back through the shaded client IS the assertion.
+wh="$(curl -sS -XPOST 'http://127.0.0.1:9200/_plugins/_notifications/feature/test/smoke-webhook' 2>&1 || true)"
+case "$wh" in
+  *NoClassDefFoundError*|*ClassNotFoundException*|*VerifyError*|*NoSuchMethodError*)
+    echo "the shaded httpclient5 failed to link -- the relocation in melange block (2d) is broken"
+    echo "$wh" | head -5; docker logs "$NAME" 2>&1 | tail -30; exit 1 ;;
+  *'Failed: Bad Request'*)
+    echo "  the sink's HTTP answer came back through the shaded client" ;;
+  *)
+    echo "webhook delivery gave an unexpected result -- check the shaded httpclient5 first"
+    echo "$wh" | head -5; docker logs "$NAME" 2>&1 | tail -30; exit 1 ;;
+esac
 
 echo "smoke test passed (nonroot user: $user)"
