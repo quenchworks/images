@@ -63,6 +63,66 @@ pipeline:
       cp -a "${SRC}/public"          "$HOME_DIR/public"
       cp -a "${SRC}/conf"            "$HOME_DIR/conf"
       cp -a "${SRC}/plugins-bundled" "$HOME_DIR/plugins-bundled"
+
+      # GUARD (2026-08-27): grafana is progressively externalising core datasource
+      # BACKENDS out of the monolith into PREBUILT Go plugin binaries under
+      # data/plugins-bundled/<ds>/gpx_*_linux_<arch>. Upstream builds each of those in
+      # its own repo on its own (stale) toolchain, so they cannot be shipped: 13.2.0
+      # externalised all 13 core datasources and its prebuilt backends carry 190 fixable
+      # findings (go1.25.7..1.26.5 stdlib + x/net + x/text + grpc + the unfixable tempo
+      # module path). This recipe therefore ships ONLY in-binary (core) datasources --
+      # which means every externalised datasource is ABSENT from the image. On 13.2.0
+      # that silently produced a 0-CVE image exposing 5 datasource types with no
+      # prometheus, no loki, no tempo and no SQL, i.e. an image that gates green and
+      # cannot back the observability/logging/tracing/lgtm stacks. Two checks, both
+      # must hold, or the build fails:
+      #
+      #   1. POSITIVE -- every datasource the stacks provision must still be a CORE
+      #      in-binary plugin. Core plugins ship their plugin.json under
+      #      public/app/plugins/datasource/<id>; an externalised one does not.
+      #   2. NEGATIVE -- the ONLY externalised backends allowed are the ones listed in
+      #      ACCEPTED_EXTERNALISED below, which we have knowingly decided to lose.
+      #      Anything new appearing there fails the build so the loss is a decision,
+      #      never a silent regression.
+      #
+      # Do not relax either check to make a version bump pass. If a datasource the
+      # stacks need moves out of the binary, the answer is to build that backend from
+      # source and swap it in -- see apps/grafana/build.conf STATUS.
+      REQUIRED_CORE_DS="prometheus loki tempo mysql mssql influxdb graphite jaeger
+                        grafana-postgresql-datasource grafana-testdata-datasource
+                        alertmanager"
+      for ds in $REQUIRED_CORE_DS; do
+        if [ ! -f "${SRC}/public/app/plugins/datasource/${ds}/plugin.json" ]; then
+          echo "ERROR: datasource '${ds}' is no longer a CORE in-binary plugin in" >&2
+          echo "       grafana ${VER} (no public/app/plugins/datasource/${ds})." >&2
+          echo "       The image would be HOLLOW for the stacks. Build that backend" >&2
+          echo "       from source and swap it in, or keep this app BLOCKED. See" >&2
+          echo "       apps/grafana/build.conf STATUS." >&2
+          exit 1
+        fi
+      done
+
+      # knowingly-lost externalised backends (no stack provisions these):
+      #   elasticsearch, zipkin -- externalised as of 13.1.x, prebuilt on go1.26.3 /
+      #   go1.26.4, both below the go1.26.6 that clears the current stdlib advisories.
+      ACCEPTED_EXTERNALISED="elasticsearch zipkin"
+      if [ -d "${SRC}/data/plugins-bundled" ]; then
+        for d in "${SRC}"/data/plugins-bundled/*; do
+          [ -d "$d" ] || continue
+          [ -n "$(find "$d" -name 'gpx_*' -print -quit)" ] || continue
+          name="$(basename "$d")"
+          case " ${ACCEPTED_EXTERNALISED} " in
+            *" ${name} "*) echo "note: '${name}' backend externalised upstream, not shipped (accepted)" ;;
+            *) echo "ERROR: grafana ${VER} externalised the '${name}' datasource backend" >&2
+               echo "       into a prebuilt data/plugins-bundled/${name}/gpx_* that this" >&2
+               echo "       recipe does not install, so the image would silently lose it." >&2
+               echo "       Either build it from source and swap it in, or add it to" >&2
+               echo "       ACCEPTED_EXTERNALISED after confirming no chart needs it." >&2
+               exit 1 ;;
+          esac
+        done
+      fi
+
       cp -a "${SRC}/tools"           "$HOME_DIR/tools" 2>/dev/null || true
       install -Dm0644 "${SRC}/LICENSE"   "$HOME_DIR/LICENSE"
       install -Dm0644 "${SRC}/NOTICE.md" "$HOME_DIR/NOTICE.md" 2>/dev/null || true

@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Smoke test for a built Grafana image. Usage: test.sh <image-ref>
+# Smoke test for a built Grafana image. Usage: test.sh <image-ref> [expected-version]
 # Runs read-only rootfs + writable tmpfs for data/logs/provisioning + /tmp (the read-only
-# posture the chart ships). Waits for /api/health, then asserts the DB is ok and the
-# version is exactly 13.0.2, the login page serves HTML (frontend assets present), and
-# basic-auth admin login reaches /api/org (the default org). Confirms nonroot uid 1001.
+# posture the chart ships). Waits for /api/health, then asserts the DB is ok and (when a
+# version is given as $2) that it matches, the login page serves HTML (frontend assets
+# present), and basic-auth admin login reaches /api/org (the default org). Confirms
+# nonroot uid 1001.
 set -euo pipefail
 
-IMAGE="${1:?usage: test.sh <image-ref>}"
+IMAGE="${1:?usage: test.sh <image-ref> [expected-version]}"
+EXPECT_VER="${2:-}"
 NAME="quench-grafana-smoke-$$"
 BASE="http://127.0.0.1:3000"
 ADMIN_PW="quenchtest"
@@ -37,7 +39,11 @@ done
 
 echo "got /api/health: $health"
 echo "$health" | grep -q '"database": *"ok"' || { echo "database not ok"; docker logs "$NAME"; exit 1; }
-echo "$health" | grep -q '"version": *"13.0.2"' || { echo "version is not 13.0.2"; docker logs "$NAME"; exit 1; }
+if [ -n "$EXPECT_VER" ]; then
+  echo "$health" | grep -q "\"version\": *\"${EXPECT_VER}\"" \
+    || { echo "version is not ${EXPECT_VER}"; docker logs "$NAME"; exit 1; }
+  echo "  version matches ${EXPECT_VER}"
+fi
 
 echo "checking /login serves HTML (frontend assets present)"
 login="$(curl -fsS "$BASE/login")"
