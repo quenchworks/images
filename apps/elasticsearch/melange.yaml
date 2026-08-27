@@ -99,28 +99,82 @@ pipeline:
       #     OLD reactor-core 3.4.38, incompatible with the fixed reactor-netty 1.2.8 (which
       #     needs reactor-core >= 3.6), so it cannot be cleanly swapped. Drop it.
       rm -rf "$dest"/modules/repository-azure
-      # --- (a2) modules/apm: LEAVE IT ALONE -------------------------------------------
-      # The bundled Elastic APM agent (elastic-apm-agent-java8-1.55.6.jar) carries
-      # log4j-api 2.25.4 = CVE-2026-49844 (MEDIUM). Two remediations were tried and BOTH
-      # are dead ends; do not retry either without new upstream releases.
+      # --- (a2) modules/apm: OVERLAY the fixed log4j-api into the bundled APM agent -----
+      # The agent (elastic-apm-agent-java8-1.55.6.jar) shades log4j-api 2.25.4 =
+      # CVE-2026-49844 (MEDIUM -- malformed JSON output from MapMessage /
+      # StructuredDataMessage). Neither easy way out works:
       #
       # 1. DELETING modules/apm. Elasticsearch validates its module set at startup:
       #      ERROR: Expected to find [apm] module in [/opt/elasticsearch/modules/apm]!
       #      Installation is corrupt, with exit code 70
-      #    This shipped by accident -- it cleared the scan and published, because this
-      #    workflow ran no boot test. Only the chart's kind gate caught it (Ready 0/1).
-      #    The module is not optional in any sense that matters.
+      #    That removal shipped once by accident (it cleared the scan and published; only
+      #    the chart's kind gate caught it, Ready 0/1). The module is not optional.
+      # 2. SWAPPING the agent jar for a newer release. 1.56.0 is the newest that exists and
+      #    it bundles log4j-api 2.26.0, which is ALSO vulnerable (fixes are 2.25.5/2.26.1).
       #
-      # 2. SWAPPING the agent jar for a newer release. Agent 1.56.0 (the newest that
-      #    exists) bundles log4j-api 2.26.0, which is ALSO vulnerable to CVE-2026-49844 --
-      #    the fixed versions are 2.25.5 and 2.26.1, and 2.26.0 is neither. So there is no
-      #    agent version to move to.
+      # So overlay the fixed classes instead. The agent keeps its shaded dependencies as an
+      # EXPLODED tree under agent/ with every class renamed *.esclazz (loaded by the agent's
+      # own classloader), and its log4j-api copies are BYTE-IDENTICAL to the upstream jar's
+      # -- verified per class, 209/209 base + 4/4 versioned, with only module-info.class
+      # omitted -- so upstream 2.25.5 drops straight in.
       #
-      # What is left would be overlaying log4j-api 2.26.1 into the agent jar, whose log4j
-      # copies are renamed `.esclazz` files loaded only by the agent's own classloader.
-      # That is the same shaded-jar surgery that shipped a broken graylog this round, so it
-      # is NOT being attempted for a MEDIUM in the agent's internal logging. This app stays
-      # BLOCKED until Elastic ships an agent bundling log4j-api >= 2.26.1 (or 2.25.5).
+      # The agent jar is `Multi-Release: true` AND it really does ship versioned copies of
+      # log4j classes under META-INF/versions/9/agent/... . On Java 21 a versioned entry
+      # WINS over the base one, so patching only the base tree would leave the vulnerable
+      # bytecode running while the scanner read a patched pom.properties (exactly the false
+      # clean graylog shipped). Overlay the base tree AND every META-INF/versions/<n>/ tree,
+      # never module-info.class, and prune anything the patched release deleted.
+      getj "$MC/org/apache/logging/log4j/log4j-api/2.25.5/log4j-api-2.25.5.jar" log4j-api-2.25.5.jar 64777f73ea0b3104c04eb82befbdccc30a425a19e83ad06cb2f93aa303511863
+      apmjar="$(find "$dest/modules/apm" -maxdepth 1 -name 'elastic-apm-agent-*.jar')"
+      test "$(printf '%s\n' "$apmjar" | grep -c .)" -eq 1 || { echo "FATAL: expected exactly 1 APM agent jar:"; printf '%s\n' "$apmjar"; exit 1; }
+      l4pom='agent/META-INF/maven/org.apache.logging.log4j/log4j-api/pom.properties'
+      l4ver="$(unzip -p "$apmjar" "$l4pom" | sed -n 's/^version=//p')"
+      case "$l4ver" in
+        2.25.4)
+          echo "overlaying log4j-api 2.25.5 over the agent's shaded $l4ver"
+          w="$PW/apm"; rm -rf "$w"; mkdir -p "$w/x" "$w/o/agent/META-INF"
+          ( cd "$w/x" && unzip -qo "$DL/log4j-api-2.25.5.jar" )
+          cp -r "$w/x/org" "$w/o/agent/"
+          cp -r "$w/x/META-INF/maven" "$w/o/agent/META-INF/"   # pom.properties/pom.xml = the version the scanner reads
+          for vd in "$w/x"/META-INF/versions/*; do
+            n="$(basename "$vd")"
+            mkdir -p "$w/o/META-INF/versions/$n/agent"
+            cp -r "$vd"/. "$w/o/META-INF/versions/$n/agent/"
+          done
+          find "$w/o" -name 'module-info.class' -delete
+          find "$w/o" -name '*.class' -exec sh -c 'mv "$1" "${1%.class}.esclazz"' _ {} \;
+          ( cd "$w/o" && find . -type f | sed 's|^\./||' | sort ) > "$w/new.txt"
+          unzip -Z1 "$apmjar" | sort > "$w/have.txt"
+          # the overlay must only REPLACE: a path the agent jar does not already have means
+          # the shaded layout changed and this surgery needs re-deriving, not guessing.
+          if grep -Fxv -f "$w/have.txt" "$w/new.txt" > "$w/add.txt"; then
+            echo "FATAL: overlay would ADD entries absent from the agent jar:"; cat "$w/add.txt"; exit 1
+          fi
+          ( cd "$w/o" && zip -qX "$apmjar" -@ < "$w/new.txt" )
+          # prune classes the patched release deleted (scoped to the package dirs the
+          # overlay writes -- verified that only log4j-api owns those dirs in this jar).
+          sed 's|/[^/]*$||' "$w/new.txt" | sort -u > "$w/dirs.txt"
+          while read -r d; do grep "^$d/[^/]*\.esclazz$" "$w/have.txt" || true; done < "$w/dirs.txt" | sort -u > "$w/dirents.txt"
+          if grep -Fxv -f "$w/new.txt" "$w/dirents.txt" > "$w/del.txt"; then
+            echo "pruning classes dropped by 2.25.5:"; cat "$w/del.txt"
+            ( cd "$w" && zip -qd "$apmjar" -@ < "$w/del.txt" )
+          fi
+          # VERIFY THE RUNNING CODE, not the scanner: every overlaid entry in the jar must
+          # now be byte-identical to the pristine upstream 2.25.5 jar's copy.
+          while read -r p; do
+            unzip -p "$apmjar" "$p" | cmp -s - "$w/o/$p" || { echo "FATAL: overlay did not take for $p"; exit 1; }
+          done < "$w/new.txt"
+          l4new="$(unzip -p "$apmjar" "$l4pom" | sed -n 's/^version=//p')"
+          test "$l4new" = 2.25.5 || { echo "FATAL: agent log4j-api still reports $l4new"; exit 1; }
+          echo "APM agent log4j-api: $l4ver -> $l4new ($(wc -l < "$w/new.txt") entries, base + versioned)"
+          ;;
+        2.25.5|2.26.1)
+          echo "APM agent already ships a fixed log4j-api ($l4ver); no overlay needed" ;;
+        *)
+          echo "FATAL: APM agent ships log4j-api $l4ver -- unexpected. Re-derive the overlay"
+          echo "       (the class set and the per-class byte-identity were verified against"
+          echo "       2.25.4 only) instead of assuming the 2.25.5 tree still fits."; exit 1 ;;
+      esac
 
       # --- (b) standalone jackson 2.18.8 -> 2.18.9 (core+databind+annotations, consistent
       #     set; databind fix = 2.18.9 (for -54515 and CVE-2026-59889), core fix >= 2.18.6).
@@ -153,7 +207,7 @@ pipeline:
       #     storage plugin whose gzip handling the 5.6.x line broke.
       getj "$MC/org/apache/httpcomponents/client5/httpclient5/5.6.3/httpclient5-5.6.3.jar" httpclient5-5.6.3.jar 80712ff129210d7c73d9fcc1195cbee5c3c34744965c7a05ea107b3648922f18
       find "$dest" -name 'httpclient5-5.6.1.jar' -exec sh -c 'cp "$1" "$(dirname "$2")/httpclient5-5.6.3.jar"; rm -f "$2"' _ "$DL/httpclient5-5.6.3.jar" {} \;
-      getj "$MC/org/apache/logging/log4j/log4j-api/2.25.5/log4j-api-2.25.5.jar" log4j-api-2.25.5.jar 64777f73ea0b3104c04eb82befbdccc30a425a19e83ad06cb2f93aa303511863
+      # (the 2.25.5 jar is fetched + sha-pinned in (a2) above, which needs it first)
       find "$dest" -name 'log4j-api-2.25.4.jar' -exec sh -c 'cp "$1" "$(dirname "$2")/log4j-api-2.25.5.jar"; rm -f "$2"' _ "$DL/log4j-api-2.25.5.jar" {} \;
 
       # --- (c) commons-lang3 3.9 -> 3.18.0 (x-pack-ent-search; other modules already 3.18+)
@@ -193,30 +247,32 @@ pipeline:
       xc_surgery "$dest/lib/elasticsearch-x-content-${{package.version}}.jar"
       xc_surgery "$dest/lib/tools/plugin-cli/elasticsearch-x-content-${{package.version}}.jar"
 
-      # --- (g) netty 4.1.135.Final -> 4.1.136.Final (Jul-2026 netty codec/http wave). The
+      # --- (g) netty 4.1.135.Final -> 4.1.137.Final (Aug-2026: 4.1.136 itself picked up
+      #     CVE-2026-59903 in netty-codec-http, fixed in 4.1.137.Final; the whole set moves
+      #     together so the modules never mix netty patch levels). The
       #     RETAINED modules (transport-netty4, x-pack-security, x-pack-inference,
       #     esql-datasource-grpc) bundle standalone io.netty jars; the azure/iceberg/gcs
       #     datasources + repository-azure that also carried netty were dropped in (a) above.
       #     netty is ABI-stable within 4.1.x -> content-swap in place keeping the 4.1.135
-      #     filename (Trivy reads the jar's pom.properties = 4.1.136 -> clean).
-      nettyswap() { # <artifact> <sha256-of-4.1.136>
-        getj "$MC/io/netty/$1/4.1.136.Final/$1-4.1.136.Final.jar" "$1-4.1.136.Final.jar" "$2"
-        find "$dest/modules" -name "$1-4.1.135.Final.jar" -exec cp "$DL/$1-4.1.136.Final.jar" {} \;
+      #     filename (Trivy reads the jar's pom.properties = 4.1.137 -> clean).
+      nettyswap() { # <artifact> <sha256-of-4.1.137>
+        getj "$MC/io/netty/$1/4.1.137.Final/$1-4.1.137.Final.jar" "$1-4.1.137.Final.jar" "$2"
+        find "$dest/modules" -name "$1-4.1.135.Final.jar" -exec cp "$DL/$1-4.1.137.Final.jar" {} \;
       }
-      nettyswap netty-buffer                        c88f13fc41156fde5df918c7b240038dfbe97ac57576163f208630391789b5d5
-      nettyswap netty-codec                         2de4fc13005c7740b46427a47ee04265a19779c147d53e583f441889b1148159
-      nettyswap netty-codec-dns                     89bddc4ec42756c41a0195a50a1323a324836162b6712a843c3de5c29096c93b
-      nettyswap netty-codec-http                    ffd1e1b19a533bc6e47ef2cbc1290374ff4a7cb53a280defa3df392538214948
-      nettyswap netty-codec-http2                   14f67ae095c056b062aa0ee2c7b01f6b78004cf3620a6e9061bcb637f079387a
-      nettyswap netty-codec-socks                   341f47dbaac667a6e7e6cad4114218025f9755ced641bb0740fb69e34d29b421
-      nettyswap netty-common                        e2f73be7ec359b46583ad875521137000eff520bafd320e730846ec9974f3be6
-      nettyswap netty-handler                       54bb1a59f46a3aefd117942e6acee09e555b756776bad731fc06159d89c2da28
-      nettyswap netty-handler-proxy                 47400551f0444dea33629ee0c52d4e30856b2ddf00b12adf1881902957e74cf2
-      nettyswap netty-resolver                      e64972fec474f5b9bd086b738154d190a923e82c4923ac550aff4f5ea9e98600
-      nettyswap netty-resolver-dns                  9c05a9b18b5d54fcc1569c48b93958019cf3dde5ae7011f8a46451ee05e7daff
-      nettyswap netty-transport                     b92881ea925721ed42fee5122a42b8bce4b84da737dbc3ca2d84dfaca52c28b6
-      nettyswap netty-transport-classes-epoll       f6a0b631b98667f131daf4ca07a9cae1072d58e259dcbc0f8c6a053d843449c6
-      nettyswap netty-transport-native-unix-common  7e014c9b13defd9d254d4e5a5edd8ab6dde17533e1152f99699a6b28b2967a8a
+      nettyswap netty-buffer                        f474b14c7734f15e0540394cb6f39d67777b7581a42919e4ac89d253d4efd929
+      nettyswap netty-codec                         9987b6a660b0a6b1f0d791485dae33180b3d1c63687c006fe6d3fd025e9e3798
+      nettyswap netty-codec-dns                     2d9a33ce41bd9f6f607df95039e42518a1fca16f83c9bbfe72beb57df6e2489f
+      nettyswap netty-codec-http                    0535bb5a736472bef5c948d15eb273c4ab9f796656fc7c5d6b982ad92bddbd49
+      nettyswap netty-codec-http2                   576ddcfb51b78e86f145c9a52b60e500b1a1d5a257cafec8aa5416ffba044b49
+      nettyswap netty-codec-socks                   4a6190e08988c058bfeef2b5965e71946439c771abf721c68f4039b4e7b023e8
+      nettyswap netty-common                        d31926b01adcc07af86f5e27b81b6d6c115df17d366e835d1fc3f5a1924e7e52
+      nettyswap netty-handler                       d0e4c6ee4779f59f6ab2fb5d388e4f57147c82270164b37945764bb9bda96a44
+      nettyswap netty-handler-proxy                 843de10c4cef34cbc1a5344090f1b57db532fbebf141559862da675f6b656df4
+      nettyswap netty-resolver                      b4cf2aeedd9fc7c8c439bbfe574f63cfe5b83392e88bbc07ca0e8424b7cff955
+      nettyswap netty-resolver-dns                  898d63ca62ed68ff46543c5344f969424b417f1e8d082fe2bb0181ba10144194
+      nettyswap netty-transport                     6251adc2a2921572382732a2db188d4f4f2251fd6ebb49c5d44bbf33d6bfb1a7
+      nettyswap netty-transport-classes-epoll       55049554b799dc8e53bf234fffa36e001f7b5b65c32994b9bd59fc6356f1c52f
+      nettyswap netty-transport-native-unix-common  8056e7637f9948f953314894cf995ab664711b66c73c4cd5b593ae84f0b1048c
       # --- (h) lz4-java 1.10.1 -> 1.11.1 in core lib/ (CVE-2026-59949 MEDIUM: the native
       #     XXHash impl can crash the JVM on invalid input; new in the 9.4.4 bundle). Same
       #     at.yawk.lz4 coordinates, same net/jpountz layout, and the 1.11.1 jar still ships
