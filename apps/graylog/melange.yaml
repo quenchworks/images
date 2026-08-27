@@ -65,16 +65,17 @@ pipeline:
       #     it (all three storage plugin jars are clean).
       #   * com.rabbitmq:amqp-client 5.29.0 -> 5.33.1 (6 CVEs, 3 of them HIGH) -- added
       #     for 7.1.8. graylog.jar only; the storage plugins do not bundle it.
-      # NOT fixable here: httpclient5 5.5.1 / httpcore5 + httpcore5-h2 5.3.4 inside
-      # plugin/graylog-storage-opensearch3. See build.conf -- httpclient5's only fixed
-      # line is 5.6.x, which was runtime-verified to break the OpenSearch response path.
+      #   * httpclient5 5.5.1 -> 5.6.4 and httpcore5 + httpcore5-h2 5.3.4 -> 5.4.3
+      #     (CVE-2026-64607, CVE-2026-54399, CVE-2026-54428) in the opensearch3 storage
+      #     plugin -- see the long note at the httpcomponents block below: the bump is
+      #     only safe together with the opensearch-java transport that pairs with it.
       # All fetches are sha256-pinned Maven Central. Scratch lives under the on-disk
       # build workspace (NOT /tmp, which is a small tmpfs in the sandbox).
       set -eu
       ROOT="$(pwd)"
       MC="https://repo1.maven.org/maven2"
       PW="$ROOT/.patchwork"; DL="$PW/dl"; ST="$PW/stage"
-      mkdir -p "$DL" "$ST/jackson" "$ST/shiro" "$ST/mail" "$ST/lz4" "$ST/log4j" "$ST/jsoup" "$ST/amqp"
+      mkdir -p "$DL" "$ST/jackson" "$ST/shiro" "$ST/mail" "$ST/lz4" "$ST/log4j" "$ST/jsoup" "$ST/amqp" "$ST/hc" "$ST/osj"
       getj() { curl -fsSL -o "$DL/$2" "$1"; echo "$3  $DL/$2" | sha256sum -c -; }
 
       # --- jackson (databind + core) 2.21.5: overlay class trees + maven metadata ---
@@ -143,6 +144,63 @@ pipeline:
       getj "$MC/com/rabbitmq/amqp-client/5.33.1/amqp-client-5.33.1.jar" amqp-client-5.33.1.jar 27aec6803b9426da152de219e31783d52d89f486dd635c5a426cf6d321c58542
       ( cd "$ST/amqp" && unzip -qo "$DL/amqp-client-5.33.1.jar" 'com/rabbitmq/*' 'META-INF/maven/com.rabbitmq/*' 'rabbitmq-amqp-client.properties' )
 
+      # --- httpcomponents 5.x in plugin/graylog-storage-opensearch3 (3 CVEs) --------------
+      #   httpclient5  5.5.1 -> 5.6.4  (CVE-2026-64607 MEDIUM, connection leak on a
+      #                                 Content-Encoding decode error)
+      #   httpcore5    5.3.4 -> 5.4.3  (CVE-2026-54399 HIGH, DoS via excessive headers)
+      #   httpcore5-h2 5.3.4 -> 5.4.3  (CVE-2026-54428 HIGH, DoS via oversized HPACK header)
+      # 5.5.2 does NOT clear CVE-2026-64607 (the advisory's only fixed line is 5.6.x), so the
+      # MINOR bump is unavoidable -- and it is a THREE-part change, not a jar swap:
+      #
+      #   1. httpclient5 5.6 added ContentCompressionAsyncExec to the DEFAULT async exec chain
+      #      (5.5.1 had no content decoding on the async path at all). It inflates the body and
+      #      hands the response consumer an EntityDetails whose getContentEncoding() is null --
+      #      but it does NOT remove the response's own `Content-Encoding: gzip` HEADER.
+      #      opensearch-java's HeapBufferedAsyncResponseConsumer.buildResult() reads that
+      #      HEADER (not the EntityDetails) and stamps it on the ByteArrayEntity it builds, and
+      #      ApacheHttpClient5Transport.convertResponse() then wraps any entity claiming gzip in
+      #      a GzipDecompressingEntity. The already-inflated body is therefore inflated a second
+      #      time, and the first read fails with
+      #        java.util.zip.ZipException: Not in GZIP format
+      #      surfacing inside JacksonJsonProvider$ParserFactory.createParser. That is what broke
+      #      the reverted 2026-08-17 attempt -- NOT stale leftover classes. It is unconditional:
+      #      no Graylog or chart setting avoids it, because httpclient5 adds Accept-Encoding
+      #      itself whenever the request does not already carry one.
+      #      opensearch-java fixed this in 3.6.0, the SAME release that moved its own dependency
+      #      to httpclient5 5.6 / httpcore5 5.4: it dropped the GzipDecompressingEntity wrap and
+      #      relies on httpclient5 to decode. Graylog 7.1.8 bundles opensearch-java 3.0-3.2
+      #      (ApacheHttpClient5Transport is byte-identical to those releases), so the httpcomponents
+      #      bump MUST be paired with 3.6.0's ApacheHttpClient5Transport. Only that one class and
+      #      its inner classes changed, plus a new internal/NodeState referenced by nothing else;
+      #      every other class in org/opensearch/client/transport/httpclient5/** is CRC-identical
+      #      from 3.0.0 through 3.9.0, so the overlay stays this small. All overlaid classes are
+      #      pristine upstream -- nothing here is hand-modified.
+      #   2. This is a MINOR bump, so it DELETES classes: 5.5.1 -> 5.6.4 drops the 14
+      #      org/apache/hc/client5/http/impl/compat/** helpers (they moved into httpcore5 5.4's
+      #      http/nio/support/classic/**), 5.3.4 -> 5.4.3 drops 9 (incl. impl/io/IncomingHttpEntity
+      #      and the IOWorkers family) and h2 drops 2. An overlay cannot delete, so the whole
+      #      org/apache/hc tree is REMOVED first (see PRUNE_HC in apply below). The bundled tree
+      #      is exactly the union of the three pristine jars -- verified file-set-identical -- so
+      #      remove-then-overlay reproduces 5.6.4 + 5.4.3 + 5.4.3 exactly, with no hybrid left
+      #      behind. Nothing outside org/apache/hc/** references any of the 25 dropped classes.
+      #   3. Verified at runtime, not just by the scanner: the chart's kind install gate brings up
+      #      MongoDB + OpenSearch and Graylog must reach /api/system/lbstatus = ALIVE, which
+      #      exercises the OpenSearch storage path where the ZipException appeared. The image
+      #      smoke test and the CVE gate BOTH passed on the broken build, so neither is proof.
+      getj "$MC/org/apache/httpcomponents/client5/httpclient5/5.6.4/httpclient5-5.6.4.jar" httpclient5-5.6.4.jar bdef5f8841145cd76c4c605ff301bc840eea0d5292332b7b892a93316c0d8ee1
+      getj "$MC/org/apache/httpcomponents/core5/httpcore5/5.4.3/httpcore5-5.4.3.jar" httpcore5-5.4.3.jar 18bfbbabb478dfb67f31aeaf428c387f3c3df654582e1309f708ee1f3086830a
+      getj "$MC/org/apache/httpcomponents/core5/httpcore5-h2/5.4.3/httpcore5-h2-5.4.3.jar" httpcore5-h2-5.4.3.jar c7db7026b8e2dea39132b04a6069f6671e2858309b20a146ec5c7dd6ed73a0b6
+      getj "$MC/org/opensearch/client/opensearch-java/3.6.0/opensearch-java-3.6.0.jar" opensearch-java-3.6.0.jar fafb80b7cdaf2c0b9571a01669267a5e760eb4cbf5c0daf8e0fbdf262b68c67d
+      # httpcore5 and httpcore5-h2 share the org/apache/hc/core5/** namespace but have separate
+      # META-INF/maven dirs (both are read by Trivy), so each is taken by its own artifact path.
+      ( cd "$ST/hc" \
+          && unzip -qo "$DL/httpclient5-5.6.4.jar"  'org/apache/hc/*' 'META-INF/maven/org.apache.httpcomponents.client5/*' \
+          && unzip -qo "$DL/httpcore5-5.4.3.jar"    'org/apache/hc/*' 'META-INF/maven/org.apache.httpcomponents.core5/httpcore5/*' \
+          && unzip -qo "$DL/httpcore5-h2-5.4.3.jar" 'org/apache/hc/*' 'META-INF/maven/org.apache.httpcomponents.core5/httpcore5-h2/*' )
+      ( cd "$ST/osj" && unzip -qo "$DL/opensearch-java-3.6.0.jar" \
+          'org/opensearch/client/transport/httpclient5/ApacheHttpClient5Transport*' \
+          'org/opensearch/client/transport/httpclient5/internal/NodeState.class' )
+
       # --- apply: explode each uber-jar, overlay the patched trees, repackage ---
       apply() {
         jarp="$1"; shift
@@ -160,13 +218,25 @@ pipeline:
         # brings v2_21_5 and the bundled v2_21_2 tree would be left behind unreferenced.
         rm -rf "$w/com/fasterxml/jackson/core/internal/shaded/fdp/v2_21_2" \
                "$w"/META-INF/versions/*/com/fasterxml/jackson/core/internal/shaded/fdp/v2_21_2
+        # httpcomponents is the one MINOR bump here, so a class-level overlay is not enough:
+        # the whole org/apache/hc tree goes first and is rebuilt from the three pristine jars.
+        # Same for the opensearch-java transport, whose inner classes are all recompiled.
+        # Only the opensearch3 storage plugin carries either tree -- graylog.jar and the other
+        # two storage plugins bundle no org/apache/hc/** and no opensearch transport at all.
+        if [ "${PRUNE_HC:-0}" = 1 ]; then
+          rm -rf "$w/org/apache/hc" \
+                 "$w/META-INF/maven/org.apache.httpcomponents.client5" \
+                 "$w/META-INF/maven/org.apache.httpcomponents.core5"
+          rm -f "$w"/org/opensearch/client/transport/httpclient5/ApacheHttpClient5Transport*.class
+        fi
         for s in "$@"; do cp -a "$s/." "$w/"; done
         rm -f "$jarp"
         ( cd "$w" && zip -qrX "$jarp" . )
         rm -rf "$w"
       }
       apply "$ROOT/graylog.jar" "$ST/jackson" "$ST/shiro" "$ST/mail" "$ST/lz4" "$ST/log4j" "$ST/jsoup" "$ST/amqp"
-      apply "$ROOT/plugin/graylog-storage-opensearch3-${{package.version}}.jar" "$ST/jackson"
+      PRUNE_HC=1
+      apply "$ROOT/plugin/graylog-storage-opensearch3-${{package.version}}.jar" "$ST/jackson" "$ST/hc" "$ST/osj"
       rm -rf "$PW"
   - runs: |
       # install the server jar, launcher, plugins and config example under /opt/graylog
