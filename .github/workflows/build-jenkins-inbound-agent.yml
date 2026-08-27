@@ -1,19 +1,27 @@
 name: build-jenkins-inbound-agent
 
-# LANGUAGE-RUNTIMES track. Hardened OpenJDK (JDK) base images, assembled
-# straight from Wolfi's versioned `openjenkins-inbound-agent-N-default-jenkins-inbound-agent` packages with apko --
-# NO melange/from-source step, since Wolfi already packages OpenJDK. A MATRIX
-# fans out over the latest 3 LTS lines; each one runs a NATIVE per-arch apko
-# build (no QEMU), the hard 0-CVE Trivy gate, then a per-version merge job that
-# assembles + signs + attests the multi-arch index.
+# CI-AGENTS track. The Jenkins inbound (JNLP/websocket) build agent, assembled
+# with apko from Wolfi's `jenkins-docker-agent-openjdk-21` + `jenkins-remoting`
+# apks. A MATRIX fans out over the latest 3 docker-agent lines; each one runs a
+# NATIVE per-arch build (no QEMU), the hard 0-CVE Trivy gate, then a per-version
+# merge job that assembles + signs + attests the multi-arch index.
 #
-# IMAGE-ONLY: the JDK is a base/runtime image with no Helm chart, so there is
-# NO charts-repo dispatch.
+# ONE melange STEP, and only one: apps/jenkins-inbound-agent/melange.yaml builds a
+# SHADOW `git-lfs` 3.7.1-r22 from source with golang.org/x/net floated past
+# CVE-2026-46600. It exists because `jenkins-utils` -- a hard, transitive dep of the
+# docker-agent apk -- hard-depends on `git-lfs` UNPINNED, so the vulnerable Wolfi
+# git-lfs-3.7.1-r21 cannot simply be omitted from apko.yaml the way apps/argocd and
+# apps/coolify-app omit it. apko installs ours from ./packages via `git-lfs@local`, so
+# the melange build MUST run before `apko build`. Delete the melange steps (and revert
+# apko.yaml) the day Wolfi publishes a git-lfs built against x/net >= 0.56.0.
 #
-# TEMPLATE: to add another LTS (or another runtime), copy a matrix entry and
-# change `ver`; apps/jenkins-inbound-agent/apko.yaml carries the `__VER__` placeholder that CI
-# substitutes per entry (it also feeds JAVA_HOME). No :latest tag is ever
-# published.
+# IMAGE-ONLY: the agent has no Helm chart (the Jenkins controller launches it),
+# so there is NO charts-repo dispatch.
+#
+# TEMPLATE: to add another line, append to VERSIONS + PIN in
+# apps/jenkins-inbound-agent/build.conf -- that file is the single source of truth
+# and its render() substitutes the `__PKG__` placeholder per matrix entry. No
+# :latest tag is ever published.
 on:
   workflow_dispatch:
 permissions:
@@ -50,7 +58,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # latest 3 LTS Wolfi-packaged OpenJDK lines x both native arches,
+        # latest 3 Wolfi jenkins-docker-agent lines x both native arches,
         # driven by apps/jenkins-inbound-agent/build.conf VERSIONS (the single source of truth).
         ver: ${{ fromJson(needs.prep.outputs.vers) }}
         arch:
@@ -63,22 +71,50 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install apko (native ${{ matrix.arch.platform }})
+      - name: Install apko + melange (native ${{ matrix.arch.platform }})
         working-directory: ${{ github.workspace }}
         run: |
           APKO_VER="$(curl -fsSL https://api.github.com/repos/chainguard-dev/apko/releases/latest | grep -m1 '"tag_name"' | cut -d'"' -f4)"
           curl -fsSL "https://github.com/chainguard-dev/apko/releases/download/${APKO_VER}/apko_${APKO_VER#v}_linux_${{ matrix.arch.platform }}.tar.gz" \
             | sudo tar xz --strip-components=1 -C /usr/local/bin
           apko version | head -1
+          MELANGE_VER=v0.53.0
+          curl -fsSL "https://github.com/chainguard-dev/melange/releases/download/${MELANGE_VER}/melange_${MELANGE_VER#v}_linux_${{ matrix.arch.platform }}.tar.gz" \
+            | sudo tar xz --strip-components=1 -C /usr/local/bin
+          melange version | head -1
+          sudo apt-get update -qq && sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
 
-      - name: Render apko config for OpenJDK ${{ matrix.ver }} (build.conf render)
+      - name: Render recipes for ${{ matrix.ver }} (build.conf render)
         run: |
           set -euo pipefail
           source build.conf
-          sed -e "$(render '${{ matrix.ver }}')" apko.yaml > apko.rendered.yaml
+          prog="$(render '${{ matrix.ver }}')"
+          sed -e "$prog" melange.yaml > melange.rendered.yaml
+          sed -e "$prog" apko.yaml    > apko.rendered.yaml
+
+      # Builds the SHADOW git-lfs 3.7.1-r22 (x/net floated past CVE-2026-46600).
+      # apko installs it from ./packages as `git-lfs@local`, so this MUST run BEFORE
+      # assemble -- see melange.yaml for why the apk cannot just be omitted.
+      - name: Build the shadow git-lfs package (native ${{ matrix.arch.name }})
+        run: |
+          melange keygen melange.rsa
+          melange build melange.rendered.yaml --arch ${{ matrix.arch.name }} --signing-key melange.rsa --out-dir ./packages
 
       - name: Assemble single-arch image for the scan gate
         run: apko build apko.rendered.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}
+
+      # Validate the VEX BEFORE Trivy is allowed to honour it. This file removes
+      # findings from the gate that is the whole product guarantee, so a malformed or
+      # unargued entry must fail the build rather than silently suppress a real CVE.
+      # The local gate already does this; CI is where publishing happens, so it needs
+      # it more, not less. Rules enforced (scripts/check-vex.py): status not_affected
+      # only, an OpenVEX justification value, an impact_statement that says how the
+      # claim was verified, and no duplicate (CVE, product) pairs.
+      - name: Validate the VEX clearance
+        uses: astral-sh/setup-uv@v7
+      - name: Check VEX
+        run: uv run scripts/check-vex.py jenkins-inbound-agent
 
       - name: Scan, the hard 0-CVE gate (before publish)
         uses: aquasecurity/trivy-action@master
@@ -103,7 +139,9 @@ jobs:
           docker load < image.tar
           # apko load tags the image as <ref>-<arch>; the scan ref ended in the platform.
           docker tag "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}-${{ matrix.arch.platform }}" jenkins-inbound-agent-smoke:local
-          bash test.sh jenkins-inbound-agent-smoke:local "3.13"
+          # test.sh takes ONLY <image-ref>. The "3.13" that used to be passed here was a
+          # copy-paste leftover from the poetry template this workflow was cloned from.
+          bash test.sh jenkins-inbound-agent-smoke:local
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -169,4 +207,4 @@ jobs:
           subject-digest: ${{ steps.merge.outputs.digest }}
           push-to-registry: true
 
-      # IMAGE-ONLY: no charts-repo dispatch. The JDK is a base/runtime image.
+      # IMAGE-ONLY: no charts-repo dispatch. The Jenkins controller launches this agent.

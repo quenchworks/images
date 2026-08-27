@@ -94,10 +94,31 @@ jobs:
       - name: Assemble single-arch image for the scan gate
         run: apko build apko.rendered.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}
 
+      # Validate the VEX BEFORE Trivy is allowed to honour it. This file removes
+      # findings from the gate that is the whole product guarantee, so a malformed or
+      # unargued entry must fail the build rather than silently suppress a real CVE.
+      # The local gate already does this; CI is where publishing happens, so it needs
+      # it more, not less. Rules enforced (scripts/check-vex.py): status not_affected
+      # only, an OpenVEX justification value, an impact_statement that says how the
+      # claim was verified, and no duplicate (CVE, product) pairs.
+      - name: Validate the VEX clearance
+        uses: astral-sh/setup-uv@v7
+      - name: Check VEX
+        run: uv run scripts/check-vex.py grafana
+
       - name: Scan, the hard 0-CVE gate (before publish)
         uses: aquasecurity/trivy-action@master
         env:
           TRIVY_DETECTION_PRIORITY: comprehensive
+          # Documented VEX clearance for the two github.com/grafana/tempo findings.
+          # Both CVEs live in the Tempo SERVER (a DoS in its query path; an S3 key leak
+          # via its /status endpoint); Grafana is a Tempo CLIENT and links the module
+          # only for generated protobuf types. Proven by reading the shipped binary:
+          # only pkg/tempopb and its common/v1, resource/v1, trace/v1 subpackages are
+          # present, with 0 matches for tempodb, modules/, pkg/api, cmd/tempo,
+          # pkg/traceql, backend/s3 and pkg/util/status. See docs/vex-policy.md.
+          # trivy-action has no `vex:` input; pass it through the TRIVY_VEX env.
+          TRIVY_VEX: apps/grafana/vex.openvex.json
         with:
           input: apps/grafana/image.tar
           format: table

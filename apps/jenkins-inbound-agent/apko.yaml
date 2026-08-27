@@ -1,9 +1,12 @@
-# Assembles a hardened Jenkins inbound agent image directly from Wolfi packages. No
-# Dockerfile, NO melange build -- apko pulls the jenkins-agent script
-# (jenkins-docker-agent-openjdk-21, which brings OpenJDK 21 + jenkins-utils + bash)
-# and the remoting agent.jar (jenkins-remoting) straight from the Wolfi `os` repository.
-# Wolfi retired the flat `jenkins-docker-agent` apk in favour of the per-JDK
-# subpackages -- see build.conf for the rename rationale.
+# Assembles a hardened Jenkins inbound agent image from Wolfi packages. No Dockerfile:
+# apko pulls the jenkins-agent script (jenkins-docker-agent-openjdk-21, which brings
+# OpenJDK 21 + jenkins-utils + bash) and the remoting agent.jar (jenkins-remoting)
+# straight from the Wolfi `os` repository. Wolfi retired the flat
+# `jenkins-docker-agent` apk in favour of the per-JDK subpackages -- see build.conf
+# for the rename rationale.
+#
+# The ONE melange package this app builds is a SHADOW git-lfs (see melange.yaml); the
+# Jenkins bits themselves are still pure Wolfi apk assembly.
 #
 # IMAGE-ONLY -- no Helm chart. The 0-CVE, signed, nonroot, multi-arch answer to
 # jenkins/inbound-agent: the controller launches it over JNLP/websocket. The entrypoint
@@ -12,13 +15,35 @@
 contents:
   keyring:
     - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
   repositories:
     - https://packages.wolfi.dev/os
+    - "@local ./packages"
   packages:
     - wolfi-baselayout
     - ca-certificates-bundle
     - __PKG__            # jenkins-docker-agent-openjdk-21: /usr/local/bin/jenkins-agent + OpenJDK 21 + bash
     - jenkins-remoting   # the remoting agent.jar (/usr/share/jenkins/agent.jar)
+    # git-lfs is NOT optional here: jenkins-utils (a hard dep of the docker-agent
+    # apk) hard-depends on it UNPINNED, so it lands in the image whether we ask
+    # or not -- and Wolfi's newest, 3.7.1-r21, is built against golang.org/x/net
+    # v0.55.0 = CVE-2026-46600 (HIGH). melange.yaml builds our own git-lfs
+    # 3.7.1-r22 from source with x/net floated, into ./packages, and this line is
+    # what makes apko install it. Same package NAME, so this one package also
+    # satisfies jenkins-utils's bare `git-lfs` dep and Wolfi's r21 is never
+    # fetched.
+    #
+    # THE `@local` TAG IS REQUIRED, not decoration. Measured both ways on
+    # 2026-08-27: with a bare `- git-lfs`, relying on r22 > r21 winning on
+    # version, apko resolved to Wolfi's `git-lfs (3.7.1-r21)` -- apko's resolver
+    # does NOT simply take the highest version across repositories, it needs the
+    # repository pin. With `@local` it installs `git-lfs (3.7.1-r22)`.
+    #
+    # Consequence: the shadow does NOT expire on its own. When Wolfi publishes a
+    # git-lfs built against x/net >= 0.56.0, delete melange.yaml, drop this line
+    # plus the `@local` repo and `./melange.rsa.pub` keyring entries above, and
+    # revert the workflow to apko-only. build.conf records that condition.
+    - git-lfs@local
 
 accounts:
   groups:

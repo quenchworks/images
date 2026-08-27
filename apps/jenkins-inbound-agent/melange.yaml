@@ -1,0 +1,116 @@
+# SHADOW APK. This recipe does NOT build the Jenkins agent -- that still comes
+# straight from Wolfi's `jenkins-docker-agent-openjdk-21` + `jenkins-remoting`
+# apks (apko.yaml). It builds ONE replacement package: git-lfs, from upstream
+# source at v3.7.1, with the golang.org/x/* family floated past
+# CVE-2026-46600 (HIGH, DoS in golang.org/x/net/dns/dnsmessage; x/net
+# v0.55.0 -> 0.56.0).
+#
+# WHY A SHADOW PACKAGE AND NOT `- git-lfs` DROPPED FROM apko.yaml
+# apps/argocd and apps/coolify-app hit the same CVE and simply omit the apk
+# (coolify-app rebuilds the binary into its own package). That is not available
+# here: `jenkins-docker-agent-openjdk-21` hard-depends on `jenkins-utils`, whose
+# APKINDEX line is `D: bash ... git git-lfs glibc-locale-en ...` -- an UNPINNED
+# hard dependency. apko cannot drop a transitive dep, so git-lfs is in the image
+# whether we ask for it or not, and Wolfi's newest git-lfs IS the vulnerable one
+# (3.7.1-r21; r17..r21 are the last five revisions in the live x86_64 APKINDEX,
+# all built against x/net v0.55.0, and Wolfi's secdb carries no fixed revision).
+#
+# So we publish our OWN package under the SAME NAME at the NEXT revision --
+# git-lfs 3.7.1-r22 -- into the local melange repo, and apko.yaml asks for
+# `git-lfs@local`. Same name means no file conflict and no
+# `replaces:`/`provides:` juggling: only ONE package can own /usr/bin/git-lfs,
+# and because it is the same name, that one package ALSO satisfies
+# jenkins-utils's bare `git-lfs` dependency -- Wolfi's r21 is never fetched.
+#
+# THE `@local` TAG IS REQUIRED. Measured 2026-08-27: with a bare `- git-lfs`,
+# betting on r22 > r21, apko installed Wolfi's `git-lfs (3.7.1-r21)` anyway --
+# apko's resolver does not just take the highest version across repositories. The
+# repository pin is what makes ours win. So the higher epoch is necessary but not
+# sufficient; keep both.
+#
+# NOT self-expiring, therefore: when Wolfi ships a git-lfs built against x/net
+# >= 0.56.0, this file must be DELETED by hand and apko.yaml reverted (drop
+# `git-lfs@local`, the `@local` repo and the melange.rsa.pub keyring entry), and
+# the workflow returned to apko-only. build.conf records that unblock condition.
+#
+# The float below is a FLOOR, not a pin -- see docs/go-module-float.md. The
+# pipeline asserts the floor reached the SHIPPED BINARY, so a `go mod tidy` that
+# drops the requirement, or an upstream `replace` that shadows it, fails the
+# build instead of shipping quietly.
+package:
+  name: git-lfs
+  version: 3.7.1
+  epoch: 22            # MUST stay above Wolfi's newest revision (r21) -- see above
+  description: "git-lfs 3.7.1 built from source with golang.org/x/net floated past CVE-2026-46600 (shadows Wolfi's git-lfs-3.7.1-r21)"
+  copyright:
+    - license: MIT
+  # No `provides:` here on purpose: `cmd:git-lfs=<version>` -- which Wolfi's apk
+  # also publishes -- is emitted automatically by melange's SCA from
+  # /usr/bin/git-lfs. Declaring it by hand would duplicate it.
+  dependencies:
+    runtime:
+      # The same single runtime dep Wolfi's git-lfs-3.7.1-r21 declares (`D: git`).
+      - git
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - git
+      - go
+
+pipeline:
+  - name: Build git-lfs from source with the golang.org/x/* float
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      mkdir -p "$destdir"/usr/bin
+      cd "$(mktemp -d)"
+      git clone --depth 1 --branch v3.7.1 https://github.com/git-lfs/git-lfs.git src
+      cd src
+      # Verify the tag resolves to the commit we reviewed. A tag is mutable
+      # upstream, and every other source in this repo is pinned by
+      # expected-commit / expected-sha256, so an unverified clone would be the
+      # weakest link in the image.
+      #
+      # NOTE: v3.7.1 is an ANNOTATED tag, so `git ls-remote refs/tags/v3.7.1`
+      # returns the TAG OBJECT sha (a94294cc...), NOT the commit. The commit is
+      # what gets checked out, so the expected value must come from
+      # `refs/tags/v3.7.1^{}`.
+      got="$(git rev-parse HEAD)"
+      test "$got" = "b84b33847fe6458f36ef521534dc0eac953cb379" \
+        || { echo "FATAL: git-lfs v3.7.1 is $got, expected b84b33847fe6458f36ef521534dc0eac953cb379"; exit 1; }
+      # Float the golang.org/x/* family COHERENTLY, not one module at a time.
+      # Raising x/net alone leaves x/text at v0.38.0 = CVE-2026-56852 (HIGH, DoS
+      # on invalid UTF-8), which just moves the finding instead of clearing it.
+      go mod edit -require=golang.org/x/net@v0.58.0 -require=golang.org/x/text@v0.41.0
+      go mod tidy
+      # Match upstream's own ldflags so `git lfs version` reports a real version
+      # rather than the "" it prints when these are unset.
+      go build -trimpath -buildvcs=false \
+        -ldflags "-s -w -X github.com/git-lfs/git-lfs/v3/config.GitCommit=v3.7.1" \
+        -o "$destdir"/usr/bin/git-lfs ./
+      chmod 0755 "$destdir"/usr/bin/git-lfs
+      # Prove the float actually landed in the binary, so a silent MVS downgrade
+      # or a `go mod tidy` that drops the requirement cannot ship quietly.
+      # A float is a FLOOR: accept the wanted version or anything newer.
+      for want in "golang.org/x/net v0.56.0" "golang.org/x/text v0.39.0"; do
+        mod="${want% *}"; min="${want#* }"
+        got="$(go version -m "$destdir"/usr/bin/git-lfs | awk -v m="$mod" '$2==m{print $3}' | head -1)"
+        test -n "$got" || { echo "FATAL: $mod absent from the git-lfs build info"; exit 1; }
+        low="$(printf '%s\n%s\n' "${min#v}" "${got#v}" | sort -V | head -1)"
+        test "$low" = "${min#v}" || { echo "FATAL: $mod is $got, need >= $min"; exit 1; }
+        echo "ok $mod $got (>= $min)"
+      done
+
+test:
+  pipeline:
+    - runs: |
+        set -eu
+        git-lfs version
+        git-lfs env >/dev/null
