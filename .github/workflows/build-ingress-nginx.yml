@@ -73,6 +73,8 @@ jobs:
 
       - name: Install melange and apko (native ${{ matrix.arch.platform }})
         working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           sudo apt-get update && sudo apt-get install -y bubblewrap
@@ -80,7 +82,18 @@ jobs:
           MELANGE_VER=v0.53.0
           curl -fsSL "https://github.com/chainguard-dev/melange/releases/download/${MELANGE_VER}/melange_${MELANGE_VER#v}_linux_${{ matrix.arch.platform }}.tar.gz" \
             | sudo tar xz --strip-components=1 -C /usr/local/bin
-          APKO_VER="$(curl -fsSL https://api.github.com/repos/chainguard-dev/apko/releases/latest | grep -m1 '"tag_name"' | cut -d'"' -f4)"
+          # Resolve apko's latest tag through `gh api`, authenticated and retried, not an
+          # anonymous api.github.com call: unauthenticated requests are rate-limited on
+          # runners, and the error JSON silently yields an EMPTY version, a malformed
+          # download URL, and `curl: (23)` as tar chokes on the response. That is exactly
+          # how this workflow failed on 2026-08-27. Same shape as build-coolify-app.yml.
+          APKO_VER=""
+          for i in 1 2 3 4 5; do
+            APKO_VER="$(gh api repos/chainguard-dev/apko/releases/latest --jq .tag_name 2>/dev/null || true)"
+            [ -n "$APKO_VER" ] && break
+            echo "apko lookup attempt $i failed; retrying..." >&2; sleep 5
+          done
+          [ -n "$APKO_VER" ] || { echo "could not resolve latest apko"; exit 1; }
           curl -fsSL "https://github.com/chainguard-dev/apko/releases/download/${APKO_VER}/apko_${APKO_VER#v}_linux_${{ matrix.arch.platform }}.tar.gz" \
             | sudo tar xz --strip-components=1 -C /usr/local/bin
           melange version | head -1

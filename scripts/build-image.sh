@@ -97,8 +97,7 @@ if [ -f melange.yaml ]; then
   # 13.2.0 image while the run was nominally 13.1.4. Wipe the repo so only what this
   # run builds can be installed.
   rm -rf ./packages
-  echo "📦 melange build ($ARCHES) ..."
-  melange build "$MEL" --arch "$ARCHES" --signing-key melange.rsa --out-dir ./packages
+  MELANGE_READY=1        # the per-arch loop below builds each arch just before it scans
 fi
 
 # --- 0-CVE gate: assemble and scan EVERY arch in $ARCHES -------------------
@@ -112,6 +111,22 @@ fi
 NATIVE="$(uname -m)"; [ "$NATIVE" = "arm64" ] && NATIVE="aarch64"
 SCAN_ARCHES="${ARCHES//,/ }"
 for SCAN_ARCH in $SCAN_ARCHES; do
+# Build this arch's package immediately before assembling and scanning it, rather than
+# building every arch up front. One melange invocation with a comma arch list shares the
+# memory cap across concurrent legs, and on 2026-08-27 mimir came out of such a run with
+# ONLY the aarch64 apk written while melange still exited 0 -- apko then failed with
+# `nothing provides "quench-mimir"` for amd64. Per-arch keeps peak memory to one build
+# and makes a missing package impossible to miss.
+if [ "${MELANGE_READY:-0}" = 1 ]; then
+  echo "📦 melange build ($SCAN_ARCH) ..."
+  melange build "$MEL" --arch "$SCAN_ARCH" --signing-key melange.rsa --out-dir ./packages
+  # melange has exited 0 while producing nothing for an arch; refuse to scan a stale or
+  # foreign image rather than reporting a verdict for the wrong artifact.
+  test -f "./packages/${SCAN_ARCH}/APKINDEX.tar.gz" || {
+    echo "❌ melange produced no package index for $SCAN_ARCH; refusing to scan."
+    exit 1
+  }
+fi
 echo "🔎 apko build (scan tar, $SCAN_ARCH) ..."
 apko build "$APKO" "$GHCR:scan" image.tar --arch "$SCAN_ARCH" > apko.build.log 2>&1 || {
   cat apko.build.log; exit 1;
