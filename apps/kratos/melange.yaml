@@ -35,9 +35,97 @@ pipeline:
       uri: https://github.com/ory/kratos/archive/refs/tags/v${{package.version}}.tar.gz
       expected-sha256: __SHA256__
   - runs: |
+      set -eu
       export CGO_ENABLED=0
       export GOTOOLCHAIN=local
       export GOFLAGS=-mod=mod
+
+      # ---- drop the ory/x docker test helper from the SERVER binary ---------
+      # github.com/docker/docker is stuck at v28.x (proxy.golang.org returns
+      # v28.5.2+incompatible as @latest for both docker/docker and moby/moby; the
+      # v29 line ships only as the split moby/moby/{api,client} modules), so
+      # CVE-2026-33997 has no obtainable fix on that module path. It reached the
+      # kratos binary through exactly ONE file:
+      #
+      #   github.com/ory/kratos  ->  github.com/ory/x/dbal  ->
+      #   github.com/ory/x/sqlcon/dockertest  ->  github.com/docker/docker/...
+      #
+      # oryx/dbal/testhelpers.go is a non-_test.go file (so it compiles into the
+      # regular `dbal` package and links into the server) whose only content is
+      # RestoreFromSchemaDump(t testing.TB, ...) -- a helper for Ory's own
+      # integration tests, called from _test.go files only. `dbal` itself is
+      # production code, which is why the whole docker client tree was dragged in.
+      # ory/x is vendored IN THIS TARBALL via `replace github.com/ory/x => ./oryx`,
+      # so deleting the file is a local edit, not a fork of an external module, and
+      # it removes every docker/*, moby/* and ory/dockertest package from the
+      # binary's dependency set. We do not build or run Ory's test suite here.
+      # -f, because the file does not exist yet in the 25.4.0 line: the assertion at
+      # the end of this block, not the rm, is what guarantees the shipped binary
+      # links no docker.
+      #
+      # x/mailhog.go is the same shape and the SECOND docker path: a non-_test.go
+      # file in the production `x` package. At 25.4.0 it stands up a MailHog
+      # container through github.com/ory/dockertest/v3 (which is how docker/docker
+      # and docker/cli reach the 25.4.0 binary even with dbal fixed); at 26.2.0
+      # upstream rewrote it to run MailHog in-process, which instead links the
+      # abandoned github.com/mailhog/{MailHog-Server,smtp,data} v1.0.1 into the
+      # server. Both are test scaffolding -- the only exported entry points take a
+      # testing.TB (StartMailhog / RunTestSMTP) and are called from _test.go only --
+      # so the file goes for both lines.
+      rm -f oryx/dbal/testhelpers.go x/mailhog.go
+
+      # ---- 0-CVE module float (docs/go-module-float.md) --------------------
+      # Kratos 26.2.0 ships below the current floors on the canonical x/* + grpc
+      # + otel set, plus go-jose (CVE-2026-34986) and pgx (CVE-2026-33815/33816
+      # CRITICAL). golang.org/x/mod's floor is v0.40.0, NOT the v0.37.0 Trivy
+      # names -- see docs/go-module-float.md. The otlptrace exporters are their
+      # OWN modules on their own version line, so the umbrella otel float does
+      # not move them and they are named explicitly. The second gate pass also
+      # named github.com/slack-go/slack (GHSA-gxhx-2686-5h9g, fixed 0.23.1 -- the
+      # courier's Slack channel) and go.mongodb.org/mongo-driver (CVE-2026-2303,
+      # fixed 1.17.7), so both are floored here too.
+      # FLOOR is a FLOOR, not a pin. A bare `go get mod@vX` fails silently in two
+      # directions: it is a NO-OP when an upstream `replace` overrides it, and it
+      # becomes a DOWNGRADE once upstream requires more than vX -- re-introducing
+      # the CVE it was added to clear. Float only what is below the floor, then
+      # assert the SHIPPED BINARY carries nothing below it.
+      FLOOR="golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0 golang.org/x/mod@v0.40.0 golang.org/x/crypto@v0.55.0 golang.org/x/sys@v0.47.0 golang.org/x/oauth2@v0.36.0 google.golang.org/grpc@v1.82.1 go.opentelemetry.io/otel@v1.43.0 go.opentelemetry.io/otel/sdk@v1.43.0 go.opentelemetry.io/otel/trace@v1.43.0 go.opentelemetry.io/otel/metric@v1.43.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.43.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.43.0 github.com/go-jose/go-jose/v3@v3.0.5 github.com/go-jose/go-jose/v4@v4.1.4 github.com/jackc/pgx/v5@v5.9.2 github.com/slack-go/slack@v0.23.1 go.mongodb.org/mongo-driver@v1.17.7"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is
+      # the EFFECTIVE version and a replace cannot hide behind the require line.
+      go list -m $MODS
+      need="$(go list -m $MODS | awk '{ print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
+      go mod tidy
+
       go build -trimpath -tags json1 \
         -ldflags "-s -w -X github.com/ory/kratos/driver/config.Version=v${{package.version}}" \
         -o "${{targets.destdir}}/usr/bin/kratos" .
+
+      # The float is only real if it reached the BINARY. Every `dep`/`=>` line of
+      # `go version -m` must be at or above its floor -- the `=>` line is what
+      # catches a replace-shadowed float. Fail the build rather than ship it.
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/kratos" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor kratos)"
+      [ -z "$bad" ] || { echo "0-CVE float did not reach the binary:"; echo "$bad"; exit 1; }
+
+      # And the docker excision is only real if the binary links none of it. If a
+      # future ory/x pulls the docker client back into production code, fail here
+      # rather than ship a v28 module that has no fixed version to float to.
+      dockerdeps="$(go version -m "${{targets.destdir}}/usr/bin/kratos" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2 }' \
+        | grep -E '^github.com/(docker/|moby/|ory/dockertest)' || true)"
+      [ -z "$dockerdeps" ] || { echo "docker client tree is linked into the binary:"; echo "$dockerdeps"; exit 1; }

@@ -85,30 +85,65 @@ pipeline:
       export GOFLAGS=-mod=mod
       export GOTOOLCHAIN=local     # use the installed go-1.26, do not fetch go.mod's 1.25.8
       export GO111MODULE=on
-      # --- minimal safe dependency bumps for the comprehensive Trivy gate --------
-      # The 0-CVE gate flags fixable CVEs in these transitive/direct modules; each
-      # is a same-major, source-compatible bump (verified to compile). x/net@0.55.0
-      # pulls x/crypto up to >=0.51.0; the distribution/oras bumps pull grpc up to
-      # v1.80.0, which clears the grpc CRITICAL (CVE-2026-33186).
-      go get golang.org/x/crypto@v0.55.0 golang.org/x/net@v0.55.0
-      go get github.com/cloudflare/circl@v1.6.3 \
-             github.com/distribution/distribution/v3@v3.1.1 \
-             github.com/go-chi/chi/v5@v5.2.4 \
-             github.com/jackc/pgx/v5@v5.9.2 \
-             github.com/ulikunitz/xz@v0.5.15 \
-             oras.land/oras-go/v2@v2.6.1
+      # ---- 0-CVE module float (docs/go-module-float.md) -------------------------
+      # FLOOR is a FLOOR, not a pin: a bare `go get mod@vX` is a NO-OP when an
+      # upstream `replace` outranks it and a DOWNGRADE once upstream requires more
+      # than vX, so float only what sits below the floor and then assert the SHIPPED
+      # BINARY. What each entry clears, as of 2026-08-27:
+      #   kin-openapi v0.144.0   GHSA-r277-6w6q-xmqw (CRITICAL, fail-open auth) +
+      #                          CVE-2026-76905/77354/73502
+      #   x/mod v0.40.0          CVE-2026-56864/56865 (v0.37.0 is NOT enough, see doc)
+      #   grpc v1.82.1           GHSA-hrxh-6v49-42gf xDS RBAC / HTTP2
+      #   oras-go v2.6.2         CVE-2026-50163 tarball hardlink escape
+      #   x/crypto v0.55.0 + x/net v0.58.0: crypto v0.55.0 REQUIRES net >= v0.57.0,
+      #                          so the older (0.55.0, 0.55.0) pair made `go get` fail
+      #                          outright -- that is what actually broke this build.
+      #   circl / distribution / chi / pgx / xz: earlier advisory floors, kept as
+      #                          floors so a later upstream bump is not dragged back.
+      FLOOR="golang.org/x/crypto@v0.55.0 golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0 golang.org/x/mod@v0.40.0 google.golang.org/grpc@v1.82.1 oras.land/oras-go/v2@v2.6.2 github.com/getkin/kin-openapi@v0.144.0 github.com/cloudflare/circl@v1.6.3 github.com/distribution/distribution/v3@v3.1.1 github.com/go-chi/chi/v5@v5.2.4 github.com/jackc/pgx/v5@v5.9.2 github.com/ulikunitz/xz@v0.5.15"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is
+      # the EFFECTIVE version and a replace cannot hide behind the require line.
+      go list -m $MODS
+      need="$(go list -m $MODS | awk '{ print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
       go mod tidy
       # --- BLOCKED: github.com/docker/docker ------------------------------------
-      # CVE-2026-34040 (HIGH, Moby auth-bypass) and CVE-2026-33997 (MEDIUM, Moby
-      # plugin privilege-validation bypass) are fixed ONLY in 29.3.1. The
-      # github.com/docker/docker import path (used by gitness's gitspace/
-      # infraprovider/pipeline code) tops out at v28.5.2+incompatible -- v29 was
-      # renamed to the module github.com/moby/moby, whose packages live under a
-      # different import path. Clearing these therefore requires migrating gitness's
-      # docker-client integration to the moby/moby v29 API (module-path change +
-      # API break) = a fork of upstream, which the CVE discipline forbids. Until
-      # gitness upstream moves to moby/moby v29 (or the fixes are backported to a
-      # v28 docker/docker tag), this image stays BLOCKED and is not published.
+      # Re-verified 2026-08-27 against the real gate, and this is the ONLY residue:
+      # with the floors above the binary scans down to exactly two findings, both in
+      # github.com/docker/docker v27.1.1 (gitness's own pin, reached from
+      # gitspace/infraprovider/pipeline code across 11 files -- it is genuinely
+      # linked, not just present in go.mod):
+      #   CVE-2026-33997 MEDIUM  fixed only in "29.3.1"
+      #   CVE-2025-54410 LOW     fixed in 25.0.13 / 28.0.0
+      # Neither fix is reachable:
+      #   * v29 does not exist at this module path. proxy.golang.org returns
+      #     v28.5.2+incompatible as @latest for BOTH github.com/docker/docker and
+      #     github.com/moby/moby; the v29 line ships only as the split
+      #     github.com/moby/moby/{api,client} modules and pre-release
+      #     github.com/moby/moby/v2 v2.0.0-beta.* -- different import paths, so a
+      #     move is an API migration, i.e. a fork of gitness.
+      #   * floating to v28.5.2 (which would clear the LOW) breaks a THIRD-PARTY
+      #     module: github.com/drone-runners/drone-runner-docker calls the docker-25-era
+      #     `types.NetworkCreate`, removed in docker 28 --
+      #       engine/engine.go:95: undefined: types.NetworkCreate
+      #     and its newest release (v1.8.5, requires docker v25.0.6) still does, so
+      #     there is nothing to bump to; only a fork of that module would fix it.
+      # So this image stays BLOCKED (BLOCKED=1 in build.conf) and is not published.
+      # It goes green the moment gitness (and drone-runner-docker) move to moby v29.
       V="${{package.version}}"
       MAJ="${V%%.*}"; REST="${V#*.}"; MIN="${REST%%.*}"; PAT="${REST#*.}"
       VERPKG="github.com/harness/gitness/version"
@@ -118,3 +153,9 @@ pipeline:
       go build -trimpath \
         -ldflags "-s -w -X ${VERPKG}.major=${MAJ} -X ${VERPKG}.minor=${MIN} -X ${VERPKG}.patch=${PAT} -X ${VERPKG}.GitCommit=v${V}" \
         -o "${{targets.destdir}}/usr/bin/gitness" ./cmd/gitness
+      # The float is only real if it reached the BINARY. Every `dep`/`=>` line of
+      # `go version -m` must be at or above its floor -- the `=>` line is what catches
+      # a replace-shadowed float. Fail the build rather than ship it.
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/gitness" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor gitness)"
+      [ -z "$bad" ] || { echo "0-CVE float did not reach the binary:"; echo "$bad"; exit 1; }
