@@ -5,10 +5,14 @@
 # is a separate concern and is dropped here to keep the CVE surface minimal. OAP
 # exposes gRPC 11800 (agents) and HTTP 12800 (GraphQL/health). Storage (BanyanDB
 # or Elasticsearch) is the chart's job; the image just launches the OAP server.
+# The ZooKeeper and Consul cluster coordinators / config centres are NOT shipped:
+# their bundled clients carry CVEs with no same-major fix, so the code is removed
+# rather than patched (see the remediation block below). SW_CLUSTER supports
+# standalone (default), kubernetes, etcd and nacos; every storage backend remains.
 package:
   name: quench-skywalking
   version: __VER__
-  epoch: 1   # bumped: repackage same upstream version with log4j2.xml patched to log to stdout
+  epoch: 2   # bumped: 0-CVE jar remediation of the bundled oap-libs/ classpath (see pipeline)
   description: "Quenchworks hardened Apache SkyWalking OAP server, packaged on Wolfi"
   copyright:
     - license: Apache-2.0
@@ -26,6 +30,8 @@ environment:
     packages:
       - busybox
       - ca-certificates-bundle
+      - curl        # build-only: fetch same-major patched jars from Maven Central
+      - python-3    # build-only: the post-swap classpath audit below
 
 pipeline:
   - uses: fetch
@@ -42,6 +48,271 @@ pipeline:
       install -d "$dest"
       cp -r bin config oap-libs LICENSE NOTICE licenses "$dest/"
       rm -rf "$dest/bin/"*.bat
+
+      # ================= 0-CVE remediation of the bundled oap-libs/ classpath =========
+      # The OAP binary distribution ships 280 prebuilt jars, 26 of them stale enough to
+      # fail the gate: 68 fixable findings on 10.4.0 (1 CRITICAL, 30 HIGH, 36 MEDIUM,
+      # 1 LOW) over 23 coordinates. Audited first: every one of those 23 is owned by
+      # exactly ONE standalone jar in oap-libs/, and no jar shades or relocates a FLAGGED
+      # coordinate's classes -- so file-level jar work is the whole fix here. No class
+      # overlays, no constant-pool relocation, no Multi-Release trickery needed.
+      # (One shaded copy does exist and is deliberately left alone: nacos-client-2.3.2
+      # bundles a complete grpc-netty-shaded tree under com/alibaba/nacos/shaded/io/grpc/
+      # netty/shaded/io/netty/. It carries no maven metadata, so Trivy attributes nothing
+      # to it and reports the jar clean; it also resolves entirely within itself, so the
+      # netty swap below neither reaches it nor breaks it.)
+      #
+      # The entrypoint below builds the classpath with `for j in oap-libs/*.jar`, so jar
+      # FILENAMES are not load-bearing: a swap may change the version in the name freely.
+      #
+      # Two techniques, in this order of preference:
+      #   REMOVE  an optional coordinator/config-center whose vulnerable dependency has no
+      #           same-major fix. Deleting the code beats patching it, and it is the only
+      #           honest answer when the fix is a binary-incompatible major bump.
+      #   SWAP    a standalone jar for its same-major Trivy-fixed release from Maven
+      #           Central (ABI-safe within a major/minor line).
+      MC="https://repo1.maven.org/maven2"
+
+      drop() { # <jar-filename> ... -- delete jars we deliberately do not ship
+        for p in "$@"; do
+          [ -f "$dest/oap-libs/$p" ] || {
+            echo "FATAL: expected to drop oap-libs/$p but the dist does not ship it --"
+            echo "       the bundled dependency set moved; re-audit this removal."
+            exit 1
+          }
+          rm -f "$dest/oap-libs/$p"
+        done
+      }
+
+      swap() { # <maven-group-path> <artifact> <oldver> <newver>
+        # Three cases, decided by what the PRISTINE dist actually ships (pulsar's rule:
+        # old= must name what upstream shipped, never what an earlier swap produced):
+        #   old present             -> real swap
+        #   old absent, new SHIPPED -> upstream caught up; loud no-op so the dead line
+        #                              gets deleted rather than silently duplicated
+        #   neither present         -> the dist moved elsewhere; downloading blind would
+        #                              add a jar BESIDE an unknown version. FATAL.
+        oldf="$dest/oap-libs/$2-$3.jar"; newf="$dest/oap-libs/$2-$4.jar"
+        if [ -f "$oldf" ]; then
+          :
+        elif [ -f "$newf" ]; then
+          echo "note: dist already ships $2-$4; the swap line for $3 is dead, remove it"
+          return 0
+        else
+          echo "FATAL: $2: neither $3 nor $4 is shipped -- dist moved, re-audit this line"
+          ls "$dest/oap-libs/" | grep -F "$2" || true
+          exit 1
+        fi
+        # download BEFORE removing the old jar: a 404 then leaves the dist intact and
+        # `set -e` fails the build, instead of silently deleting a classpath entry.
+        curl -fsSL -o "$newf" "$MC/$1/$2/$4/$2-$4.jar"
+        test -s "$newf"
+        rm -f "$oldf"
+      }
+
+      # ---- (1) REMOVE the ZooKeeper cluster-coordinator island ------------------------
+      # zookeeper 3.5.7 carries CRITICAL CVE-2023-44981 (authorization bypass), fixed only
+      # in 3.7.2/3.8.3/3.9.1 -- a two-minor bump. Its consumer here is Curator 4.3.0, which
+      # is the ZK-3.5-generation client (Curator 5.x is the 3.6+ pairing), so a straight
+      # zookeeper-jar bump would leave an unsupported curator/zookeeper combination that
+      # only breaks at runtime, under a coordinator no CI here exercises.
+      # Reference audit of the pristine dist: org/apache/zookeeper classes are referenced
+      # ONLY by cluster-zookeeper-plugin and the four curator jars; org/apache/curator ONLY
+      # by cluster-zookeeper-plugin and configuration-zookeeper. That is a closed island --
+      # nothing else on the classpath touches it -- so the whole island comes out and the
+      # CRITICAL goes with the code rather than being papered over.
+      # Cost: SW_CLUSTER=zookeeper and SW_CONFIGURATION=zookeeper are not available in this
+      # image. Remaining coordinators: standalone (default), kubernetes, etcd, nacos.
+      drop zookeeper-3.5.7.jar zookeeper-jute-3.5.7.jar \
+           curator-client-4.3.0.jar curator-framework-4.3.0.jar \
+           curator-recipes-4.3.0.jar curator-x-discovery-4.3.0.jar \
+           cluster-zookeeper-plugin-${{package.version}}.jar \
+           configuration-zookeeper-${{package.version}}.jar
+
+      # ---- (2) REMOVE the Consul cluster-coordinator island ---------------------------
+      # okhttp 3.14.9 carries HIGH CVE-2021-0341 (TLS hostname verification), fixed only in
+      # 4.9.2 -- the 3.x -> 4.x Kotlin rewrite, binary-incompatible with anything compiled
+      # against the okhttp 3 API. Square never backported it, so there is no same-major fix
+      # to swap to. okio 1.17.2 (MEDIUM) rides along as okhttp's own dependency.
+      # Reference audit: okhttp3 classes are referenced by consul-client, retrofit,
+      # converter-jackson -- and by micrometer-core, but only from its OPTIONAL
+      # io.micrometer.core.instrument.binder.okhttp3.* binders, which are loaded solely when
+      # application code instantiates them against an OkHttpClient. OAP never does; the
+      # post-swap audit below asserts micrometer-core stays the only such referrer.
+      # retrofit/okio are referenced by nothing outside this island.
+      # Cost: SW_CLUSTER=consul and SW_CONFIGURATION=consul are not available in this image.
+      drop okhttp-3.14.9.jar okio-1.17.2.jar retrofit-2.9.0.jar converter-jackson-2.9.0.jar \
+           consul-client-1.5.3.jar \
+           cluster-consul-plugin-${{package.version}}.jar \
+           configuration-consul-${{package.version}}.jar
+
+      # ---- (3) SWAP the netty module set 4.2.10.Final -> 4.2.17.Final -----------------
+      # 14 of the 32 netty 4.2.10 jars are flagged (netty-codec-http alone carries 15
+      # findings; the highest fix any of them asks for is 4.2.17.Final). netty ships as a
+      # matched module set and its modules MUST move in lockstep -- a 4.2.10 netty-common
+      # beside a 4.2.17 netty-handler risks NoSuchMethodError across module boundaries --
+      # so all 32 move together, flagged or not. Same 4.2 minor line: ABI-safe patch.
+      # The loop ENUMERATES what the dist ships (base jars and per-OS classifier jars
+      # alike: -linux-x86_64, -linux-aarch_64, -osx-*) rather than hardcoding a list, so a
+      # dist that adds or renames a netty module cannot be silently half-swapped. The
+      # count assertion makes any such change loud.
+      # netty-tcnative 2.0.75.Final is a separate artifact on its own version line and is
+      # not flagged; it stays.
+      NETTY_OLD=4.2.10.Final
+      NETTY_NEW=4.2.17.Final
+      n=0
+      for f in "$dest"/oap-libs/netty-*-"$NETTY_OLD"*.jar; do
+        b="$(basename "$f")"
+        art="${b%%-$NETTY_OLD*}"          # netty-codec-http
+        cls="${b#"$art"-$NETTY_OLD}"      # ".jar", or "-linux-x86_64.jar"
+        curl -fsSL -o "$dest/oap-libs/${art}-${NETTY_NEW}${cls}" \
+          "$MC/io/netty/${art}/${NETTY_NEW}/${art}-${NETTY_NEW}${cls}"
+        test -s "$dest/oap-libs/${art}-${NETTY_NEW}${cls}"
+        rm -f "$f"
+        n=$((n + 1))
+      done
+      [ "$n" -eq 32 ] || {
+        echo "FATAL: expected 32 netty $NETTY_OLD jars in the dist, swapped $n --"
+        echo "       upstream changed its netty module set; re-audit the lockstep list."
+        exit 1
+      }
+      echo "netty: swapped $n jars $NETTY_OLD -> $NETTY_NEW"
+
+      # ---- (4) SWAP the remaining standalone jars -------------------------------------
+      # jackson core trio -> 2.18.9. The dist ships a MISMATCHED set (databind 2.16.0
+      # against core/annotations 2.18.5); 2.18.9 clears every databind and core finding
+      # (each fix list offers a 2.18.x option) and makes the trio coherent for the first
+      # time. The other jackson modules (dataformat-yaml, datatype-*, module-kotlin) are
+      # unflagged and already span 2.12..2.20, so they are left alone -- moving databind
+      # UP to 2.18.9 puts it closer to them, not further away.
+      swap com/fasterxml/jackson/core jackson-databind    2.16.0 2.18.9
+      swap com/fasterxml/jackson/core jackson-core        2.18.5 2.18.9
+      swap com/fasterxml/jackson/core jackson-annotations 2.18.5 2.18.9
+      # log4j2 2.25.3 -> 2.25.5, same 2.25 line. core needs 2.25.4 (CVE-2026-34477/34478/
+      # 34480), api needs 2.25.5; take 2.25.5 for all three so the binding stays matched.
+      swap org/apache/logging/log4j log4j-api        2.25.3 2.25.5
+      swap org/apache/logging/log4j log4j-core       2.25.3 2.25.5
+      swap org/apache/logging/log4j log4j-slf4j-impl 2.25.3 2.25.5
+      # kafka-clients 3.4.0 -> 3.9.2, same 3.x major. Genuinely in use -- org/apache/kafka
+      # is referenced by kafka-fetcher-plugin, exporter and zipkin-receiver-plugin -- so
+      # this is a swap, not a removal.
+      swap org/apache/kafka kafka-clients 3.4.0 3.9.2
+      # kafka's two compression codecs, both reached only through kafka-clients:
+      #   lz4-java 1.8.0 -> 1.11.2. The org.lz4 coordinate is abandoned: its own 1.8.1
+      #   release is a POM-ONLY relocation stub to the maintained fork at.yawk.lz4 (same
+      #   net.jpountz packages), and there is no org.lz4 jar past 1.8.0 to swap to. Trivy
+      #   names 1.8.1 as the fix for CVE-2025-12183 but the fork's line carries two more:
+      #   CVE-2025-66566 (HIGH, needs 1.10.1) and CVE-2026-59949 (MEDIUM, needs 1.11.1) --
+      #   an earlier attempt at 1.8.1 gated on exactly those two, so take the newest.
+      #   Verified against the shipped 1.8.0: 1.11.2's class set is a strict SUPERSET (85
+      #   vs 80, nothing dropped) and it still ships liblz4-java.so for linux amd64 AND
+      #   aarch64, so both arches keep their natives.
+      swap at/yawk/lz4 lz4-java 1.8.0 1.11.2
+      #   snappy-java 1.1.8.4 -> 1.1.10.4 (CVE-2023-34453/34454/34455/43642); 1.1.10.x is
+      #   also what kafka-clients 3.9.x itself declares.
+      swap org/xerial/snappy snappy-java 1.1.8.4 1.1.10.4
+      # pgjdbc 42.4.4 -> 42.7.13, same 42.x major. Backs SW_STORAGE=postgresql via
+      # storage-jdbc-hikaricp-plugin; a JDBC driver loaded by name, so nothing on the
+      # classpath compiles against it. 42.7.11 clears CVE-2026-42198 but is itself hit by
+      # CVE-2026-54291 (SCRAM-SHA-256-PLUS downgrade, needs 42.7.12) -- take the newest of
+      # the 42.7 line rather than the exact floor Trivy names, so one bump covers both.
+      swap org/postgresql postgresql 42.4.4 42.7.13
+      # micrometer 1.14.4 -> 1.15.12. In real use (io/micrometer is referenced by armeria,
+      # armeria-grpc, HikariCP and nacos-client), so it must be swapped, not dropped, and
+      # core/commons/observation are a matched set that has to move together.
+      swap io/micrometer micrometer-core        1.14.4 1.15.12
+      swap io/micrometer micrometer-commons     1.14.4 1.15.12
+      swap io/micrometer micrometer-observation 1.14.4 1.15.12
+
+      # ---- (5) POST-SWAP CLASSPATH AUDIT ---------------------------------------------
+      # Making the scanner quiet is not the goal; removing the vulnerable bytecode is. Two
+      # things could make the gate lie, and both are asserted here rather than assumed:
+      #   (a) a jar we DROPPED is still needed by something that survived -- which would be
+      #       a NoClassDefFoundError at runtime, not a CVE, but is exactly the failure the
+      #       removals risk. Only micrometer-core's optional okhttp3 binders may reference a
+      #       removed package; anything else is a dangling reference and fails the build.
+      #   (b) a SWAP left two versions of one artifact on the classpath (pulsar's "last swap
+      #       wins" trap: a later line re-downloading what an earlier one removed). Then the
+      #       old, vulnerable bytecode still loads even though the scanner sees the new jar.
+      #       Scoped to the artifacts this block touches -- a dist-wide duplicate check is
+      #       useless here because several bundled google jars legitimately carry their
+      #       dependencies' pom.properties, which reads as a duplicate and is not ours.
+      python3 - "$dest/oap-libs" "$NETTY_NEW" <<'PY'
+      import collections, os, re, sys, zipfile
+
+      libs, netty_new = sys.argv[1], sys.argv[2]
+      jars = sorted(f for f in os.listdir(libs) if f.endswith(".jar"))
+
+      # (a) dangling references to the packages the removals took out
+      removed = {
+          "org/apache/zookeeper": "zookeeper",
+          "org/apache/curator": "curator",
+          "okhttp3": "okhttp",
+          "okio": "okio",
+          "retrofit2": "retrofit",
+          "com/orbitz/consul": "consul-client",
+      }
+      # micrometer-core ships okhttp3/kafka/... binders that only load when application
+      # code wires them; OAP never does. This is the ONLY sanctioned dangling referrer.
+      allowed = {"micrometer-core"}
+      pat = re.compile(rb"(" + rb"|".join(re.escape(k.encode()) for k in removed) + rb")/")
+
+      dangling = collections.defaultdict(set)
+      for j in jars:
+          z = zipfile.ZipFile(os.path.join(libs, j))
+          for n in z.namelist():
+              if not n.endswith(".class"):
+                  continue
+              for m in set(pat.findall(z.read(n))):
+                  pkg = m.decode()
+                  if n.startswith(pkg + "/"):
+                      continue          # a jar referencing its own package
+                  dangling[j].add(removed[pkg])
+
+      bad = {j: v for j, v in dangling.items() if j.rsplit("-", 1)[0] not in allowed}
+      if bad:
+          for j, v in sorted(bad.items()):
+              print(f"  {j} -> {sorted(v)}")
+          sys.exit(
+              f"FATAL: {len(bad)} jar(s) still reference a REMOVED package. A dropped "
+              "island is not closed -- re-audit the removals above."
+          )
+
+      # (b) one version per swapped artifact
+      swapped = """jackson-databind jackson-core jackson-annotations
+                   log4j-api log4j-core log4j-slf4j-impl kafka-clients lz4-java
+                   snappy-java postgresql
+                   micrometer-core micrometer-commons micrometer-observation""".split()
+      dup = {}
+      for a in swapped:
+          # <artifact>-<version>.jar, version starting with a digit so a longer sibling
+          # artifact name (micrometer-core vs micrometer-commons) cannot cross-match
+          rx = re.compile(rf"^{re.escape(a)}-(\d[^/]*?)\.jar$")
+          vs = {m.group(1) for m in (rx.match(j) for j in jars) if m}
+          if not vs:
+              sys.exit(f"FATAL: no jar left for swapped artifact {a} -- swap removed it")
+          if len(vs) > 1:
+              dup[a] = vs
+      # netty moves as one matched module set: nothing may be left on an older 4.2.x
+      stale = [j for j in jars if j.startswith("netty-") and netty_new not in j
+               and "netty-tcnative" not in j]
+      if stale:
+          dup["io.netty (mixed module set)"] = stale
+      if dup:
+          for k, v in sorted(dup.items()):
+              print(f"  {k} -> {sorted(v)}")
+          sys.exit(
+              f"FATAL: {len(dup)} swapped artifact(s) are on the classpath at more than "
+              "one version. The old bytecode still loads even though the scanner only "
+              "sees the new jar."
+          )
+
+      print(
+          f"classpath audit OK: {len(jars)} jars, no dangling refs to removed packages, "
+          f"one version per swapped artifact (sanctioned optional referrers: {sorted(allowed)})"
+      )
+      PY
+      # ================= end 0-CVE remediation ========================================
       # Make OAP log to the container stdout so `kubectl logs` / `docker logs` show the
       # real boot/crash reasons. The upstream config/log4j2.xml routes the Root logger to
       # BOTH a RollingFile AND a Console appender, but the Console appender carries a
