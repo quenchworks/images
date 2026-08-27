@@ -141,7 +141,7 @@ if [ -f "$APPDIR/vex.openvex.json" ]; then
   # not_affected only (never under_investigation), an OpenVEX justification value, and
   # an impact_statement that actually says how the claim was verified.
   echo "🔎 validating $APPDIR/vex.openvex.json ..."
-  uv run "$(dirname "$0")/check-vex.py" "$APP" || {
+  uv run "$ROOT/scripts/check-vex.py" "$APP" || {
     echo "❌ VEX file rejected -- refusing to scan with it. Fix it or remove it."
     exit 1
   }

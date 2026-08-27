@@ -1,0 +1,229 @@
+# nginx-ingress-controller shim: rebuilds ONLY the controller Go binary from the exact
+# source Wolfi builds, with golang.org/x/net + golang.org/x/text floated past their CVEs.
+#
+# WHY THIS EXISTS
+# The image is otherwise pure apko assembly of Wolfi's ingress-nginx-controller-__MINOR__
+# apk (nginx + its module set + the controller + the templates). That apk -- at
+# 1.15.10-r3, the NEWEST revision Wolfi publishes -- links:
+#   golang.org/x/net  v0.55.0  CVE-2026-46600 (HIGH, DoS in dns/dnsmessage), fixed 0.56.0
+#   golang.org/x/text v0.37.0  CVE-2026-56852 (HIGH, DoS on invalid UTF-8),   fixed 0.39.0
+# Wolfi has not rebuilt the package against the fixed modules, so `apko` alone cannot
+# reach 0-CVE no matter which revision we pin. The controller is the whole point of the
+# image, so dropping it is not an option.
+#
+# The apk's own SBOM records the source it was built from:
+#   pkg:github/chainguard-forks/ingress-nginx@controller-v1.15.10
+# i.e. NOT kubernetes/ingress-nginx, whose newest 1.15 tag is controller-v1.15.1. So the
+# only way to rebuild the SAME version is that fork's tag, pinned here by commit.
+# We build just `./cmd/nginx` with the apk's own ldflags/tags (read out of the shipped
+# binary's buildinfo) and let `replaces:` hand us ownership of the file. nginx itself,
+# the lua/modsecurity module set, the templates and the other two Go binaries
+# (nginx-dbg, waitshutdown -- neither links x/net or x/text) keep coming from the apk.
+#
+# Same two-halves rule as apps/python: replace the CODE first, then make the bundled
+# manifest tell the truth about it. Trivy scans /var/lib/db/sbom/*.spdx.json as its own
+# gobinary target, so the apk's SBOM has to be corrected too -- from what the rebuilt
+# binary actually links, never hand-written.
+#
+# SELF-EXPIRING: the SBOM step asserts the Wolfi apk is STILL below the floor. The day
+# Wolfi rebuilds the controller, this build FAILS instead of quietly shipping a pointless
+# shim, and this file plus the two apko.yaml lines should be deleted.
+package:
+  name: quench-ingress-nginx-controller-fix
+  version: __VER__
+  epoch: 0
+  description: "nginx-ingress-controller __VER__ rebuilt with golang.org/x/net + x/text floated past CVE-2026-46600 / CVE-2026-56852"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    # We take ownership of /usr/bin/nginx-ingress-controller and of the apk's bundled
+    # SPDX. Without this apk refuses to overwrite another package's files.
+    replaces:
+      - ingress-nginx-controller-__MINOR__
+  options:
+    # melange's command scanner would auto-add `provides: cmd:nginx-ingress-controller`,
+    # and apko's solver then rejects the package outright ("disqualified because
+    # ingress-nginx-controller-__MINOR__ already provides cmd:nginx-ingress-controller").
+    # We are replacing that apk's file, not competing to provide the command.
+    no-commands: true
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - curl
+      - git
+      - go
+      - python3
+      # NOTE: the controller apk is deliberately NOT installed here. It hard-depends on
+      # dumb-init-privileged-netbindservice, whose binary carries a security.capability
+      # xattr, and melange's guest cannot set that unprivileged ("unable to set xattr
+      # security.capability on usr/bin/dumb-init: operation not permitted"), so the guest
+      # build fails outright. The SBOM step downloads the same .apk instead and verifies
+      # it against a pinned per-arch sha256.
+
+pipeline:
+  - name: Rebuild the controller with the x/net + x/text float
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      mkdir -p "$destdir"/usr/bin
+      cd "$(mktemp -d)"
+      git clone -q --depth 1 --branch controller-v__VER__ \
+        https://github.com/chainguard-forks/ingress-nginx.git src
+      cd src
+      # A tag is mutable upstream; every other source in this repo is pinned by
+      # expected-commit / expected-sha256, so verify the tag resolves to the commit the
+      # apk was built from (its SBOM records both the tag AND this sha).
+      got="$(git rev-parse HEAD)"
+      test "$got" = "__COMMIT__" \
+        || { echo "FATAL: controller-v__VER__ is $got, expected __COMMIT__"; exit 1; }
+
+      # Go derives the MAIN module version from a semver tag. Upstream's release tags are
+      # `controller-vX.Y.Z`, which is NOT semver, so the stamp lands as a v0.0.0-<date>
+      # pseudo-version -- a version Trivy cannot match against ingress-nginx advisories,
+      # which would silently hide any future finding on the controller itself. Add the
+      # plain semver tag so buildinfo records `v__VER__`, exactly what the apk's own
+      # binary records.
+      git tag v__VER__ HEAD
+
+      # ---- 0-CVE module float (docs/go-module-float.md) --------------------
+      # FLOOR is a FLOOR, not a pin: float only what is below it, then assert the
+      # SHIPPED BINARY carries nothing below it. controller-v__VER__'s go.mod has no
+      # `replace` block, so nothing can shadow the float -- re-check that on a bump.
+      export GOFLAGS=-mod=mod
+      FLOOR="golang.org/x/net@v0.56.0 golang.org/x/text@v0.39.0"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      go list -m $MODS
+      need="$(go list -m $MODS | awk '{ print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
+      go mod tidy
+
+      # Build flags copied verbatim from the shipped apk's buildinfo (`go version -m
+      # /usr/bin/nginx-ingress-controller`): -trimpath, -tags netgo,osusergo, and the
+      # three version ldflags. CGO_ENABLED=0 matches upstream build/build.sh; with
+      # netgo+osusergo cgo is unused anyway and this keeps the binary fully static.
+      CGO_ENABLED=0 go build -trimpath -tags netgo,osusergo \
+        -ldflags "-w \
+          -X k8s.io/ingress-nginx/version.RELEASE=controller-v__VER__ \
+          -X k8s.io/ingress-nginx/version.COMMIT=$(echo __COMMIT__ | cut -c1-7) \
+          -X k8s.io/ingress-nginx/version.REPO=https://github.com/chainguard-forks/ingress-nginx" \
+        -o "$destdir"/usr/bin/nginx-ingress-controller ./cmd/nginx
+      chmod 0755 "$destdir"/usr/bin/nginx-ingress-controller
+
+      # The float is only real if it reached the BINARY. `$NF` on the dep/=> lines is the
+      # EFFECTIVE version, so a replace-shadowed float cannot pass.
+      go version -m "$destdir"/usr/bin/nginx-ingress-controller | grep -E '^[[:space:]]+(mod|dep)[[:space:]]+golang.org/x/(net|text)' || true
+      bad="$(go version -m "$destdir"/usr/bin/nginx-ingress-controller \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $NF }' | below_floor binary)"
+      [ -z "$bad" ] || { echo "FATAL: 0-CVE float did not reach the binary:"; echo "$bad"; exit 1; }
+      # And the main-module stamp must be the real release, not a pseudo-version.
+      go version -m "$destdir"/usr/bin/nginx-ingress-controller \
+        | awk '$1 == "mod" { print $3 }' | grep -qx 'v__VER__+dirty' \
+        || { echo "FATAL: main module stamp is not v__VER__+dirty"; \
+             go version -m "$destdir"/usr/bin/nginx-ingress-controller | head -3; exit 1; }
+
+  - name: Correct the apk's bundled SBOM to match the rebuilt binary
+    runs: |
+      set -eu
+      export DESTDIR="${{targets.destdir}}"
+      APK="ingress-nginx-controller-__MINOR__-__APKVER__.apk"
+      # Pinned per arch. `apko` installs the signature-verified apk into the image, but
+      # THIS copy is what we edit and ship, so it gets its own integrity check -- a
+      # doctored SBOM could silence the gate. Bump these together with PIN in build.conf;
+      # a stale value fails the build loudly rather than shipping something unverified.
+      case "$(uname -m)" in
+        x86_64)  WANT=__APKSHA_X86_64__ ;;
+        aarch64) WANT=__APKSHA_AARCH64__ ;;
+        *) echo "FATAL: no pinned apk sha256 for $(uname -m)"; exit 1 ;;
+      esac
+      # 34 MB over a shared link: curl with retries, not a single fixed-timeout read.
+      curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "/tmp/$APK" \
+        "https://packages.wolfi.dev/os/$(uname -m)/$APK"
+      echo "$WANT  /tmp/$APK" | sha256sum -c -
+      export APK
+      python3 - <<'PYEOF'
+      import json, os, pathlib, subprocess, tarfile
+
+      APK = os.environ["APK"]
+      # An apk is concatenated tar.gz sections with no end-of-archive marker between
+      # them, so one pass over the whole file yields every member.
+      spdx_name = "var/lib/db/sbom/ingress-nginx-controller-__MINOR__-__APKVER__.spdx.json"
+      with tarfile.open(f"/tmp/{APK}", "r:gz") as t:
+          member = t.extractfile(spdx_name)
+          assert member is not None, f"{spdx_name} not in {APK}"
+          spdx = json.loads(member.read())
+
+      binpath = os.path.join(os.environ["DESTDIR"], "usr/bin/nginx-ingress-controller")
+      # Read the versions off the binary we just built -- never hand-write them, or the
+      # manifest can go quiet while the vulnerable code is still on disk.
+      built = {}
+      for line in subprocess.run(["go", "version", "-m", binpath],
+                                 capture_output=True, text=True, check=True).stdout.splitlines():
+          f = line.split()
+          if len(f) >= 3 and f[0] in ("dep", "=>") and f[1] in ("golang.org/x/net", "golang.org/x/text"):
+              built[f[1]] = f[2]
+      assert set(built) == {"golang.org/x/net", "golang.org/x/text"}, built
+
+      fixed = 0
+      for pkg in spdx.get("packages", []):
+          new = built.get(pkg.get("name"))
+          if not new:
+              continue
+          old = pkg.get("versionInfo")
+          # SELF-EXPIRING GUARD: if the apk already ships the floated module there is
+          # nothing to shim. Fail loudly instead of shipping dead weight.
+          assert old != new, (
+              f"{pkg['name']} in {spdx_name} is already {new} -- Wolfi has rebuilt the "
+              "controller; delete apps/ingress-nginx/melange.yaml and the @local lines "
+              "in apko.yaml"
+          )
+          pkg["versionInfo"] = new
+          # The recorded module checksum described the OLD module. filesAnalyzed is
+          # false, so SPDX lets us drop it rather than assert something untrue.
+          pkg.pop("checksums", None)
+          # purl and cpe23Type locators both embed the version (cpe with and without the
+          # leading `v`), so rewrite every occurrence in the locator.
+          for ref in pkg.get("externalRefs", []):
+              loc = ref.get("referenceLocator", "")
+              ref["referenceLocator"] = loc.replace(old, new).replace(old.lstrip("v"), new.lstrip("v"))
+          fixed += 1
+          print(f"corrected {pkg['name']}: {old} -> {new}")
+      assert fixed == 2, f"expected to correct 2 packages, corrected {fixed}"
+
+      out = pathlib.Path(os.environ["DESTDIR"]) / spdx_name
+      out.parent.mkdir(parents=True, exist_ok=True)
+      out.write_text(json.dumps(spdx, indent=2) + "\n")
+      PYEOF
+
+  - name: Sanity-check the shipped tree
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      test -x "$destdir/usr/bin/nginx-ingress-controller"
+      test -s "$destdir/var/lib/db/sbom/ingress-nginx-controller-__MINOR__-__APKVER__.spdx.json"
+
+test:
+  pipeline:
+    - runs: |
+        set -eu
+        # The controller shells out to `nginx` for its version banner; that lives in the
+        # same apk, so --version exercises both halves of the assembled image.
+        nginx-ingress-controller --version | grep -q "controller-v__VER__"

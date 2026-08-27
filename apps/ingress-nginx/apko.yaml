@@ -1,17 +1,32 @@
-# Assembles a hardened NGINX Ingress Controller image directly from Wolfi's own
-# ingress-nginx-controller package (which brings nginx). No Dockerfile, NO melange
-# build -- apko pulls the controller + nginx straight from the Wolfi `os` repo. The
-# entrypoint is the controller binary; the chart supplies its flags. `__PKG__` is the
-# pinned ingress-nginx-controller-<minor> apk, substituted per matrix entry.
+# Assembles a hardened NGINX Ingress Controller image from Wolfi's own
+# ingress-nginx-controller package (which brings nginx). No Dockerfile -- apko pulls the
+# controller + nginx straight from the Wolfi `os` repo. The entrypoint is the controller
+# binary; the chart supplies its flags. `__PKG__` is the pinned
+# ingress-nginx-controller-<minor> apk, substituted per matrix entry.
+#
+# One melange package on top (see melange.yaml): the apk's newest revision still links a
+# vulnerable golang.org/x/net + x/text, so the controller BINARY is rebuilt from the same
+# source with those floated. Everything else -- nginx, the lua/modsecurity module set, the
+# templates, nginx-dbg, waitshutdown -- still comes from the apk unchanged.
 contents:
   keyring:
     - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
   repositories:
     - https://packages.wolfi.dev/os
+    - "@local ./packages"
   packages:
     - wolfi-baselayout
     - ca-certificates-bundle
     - __PKG__
+    # Rebuilds ONLY /usr/bin/nginx-ingress-controller from the same source the apk was
+    # built from, with golang.org/x/net + x/text floated past CVE-2026-46600 /
+    # CVE-2026-56852 (the apk's newest revision still links v0.55.0 / v0.37.0), and
+    # corrects the apk's bundled SBOM to match. nginx, its module set and the templates
+    # still come from the apk. Temporary: delete this line, the two lines above and
+    # melange.yaml once Wolfi rebuilds the controller -- melange.yaml fails the build
+    # when that day arrives.
+    - quench-ingress-nginx-controller-fix@local
 
 accounts:
   groups:
