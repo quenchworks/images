@@ -416,6 +416,12 @@ pipeline:
       # capnp, gomemcache, kuberesolver, galaxycache, kingpin, zenhack/util).
       go get google.golang.org/grpc@v1.82.1 golang.org/x/text@v0.41.0
       go get github.com/thanos-io/promql-engine@v0.0.0-20260713055003-6e924468ac44
+      # otel is NOT one module. The comment above was right that go.opentelemetry.io/otel
+      # itself is pulled up to 1.44.0 by prometheus, but the otel repo publishes each
+      # component as its OWN module with its OWN version, and bridge/opentracing stayed
+      # at v1.36.0 -- carrying CVE-2026-45404 (MEDIUM), fixed in 1.45.0. Floating the
+      # umbrella module does nothing for it; the bridge has to be named explicitly.
+      go get go.opentelemetry.io/otel/bridge/opentracing@v1.45.0
 
       # --- vendor + patch promql-engine (its latest commit still targets the old
       # prometheus promql API). Copy the fetched module out of the read-only cache,

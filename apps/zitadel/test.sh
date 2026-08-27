@@ -26,9 +26,15 @@ echo "$VER_OUT" | sed 's/^/  /'
 echo "$VER_OUT" | grep -q '^zitadel version ' || { echo "FAIL: no version line"; exit 1; }
 
 if [ -n "$EXPECT_VER" ]; then
-  echo "$VER_OUT" | grep -q "^zitadel version v${EXPECT_VER}$" \
-    || { echo "FAIL: expected zitadel version v${EXPECT_VER}"; exit 1; }
-  echo "  version matches v${EXPECT_VER}"
+  # The binary prints `zitadel version 4.17.1` -- NO leading v. This assertion used to
+  # require one, so it failed on every correct build. It never showed up because the app
+  # was BLOCKED=1, so CI skipped it and this test had not run since the flag went on:
+  # blocking an app silences the check that would have caught this. Accept either form,
+  # since upstream has emitted both across releases. Capture then grep -- `echo | grep -q`
+  # under pipefail fails WHEN THE PATTERN MATCHES (grep exits, echo takes SIGPIPE).
+  grep -qE "^zitadel version v?${EXPECT_VER}$" <<<"$VER_OUT" \
+    || { echo "FAIL: expected zitadel version ${EXPECT_VER} (with or without a v), got:"; echo "$VER_OUT"; exit 1; }
+  echo "  version matches ${EXPECT_VER}"
 fi
 
 echo "PASS: zitadel smoke test green"
