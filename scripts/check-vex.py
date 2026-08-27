@@ -125,6 +125,34 @@ def check_file(path: pathlib.Path) -> list[str]:
     return errs
 
 
+def check_workflow_wiring(app: str) -> list[str]:
+    """A VEX file only reaches the CI gate if its workflow passes TRIVY_VEX.
+
+    The local gate (build-image.sh) picks the file up automatically, so a missing CI
+    wiring is INVISIBLE until a publish attempt fails -- which happened three separate
+    times on 2026-08-27 (grafana, jenkins-inbound-agent, kgateway), each because a
+    workflow was copied from an app that had no VEX. trivy-action has no `vex:` input,
+    so the file has to go through the TRIVY_VEX env var; and the validator itself must
+    run there too, or CI would honour an unchecked suppression file.
+    """
+    wf = ROOT / ".github" / "workflows" / f"build-{app}.yml"
+    if not wf.exists():
+        return [f"no workflow at {wf.relative_to(ROOT)} to check"]
+    text = wf.read_text()
+    errs = []
+    if f"TRIVY_VEX: apps/{app}/vex.openvex.json" not in text:
+        errs.append(
+            f"build-{app}.yml does not pass TRIVY_VEX -- the VEX clears the LOCAL gate "
+            f"but CI will still fail on the suppressed findings"
+        )
+    if "check-vex.py" not in text:
+        errs.append(
+            f"build-{app}.yml does not run check-vex.py -- CI would honour this file "
+            f"without validating it"
+        )
+    return errs
+
+
 def main() -> int:
     only = sys.argv[1:]
     files = sorted((ROOT / "apps").glob("*/vex.openvex.json"))
@@ -141,8 +169,8 @@ def main() -> int:
 
     bad = 0
     for f in files:
-        errs = check_file(f)
         app = f.parent.name
+        errs = check_file(f) + check_workflow_wiring(app)
         if errs:
             bad += 1
             print(f"!! {app}")

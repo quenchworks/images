@@ -101,10 +101,25 @@ jobs:
       - name: Assemble single-arch image for the scan gate
         run: apko build apko.rendered.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}
 
+      # Validate the VEX before Trivy is allowed to honour it: this file removes
+      # findings from the gate that is the product guarantee, so a malformed or unargued
+      # entry must fail the build rather than silently suppress a real CVE.
+      - name: Install uv (for the VEX validator)
+        uses: astral-sh/setup-uv@v7
+      - name: Check VEX
+        # the job's default working-directory is apps/kgateway
+        working-directory: ${{ github.workspace }}
+        run: uv run scripts/check-vex.py kgateway
+
       - name: Scan, the hard 0-CVE gate (before publish)
         uses: aquasecurity/trivy-action@master
         env:
           TRIVY_DETECTION_PRIORITY: comprehensive
+          # 5 istio advisories against a pseudo-version that can never satisfy the
+          # scanner: istio tags releases without a `v` prefix, so the Go proxy publishes
+          # no semver at all. See apps/kgateway/vex.openvex.json and docs/vex-policy.md.
+          # trivy-action has no `vex:` input; it goes through TRIVY_VEX.
+          TRIVY_VEX: apps/kgateway/vex.openvex.json
         with:
           input: apps/kgateway/image.tar
           format: table
