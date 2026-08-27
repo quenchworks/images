@@ -1,5 +1,4 @@
 catalog:
-
   - name: redis
     category: Cache
     summary: In-memory key-value store used as a cache, message broker, and ephemeral datastore. Shipped under AGPL (not permissive); Valkey is the BSD-licensed open alternative.
@@ -1883,7 +1882,7 @@ catalog:
 
   - name: apisix
     category: Gateway
-    summary: 'Cloud-native API gateway on OpenResty/LuaJIT with dynamic routing, auth, rate limiting, observability and a 100+ plugin ecosystem. Built from source including api7''s apisix-runtime, which rebuilds OpenResty against current OpenSSL rather than upstream''s pinned older crypto, plus the admin dashboard SPA that upstream now embeds by commit id instead of releasing separately. Runs file-driven standalone by default, so no etcd is required. Ships no prebuilt wasmtime, so proxy-wasm plugins are unavailable, and omits saml-auth because it statically links a 2019 xmlsec fork our scanner cannot inspect.'
+    summary: "Cloud-native API gateway on OpenResty/LuaJIT with dynamic routing, auth, rate limiting, observability and a 100+ plugin ecosystem. Built from source including api7's apisix-runtime, which rebuilds OpenResty against current OpenSSL rather than upstream's pinned older crypto, plus the admin dashboard SPA that upstream now embeds by commit id instead of releasing separately. Runs file-driven standalone by default, so no etcd is required. Ships no prebuilt wasmtime, so proxy-wasm plugins are unavailable, and omits saml-auth because it statically links a 2019 xmlsec fork our scanner cannot inspect."
     source: https://github.com/apache/apisix
     upstream: https://apisix.apache.org
     license: Apache-2.0
@@ -1892,7 +1891,7 @@ catalog:
 
   - name: apisix-ingress-controller
     category: Gateway
-    summary: 'The Apache APISIX Ingress Controller, the Kubernetes operator that drives an APISIX data plane. Reconciles Gateway API resources, native Ingress and APISIX''s own CRDs such as ApisixRoute, ApisixUpstream and ApisixPluginConfig into APISIX configuration. Built from the ASF source release; tracks Gateway API 1.6 and needs Kubernetes 1.31 or newer.'
+    summary: "The Apache APISIX Ingress Controller, the Kubernetes operator that drives an APISIX data plane. Reconciles Gateway API resources, native Ingress and APISIX's own CRDs such as ApisixRoute, ApisixUpstream and ApisixPluginConfig into APISIX configuration. Built from the ASF source release; tracks Gateway API 1.6 and needs Kubernetes 1.31 or newer."
     source: https://github.com/apache/apisix-ingress-controller
     upstream: https://apisix.apache.org/docs/ingress-controller/overview/
     license: Apache-2.0
@@ -1901,25 +1900,61 @@ catalog:
 
   - name: envoy-gateway
     category: Gateway
-    summary: 'Gateway API control plane from the Envoy project. Watches Gateway, HTTPRoute and its own policy CRDs and programs Envoy over xDS, provisioning and managing the proxy fleet. Drives the QuenchWorks envoy image as its data plane. Ships two minor lines because 1.7.x carries a docker/docker advisory whose stated fix version has no corresponding Go module.'
+    summary: "Gateway API control plane from the Envoy project. Watches Gateway, HTTPRoute and its own policy CRDs and programs Envoy over xDS, provisioning and managing the proxy fleet. Drives the QuenchWorks envoy image as its data plane. Ships two minor lines because 1.7.x carries a docker/docker advisory whose stated fix version has no corresponding Go module."
     source: https://github.com/envoyproxy/gateway
     upstream: https://gateway.envoyproxy.io
     license: Apache-2.0
     tier: standard
     status: built
 
+  - name: kgateway
+    category: Gateway
+    summary: "kgateway, the CNCF Gateway API control plane that succeeded Gloo Edge. Watches Gateway, HTTPRoute, GRPCRoute and its own gateway.kgateway.dev policy CRDs, programs Envoy over xDS and provisions the proxy fleet itself. Pairs with the QuenchWorks kgateway-envoy data plane. Ships two minor lines because 2.2.x pins its amd64 data plane to a vendor fork of Envoy this catalog does not rebuild. Carries the Wolfi envoy binary for the strict xDS validation path."
+    source: https://github.com/kgateway-dev/kgateway
+    upstream: https://kgateway.dev
+    license: Apache-2.0
+    tier: standard
+    status: built
+
+  - name: kgateway-envoy
+    category: Gateway
+    summary: "The kgateway data plane, upstream's envoy-wrapper rebuilt clean-room: the QuenchWorks hardened Wolfi Envoy binary plus kgateway's own envoyinit shim, which expands Kubernetes Downward API templates in the bootstrap the controller generates and then execs Envoy. Versioned in lockstep with the kgateway control plane. Not a general-purpose Envoy image -- use the envoy image for that."
+    source: https://github.com/kgateway-dev/kgateway
+    upstream: https://kgateway.dev
+    license: Apache-2.0
+    tier: standard
+    status: built
+
   - name: contour
     category: Gateway
-    summary: 'Project Contour, the CNCF Kubernetes ingress controller that programs Envoy over xDS. Serves HTTPProxy and Ingress plus Gateway API, and one binary covers every role, including the xDS control plane, Envoy bootstrap generation, certgen, shutdown-manager and the Gateway provisioner. Pairs with the QuenchWorks envoy data plane.'
+    summary: "Project Contour, the CNCF Kubernetes ingress controller that programs Envoy over xDS. Serves HTTPProxy and Ingress plus Gateway API, and one binary covers every role, including the xDS control plane, Envoy bootstrap generation, certgen, shutdown-manager and the Gateway provisioner. Pairs with the QuenchWorks envoy data plane."
     source: https://github.com/projectcontour/contour
     upstream: https://projectcontour.io
     license: Apache-2.0
     tier: standard
     status: built
 
+  - name: nginx-gateway-fabric
+    category: Gateway
+    summary: "NGINX Gateway Fabric control plane: the F5/NGINX Gateway API implementation. Watches GatewayClass, Gateway, HTTPRoute and its own gateway.nginx.org policy CRDs, provisions an nginx Deployment per Gateway, and pushes generated config to the nginx-agent inside it over gRPC. One binary covers three roles the chart uses -- controller, generate-certs, and the initialize step that runs as the init container of every data-plane pod. Pairs with the nginx-gateway-fabric-nginx data plane, which it version-locks to itself."
+    source: https://github.com/nginx/nginx-gateway-fabric
+    upstream: https://docs.nginx.com/nginx-gateway-fabric/
+    license: Apache-2.0
+    tier: standard
+    status: built
+
+  - name: nginx-gateway-fabric-nginx
+    category: Gateway
+    summary: "NGINX Gateway Fabric data plane: nginx built from source with the njs dynamic module, NGF's own njs scripts and base configs, and nginx-agent v3 alongside it in one container. NGF 2.x configures nginx over an agent gRPC stream rather than a ConfigMap, so the hardened quench nginx image cannot serve this role -- it has no njs module and no agent. Provisioned by the nginx-gateway-fabric control plane, never installed on its own. Image only, no chart."
+    source: https://github.com/nginx/nginx-gateway-fabric
+    upstream: https://docs.nginx.com/nginx-gateway-fabric/
+    license: BSD-2-Clause AND Apache-2.0
+    tier: standard
+    status: built
+
   - name: krakend
     category: Gateway
-    summary: 'Stateless, declarative API gateway that aggregates and transforms backend responses from a single JSON config. Built from the community distribution''s own target, so the Lua, CEL, martian, JWT/JOSE, CORS, rate-limiting and telemetry middleware are compiled in, and ships a minimal bootable config so the image starts standalone. CGO is off, which trades external plugin loading for a hardened nonroot base.'
+    summary: "Stateless, declarative API gateway that aggregates and transforms backend responses from a single JSON config. Built from the community distribution's own target, so the Lua, CEL, martian, JWT/JOSE, CORS, rate-limiting and telemetry middleware are compiled in, and ships a minimal bootable config so the image starts standalone. CGO is off, which trades external plugin loading for a hardened nonroot base."
     source: https://github.com/krakend/krakend-ce
     upstream: https://www.krakend.io
     license: Apache-2.0
@@ -1928,7 +1963,7 @@ catalog:
 
   - name: adc
     category: Gateway
-    summary: 'ADC (API Declarative CLI), the declarative configuration engine for Apache APISIX and API7 Enterprise. Ships as the required adc-server sidecar of the APISIX Ingress Controller, which drives it over a shared Unix socket, and is also usable standalone to lint, diff, dump and sync APISIX configuration. Built from source as an esbuild bundle on a hardened Wolfi Node 24 rather than the upstream Node SEA release binary, which embeds an unpatched interpreter. Image only, no chart.'
+    summary: "ADC (API Declarative CLI), the declarative configuration engine for Apache APISIX and API7 Enterprise. Ships as the required adc-server sidecar of the APISIX Ingress Controller, which drives it over a shared Unix socket, and is also usable standalone to lint, diff, dump and sync APISIX configuration. Built from source as an esbuild bundle on a hardened Wolfi Node 24 rather than the upstream Node SEA release binary, which embeds an unpatched interpreter. Image only, no chart."
     source: https://github.com/api7/adc
     upstream: https://docs.api7.ai/enterprise/reference/adc
     license: Apache-2.0

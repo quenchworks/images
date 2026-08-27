@@ -1,0 +1,68 @@
+# Assembles the kgateway control-plane runtime image. Minimal, nonroot, multi-arch,
+# SBOM by apko. The entrypoint is the bare binary: the chart supplies no subcommand
+# (`kgateway` runs the controller; `kgateway --version` prints the release) and the
+# controller is configured entirely through KGW_* environment variables.
+#
+# The Wolfi envoy binary is installed and symlinked to /usr/local/bin/envoy on purpose.
+# pkg/validator hard-codes that path and forks `envoy --mode validate --config-path
+# /dev/fd/0` once per translation when `validation.level: strict` is set, which is a
+# first-class chart setting. Upstream's controller image carries an envoy binary for
+# exactly this reason. Ours is the same apk that backs the quench `envoy` image, pinned
+# per kgateway release by build.conf (__ENVOY_PKG__).
+#
+# NOT present, and the chart README says so: librust_module.so plus
+# ENVOY_DYNAMIC_MODULES_SEARCH_PATH. See apps/kgateway/build.conf for why (Rust 1.95 vs
+# Wolfi rust-1.92, and an ABI-pinned git SDK dependency on the Envoy repo). Strict
+# validation of a TrafficPolicy that uses `transformation` or `rbac` will therefore be
+# rejected rather than silently accepted, which is the safe direction.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - __ENVOY_PKG__
+    - quench-kgateway@local
+
+accounts:
+  groups:
+    - groupname: kgateway
+      gid: 1001
+  users:
+    - username: kgateway
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  # wolfi-baselayout does not create /usr/local/bin, and a symlink cannot be laid
+  # down into a directory that does not exist.
+  - path: /usr/local/bin
+    type: directory
+    uid: 0
+    gid: 0
+    permissions: 0o755
+  # The path pkg/validator forks for `envoy --mode validate` (validator.go:
+  # defaultEnvoyPath = "/usr/local/bin/envoy"). Wolfi installs envoy at /usr/bin/envoy.
+  - path: /usr/local/bin/envoy
+    type: symlink
+    source: /usr/bin/envoy
+    permissions: 0o755
+
+entrypoint:
+  command: /usr/bin/kgateway
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-kgateway"
+  org.opencontainers.image.licenses: "Apache-2.0"

@@ -1,0 +1,74 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/kgateway/2026-08-27",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-08-27T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2019-14993"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/istio.io/istio@v0.0.0-20260605182440-f18fd540c0e8"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "PROVEN false-positive. The advisory is against istio/envoy -- Istio's FORK of the Envoy C++ proxy -- and is a denial of service from mishandled regular expressions on long URIs. This image ships no Istio Envoy and no istio-proxy: its data plane binary is Wolfi's stock envoy apk, and the control-plane image carries that same stock envoy only for `envoy --mode validate`. Verified on the built artifact rather than reasoned about: `strings` over usr/bin/kgateway returns 0 matches for istio.io/istio/pkg/envoy and 0 for istio.io/istio/istioctl, and the image contains no istio-proxy binary at all. The vulnerable component is a different program in a different language. The metadata is also unfixable by any pin, permanently: istio tags its releases as `1.14.1` with no `v` prefix, so the Go module proxy publishes no semver versions at all -- `go list -m -versions istio.io/istio` printed an EMPTY list, and `go get istio.io/istio@v1.14.1` cannot resolve. A pseudo-version is therefore the only obtainable form of this module, and v0.0.0-<date>-<sha> sorts below every number the advisory calls fixed, by construction rather than by staleness. Checked the dates too: the pinned commit f18fd540c0e86dae7596e144759caadb477f8ff2 is 'Do not parse dry-run if there is no value (#60480)' on istio master, committer date 2026-06-05T18:24:40Z, while the newest fix release named across these five advisories is 1.14.1, tagged 2022-06-09T19:09:15Z (and 1.11.1 2021-08-24, 1.2.4 and 1.1.13 2019-08-06). The code linked here postdates every one of them by about four years."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2022-23635"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/istio.io/istio@v0.0.0-20260605182440-f18fd540c0e8"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "PROVEN false-positive. The advisory is an unauthenticated denial of service against ISTIOD, reached through the pilot-discovery control plane's XDS/debug endpoints. This image runs no istiod. Verified on the built artifact: `strings` over usr/bin/kgateway returns 0 matches for istio.io/istio/pilot/cmd (the pilot-discovery entrypoint), 0 for pilot-discovery and 0 for istio.io/istio/istioctl. What IS linked is the library subset kgateway's waypoint/ambient and ServiceEntry translation uses -- pilot/pkg/model, pilot/pkg/serviceregistry, pilot/pkg/security, pkg/kube, pkg/config -- none of which serves an XDS or debug listener in this binary; kgateway's own xDS server is its own code on port 9977. There is no istiod process here to attack. The metadata is also unfixable by any pin, permanently: istio tags its releases as `1.14.1` with no `v` prefix, so the Go module proxy publishes no semver versions at all -- `go list -m -versions istio.io/istio` printed an EMPTY list, and `go get istio.io/istio@v1.14.1` cannot resolve. A pseudo-version is therefore the only obtainable form of this module, and v0.0.0-<date>-<sha> sorts below every number the advisory calls fixed, by construction rather than by staleness. Checked the dates too: the pinned commit f18fd540c0e86dae7596e144759caadb477f8ff2 is 'Do not parse dry-run if there is no value (#60480)' on istio master, committer date 2026-06-05T18:24:40Z, while the newest fix release named across these five advisories is 1.14.1, tagged 2022-06-09T19:09:15Z (and 1.11.1 2021-08-24, 1.2.4 and 1.1.13 2019-08-06). The code linked here postdates every one of them by about four years."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2022-31045"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/istio.io/istio@v0.0.0-20260605182440-f18fd540c0e8"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "PROVEN false-positive. The advisory is unsafe memory access in Istio's METADATA EXCHANGE filter, which is C++/Wasm code living in istio/proxy and compiled into the istio-proxy sidecar binary -- not Go code in the istio.io/istio module Trivy matched. This image ships no istio-proxy and no Wasm extension. Verified on the built artifact: the only matches for metadata_exchange in usr/bin/kgateway are Envoy extension NAME strings that appear in generated xDS config, and `strings` returns 0 matches for istio.io/istio/pkg/envoy, 0 for istio.io/istio/pilot/cmd and 0 for istioctl; there is no filter implementation in the artifact. The metadata is also unfixable by any pin, permanently: istio tags its releases as `1.14.1` with no `v` prefix, so the Go module proxy publishes no semver versions at all -- `go list -m -versions istio.io/istio` printed an EMPTY list, and `go get istio.io/istio@v1.14.1` cannot resolve. A pseudo-version is therefore the only obtainable form of this module, and v0.0.0-<date>-<sha> sorts below every number the advisory calls fixed, by construction rather than by staleness. Checked the dates too: the pinned commit f18fd540c0e86dae7596e144759caadb477f8ff2 is 'Do not parse dry-run if there is no value (#60480)' on istio master, committer date 2026-06-05T18:24:40Z, while the newest fix release named across these five advisories is 1.14.1, tagged 2022-06-09T19:09:15Z (and 1.11.1 2021-08-24, 1.2.4 and 1.1.13 2019-08-06). The code linked here postdates every one of them by about four years."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2021-39155"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/istio.io/istio@v0.0.0-20260605182440-f18fd540c0e8"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "PROVEN false-positive, of the 'scanner read the version metadata, not the artifact' kind. The advisory is an Istio AuthorizationPolicy bypass: host matching was case sensitive, so a request with a differently-cased Host header evaded hosts/notHosts rules. It was fixed in 1.9.8 / 1.10.4 / 1.11.1 (2021-08). The authz code this binary links is from istio master four years later, and it carries the remedy: read the source at the pinned commit -- pilot/pkg/security/authz/matcher/string.go at f18fd540c0e8 -- and every string matcher constructor (StringMatcherExact, StringMatcherPrefix, StringMatcherSuffix) takes an explicit ignoreCase parameter and sets StringMatcher.IgnoreCase, which is precisely the case-insensitivity the fix introduced; the pre-fix code had no such parameter. Verified which packages ship, too: `strings` over usr/bin/kgateway shows only pilot/pkg/security/authz/{model,builder,matcher}, the library kgateway's waypoint translation calls to build Envoy RBAC matchers, with no istiod around it. The metadata is also unfixable by any pin, permanently: istio tags its releases as `1.14.1` with no `v` prefix, so the Go module proxy publishes no semver versions at all -- `go list -m -versions istio.io/istio` printed an EMPTY list, and `go get istio.io/istio@v1.14.1` cannot resolve. A pseudo-version is therefore the only obtainable form of this module, and v0.0.0-<date>-<sha> sorts below every number the advisory calls fixed, by construction rather than by staleness. Checked the dates too: the pinned commit f18fd540c0e86dae7596e144759caadb477f8ff2 is 'Do not parse dry-run if there is no value (#60480)' on istio master, committer date 2026-06-05T18:24:40Z, while the newest fix release named across these five advisories is 1.14.1, tagged 2022-06-09T19:09:15Z (and 1.11.1 2021-08-24, 1.2.4 and 1.1.13 2019-08-06). The code linked here postdates every one of them by about four years."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2021-39156"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/istio.io/istio@v0.0.0-20260605182440-f18fd540c0e8"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "PROVEN false-positive, of the 'scanner read the version metadata, not the artifact' kind. The advisory is the sibling of CVE-2021-39155: a URI fragment let a request bypass AuthorizationPolicy path rules, fixed in the same 1.9.8 / 1.10.4 / 1.11.1 releases (2021-08). The istio authz tree linked into this binary is from master at f18fd540c0e8 (2026-06-05), roughly five years and about 10,277 commits past the 1.11.1 fix line, so the pre-fix path matcher is not the code that ships. Verified what is actually linked rather than assuming: `strings` over usr/bin/kgateway shows only pilot/pkg/security/authz/{model,builder,matcher} plus pilot/pkg/{model,serviceregistry,security,util}, i.e. the translation library kgateway's waypoint integration uses; istiod itself is absent (0 matches for pilot/cmd, 0 for pilot-discovery, 0 for istioctl), so there is no Istio request path in this image to bypass. The metadata is also unfixable by any pin, permanently: istio tags its releases as `1.14.1` with no `v` prefix, so the Go module proxy publishes no semver versions at all -- `go list -m -versions istio.io/istio` printed an EMPTY list, and `go get istio.io/istio@v1.14.1` cannot resolve. A pseudo-version is therefore the only obtainable form of this module, and v0.0.0-<date>-<sha> sorts below every number the advisory calls fixed, by construction rather than by staleness. Checked the dates too: the pinned commit f18fd540c0e86dae7596e144759caadb477f8ff2 is 'Do not parse dry-run if there is no value (#60480)' on istio master, committer date 2026-06-05T18:24:40Z, while the newest fix release named across these five advisories is 1.14.1, tagged 2022-06-09T19:09:15Z (and 1.11.1 2021-08-24, 1.2.4 and 1.1.13 2019-08-06). The code linked here postdates every one of them by about four years."
+    }
+  ]
+}

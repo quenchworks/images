@@ -1,0 +1,83 @@
+# Assembles the kgateway data-plane runtime image -- upstream's `envoy-wrapper`, rebuilt
+# from Wolfi. Minimal, nonroot, multi-arch, SBOM by apko.
+#
+# The entrypoint is upstream's own /docker-entrypoint.sh, not the envoyinit binary
+# directly, and that is deliberate: the kgateway deployer generates the proxy container
+# with args only and no command, and it switches the proxy between two modes purely by
+# environment variable (ENVOY_SIDECAR=true for the Istio-ambient path). Exec'ing
+# envoyinit straight from apko would silently break the second mode. `busybox-full`
+# supplies the /bin/sh that script needs plus the `wget` the generated preStop drain hook
+# calls -- Wolfi's plain `busybox` apk has no wget applet, see the note in melange.yaml.
+#
+# envoy lands at /usr/bin/envoy from Wolfi's apk and is symlinked to
+# /usr/local/bin/envoy, which is the path both pkg/envoyinit (defaultEnvoyExecutable)
+# and the sidecar branch of docker-entrypoint.sh expect. __ENVOY_PKG__ is the exact apk
+# for this kgateway release, pinned in build.conf.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - busybox-full
+    - __ENVOY_PKG__
+    - quench-kgateway-envoy@local
+
+accounts:
+  groups:
+    - groupname: envoy
+      gid: 1001
+  users:
+    - username: envoy
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  # The bootstrap mount point. In a cluster the controller mounts its generated
+  # ConfigMap over /etc/envoy; the directory is created here so the image is also
+  # usable (and testable) without one, and so a `docker cp` into it works.
+  - path: /etc/envoy
+    type: directory
+    uid: 0
+    gid: 0
+    permissions: 0o755
+  - path: /usr/local/bin
+    type: directory
+    uid: 0
+    gid: 0
+    permissions: 0o755
+  # pkg/envoyinit: defaultEnvoyExecutable = "/usr/local/bin/envoy" (overridable with
+  # $ENVOY). docker-entrypoint.sh hard-codes the same path for the sidecar branch.
+  - path: /usr/local/bin/envoy
+    type: symlink
+    source: /usr/bin/envoy
+    permissions: 0o755
+  # Upstream's docker-entrypoint.sh -- shipped verbatim and set as the entrypoint --
+  # execs /usr/local/bin/envoyinit. The binary itself goes to /usr/bin like every other
+  # QuenchWorks image, so the two layouts meet here. Without this symlink the container
+  # dies instantly with `exec: line 12: /usr/local/bin/envoyinit: not found`, which is
+  # exactly what the local boot test caught: the 0-CVE scan was green on an image that
+  # could not start.
+  - path: /usr/local/bin/envoyinit
+    type: symlink
+    source: /usr/bin/envoyinit
+    permissions: 0o755
+
+entrypoint:
+  command: /bin/sh /docker-entrypoint.sh
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-kgateway-envoy"
+  org.opencontainers.image.licenses: "Apache-2.0"

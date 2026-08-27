@@ -1,0 +1,74 @@
+# Builds kgateway's `envoyinit` bootstrap shim from source onto Wolfi. Single static Go
+# binary, no CGO, same build flags as the controller (upstream Makefile builds
+# ./cmd/envoyinit with GO111MODULE=on CGO_ENABLED=0 and the same LDFLAGS).
+#
+# Also installs upstream's own /docker-entrypoint.sh verbatim from the source tree
+# (cmd/envoyinit/docker-entrypoint.sh) rather than a rewrite of it, so the two modes the
+# deployer can ask for keep working: the default execs envoyinit, and ENVOY_SIDECAR=true
+# (the Istio-ambient path) execs envoy against the sidecar bootstrap instead.
+package:
+  name: quench-kgateway-envoy
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened kgateway data plane (Envoy plus the envoyinit bootstrap shim), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      # /bin/sh for the entrypoint script, and `wget` for the preStop hook the kgateway
+      # deployer generates on every proxy pod:
+      #   /bin/sh -c 'wget --post-data "" -O /dev/null 127.0.0.1:19000/healthcheck/fail; sleep 10'
+      # That hook is how a Gateway drains connections before termination. Without a
+      # shell and a wget it fails as FailedPreStopHook and the drain is lost.
+      #
+      # busybox-FULL, not busybox, and the local boot test is what found it: Wolfi's
+      # plain `busybox` apk is built WITHOUT the wget applet (222 applets in
+      # busybox-full versus a trimmed set in busybox), so the drain hook would have
+      # failed on every terminating proxy pod while the image otherwise looked fine.
+      # Upstream sidesteps this by copying the Docker Hub busybox, which does carry
+      # wget. busybox-full installs its applets under /usr/bin, and wolfi-baselayout
+      # already links /bin -> usr/bin, so /bin/sh still resolves.
+      - busybox-full
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go-1.26
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/kgateway-dev/kgateway/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      # go.mod declares `go 1.26.7` and Wolfi's go-1.26 IS 1.26.7: satisfied locally,
+      # so no toolchain download.
+      export GOTOOLCHAIN=local
+
+      # ---- 0-CVE gate: no module float is needed at these tags ----------------
+      # envoyinit is a thin shim -- bootstrap transform plus syscall.Exec -- and its
+      # dependency tree is a small subset of the controller's, so both shipped tags
+      # build 0-fixable on x86_64 and aarch64 with no `go get` floor. Note it does NOT
+      # link istio.io/istio, which is why this app needs no VEX file while
+      # apps/kgateway does. When a float DOES become necessary, copy the
+      # FLOOR/below_floor pattern from apps/envoy-gateway/melange.yaml and read
+      # docs/go-module-float.md first.
+
+      go build -trimpath \
+        -ldflags "-s -w -X github.com/kgateway-dev/kgateway/v2/pkg/version.Version=v${{package.version}}" \
+        -o "${{targets.destdir}}/usr/bin/envoyinit" ./cmd/envoyinit
+
+      # Upstream's entrypoint, byte for byte from the release tarball.
+      install -Dm0755 cmd/envoyinit/docker-entrypoint.sh \
+        "${{targets.destdir}}/docker-entrypoint.sh"
