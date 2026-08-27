@@ -1,0 +1,35 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/grafana/2026-08-27",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-08-27T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-21728"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/grafana/tempo@v1.5.1-0.20260427112133-525d1bab07e0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "PROVEN false-positive. The advisory is a denial of service in the Tempo SERVER's query path (large queries against pkg/api, pkg/traceql and tempodb). Grafana is a Tempo CLIENT: it links github.com/grafana/tempo solely for the generated protobuf message types used to speak OTLP over the wire, and it does not contain or run any Tempo server component. Verified against the built binary rather than reasoned about: `strings` over usr/share/grafana/bin/grafana lists only github.com/grafana/tempo/pkg/tempopb and its common/v1, resource/v1 and trace/v1 subpackages, and an explicit search for each tree the advisory concerns returns 0 matches -- tempodb 0, modules/ 0, pkg/api 0, cmd/tempo 0, pkg/traceql 0. The vulnerable code is absent from the shipped artifact, so it cannot be reached. Note the finding is also permanent by construction, not staleness: Grafana pins Tempo by commit, which renders as v1.5.1-0.<pseudo>, and every fixed Tempo release (2.8.4, 2.9.2, 2.10.2) declares `module github.com/grafana/tempo` with no /vN suffix, so `go list -m github.com/grafana/tempo@v2.10.3` is refused outright -- no fixed version is obtainable under the path Grafana requires."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-28377"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/grafana/tempo@v1.5.1-0.20260427112133-525d1bab07e0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "PROVEN false-positive. The advisory discloses an S3 encryption key through the Tempo SERVER's /status endpoint. Grafana ships no Tempo server, no Tempo HTTP API and no Tempo storage backend: it links github.com/grafana/tempo only for the generated protobuf message types it uses as a client. Verified on the built binary, not inferred: an explicit search of usr/share/grafana/bin/grafana returns 0 matches for grafana/tempo/pkg/api, 0 for grafana/tempo/pkg/util/status and 0 for grafana/tempo/backend/s3, while the only tempo packages present are pkg/tempopb and its common/v1, resource/v1, trace/v1 subpackages. There is no S3 backend and no /status handler in this artifact to disclose anything. As with CVE-2026-21728 the version can never satisfy the scanner either: Grafana pins Tempo by commit (v1.5.1-0.<pseudo>) and the fixed 2.10.3 release keeps `module github.com/grafana/tempo` without a /vN suffix, so Go refuses to resolve it under that path."
+    }
+  ]
+}

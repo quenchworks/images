@@ -89,14 +89,45 @@ if [ -f melange.yaml ]; then
     echo "🧬 registering qemu/binfmt for aarch64 emulation ..."
     docker run --privileged --rm tonistiigi/binfmt --install arm64 >/dev/null 2>&1 || true
   fi
+  # ./packages is a LOCAL APK REPO, and apko resolves the HIGHEST version it finds
+  # there. A leftover apk from a previous build at a DIFFERENT version therefore wins
+  # over the one we are about to build, and the gate then scans an image the log header
+  # says it is not scanning. This produced a false "0 fixable CVEs" for grafana on
+  # 2026-08-27: a stale quench-grafana-13.2.0-r0.apk meant the gate scanned the hollow
+  # 13.2.0 image while the run was nominally 13.1.4. Wipe the repo so only what this
+  # run builds can be installed.
+  rm -rf ./packages
   echo "📦 melange build ($ARCHES) ..."
   melange build "$MEL" --arch "$ARCHES" --signing-key melange.rsa --out-dir ./packages
 fi
 
-# --- 0-CVE gate: assemble the native arch and scan the tar -----------------
+# --- 0-CVE gate: assemble and scan EVERY arch in $ARCHES -------------------
+# This used to hardcode the NATIVE arch, which quietly made `ARCHES=aarch64 ...` a
+# no-op for the gate: melange built the arm64 apk, then apko assembled and scanned
+# x86_64 AGAIN, so the "0 fixable CVEs" line described the wrong image. Local
+# both-arches verification was therefore not verifying the second arch at all.
+# (CI was unaffected: its matrix runs each arch on a native runner, so every leg's
+# scan was already correct.) Cross-arch scanning is fine -- Trivy analyses the tar
+# statically and never executes it.
 NATIVE="$(uname -m)"; [ "$NATIVE" = "arm64" ] && NATIVE="aarch64"
-echo "🔎 apko build (scan tar, $NATIVE) ..."
-apko build "$APKO" "$GHCR:scan" image.tar --arch "$NATIVE" >/dev/null
+SCAN_ARCHES="${ARCHES//,/ }"
+for SCAN_ARCH in $SCAN_ARCHES; do
+echo "🔎 apko build (scan tar, $SCAN_ARCH) ..."
+apko build "$APKO" "$GHCR:scan" image.tar --arch "$SCAN_ARCH" > apko.build.log 2>&1 || {
+  cat apko.build.log; exit 1;
+}
+# Belt to the braces above: confirm the local package apko installed is the version
+# this run is building. Silent version drift here means the gate result belongs to a
+# different image than the one being reported.
+if [ -f melange.yaml ] && [ -n "${VERSION:-}" ]; then
+  inst="$(grep -oE "installing quench-[a-z0-9._-]+ \(${VERSION}-r[0-9]+\)" apko.build.log | head -1 || true)"
+  any="$(grep -oE 'installing quench-[a-z0-9._-]+ \([^)]+\)' apko.build.log | head -1 || true)"
+  if [ -n "$any" ] && [ -z "$inst" ]; then
+    echo "❌ apko installed '$any' but this run targets version $VERSION."
+    echo "   The gate would scan the wrong image. Refusing."
+    exit 1
+  fi
+fi
 echo "🛡  trivy 0-CVE gate ..."
 # Per-app documented VEX clearance (OpenVEX): if apps/<app>/vex.openvex.json
 # exists, feed it to Trivy so PROVEN false-positives (status: not_affected) are
@@ -126,7 +157,8 @@ fi
 trivy image --input image.tar --exit-code 1 --ignore-unfixed \
   --severity CRITICAL,HIGH,MEDIUM,LOW --scanners vuln \
   --detection-priority comprehensive --quiet "${VEX_ARG[@]}"
-echo "✅ 0 fixable CVEs"
+echo "✅ 0 fixable CVEs ($SCAN_ARCH)"
+done
 
 if [ "$PUSH" != "1" ]; then
   echo "⏭  PUSH=0 — built + scanned only, not publishing."
