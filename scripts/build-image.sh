@@ -103,7 +103,19 @@ echo "🛡  trivy 0-CVE gate ..."
 # suppressed with an auditable justification. Scoped per-app -- apps without a
 # vex file get an empty VEX_ARG and behave exactly as before.
 VEX_ARG=()
-[ -f "$APPDIR/vex.openvex.json" ] && VEX_ARG=(--vex "$APPDIR/vex.openvex.json")
+if [ -f "$APPDIR/vex.openvex.json" ]; then
+  # Validate BEFORE Trivy consumes it. This file removes findings from the gate that
+  # is the entire product guarantee, so a malformed or unargued entry must fail the
+  # build rather than silently suppress a real CVE. check-vex.py enforces: status is
+  # not_affected only (never under_investigation), an OpenVEX justification value, and
+  # an impact_statement that actually says how the claim was verified.
+  echo "🔎 validating $APPDIR/vex.openvex.json ..."
+  uv run "$(dirname "$0")/check-vex.py" "$APP" || {
+    echo "❌ VEX file rejected -- refusing to scan with it. Fix it or remove it."
+    exit 1
+  }
+  VEX_ARG=(--vex "$APPDIR/vex.openvex.json")
+fi
 # --detection-priority comprehensive is REQUIRED, not optional: in the default
 # "precise" mode Trivy drops language files that are owned by an OS package, so a
 # from-source binary packaged into an apk (every Go/Rust/etc. app here) has its

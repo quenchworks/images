@@ -1,23 +1,27 @@
-# Assembles a hardened SonarScanner CLI image directly from Wolfi's own
-# `sonar-scanner-cli` apk. No Dockerfile, NO melange build -- apko pulls the scanner
-# plus its OpenJDK (a runtime dep of the apk, with JAVA_HOME preset) straight from
-# the Wolfi `os` repository.
+# Assembles a hardened SonarScanner CLI image on a Wolfi openjdk-21-jre base.
+# The scanner itself comes from our own melange package (quench-sonar-scanner-cli),
+# built from the OFFICIAL SonarSource distribution zip with the logback bundled in
+# its fat jar swapped for a patched release -- see melange.yaml for why we no
+# longer install Wolfi's `sonar-scanner-cli` apk (its 0-CVE fix revision, -r3, was
+# never published).
 #
 # IMAGE-ONLY -- no Helm chart. The 0-CVE, signed, nonroot, multi-arch answer to
 # sonarsource/sonar-scanner-cli: `FROM` it in CI to analyse a project against a
-# SonarQube server. `__PKG__` is the pinned sonar-scanner-cli apk, substituted per
-# matrix entry. SONAR_USER_HOME points at /tmp so the cache works on a read-only rootfs.
+# SonarQube server. SONAR_USER_HOME points at /tmp so the cache works on a
+# read-only rootfs.
 contents:
   keyring:
     - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
   repositories:
     - https://packages.wolfi.dev/os
+    - "@local ./packages"
   packages:
     - wolfi-baselayout
     - ca-certificates-bundle
     - busybox            # a POSIX shell so the scanner is usable in CI pipelines
-    - openjdk-21-jre     # the JRE the scanner runs on (the apk's java dep is not auto-pulled by apko)
-    - __PKG__            # sonar-scanner-cli (/usr/bin/sonar-scanner-cli)
+    - openjdk-21-jre     # the JRE the scanner runs on (also the scanned CVE surface)
+    - quench-sonar-scanner-cli@local   # /usr/bin/sonar-scanner-cli -> /usr/share/sonar-scanner
 
 accounts:
   groups:

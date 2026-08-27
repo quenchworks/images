@@ -1,9 +1,9 @@
 {
   "@context": "https://openvex.dev/ns/v0.2.0",
-  "@id": "https://quench-works.com/vex/jenkins-inbound-agent/2026-07-13",
+  "@id": "https://quench-works.com/vex/jenkins-inbound-agent/2026-08-27",
   "author": "QuenchWorks <info@quench-works.com>",
-  "timestamp": "2026-07-13T00:00:00Z",
-  "version": 1,
+  "timestamp": "2026-08-27T00:00:00Z",
+  "version": 2,
   "statements": [
     {
       "vulnerability": {
@@ -12,6 +12,9 @@
       "products": [
         {
           "@id": "pkg:apk/wolfi/jenkins-docker-agent"
+        },
+        {
+          "@id": "pkg:apk/wolfi/jenkins-docker-agent-openjdk-21"
         },
         {
           "@id": "pkg:apk/wolfi/jenkins-remoting"
@@ -26,11 +29,36 @@
     },
     {
       "vulnerability": {
+        "name": "CVE-2025-48924"
+      },
+      "products": [
+        {
+          "@id": "pkg:apk/wolfi/jenkins-docker-agent"
+        },
+        {
+          "@id": "pkg:apk/wolfi/jenkins-docker-agent-openjdk-21"
+        },
+        {
+          "@id": "pkg:apk/wolfi/jenkins-remoting"
+        },
+        {
+          "@id": "pkg:apk/wolfi/jenkins-utils"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "PROVEN false-positive. Wolfi records this advisory against the package ORIGIN `jenkins-2` (verified in https://packages.wolfi.dev/os/security.json), and Trivy inherits it onto every jenkins-2 subpackage -- jenkins-docker-agent-openjdk-21, jenkins-remoting, jenkins-utils -- even though the vulnerable library ships only in the Jenkins CONTROLLER (jenkins.war): org.apache.commons/commons-lang3. This is the Jenkins INBOUND AGENT image, which contains no controller and no such library. Re-verified 2026-08-27 by full-layer extraction of the built image: the only jars present are remoting-3355.v388858a_47b_33.jar (with the agent.jar/slave.jar symlinks) and the JDK's jrt-fs.jar; `unzip -l` over both plus a raw byte grep of every other file in the layer return 0 matches for com/fasterxml/jackson, org/apache/mina, org/apache/sshd, org/apache/commons/lang3 and org/springframework. The vulnerable code is not present, so the finding is not exploitable here. (Secondary evidence that the advisory is mis-keyed: its fixed-version does not exist for origin jenkins-2, which Wolfi caps at 2.566-r1 -- 2.572/2.574/2.577/2.579 are published only under the separate o:jenkins-docker controller origin.)"
+    },
+    {
+      "vulnerability": {
         "name": "CVE-2025-7962"
       },
       "products": [
         {
           "@id": "pkg:apk/wolfi/jenkins-docker-agent"
+        },
+        {
+          "@id": "pkg:apk/wolfi/jenkins-docker-agent-openjdk-21"
         },
         {
           "@id": "pkg:apk/wolfi/jenkins-remoting"
@@ -52,6 +80,9 @@
           "@id": "pkg:apk/wolfi/jenkins-docker-agent"
         },
         {
+          "@id": "pkg:apk/wolfi/jenkins-docker-agent-openjdk-21"
+        },
+        {
           "@id": "pkg:apk/wolfi/jenkins-remoting"
         },
         {
@@ -69,6 +100,9 @@
       "products": [
         {
           "@id": "pkg:apk/wolfi/jenkins-docker-agent"
+        },
+        {
+          "@id": "pkg:apk/wolfi/jenkins-docker-agent-openjdk-21"
         },
         {
           "@id": "pkg:apk/wolfi/jenkins-remoting"
@@ -90,6 +124,9 @@
           "@id": "pkg:apk/wolfi/jenkins-docker-agent"
         },
         {
+          "@id": "pkg:apk/wolfi/jenkins-docker-agent-openjdk-21"
+        },
+        {
           "@id": "pkg:apk/wolfi/jenkins-remoting"
         },
         {
@@ -107,6 +144,9 @@
       "products": [
         {
           "@id": "pkg:apk/wolfi/jenkins-docker-agent"
+        },
+        {
+          "@id": "pkg:apk/wolfi/jenkins-docker-agent-openjdk-21"
         },
         {
           "@id": "pkg:apk/wolfi/jenkins-remoting"
@@ -128,6 +168,9 @@
           "@id": "pkg:apk/wolfi/jenkins-docker-agent"
         },
         {
+          "@id": "pkg:apk/wolfi/jenkins-docker-agent-openjdk-21"
+        },
+        {
           "@id": "pkg:apk/wolfi/jenkins-remoting"
         },
         {
@@ -145,6 +188,9 @@
       "products": [
         {
           "@id": "pkg:apk/wolfi/jenkins-docker-agent"
+        },
+        {
+          "@id": "pkg:apk/wolfi/jenkins-docker-agent-openjdk-21"
         },
         {
           "@id": "pkg:apk/wolfi/jenkins-remoting"
@@ -166,6 +212,9 @@
           "@id": "pkg:apk/wolfi/jenkins-docker-agent"
         },
         {
+          "@id": "pkg:apk/wolfi/jenkins-docker-agent-openjdk-21"
+        },
+        {
           "@id": "pkg:apk/wolfi/jenkins-remoting"
         },
         {
@@ -183,6 +232,9 @@
       "products": [
         {
           "@id": "pkg:apk/wolfi/jenkins-docker-agent"
+        },
+        {
+          "@id": "pkg:apk/wolfi/jenkins-docker-agent-openjdk-21"
         },
         {
           "@id": "pkg:apk/wolfi/jenkins-remoting"
@@ -204,6 +256,9 @@
           "@id": "pkg:apk/wolfi/jenkins-docker-agent"
         },
         {
+          "@id": "pkg:apk/wolfi/jenkins-docker-agent-openjdk-21"
+        },
+        {
           "@id": "pkg:apk/wolfi/jenkins-remoting"
         },
         {
@@ -221,6 +276,9 @@
       "products": [
         {
           "@id": "pkg:apk/wolfi/jenkins-docker-agent"
+        },
+        {
+          "@id": "pkg:apk/wolfi/jenkins-docker-agent-openjdk-21"
         },
         {
           "@id": "pkg:apk/wolfi/jenkins-remoting"
@@ -242,6 +300,9 @@
           "@id": "pkg:apk/wolfi/jenkins-docker-agent"
         },
         {
+          "@id": "pkg:apk/wolfi/jenkins-docker-agent-openjdk-21"
+        },
+        {
           "@id": "pkg:apk/wolfi/jenkins-remoting"
         },
         {
@@ -261,6 +322,9 @@
           "@id": "pkg:apk/wolfi/jenkins-docker-agent"
         },
         {
+          "@id": "pkg:apk/wolfi/jenkins-docker-agent-openjdk-21"
+        },
+        {
           "@id": "pkg:apk/wolfi/jenkins-remoting"
         },
         {
@@ -273,11 +337,36 @@
     },
     {
       "vulnerability": {
+        "name": "CVE-2026-47065"
+      },
+      "products": [
+        {
+          "@id": "pkg:apk/wolfi/jenkins-docker-agent"
+        },
+        {
+          "@id": "pkg:apk/wolfi/jenkins-docker-agent-openjdk-21"
+        },
+        {
+          "@id": "pkg:apk/wolfi/jenkins-remoting"
+        },
+        {
+          "@id": "pkg:apk/wolfi/jenkins-utils"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "PROVEN false-positive. Wolfi records this advisory against the package ORIGIN `jenkins-2` (verified in https://packages.wolfi.dev/os/security.json), and Trivy inherits it onto every jenkins-2 subpackage -- jenkins-docker-agent-openjdk-21, jenkins-remoting, jenkins-utils -- even though the vulnerable library ships only in the Jenkins CONTROLLER (jenkins.war): Apache MINA. This is the Jenkins INBOUND AGENT image, which contains no controller and no such library. Re-verified 2026-08-27 by full-layer extraction of the built image: the only jars present are remoting-3355.v388858a_47b_33.jar (with the agent.jar/slave.jar symlinks) and the JDK's jrt-fs.jar; `unzip -l` over both plus a raw byte grep of every other file in the layer return 0 matches for com/fasterxml/jackson, org/apache/mina, org/apache/sshd, org/apache/commons/lang3 and org/springframework. The vulnerable code is not present, so the finding is not exploitable here. (Secondary evidence that the advisory is mis-keyed: its fixed-version does not exist for origin jenkins-2, which Wolfi caps at 2.566-r1 -- 2.572/2.574/2.577/2.579 are published only under the separate o:jenkins-docker controller origin.)"
+    },
+    {
+      "vulnerability": {
         "name": "CVE-2026-54512"
       },
       "products": [
         {
           "@id": "pkg:apk/wolfi/jenkins-docker-agent"
+        },
+        {
+          "@id": "pkg:apk/wolfi/jenkins-docker-agent-openjdk-21"
         },
         {
           "@id": "pkg:apk/wolfi/jenkins-remoting"
@@ -299,6 +388,9 @@
           "@id": "pkg:apk/wolfi/jenkins-docker-agent"
         },
         {
+          "@id": "pkg:apk/wolfi/jenkins-docker-agent-openjdk-21"
+        },
+        {
           "@id": "pkg:apk/wolfi/jenkins-remoting"
         },
         {
@@ -318,6 +410,9 @@
           "@id": "pkg:apk/wolfi/jenkins-docker-agent"
         },
         {
+          "@id": "pkg:apk/wolfi/jenkins-docker-agent-openjdk-21"
+        },
+        {
           "@id": "pkg:apk/wolfi/jenkins-remoting"
         },
         {
@@ -330,11 +425,36 @@
     },
     {
       "vulnerability": {
+        "name": "CVE-2026-54515"
+      },
+      "products": [
+        {
+          "@id": "pkg:apk/wolfi/jenkins-docker-agent"
+        },
+        {
+          "@id": "pkg:apk/wolfi/jenkins-docker-agent-openjdk-21"
+        },
+        {
+          "@id": "pkg:apk/wolfi/jenkins-remoting"
+        },
+        {
+          "@id": "pkg:apk/wolfi/jenkins-utils"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "PROVEN false-positive. Wolfi records this advisory against the package ORIGIN `jenkins-2` (verified in https://packages.wolfi.dev/os/security.json), and Trivy inherits it onto every jenkins-2 subpackage -- jenkins-docker-agent-openjdk-21, jenkins-remoting, jenkins-utils -- even though the vulnerable library ships only in the Jenkins CONTROLLER (jenkins.war): jackson-databind. This is the Jenkins INBOUND AGENT image, which contains no controller and no such library. Re-verified 2026-08-27 by full-layer extraction of the built image: the only jars present are remoting-3355.v388858a_47b_33.jar (with the agent.jar/slave.jar symlinks) and the JDK's jrt-fs.jar; `unzip -l` over both plus a raw byte grep of every other file in the layer return 0 matches for com/fasterxml/jackson, org/apache/mina, org/apache/sshd, org/apache/commons/lang3 and org/springframework. The vulnerable code is not present, so the finding is not exploitable here. (Secondary evidence that the advisory is mis-keyed: its fixed-version does not exist for origin jenkins-2, which Wolfi caps at 2.566-r1 -- 2.572/2.574/2.577/2.579 are published only under the separate o:jenkins-docker controller origin.)"
+    },
+    {
+      "vulnerability": {
         "name": "CVE-2026-54516"
       },
       "products": [
         {
           "@id": "pkg:apk/wolfi/jenkins-docker-agent"
+        },
+        {
+          "@id": "pkg:apk/wolfi/jenkins-docker-agent-openjdk-21"
         },
         {
           "@id": "pkg:apk/wolfi/jenkins-remoting"
@@ -356,6 +476,9 @@
           "@id": "pkg:apk/wolfi/jenkins-docker-agent"
         },
         {
+          "@id": "pkg:apk/wolfi/jenkins-docker-agent-openjdk-21"
+        },
+        {
           "@id": "pkg:apk/wolfi/jenkins-remoting"
         },
         {
@@ -373,6 +496,9 @@
       "products": [
         {
           "@id": "pkg:apk/wolfi/jenkins-docker-agent"
+        },
+        {
+          "@id": "pkg:apk/wolfi/jenkins-docker-agent-openjdk-21"
         },
         {
           "@id": "pkg:apk/wolfi/jenkins-remoting"
@@ -394,6 +520,9 @@
           "@id": "pkg:apk/wolfi/jenkins-docker-agent"
         },
         {
+          "@id": "pkg:apk/wolfi/jenkins-docker-agent-openjdk-21"
+        },
+        {
           "@id": "pkg:apk/wolfi/jenkins-remoting"
         },
         {
@@ -411,6 +540,9 @@
       "products": [
         {
           "@id": "pkg:apk/wolfi/jenkins-docker-agent"
+        },
+        {
+          "@id": "pkg:apk/wolfi/jenkins-docker-agent-openjdk-21"
         },
         {
           "@id": "pkg:apk/wolfi/jenkins-remoting"

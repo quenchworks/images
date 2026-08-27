@@ -1,0 +1,122 @@
+# Repackages the OFFICIAL SonarSource SonarScanner CLI distribution zip into a
+# hardened Wolfi package, with the vulnerable logback bundled inside its fat jar
+# swapped for a patched release.
+#
+# WHY this app has a melange stage at all (it used to be apko-only, installing
+# Wolfi's `sonar-scanner-cli` apk straight from the os repo): that apk bundles
+# logback 1.5.33 inside its fat jar, CVE-2026-10532 hits it, and Wolfi's own
+# advisory says the fix lands in 8.1.0.6389-r3 -- a revision Wolfi has never
+# published (newest on both arches is -r1). Nothing a recipe can do changes what
+# somebody else's apk ships, so while we install THEIR package the 0-CVE gate
+# can never pass. Building our own package from the upstream distribution zip
+# clears both scan rows at once: the apk row disappears (the package is ours, no
+# advisory matches its name) and the jar row is fixed for real, by replacing the
+# logback code inside the fat jar rather than relabelling it.
+#
+# The fat jar bundles logback UNRELOCATED -- plain ch/qos/logback/** classes plus
+# META-INF/maven/ch.qos.logback/*/pom.properties, which is exactly what Trivy
+# reads -- so the swap is a file-level replacement: drop the old class tree and
+# its Maven metadata, unpack the patched logback-core/logback-classic jars over
+# it, rezip with the manifest first. Same 1.5.35 pin and the same Maven Central
+# sha256s as apps/cassandra and apps/zookeeper, so the repo moves as one line.
+#
+# The distribution is pure Java and arch-independent (one sha256 per version, NOT
+# per-arch); the arch comes entirely from the JRE that apko layers in. Upstream's
+# bin/sonar-scanner launcher is a POSIX sh script that resolves its own real path
+# through symlinks, so /usr/bin/sonar-scanner-cli can be a plain symlink.
+package:
+  name: quench-sonar-scanner-cli
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened SonarScanner CLI (official SonarSource distribution, patched logback), packaged on Wolfi"
+  copyright:
+    - license: LGPL-3.0-only
+  dependencies:
+    runtime:
+      - busybox                 # the upstream launcher is /bin/sh + dirname/basename/readlink
+      - ca-certificates-bundle  # the scanner talks TLS to the SonarQube server
+      - openjdk-21-jre          # the JRE it runs on (and the scanned CVE surface)
+
+vars:
+  # Patched logback for CVE-2026-10532 (deserialization of untrusted data).
+  # logback-old is what the PRISTINE dist bundles; the swap asserts it, so the
+  # pin can never silently no-op if a future release changes the bundle.
+  logback-old: 1.5.27
+  logback-new: 1.5.35
+  logback-core-sha256: d8c38ea6871eefccf769f83e1afd07280e29fa0d1dd281092a77eb77c880ace6
+  logback-classic-sha256: 1a0ba277c4d177862731c820099913013255892c79e05b5371307f174f089878
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - curl
+      - unzip                   # the dist ships as a .zip, and the fat jar is unpacked for the swap
+      - zip                     # rezips the fat jar after the swap
+
+pipeline:
+  - runs: |
+      VER="${{package.version}}"
+      OLD="${{vars.logback-old}}"
+      NEW="${{vars.logback-new}}"
+
+      curl -fsSL -o ssc.zip \
+        "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-${VER}.zip"
+      echo "__SHA256__  ssc.zip" | sha256sum -c -
+      unzip -q ssc.zip
+      src="sonar-scanner-${VER}"
+      jar="$src/lib/sonar-scanner-cli-${VER}.jar"
+      test -f "$jar"
+
+      # --- QuenchWorks CVE swap: logback inside the fat jar --------------------
+      mkdir fat
+      (cd fat && unzip -q "../$jar")
+      # `old=` must name what the PRISTINE dist ships, not what some earlier swap
+      # produced. If upstream rebundles a different logback, stop loudly instead
+      # of layering a swap onto an unknown tree.
+      for a in logback-core logback-classic; do
+        grep -qx "version=$OLD" "fat/META-INF/maven/ch.qos.logback/$a/pom.properties" \
+          || { echo "bundled logback is not $OLD -- re-triage the swap"; exit 1; }
+      done
+      rm -rf fat/ch/qos/logback fat/META-INF/maven/ch.qos.logback
+
+      M=https://repo1.maven.org/maven2
+      swap() { # artifactId sha256
+        curl -fsSL -o lb.jar "$M/ch/qos/logback/$1/$NEW/$1-$NEW.jar"
+        echo "$2  lb.jar" | sha256sum -c -
+        # Excludes, NOT an include list: logback-core ships no META-INF/services,
+        # and unzip exits 11 on a pattern that matches nothing, which would abort
+        # the step. The three excluded entries are jar-level metadata that must
+        # stay the fat jar's own (its manifest carries Main-Class; the fat jar is
+        # not modular).
+        (cd fat && unzip -qo ../lb.jar -x META-INF/MANIFEST.MF META-INF/INDEX.LIST module-info.class)
+        rm -f lb.jar
+        grep -qx "version=$NEW" "fat/META-INF/maven/ch.qos.logback/$1/pom.properties"
+      }
+      swap logback-core    "${{vars.logback-core-sha256}}"
+      swap logback-classic "${{vars.logback-classic-sha256}}"
+
+      # META-INF/MANIFEST.MF has to be the FIRST entry of a jar, so write it
+      # before the recursive add.
+      (cd fat && zip -qX ../swapped.jar META-INF/MANIFEST.MF \
+              && zip -qXr ../swapped.jar . -x META-INF/MANIFEST.MF)
+      mv swapped.jar "$jar"
+      rm -rf fat
+
+      # --- install ------------------------------------------------------------
+      dest="${{targets.destdir}}/usr/share/sonar-scanner"
+      install -d "$dest"
+      cp -a "$src/bin" "$src/conf" "$src/lib" "$dest/"
+      rm -f "$dest"/bin/*.bat            # Windows launchers
+      chmod 0755 "$dest"/bin/sonar-scanner "$dest"/bin/sonar-scanner-debug
+      chmod -R a+rX "$dest"
+      # Both names are symlinks: `sonar-scanner-cli` is the entrypoint (and what
+      # Wolfi's apk called it), `sonar-scanner` is the name CI pipelines type.
+      install -d "${{targets.destdir}}/usr/bin"
+      ln -s ../share/sonar-scanner/bin/sonar-scanner "${{targets.destdir}}/usr/bin/sonar-scanner-cli"
+      ln -s ../share/sonar-scanner/bin/sonar-scanner "${{targets.destdir}}/usr/bin/sonar-scanner"
