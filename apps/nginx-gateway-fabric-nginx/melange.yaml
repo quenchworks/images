@@ -1,0 +1,344 @@
+# Builds the NGINX Gateway Fabric DATA PLANE from source onto Wolfi: nginx with the njs
+# dynamic module, NGF's own njs scripts and base configs, and nginx-agent v3. Three
+# upstream source trees, all pinned by sha256, no upstream distro binaries and no
+# packages.nginx.org apks (upstream's Dockerfile.nginx installs alpine packages signed
+# by F5 -- that is exactly the dependency this build removes).
+#
+# HOW NGF 2.x DRIVES NGINX (why the image looks like this)
+# The control plane never writes nginx config to a ConfigMap. It opens a gRPC stream to
+# nginx-agent running in THIS container and the agent writes the generated files into
+# /etc/nginx/{conf.d,stream-conf.d,main-includes,events-includes,secrets,includes},
+# then reloads nginx. So the container runs TWO processes, and the image ships:
+#   /etc/nginx/nginx.conf                    NGF's own base config (from its source tree)
+#   /etc/nginx/grpc-error-{locations,pages}.conf  included by generated gRPC servers
+#   /usr/lib/nginx/modules/njs/*.js          NGF's njs scripts, js_import'ed by nginx.conf
+#   /usr/lib/nginx/modules/ngx_http_js_module.so   njs, without which nginx will not start
+#   /usr/bin/nginx, /usr/bin/nginx-agent
+# Everything the pair writes at runtime (/var/run/nginx, /var/cache/nginx,
+# /var/{log,lib}/nginx-agent, /etc/nginx-agent and the six config dirs) is an emptyDir
+# in the provisioned pod, which is what lets the container keep a read-only rootfs.
+package:
+  name: quench-nginx-gateway-fabric-nginx
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened NGINX Gateway Fabric data plane (nginx __NGINX_VER__ + njs __NJS_VER__ + nginx-agent __AGENT_VER__), built from source on Wolfi"
+  copyright:
+    # nginx and njs are BSD-2-Clause; nginx-agent and the NGF njs/config files are
+    # Apache-2.0. The image label carries the union.
+    - license: "BSD-2-Clause AND Apache-2.0"
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - pcre2
+      - zlib
+      - openssl
+      # busybox is REQUIRED, not a convenience: the entrypoint is a /bin/sh script that
+      # supervises nginx + nginx-agent and forwards TERM/QUIT to both.
+      - busybox
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - pcre2-dev
+      - zlib-dev
+      - openssl-dev
+      - linux-headers
+      - pkgconf
+      # nginx-agent's go.mod declares `go 1.26.0`; GOTOOLCHAIN=local keeps the build
+      # offline-deterministic on this toolchain.
+      - go-1.26
+
+pipeline:
+  # 1) NGF source: the njs scripts and the base nginx configs live in the CONTROLLER
+  #    repo, not in nginx. internal/controller/nginx/{modules/src,conf}.
+  - uses: fetch
+    with:
+      uri: https://github.com/nginx/nginx-gateway-fabric/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+      extract: true
+      strip-components: 0
+
+  # 2) njs. The nginx module links njs's own static library, so njs is configured and
+  #    built FIRST (nginx/config expects ../build/libnjs.a).
+  - uses: fetch
+    with:
+      uri: https://github.com/nginx/njs/archive/refs/tags/__NJS_VER__.tar.gz
+      expected-sha256: __NJS_SHA__
+      extract: true
+      strip-components: 0
+
+  # 3) nginx itself, from nginx.org (mainline -- NGF pins a mainline release).
+  - uses: fetch
+    with:
+      uri: https://nginx.org/download/nginx-__NGINX_VER__.tar.gz
+      expected-sha256: __NGINX_SHA__
+      extract: true
+      strip-components: 0
+
+  - name: Build njs (static library for the nginx module)
+    runs: |
+      set -eu
+      cd njs-__NJS_VER__
+      # --no-quickjs: njs 1.0 can optionally run on QuickJS instead of its own engine.
+      #   NGF's scripts do not need it and Wolfi's quickjs would be another CVE surface.
+      # --no-libxml2: only the njs xml module needs it; NGF's scripts do not.
+      # zlib/openssl/pcre2 stay on -- pcre2 is what njs regexes use, and openssl backs
+      #   the crypto/webcrypto builtins.
+      ./configure --no-quickjs --no-libxml2
+      make -j"$(nproc)" libnjs
+      test -f build/libnjs.a
+
+  - name: Build nginx with the njs dynamic module
+    runs: |
+      set -eu
+      cd nginx-__NGINX_VER__
+      destdir="${{targets.destdir}}"
+
+      # Paths mirror the ones NGF's nginx.conf and its provisioner assume, NOT the ones
+      # apps/nginx uses:
+      #   prefix /etc/nginx           (load_module + js_import resolve against it)
+      #   sbin   /usr/bin/nginx       NOT /usr/sbin: Wolfi is usrmerge and melange's
+      #                               `usrmerge` linter fails the build on /usr/sbin.
+      #                               Upstream's image uses /usr/sbin/nginx, and nothing
+      #                               depends on that path -- nginx-agent resolves the
+      #                               binary with `sh -c "command -v nginx"`, a PATH
+      #                               lookup and /proc/<pid>/exe, all of which find
+      #                               /usr/bin/nginx.
+      #   pid    /var/run/nginx/...   (nginx.conf sets it; the dir is an emptyDir)
+      #   temp   /var/cache/nginx/... (emptyDir)
+      # Module set: stream + stream_ssl_preread is REQUIRED -- NGF's nginx.conf has a
+      # stream{} block keyed on $ssl_preread_server_name for TLSRoute. auth_request,
+      # realip, slice, sub, gunzip and gzip_static back HTTPRoute filters and
+      # NginxProxy/ClientSettingsPolicy knobs. xslt/image_filter/geoip/mail/dav are
+      # omitted deliberately: unused by any generated directive, and each drags in
+      # another library.
+      # NJS_QUICKJS / NJS_LIBXSLT are read by njs's nginx/config, NOT by njs's own
+      # configure, and they default to YES there. Without them this build fails at
+      # `./configure: error: the HTTP XSLT module requires the libxml2/libxslt
+      # libraries` -- njs's module config enables its xml module and pulls libxslt into
+      # NGINX's own feature checks. libxml2 is a large CVE surface and NGF's njs scripts
+      # (httpmatches.js, epp.js) use neither xml nor QuickJS, so both stay off, matching
+      # the --no-libxml2 --no-quickjs the njs library was built with.
+      export NJS_QUICKJS=NO
+      export NJS_LIBXSLT=NO
+      ./configure \
+        --prefix=/etc/nginx \
+        --sbin-path=/usr/bin/nginx \
+        --modules-path=/usr/lib/nginx/modules \
+        --conf-path=/etc/nginx/nginx.conf \
+        --error-log-path=/dev/stderr \
+        --http-log-path=/dev/stdout \
+        --pid-path=/var/run/nginx/nginx.pid \
+        --lock-path=/var/run/nginx/nginx.lock \
+        --http-client-body-temp-path=/var/cache/nginx/client_temp \
+        --http-proxy-temp-path=/var/cache/nginx/proxy_temp \
+        --http-fastcgi-temp-path=/var/cache/nginx/fastcgi_temp \
+        --http-uwsgi-temp-path=/var/cache/nginx/uwsgi_temp \
+        --http-scgi-temp-path=/var/cache/nginx/scgi_temp \
+        --with-compat \
+        --with-threads \
+        --with-file-aio \
+        --with-http_ssl_module \
+        --with-http_v2_module \
+        --with-http_realip_module \
+        --with-http_auth_request_module \
+        --with-http_gunzip_module \
+        --with-http_gzip_static_module \
+        --with-http_slice_module \
+        --with-http_sub_module \
+        --with-http_stub_status_module \
+        --with-stream \
+        --with-stream_ssl_module \
+        --with-stream_ssl_preread_module \
+        --with-stream_realip_module \
+        --add-dynamic-module=../njs-__NJS_VER__/nginx \
+        --with-cc-opt=-Wno-error
+      # nginx's configure defaults to -Werror; Wolfi's GCC 16 warns on upstream code.
+      make -j"$(nproc)"
+      make DESTDIR="$destdir" install
+
+      # The dynamic module must be present or nginx exits at startup on NGF's
+      # `load_module` line. Assert it rather than trusting `make install`.
+      install -d "$destdir/usr/lib/nginx/modules"
+      install -m 0755 objs/ngx_http_js_module.so "$destdir/usr/lib/nginx/modules/"
+      test -f "$destdir/usr/lib/nginx/modules/ngx_http_js_module.so"
+
+      # `load_module modules/...` and `js_import modules/njs/...` are relative to the
+      # prefix, so /etc/nginx/modules has to reach the real modules dir.
+      ln -sfn /usr/lib/nginx/modules "$destdir/etc/nginx/modules"
+
+      # `make install` leaves sample configs and an html docroot behind. NGF's own
+      # nginx.conf replaces the sample; the docroot and the *.default files are dead
+      # weight in a proxy image.
+      rm -rf "$destdir/etc/nginx/html" "$destdir"/etc/nginx/*.default
+
+      # Runtime dirs. In the provisioned pod every one of these is an emptyDir; they
+      # exist in the image so the container also runs standalone (`docker run`, the
+      # boot test, `nginx -t`).
+      # /var/run is DELIBERATELY not shipped: melange's `tempdir` linter fails any
+      # package that writes under /var/run or /tmp, and nginx's own `make install`
+      # creates the pid directory there. apko creates /var/run/nginx (owned 101:1001)
+      # instead -- see apko.yaml paths -- and in the provisioned pod it is an emptyDir.
+      rm -rf "$destdir/var/run"
+      install -d "$destdir/var/cache/nginx" \
+                 "$destdir/etc/nginx/conf.d" "$destdir/etc/nginx/stream-conf.d" \
+                 "$destdir/etc/nginx/main-includes" "$destdir/etc/nginx/events-includes" \
+                 "$destdir/etc/nginx/secrets" "$destdir/etc/nginx/includes" \
+                 "$destdir/etc/nginx-agent" "$destdir/var/log/nginx-agent" \
+                 "$destdir/var/lib/nginx-agent"
+
+  - name: Install NGF's base configs and njs scripts
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      src="nginx-gateway-fabric-${{package.version}}"
+
+      # Byte-for-byte from the NGF source tree: these are what the control plane's
+      # generated config includes and js_import's. Copying them (rather than writing
+      # our own) is what keeps the data plane compatible with the control plane.
+      install -m 0644 "$src/internal/controller/nginx/conf/nginx.conf" "$destdir/etc/nginx/nginx.conf"
+      install -m 0644 "$src/internal/controller/nginx/conf/grpc-error-locations.conf" "$destdir/etc/nginx/"
+      install -m 0644 "$src/internal/controller/nginx/conf/grpc-error-pages.conf" "$destdir/etc/nginx/"
+      install -d "$destdir/usr/lib/nginx/modules/njs"
+      install -m 0644 "$src"/internal/controller/nginx/modules/src/*.js "$destdir/usr/lib/nginx/modules/njs/"
+      # The scripts are plain .js in the tarball (no bundler step), so this is complete.
+      test -f "$destdir/usr/lib/nginx/modules/njs/httpmatches.js"
+
+      # nginx.conf must reference the njs module we actually built, or the pair is
+      # mismatched in a way only a runtime failure would show.
+      grep -q 'load_module modules/ngx_http_js_module.so;' "$destdir/etc/nginx/nginx.conf"
+
+      # Supervisor entrypoint. Two processes in one container, so something has to
+      # start both and forward signals. Kept POSIX sh (busybox) rather than upstream's
+      # bash script: no `wait -n`, no bashisms.
+      install -d "$destdir/usr/bin"
+      cat > "$destdir/usr/bin/docker-entrypoint.sh" <<'EOF'
+      #!/bin/sh
+      # NGF data plane: nginx (foreground) + nginx-agent, with signals forwarded to both.
+      # nginx-agent is started only AFTER nginx's master pid file appears -- the agent
+      # discovers the running nginx instance and would otherwise report none.
+      set -u
+
+      nginx_pid=""
+      agent_pid=""
+
+      shutdown() {
+          [ -n "$agent_pid" ] && kill -TERM "$agent_pid" 2>/dev/null || true
+          [ -n "$nginx_pid" ] && kill -QUIT "$nginx_pid" 2>/dev/null || true
+      }
+      trap shutdown TERM INT QUIT
+
+      # Stale agent sockets from a previous run in a reused volume.
+      rm -f /var/run/nginx/*.sock 2>/dev/null || true
+
+      /usr/bin/nginx -g 'daemon off;' "$@" &
+      nginx_pid=$!
+
+      i=0
+      while [ ! -f /var/run/nginx/nginx.pid ] && [ ! -f /var/run/nginx.pid ]; do
+          i=$((i + 1))
+          if [ "$i" -gt 30 ]; then
+              echo "nginx master process did not start" >&2
+              exit 1
+          fi
+          # If nginx died outright, fail now instead of waiting out the loop.
+          kill -0 "$nginx_pid" 2>/dev/null || { wait "$nginx_pid"; exit 1; }
+          sleep 1
+      done
+
+      /usr/bin/nginx-agent &
+      agent_pid=$!
+
+      # The agent is the process that matters: if it exits, the data plane can no
+      # longer be configured, so take nginx down with it and let the pod restart.
+      wait "$agent_pid"
+      status=$?
+      kill -QUIT "$nginx_pid" 2>/dev/null || true
+      wait "$nginx_pid" 2>/dev/null || true
+      exit "$status"
+      EOF
+      chmod 0755 "$destdir/usr/bin/docker-entrypoint.sh"
+
+  # 4) nginx-agent v3. A separate F5 repo on its own version line; NGF pins it exactly.
+  - uses: fetch
+    with:
+      uri: https://github.com/nginx/agent/archive/refs/tags/v__AGENT_VER__.tar.gz
+      expected-sha256: __AGENT_SHA__
+      extract: true
+      strip-components: 0
+
+  - name: Build nginx-agent v3
+    runs: |
+      set -eu
+      cd agent-__AGENT_VER__
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local
+
+      # ---- 0-CVE module float (docs/go-module-float.md) --------------------
+      # FLOOR is a FLOOR, not a pin. v3.11.2's go.mod has NO `replace` block, and at
+      # this release upstream is already above every floor except golang.org/x/mod
+      # (0.38.0 < 0.40.0, GO-2026-6179/6180 -- Trivy names 0.37.0 as fixed and it is
+      # not; see docs/go-module-float.md) and github.com/google/cel-go, which the
+      # embedded OpenTelemetry collector pulls in at v0.28.0: GHSA-gcjh-h69q-9w9g (JSON
+      # private fields exposed via NativeTypes/ParseStructTag), fixed in 0.29.0 and the
+      # ONLY advisory cel-go has, so v0.29.2 -- newest patch of the fix line -- is the
+      # floor. The local gate caught this one: it is the single fixable finding in the
+      # whole image and it lives in the agent binary, not in nginx.
+      FLOOR="golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0 golang.org/x/mod@v0.40.0 golang.org/x/crypto@v0.55.0 golang.org/x/sys@v0.47.0 golang.org/x/oauth2@v0.36.0 google.golang.org/grpc@v1.82.1 github.com/google/cel-go@v0.29.2"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      go list -m $MODS
+      need="$(go list -m $MODS | awk '{ print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
+      go mod tidy
+
+      # Upstream's Makefile: CGO_ENABLED=0 go build -pgo=default.pgo -ldflags
+      # "-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)".
+      # The profile ships in the tarball, so keep it. The date is left out on purpose:
+      # a build timestamp makes the binary non-reproducible for no benefit.
+      go build -trimpath -pgo=default.pgo \
+        -ldflags "-s -w -X main.version=__AGENT_VER__ -X main.commit=__AGENT_COMMIT__" \
+        -o "${{targets.destdir}}/usr/bin/nginx-agent" ./cmd/agent
+
+      # `dep <mod> <ver> <hash>`: the version is $3, not $NF (see the control-plane
+      # recipe -- $NF is the h1 hash and the comparator silently rejects it).
+      go version -m "${{targets.destdir}}/usr/bin/nginx-agent" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor binary > /tmp/bad-agent || true
+      [ ! -s /tmp/bad-agent ] || { echo "FATAL: 0-CVE float did not reach nginx-agent:"; cat /tmp/bad-agent; exit 1; }
+
+test:
+  pipeline:
+    - runs: |
+        # nginx must report the pinned release AND have been built with the modules NGF
+        # generates directives for.
+        nginx -v 2>&1 | grep -q "nginx/__NGINX_VER__"
+        nginx -V 2>&1 | grep -q -- "--with-stream_ssl_preread_module"
+        nginx -V 2>&1 | grep -q -- "--add-dynamic-module=../njs-__NJS_VER__/nginx"
+        test -f /usr/lib/nginx/modules/ngx_http_js_module.so
+        test -f /usr/lib/nginx/modules/njs/httpmatches.js
+        test -f /usr/lib/nginx/modules/njs/epp.js
+        # The real check: NGF's own config parses, which means load_module found njs
+        # and js_import found the scripts. This is the failure mode that would
+        # otherwise only appear as a CrashLoopBackOff in a cluster.
+        nginx -t -c /etc/nginx/nginx.conf
+        nginx-agent --version
+        nginx-agent --version | grep -q "__AGENT_VER__"

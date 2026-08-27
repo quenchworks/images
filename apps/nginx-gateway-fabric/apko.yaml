@@ -1,0 +1,48 @@
+# Assembles the NGINX Gateway Fabric control-plane image. Minimal, nonroot, multi-arch,
+# SBOM by apko. No Dockerfile.
+#
+# UID 101, NOT the house default 1001 -- and that is forced, not a style choice. This
+# same image is injected by the control plane as the INIT CONTAINER of every data-plane
+# pod, and the provisioner hardcodes that container's securityContext to
+# runAsUser: 101 / runAsGroup: 1001 (internal/controller/provisioner/objects.go
+# buildInitContainers). It is not configurable through NginxProxy, so an image whose
+# own user is 1001 would run under a uid that does not exist in its /etc/passwd. The
+# group stays 1001, which is also what the pod's fsGroup is fixed to.
+#
+# The entrypoint is the bare binary: the chart supplies `controller`, the certs Job
+# supplies `generate-certs`, and the provisioner supplies `initialize`.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-nginx-gateway-fabric@local
+
+accounts:
+  groups:
+    - groupname: nginx
+      gid: 1001
+  users:
+    - username: nginx
+      uid: 101
+      gid: 1001
+  run-as: 101
+
+entrypoint:
+  command: /usr/bin/gateway
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-nginx-gateway-fabric"
+  org.opencontainers.image.licenses: "Apache-2.0"

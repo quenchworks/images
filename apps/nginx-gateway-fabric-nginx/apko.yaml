@@ -1,0 +1,113 @@
+# Assembles the NGINX Gateway Fabric data-plane image. Minimal, nonroot, multi-arch,
+# SBOM by apko. No Dockerfile.
+#
+# UID 101 / GID 1001, NOT the house default 1001, and it is forced: the control plane
+# provisions this pod itself and hardcodes the container securityContext to
+# runAsUser: 101, runAsGroup: 1001, readOnlyRootFilesystem: true, capabilities drop ALL
+# (internal/controller/provisioner/objects.go buildNginxContainer). None of it is
+# reachable through NginxProxy, so the image has to be built for exactly that uid.
+#
+# Ports below 1024 still work despite the dropped capabilities, because the provisioner
+# sets the pod sysctl net.ipv4.ip_unprivileged_port_start=0 for the listener ports a
+# Gateway declares. That is the control plane's job, not this image's.
+#
+# Everything written at runtime is a mount in the provisioned pod; the dirs exist here
+# with 101:1001 ownership so the image also runs standalone (the boot test does).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-nginx-gateway-fabric-nginx@local
+
+accounts:
+  groups:
+    - groupname: nginx
+      gid: 1001
+  users:
+    - username: nginx
+      uid: 101
+      gid: 1001
+  run-as: 101
+
+# melange's build sandbox cannot chown into the destdir, so ownership is set here.
+paths:
+  - path: /var/run/nginx
+    type: directory
+    uid: 101
+    gid: 1001
+    permissions: 0o755
+  - path: /var/cache/nginx
+    type: directory
+    uid: 101
+    gid: 1001
+    permissions: 0o755
+    recursive: true
+  - path: /etc/nginx-agent
+    type: directory
+    uid: 101
+    gid: 1001
+    permissions: 0o755
+  - path: /var/log/nginx-agent
+    type: directory
+    uid: 101
+    gid: 1001
+    permissions: 0o755
+  - path: /var/lib/nginx-agent
+    type: directory
+    uid: 101
+    gid: 1001
+    permissions: 0o755
+  # The six config dirs the agent writes into. Mounted as emptyDirs in the pod, but
+  # `nginx -t` and any standalone run need them writable by the same uid.
+  - path: /etc/nginx/conf.d
+    type: directory
+    uid: 101
+    gid: 1001
+    permissions: 0o755
+  - path: /etc/nginx/stream-conf.d
+    type: directory
+    uid: 101
+    gid: 1001
+    permissions: 0o755
+  - path: /etc/nginx/main-includes
+    type: directory
+    uid: 101
+    gid: 1001
+    permissions: 0o755
+  - path: /etc/nginx/events-includes
+    type: directory
+    uid: 101
+    gid: 1001
+    permissions: 0o755
+  - path: /etc/nginx/secrets
+    type: directory
+    uid: 101
+    gid: 1001
+    permissions: 0o755
+  - path: /etc/nginx/includes
+    type: directory
+    uid: 101
+    gid: 1001
+    permissions: 0o755
+
+# Two processes, one container: the entrypoint starts nginx, waits for its master pid,
+# then starts nginx-agent, and forwards TERM/QUIT to both.
+entrypoint:
+  command: /usr/bin/docker-entrypoint.sh
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-nginx-gateway-fabric-nginx"
+  org.opencontainers.image.licenses: "BSD-2-Clause AND Apache-2.0"

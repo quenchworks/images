@@ -1,0 +1,130 @@
+# Builds the NGINX Gateway Fabric CONTROL PLANE from source onto Wolfi. One static Go
+# binary, no CGO, main package ./cmd/gateway. Output is a signed APK in Quenchworks' own
+# repo. No upstream distro binaries.
+#
+# The binary is multi-role and every role is used by the chart:
+#   gateway controller ...      the control plane Deployment
+#   gateway generate-certs ...  the pre-install/pre-upgrade Job that mints the
+#                               control-plane <-> nginx-agent mTLS material
+#   gateway initialize ...      the INIT CONTAINER of every data-plane pod, which the
+#                               control plane injects using its own image
+# So the entrypoint is the bare binary and the subcommand comes from the pod spec.
+#
+# The version ldflag is `main.version` (Makefile GO_LINKER_FlAGS_VARS / .goreleaser.yml).
+# It is not cosmetic: it is the DEFAULT TAG the provisioner appends to the data-plane
+# image repository, so a wrong stamp silently provisions the wrong nginx image.
+# The three telemetry ldflags are left unset on purpose -- with an empty
+# main.telemetryEndpoint NGF logs its product telemetry at debug level instead of
+# shipping it to F5, and the chart also passes --product-telemetry-disable by default.
+package:
+  name: quench-nginx-gateway-fabric
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened NGINX Gateway Fabric control plane, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      # CA bundle: only needed if an operator re-enables product telemetry, but the
+      # binary also dials the Kubernetes API over TLS with the in-cluster CA.
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      # go.mod declares `go 1.26.0` + `toolchain go1.26.5`; pin the matching Wolfi
+      # toolchain and keep GOTOOLCHAIN=local so nothing is downloaded mid-build.
+      - go-1.26
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/nginx/nginx-gateway-fabric/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+      strip-components: 0
+  - runs: |
+      set -eu
+      cd nginx-gateway-fabric-${{package.version}}
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local
+
+      # ---- 0-CVE module float (docs/go-module-float.md) --------------------
+      # FLOOR is a FLOOR, not a pin: float only what is below it, then assert the
+      # SHIPPED BINARY carries nothing below it. v2.6.7's go.mod has NO `replace`
+      # block, so nothing can shadow the float -- re-check that on every bump.
+      # At v2.6.7 upstream is at or above only the x/oauth2 floor; x/net (0.56.0),
+      # x/text (0.38.0), x/mod (0.37.0), x/sys (0.46.0) and grpc (1.81.1) are below.
+      # The floors are one COHERENT set on purpose: `go get` now refuses an exact
+      # version that a co-floated module contradicts ("golang.org/x/crypto@v0.55.0
+      # requires golang.org/x/text@v0.41.0, not golang.org/x/text@v0.39.0"), so
+      # x/text has to be v0.41.0 here rather than the bare CVE-fix version.
+      FLOOR="golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0 golang.org/x/mod@v0.40.0 golang.org/x/crypto@v0.55.0 golang.org/x/sys@v0.47.0 golang.org/x/oauth2@v0.36.0 google.golang.org/grpc@v1.82.1"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      go list -m $MODS
+      need="$(go list -m $MODS | awk '{ print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
+      go mod tidy
+
+      # THREE ldflags, not one, and the two telemetry ones are NOT optional. The
+      # controller parses them at startup before it touches Kubernetes:
+      #   time.ParseDuration(telemetryReportPeriod)   -- "" is an error
+      #   strconv.ParseBool(telemetryEndpointInsecure) -- "" is an error
+      # so a binary built with only -X main.version dies immediately with
+      # `error parsing telemetry report period: time: invalid duration ""` on EVERY
+      # start. The 0-CVE scan is perfectly happy with that image; test.sh is what
+      # caught it. Values are upstream's Makefile defaults (TELEMETRY_REPORT_PERIOD,
+      # TELEMETRY_ENDPOINT_INSECURE).
+      #
+      # main.telemetryEndpoint is deliberately left EMPTY, which is also upstream's
+      # default: with no endpoint compiled in, NGF logs its telemetry at debug level
+      # instead of shipping it to F5. The chart passes --product-telemetry-disable too.
+      go build -trimpath \
+        -ldflags "-s -w -X main.version=${{package.version}} -X main.telemetryReportPeriod=24h -X main.telemetryEndpointInsecure=false" \
+        -o "${{targets.destdir}}/usr/bin/gateway" ./cmd/gateway
+
+      # The float is only real if it reached the BINARY. The `=>` line is what catches
+      # a replace-shadowed float, so both are checked. NOTE the column: `go version -m`
+      # prints `dep <mod> <ver> <h1-hash>`, so the version is $3 -- reading $NF here
+      # (correct for `go list -m`, where the effective version IS the last field) feeds
+      # the comparator a base64 hash and fails every floor at random.
+      go version -m "${{targets.destdir}}/usr/bin/gateway" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor binary > /tmp/bad || true
+      [ ! -s /tmp/bad ] || { echo "FATAL: 0-CVE float did not reach the binary:"; cat /tmp/bad; exit 1; }
+
+test:
+  pipeline:
+    # There is no `gateway --version` and no `version` subcommand: the cobra root has no
+    # Version set, so `--version` is an unknown flag. The ldflag is observable only from
+    # the controller's first log line, which is printed before any Kubernetes connection
+    # is attempted -- so the version assertion has to run the controller and let it fail.
+    # The stamp is load-bearing: it becomes the DEFAULT TAG of the data-plane image.
+    - runs: |
+        set -eu
+        POD_NAMESPACE=default POD_NAME=t POD_UID=t INSTANCE_NAME=t IMAGE_NAME=t \
+          gateway controller --gateway-ctlr-name=gateway.nginx.org/nginx-gateway-controller \
+          --gatewayclass=nginx >/tmp/out 2>&1 || true
+        cat /tmp/out
+        grep -q 'Starting the NGINX Gateway Fabric control plane' /tmp/out
+        grep -q '"version":"${{package.version}}"' /tmp/out
+        gateway initialize --help >/dev/null
+        gateway generate-certs --help >/dev/null
