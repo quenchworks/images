@@ -7,8 +7,8 @@
 # images). It has NO bundled JS web UI build step -- the small status/admin
 # pages are committed Go-embedded assets in the tree -- so there is no Node
 # toolchain or asset-embedding step. We build from the git tag source tarball,
-# which vendors all Go dependencies (vendor/), so the build is fully offline
-# with -mod=vendor.
+# which vendors all Go dependencies (vendor/), so the compile itself runs with
+# -mod=vendor; only the 0-CVE module float below reaches the module proxy.
 #
 # We build the server `mimir` binary (cmd/mimir, the deliverable) using the exact
 # version ldflags from upstream's Makefile (MIMIR_VERSION = pkg/util/version,
@@ -42,24 +42,79 @@ environment:
       - go-1.26
 
 pipeline:
-  # Build from the git tag source tarball. Mimir vendors all deps under vendor/,
-  # so the build needs no network. Tag is `mimir-X.Y.Z`; verified by sha256.
+  # Build from the git tag source tarball. Mimir vendors all deps under vendor/.
+  # Tag is `mimir-X.Y.Z`; verified by sha256.
   - uses: fetch
     with:
       uri: https://github.com/grafana/mimir/archive/refs/tags/mimir-${{package.version}}.tar.gz
       expected-sha256: __SHA256__
   - runs: |
+      set -eu
       export CGO_ENABLED=0
       export GOFLAGS=-mod=vendor
       export GOTOOLCHAIN=local
-      # 0-CVE gate float: golang.org/x/net v0.55.0 -> v0.56.0 (CVE-2026-46600:
-      # panic parsing an invalid SVCB/HTTPS DNS RR). Vendored build -- bump in
-      # module mode, then re-vendor so the build sees it. Skip `go mod tidy`: it
-      # would raise the go directive above Wolfi's go-1.26 and break
-      # GOTOOLCHAIN=local; go get + go mod vendor is surgical (MVS raises only
-      # x/net, the rest of the pinned vendored graph is untouched).
-      GOFLAGS=-mod=mod go get golang.org/x/net@v0.58.0
-      GOFLAGS=-mod=mod go mod vendor
+      # Mimir's source tree ships its own `.config/go/env` holding
+      # `GOPRIVATE=github.com/grafana/*` (a convenience for Grafana staff whose
+      # grafana/* repos are partly private). melange extracts the tarball into the
+      # build workspace /home/build, which IS $HOME, so that file lands exactly
+      # where `go` looks for its user config and takes effect. GOPRIVATE implies
+      # GONOPROXY+GONOSUMDB, so every github.com/grafana/* module -- including the
+      # dskit pseudo-version in go.mod -- is fetched by cloning with git instead of
+      # from the module proxy. The Wolfi build environment has no git, so any
+      # module-mode command died with
+      #   github.com/grafana/dskit@v0.0.0-...: unable to resolve git version:
+      #   exec: "git": executable file not found in $PATH
+      # Clearing it in the environment (which outranks the config file) restores the
+      # proxy path AND checksum-database verification for those modules; nothing
+      # here needs private access. Belt and braces: drop the file too, so a stray
+      # `go env` read cannot pick it up.
+      export GOPRIVATE= GONOPROXY= GONOSUMDB=
+      rm -f .config/go/env
+      # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
+      #   golang.org/x/net       CVE-2026-46600 dnsmessage SVCB/HTTPS parse panic
+      #   golang.org/x/text      CVE-2026-56852 infinite loop
+      #   golang.org/x/crypto    ssh DoS
+      #   golang.org/x/sys, golang.org/x/mod (GO-2026-6179/6180 -- v0.37.0 is NOT
+      #                          clean, the floor is v0.40.0; see the doc)
+      #   google.golang.org/grpc GHSA-hrxh-6v49-42gf / CVE-2026-33186
+      # Vendor mode cannot `go get`, and the build must see the bump, so run the
+      # float with GOFLAGS=-mod=mod and re-vendor when anything moved. Skip
+      # `go mod tidy` -- it would re-raise the go directive above Wolfi's go-1.26
+      # and break GOTOOLCHAIN=local. `go get` + `go mod vendor` is surgical: MVS
+      # raises only what is asked for, leaving the pinned vendored graph intact.
+      #
+      # FLOOR is a FLOOR, not a pin. A bare `go get mod@vX` fails silently in two
+      # directions: it is a NO-OP when an upstream `replace` overrides it, and it
+      # becomes a DOWNGRADE once upstream requires more than vX -- re-introducing
+      # the CVE it was added to clear. So float only what is below the floor, then
+      # assert the SHIPPED BINARY carries nothing below it.
+      FLOOR="golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0 golang.org/x/crypto@v0.55.0 golang.org/x/sys@v0.47.0 golang.org/x/mod@v0.40.0 google.golang.org/grpc@v1.82.1"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is
+      # the EFFECTIVE version and a replace cannot hide behind the require line.
+      # Mimir carries 8 replace directives (mimir-prometheus, grafana/memberlist,
+      # grafana/go-yaml, grafana/regexp, goautoneg, two opentracing-contrib forks,
+      # mimir-otlptranslator) -- none of them holds a floored module down, and this
+      # is what proves it stays that way.
+      GOFLAGS=-mod=mod go list -m $MODS
+      need="$(GOFLAGS=-mod=mod go list -m $MODS | awk '{ print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then
+        GOFLAGS=-mod=mod go get $need
+        GOFLAGS=-mod=mod go mod vendor
+      fi
       # Stamp version exactly like upstream's Makefile GO_FLAGS: it sets the
       # pkg/util/version package vars (MIMIR_VERSION), so `mimir -version` and the
       # build_info metric report the pinned release. GO_TAGS = netgo,stringlabels.
@@ -70,6 +125,13 @@ pipeline:
           -X ${VERPKG}.Branch=HEAD \
           -X ${VERPKG}.Revision=mimir-${{package.version}}" \
         -o "${{targets.destdir}}/usr/bin/mimir" ./cmd/mimir
+      # The float is only real if it reached the BINARY. Every `dep`/`=>` line of
+      # `go version -m` must be at or above its floor -- the `=>` line is what
+      # catches a replace-shadowed float, and a stale vendor/ tree shows up here
+      # too. Fail the build rather than ship it.
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/mimir" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor mimir)"
+      [ -z "$bad" ] || { echo "0-CVE float did not reach the binary:"; echo "$bad"; exit 1; }
 
 test:
   pipeline:
