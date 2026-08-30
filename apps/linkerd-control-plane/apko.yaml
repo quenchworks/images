@@ -1,0 +1,58 @@
+# Assembles the linkerd-control-plane runtime image. Minimal, nonroot,
+# multi-arch, SBOM by apko.
+#
+# `controller` is a multi-role binary (see melange.yaml/build.conf): the chart
+# (not built in this task) picks the role per Deployment by overriding the
+# command args (`controller destination ...`, `controller identity ...`,
+# `controller proxy-injector ...`, `controller sp-validator ...`,
+# `controller service-mirror ...`, `controller heartbeat ...`). The default
+# command below runs `destination` -- the core discovery role and the one this
+# image's own smoke test exercises -- pointed at a baked-in, unreachable
+# kubeconfig (see melange.yaml) rather than no kubeconfig at all: with none,
+# rest.InClusterConfig() fails immediately and the process exits; with a
+# real-but-unreachable one, the admin server (metrics/ping/ready on :9996)
+# comes up and stays up while the informer cache-sync blocks forever, the same
+# shape of "runs, but not connected to a real cluster yet" behaviour istiod's
+# image proves.
+#
+# Version is bound via $LINKERD_CONTAINER_VERSION_OVERRIDE (see
+# pkg/version/version.go) -- there is no -ldflags -X for this binary, so the
+# version must be set here, not baked at compile time.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-linkerd-control-plane@local
+
+accounts:
+  groups:
+    - groupname: linkerd-control-plane
+      gid: 1001
+  users:
+    - username: linkerd-control-plane
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  LINKERD_CONTAINER_VERSION_OVERRIDE: __VER__
+
+entrypoint:
+  command: /usr/bin/controller destination --kubeconfig=/etc/linkerd/kubeconfig
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-linkerd-control-plane"
+  org.opencontainers.image.licenses: "Apache-2.0"

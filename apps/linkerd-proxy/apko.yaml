@@ -1,0 +1,56 @@
+# Assembles the linkerd-proxy runtime image. Minimal, nonroot, multi-arch,
+# SBOM by apko.
+#
+# Unlike istiod/linkerd-control-plane/linkerd-policy-controller, this image
+# does NOT bake in a fake kubeconfig or identity documents: this is a per-pod
+# sidecar whose identity material (private key + CSR, real ones per pod) is
+# provisioned by Linkerd's own init/identity flow and mounted at runtime by
+# the chart (not built in this task) -- baking placeholder crypto material
+# into the image itself would be the wrong shape of fake for a security
+# component. The smoke test (test.sh) supplies real, test-generated documents
+# via a bind mount instead, and all identity/destination env is left for the
+# chart or the test harness to set -- there is no sensible image-wide default
+# for `LINKERD2_PROXY_IDENTITY_IDENTITY_SERVER_ID`, it is workload-specific in
+# every real deployment.
+#
+# Admin server default is 127.0.0.1:4191 (loopback only, per
+# linkerd/app/src/env.rs DEFAULT_ADMIN_LISTEN_ADDR) -- correct for a real
+# sidecar where only the pod's own containers reach it over loopback network
+# namespace sharing, but the smoke test overrides
+# LINKERD2_PROXY_ADMIN_LISTEN_ADDR to 0.0.0.0:4191 so `docker -p` can reach it
+# from outside the container network namespace.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-linkerd-proxy@local
+
+accounts:
+  groups:
+    - groupname: linkerd-proxy
+      gid: 1001
+  users:
+    - username: linkerd-proxy
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/linkerd2-proxy
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-linkerd-proxy"
+  org.opencontainers.image.licenses: "Apache-2.0"

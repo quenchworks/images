@@ -1,0 +1,115 @@
+# Builds linkerd-policy-controller from source on Wolfi. Rust, from the
+# policy-controller/ workspace member of the same linkerd/linkerd2 monorepo
+# linkerd-control-plane builds (see that app's melange.yaml for the Go side).
+#
+# TOOLCHAIN NOTES (verified by reading Cargo.toml files at the pinned tags, not
+# assumed):
+#  - meshtls uses rustls + aws-lc-rs (NOT a vendored/pinned OpenSSL download --
+#    see build.conf for why this is not the same risk class as Cosmian KMS's
+#    build.rs). aws-lc-sys compiles AWS-LC's C/assembly source at build time,
+#    which needs a C compiler (build-base), cmake, and perl; it can also use
+#    NASM on x86_64 for accelerated assembly, falling back to portable C if
+#    absent -- nasm is included so it doesn't fall back silently.
+#  - policy-controller/Cargo.toml pulls `jemallocator` (vendored jemalloc-sys,
+#    built from C source) but ONLY on the x86_64-unknown-linux-gnu target
+#    (`[target.x86_64-unknown-linux-gnu.dependencies]`) -- on aarch64 this
+#    dependency simply isn't compiled in, cargo handles that automatically.
+#  - the workspace pulls one GIT dependency (kubert, pinned to tag
+#    kubert/v0.27.0 in the root Cargo.toml) -- needs `git` at build time and
+#    CARGO_NET_GIT_FETCH_WITH_CLI=true (same fix cosmian-kms needed for a
+#    different reason).
+#  - linkerd2-proxy-api (a published crate, not path-local) provides the gRPC
+#    types the grpc/ workspace member needs; its build.rs is expected to
+#    vendor its own protoc (protobuf-src-style), so `protoc` is included here
+#    only as a defensive fallback, not because it's confirmed required --
+#    if the build succeeds without it needing to be invoked, it's harmless
+#    extra weight and can be dropped on the next bump.
+#  - built with `cargo auditable`, the same tool Dockerfile.controller's own
+#    build uses (`ENV CARGO="cargo auditable"`) -- this embeds the resolved
+#    Cargo.lock dependency graph into the binary's ELF metadata so Trivy's
+#    Rust scanning can actually see it. Without this, a compiled Rust binary
+#    carries no dependency manifest for the vuln scanner to read at all.
+#
+# UNVERIFIED, flag on first CI run: the exact --admin-addr default port. This
+# binary uses `kubert::AdminArgs` (a library default, not read from this
+# repo's own source in this pass) -- Linkerd's own docs and multiple kubert-
+# based operators use 0.0.0.0:9990 as the convention, which is what apko.yaml
+# and test.sh assume. If the real default differs, the smoke test's retry
+# loop will simply time out and fail loudly rather than false-passing.
+package:
+  name: quench-linkerd-policy-controller
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Linkerd policy controller (policy-controller: serves Linkerd's policy CRDs to the proxy data plane over gRPC), built from source on Wolfi. Tracks Linkerd's edge-__VER__ release -- Buoyant gates true 'stable' builds commercially; linkerd/linkerd2 itself only cuts edge (see build.conf)."
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - libgcc
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - git
+      - cmake
+      - clang
+      - perl
+      - nasm
+      - pkgconf
+      - protoc
+      - rust-1.90
+      - cargo-auditable
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/linkerd/linkerd2/archive/refs/tags/edge-${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - runs: |
+      set -eu
+      export CARGO_NET_GIT_FETCH_WITH_CLI=true
+      # `cargo auditable` is a cargo subcommand (provided by the cargo-auditable
+      # package, invoked via `cargo auditable ...` once it's on PATH) that embeds
+      # the resolved Cargo.lock dependency graph into the binary's ELF metadata --
+      # see the header for why that matters to the CVE gate.
+      cargo auditable build --release --locked -p linkerd-policy-controller
+
+      install -Dm755 target/release/linkerd-policy-controller \
+        "${{targets.destdir}}/usr/bin/linkerd-policy-controller"
+
+      # Same trick as linkerd-control-plane and istiod: a syntactically-valid
+      # but unreachable kubeconfig, so the smoke test can boot the real binary
+      # against something that parses but never connects, instead of either a
+      # missing kubeconfig (immediate exit) or a real cluster (not available
+      # here).
+      install -d "${{targets.destdir}}/etc/linkerd"
+      cat > "${{targets.destdir}}/etc/linkerd/kubeconfig" <<'EOF'
+      apiVersion: v1
+      kind: Config
+      clusters:
+      - cluster:
+          server: https://127.0.0.1:6443
+          insecure-skip-tls-verify: true
+        name: standalone
+      contexts:
+      - context:
+          cluster: standalone
+          user: standalone
+        name: standalone
+      current-context: standalone
+      users:
+      - name: standalone
+        user:
+          token: standalone-test-token
+      EOF
+
+  - uses: strip

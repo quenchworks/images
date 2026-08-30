@@ -1,0 +1,51 @@
+# Assembles the linkerd-policy-controller runtime image. Minimal, nonroot,
+# multi-arch, SBOM by apko.
+#
+# Entrypoint runs the real binary against a baked-in, unreachable kubeconfig
+# (see melange.yaml) -- same shape of proof as linkerd-control-plane and
+# istiod: this cannot demonstrate real cluster behaviour, but it does prove
+# the binary boots, parses its own config (clap derive), and its admin server
+# comes up for real.
+#
+# --admin-addr / --grpc-addr default ports are `kubert::AdminArgs` /
+# `#[clap(long, default_value = "0.0.0.0:8090")] grpc_addr` (grpc_addr IS
+# confirmed by reading policy-controller/runtime/src/args.rs; the admin default
+# is the kubert crate's own default and is NOT independently confirmed in this
+# pass -- see melange.yaml's UNVERIFIED note). 9990 is Linkerd's documented
+# convention for this port; correct it here and in test.sh if CI shows
+# otherwise.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-linkerd-policy-controller@local
+
+accounts:
+  groups:
+    - groupname: linkerd-policy-controller
+      gid: 1001
+  users:
+    - username: linkerd-policy-controller
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/linkerd-policy-controller --admin-addr=0.0.0.0:9990 --grpc-addr=0.0.0.0:8090 --kubeconfig=/etc/linkerd/kubeconfig
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-linkerd-policy-controller"
+  org.opencontainers.image.licenses: "Apache-2.0"

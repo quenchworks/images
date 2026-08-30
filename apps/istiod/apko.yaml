@@ -1,0 +1,47 @@
+# Assembles the istiod runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# The default command points pilot-discovery at a baked-in, unreachable
+# kubeconfig (/etc/istio/kubeconfig -- see melange.yaml) rather than
+# --registries=Mock: Mock mode still SIGSEGVs in initServiceControllers,
+# which unconditionally needs a non-nil kube client (verified by actually
+# running it). With a real (if unreachable) kubeconfig, the process behaves
+# like real istiod pointed at a cluster it can't reach yet: informers retry
+# and log connection errors, cache sync never completes, but the HTTP (:8080)
+# and monitoring (:15014, Prometheus /metrics + /version) servers -- started
+# before the cache-sync wait -- come up and serve real requests. A real
+# deployment overrides --kubeconfig with in-cluster config; the chart (not
+# built in this task) owns that override.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-istiod@local
+
+accounts:
+  groups:
+    - groupname: istiod
+      gid: 1001
+  users:
+    - username: istiod
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/pilot-discovery discovery --kubeconfig=/etc/istio/kubeconfig --httpAddr=:8080 --monitoringAddr=:15014
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-istiod"
+  org.opencontainers.image.licenses: "Apache-2.0"
