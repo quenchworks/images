@@ -1645,6 +1645,51 @@ catalog:
     tier: standard
     status: built
 
+  - name: istiod
+    category: Coordination & mesh
+    summary: Istio's control plane binary (pilot-discovery) -- Pilot/xDS discovery, the sidecar-injecting webhook, and the mesh CA -- built from source on Wolfi. Ships three minor lines in parallel (1.28/1.29/1.30). Boots against a baked-in, unreachable kubeconfig for the standalone smoke test; a real deployment points it at a live cluster via the chart.
+    source: https://github.com/istio/istio
+    upstream: https://istio.io
+    license: Apache-2.0
+    tier: standard
+    status: pilot
+
+  - name: istio-proxyv2
+    category: Coordination & mesh
+    summary: Istio's sidecar/gateway data plane (pilot-agent plus Istio's own patched Envoy build, from the separate istio/proxy repo). Not buildable via melange/apko's source-fetch-and-compile model -- Istio's Envoy fork is built with Bazel/clang, a multi-hour, multi-GB C++ toolchain build incompatible with this factory. Image only, no chart.
+    source: https://github.com/istio/proxy
+    upstream: https://istio.io
+    license: Apache-2.0
+    tier: standard
+    status: blocked
+
+  - name: linkerd-control-plane
+    category: Coordination & mesh
+    summary: Linkerd's control plane `controller` binary (destination, identity, proxy-injector, sp-validator, service-mirror, heartbeat -- one binary, role chosen by subcommand), built from source on Wolfi. Tracks Linkerd's edge-YY.M.P releases -- linkerd/linkerd2 has cut only edge builds since stable-2.14.10 (2024-02-20), Buoyant gates true "stable" builds commercially. Ships the newest patch of the last 3 edge year.month lines (26.6/26.7/26.8). Boots against a baked-in, unreachable kubeconfig for the standalone smoke test; a real deployment points it at a live cluster via the chart.
+    source: https://github.com/linkerd/linkerd2
+    upstream: https://linkerd.io
+    license: Apache-2.0
+    tier: standard
+    status: pilot
+
+  - name: linkerd-proxy
+    category: Coordination & mesh
+    summary: linkerd2-proxy, Linkerd's Rust data-plane sidecar (mTLS termination and meshed traffic routing) -- a from-scratch Rust proxy with no bundled C++ engine, unlike Istio's Envoy fork, so it is genuinely buildable from source here. Built from linkerd/linkerd2-proxy, a separate repo/release cadence version-paired to each linkerd-control-plane release via upstream's own .proxy-version pin. Image only, no chart (ships inside meshed pods via the injector, not deployed standalone).
+    source: https://github.com/linkerd/linkerd2-proxy
+    upstream: https://linkerd.io
+    license: Apache-2.0
+    tier: standard
+    status: pilot
+
+  - name: linkerd-policy-controller
+    category: Coordination & mesh
+    summary: Linkerd's Rust policy controller (policy-controller), serving Linkerd's authorization-policy CRDs to the proxy data plane over gRPC. Built from source from the same linkerd/linkerd2 monorepo tag as linkerd-control-plane; uses rustls + aws-lc-rs (an ordinary, Cargo.lock-pinned Rust dependency, not a vendored fixed-version OpenSSL download). Image only, no chart (ships as a container in the control plane's destination Deployment).
+    source: https://github.com/linkerd/linkerd2
+    upstream: https://linkerd.io
+    license: Apache-2.0
+    tier: standard
+    status: pilot
+
   - name: velero
     category: Storage & platform
     summary: CNCF backup and disaster-recovery tool for Kubernetes cluster resources and persistent volumes. Single static Go binary on a hardened nonroot Wolfi base; object-store and snapshot backends are the operator's choice.
