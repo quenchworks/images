@@ -4,7 +4,7 @@
 # k8s.io/client-go/pkg/version.* so `metrics-server --version` reports the real release
 # (the flag prints version.Get().GitVersion). gitCommit/buildDate get static, reproducible
 # values (the tarball build has no git context). go-1.26 is pinned (newest, clears stdlib
-# CVE advisories) with GOTOOLCHAIN=local so go.mod's `go 1.24.12` directive does not trigger
+# CVE advisories) with GOTOOLCHAIN=local so go.mod's `go 1.26.4` directive does not trigger
 # a toolchain download. Output is a signed APK in Quenchworks' own repo. No upstream distro
 # binaries. Image-only (metrics API server, no chart).
 package:
@@ -36,26 +36,47 @@ pipeline:
       uri: https://github.com/kubernetes-sigs/metrics-server/archive/refs/tags/v${{package.version}}.tar.gz
       expected-sha256: __SHA256__
   - runs: |
+      set -eu
       export CGO_ENABLED=0
       export GOFLAGS=-mod=mod
       export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's toolchain
-      # 0-CVE dep bumps: safe upgrades over the versions the v0.8.1 go.mod pins, to
-      # clear fixable advisories the Trivy gate flags.
-      go get golang.org/x/crypto@v0.55.0
-      go get golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0
-      go get google.golang.org/grpc@v1.79.3
-      go get go.opentelemetry.io/otel/sdk@v1.43.0
-      # prometheus/prometheus v0.304.2 carries fixable CVEs (CVE-2026-42151/42154 HIGH,
-      # CVE-2026-40179/44903 MEDIUM); the only version fixing all four is v0.311.3. That
-      # bump pulls the k8s.io/* stack from v0.33.7 to v0.35.3, so the whole set is bumped
-      # in lockstep to keep k8s.io/apiserver consistent. v0.311.3 also changes the
-      # textparse.New signature (now (b, contentType, *SymbolTable, ParserOptions)), so
-      # the sole caller pkg/scraper/client/resource/decode.go is patched to match.
-      go get github.com/prometheus/prometheus@v0.311.3
-      go get k8s.io/apiserver@v0.35.3 k8s.io/component-base@v0.35.3 \
-        k8s.io/apimachinery@v0.35.3 k8s.io/api@v0.35.3 k8s.io/client-go@v0.35.3
-      sed -i 's#textparse.New(b, "text/plain", "", false, false, nil)#textparse.New(b, "text/plain", nil, textparse.ParserOptions{})#' \
-        pkg/scraper/client/resource/decode.go
+      # ---- 0-CVE module float (docs/go-module-float.md) --------------------------
+      # v0.9.0 already requires prometheus v0.313.0 and the k8s.io/* stack at v0.36.2,
+      # which is exactly what the old prometheus/k8s lockstep bump (plus a
+      # textparse.New source patch) existed to reach -- upstream did it, so both are
+      # gone from this recipe. What upstream still leaves below a fixed version is
+      # grpc: v0.9.0 requires v1.81.1 and the xDS-RBAC/HTTP2 HIGH
+      # (GHSA-hrxh-6v49-42gf) is fixed in v1.82.1, and cel-go: v0.9.0 reaches v0.28.1
+      # through k8s.io/apiserver and GHSA-gcjh-h69q-9w9g (JSON private fields exposed
+      # via NativeTypes) is fixed in v0.29.0. The x/* floors are the house coherent
+      # set (x/mod v0.40.0, NOT the v0.37.0 Trivy names -- see the doc).
+      #
+      # FLOOR is a FLOOR, not a pin. A bare `go get mod@vX` fails silently in two
+      # directions: it is a NO-OP when an upstream `replace` overrides it, and it
+      # becomes a DOWNGRADE once upstream requires more than vX -- re-introducing the
+      # CVE it was added to clear. Float only what is below the floor, then assert the
+      # SHIPPED BINARY carries nothing below it.
+      FLOOR="github.com/google/cel-go@v0.29.2 golang.org/x/mod@v0.40.0 golang.org/x/net@v0.58.0 golang.org/x/sys@v0.47.0 golang.org/x/text@v0.41.0 golang.org/x/crypto@v0.55.0 google.golang.org/grpc@v1.82.1"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is
+      # the EFFECTIVE version and a replace cannot hide behind the require line.
+      go list -m $MODS
+      need="$(go list -m $MODS | awk '{ print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
+      go mod tidy
       PKG=k8s.io/client-go/pkg
       go build -trimpath \
         -ldflags "-s -w \
@@ -63,3 +84,9 @@ pipeline:
           -X ${PKG}/version.gitCommit=unknown \
           -X ${PKG}/version.buildDate=1970-01-01T00:00:00Z" \
         -o "${{targets.destdir}}/usr/bin/metrics-server" sigs.k8s.io/metrics-server/cmd/metrics-server
+      # The float is only real if it reached the BINARY. Every `dep`/`=>` line of
+      # `go version -m` must be at or above its floor -- the `=>` line is what catches
+      # a replace-shadowed float. Fail the build rather than ship it.
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/metrics-server" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor metrics-server)"
+      [ -z "$bad" ] || { echo "0-CVE float did not reach the binary:"; echo "$bad"; exit 1; }
