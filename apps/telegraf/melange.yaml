@@ -35,8 +35,85 @@ pipeline:
       uri: https://github.com/influxdata/telegraf/archive/refs/tags/v${{package.version}}.tar.gz
       expected-sha256: __SHA256__
   - runs: |
+      set -eu
       export CGO_ENABLED=0
       export GOFLAGS=-mod=mod
+      # ---- rclone: v1.75.0 or nothing -------------------------------------------
+      # Every rclone below v1.75.0 carries CVE-2026-49980 (CRITICAL RCE) plus 17 more
+      # advisories; v1.75.0 is the first clean release. Telegraf 1.39.3 requires it
+      # already. The 1.37/1.38 lines pin v1.69.3 and still call the pre-1.74 rclone
+      # API (fs.LogOutput, vfs.New without a ctx), so those two call sites are ported
+      # exactly the way upstream ported them in 1.39.x -- no behaviour change, and
+      # plugins/common/slog.NewLogger already exists in both older trees.
+      #
+      # Guarded three ways: patch when the old API is present, no-op when the new API
+      # is already there, and FAIL when the file matches neither -- otherwise a
+      # rewritten upstream file would silently skip the port and ship the CVE.
+      RF=plugins/outputs/remotefile/remotefile.go
+      if grep -q 'fs\.LogOutput' "$RF"; then
+        # 1. import the plugin-logger adapter upstream routes rclone logging through
+        sed -i 's|^\t"github.com/influxdata/telegraf/plugins/outputs"$|\t"github.com/influxdata/telegraf/plugins/common/slog"\n&|' "$RF"
+        # 2. fs.LogOutput (3 lines) -> fs.SetLogger; awk, not sed, because the block
+        #    spans lines and busybox sed's multi-line `c\` form is not portable
+        awk '
+          /^\tfs\.LogOutput = func\(/ { print "\tfs.SetLogger(slog.NewLogger(f.Log).Handler())"; skip = 2; next }
+          skip > 0 { skip--; next }
+          { print }' "$RF" > "$RF.new"
+        mv "$RF.new" "$RF"
+        # 3. vfs.New grew a context argument
+        sed -i 's|vfs\.New(rootfs, &f\.vfsopts)|vfs.New(ctx, rootfs, \&f.vfsopts)|' "$RF"
+        grep -q 'plugins/common/slog"' "$RF"       || { echo "slog import not added";     exit 1; }
+        grep -q 'fs\.SetLogger(slog\.NewLogger'  "$RF" || { echo "fs.SetLogger port failed"; exit 1; }
+        grep -q 'vfs\.New(ctx, rootfs'           "$RF" || { echo "vfs.New port failed";     exit 1; }
+      elif ! grep -q 'vfs\.New(ctx, rootfs' "$RF"; then
+        echo "$RF matches neither the pre-1.74 nor the post-1.74 rclone API -- refusing"
+        exit 1
+      fi
+      # ---- 0-CVE module float (docs/go-module-float.md) -------------------------
+      # FLOOR is a FLOOR, not a pin. A bare `go get mod@vX` fails silently in two
+      # directions: it is a NO-OP when an upstream `replace` overrides it, and it
+      # becomes a DOWNGRADE once upstream requires more than vX -- re-introducing the
+      # CVE it was added to clear. 1.39.3 already sits above most of this set (rclone
+      # v1.75.0, grpc v1.84.0-dev), so mostly the older lines move. Float what is
+      # below the floor, then assert the SHIPPED BINARY carries nothing below it.
+      #
+      # TWO passes, and the order matters: rclone v1.75.0 itself requires
+      # grpc v1.84.0-dev, so asking for rclone and grpc@v1.82.1 in ONE `go get` makes
+      # go refuse the whole command ("rclone@v1.75.0 requires grpc@v1.84.0-dev, not
+      # grpc@v1.82.1"). Float rclone first, then recompute -- by then grpc is above
+      # its floor on rclone's account and is left alone.
+      RCLONE_FLOOR="github.com/rclone/rclone@v1.75.0"
+      FLOOR="golang.org/x/mod@v0.40.0 golang.org/x/net@v0.58.0 golang.org/x/sys@v0.47.0 golang.org/x/text@v0.41.0 golang.org/x/crypto@v0.55.0 google.golang.org/grpc@v1.82.1"
+      # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
+      below_floor() {
+        awk -v floor="$1" -v tag="$2" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is
+      # the EFFECTIVE version and a replace cannot hide behind the require line.
+      float() {
+        mods="$(echo "$1" | tr ' ' '\n' | cut -d@ -f1)"
+        go list -m $mods
+        need="$(go list -m $mods | awk '{ print $1, $NF }' | below_floor "$1" go.mod | awk '{ print $1 }')"
+        if [ -n "$need" ]; then go get $need; fi
+      }
+      float "$RCLONE_FLOOR"
+      float "$FLOOR"
       go build -trimpath \
         -ldflags "-s -w -X github.com/influxdata/telegraf/internal.Version=${{package.version}}" \
         -o "${{targets.destdir}}/usr/bin/telegraf" ./cmd/telegraf
+      # The float is only real if it reached the BINARY. Every `dep`/`=>` line of
+      # `go version -m` must be at or above its floor -- the `=>` line is what catches
+      # a replace-shadowed float. Fail the build rather than ship it.
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/telegraf" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' \
+        | below_floor "$RCLONE_FLOOR $FLOOR" telegraf)"
+      [ -z "$bad" ] || { echo "0-CVE float did not reach the binary:"; echo "$bad"; exit 1; }
