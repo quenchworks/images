@@ -1,0 +1,42 @@
+# Builds the mysqld_exporter Prometheus exporter from source onto Wolfi.
+# Used as the hardened metrics sidecar for the mysql and mariadb charts.
+package:
+  name: quench-mysqld-exporter
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened mysqld_exporter, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/prometheus/mysqld_exporter/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: "__SHA256__"
+  - runs: |
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      go build -trimpath \
+        -ldflags "-s -w -X github.com/prometheus/common/version.Version=${{package.version}}" \
+        -o "${{targets.destdir}}/usr/bin/mysqld_exporter" .
+  # The exporter user is provided by apko (accounts), not the package, to avoid
+  # conflicting with wolfi-baselayout's /etc files.
+
+test:
+  pipeline:
+    - runs: mysqld_exporter --version

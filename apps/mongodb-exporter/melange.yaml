@@ -1,0 +1,54 @@
+# Builds the mongodb_exporter Prometheus exporter from source onto Wolfi.
+# Used as the hardened metrics sidecar for the mongodb chart.
+package:
+  name: quench-mongodb-exporter
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened mongodb_exporter, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/percona/mongodb_exporter/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: "__SHA256__"
+  - runs: |
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      # Upstream's gssapi build tag needs cgo; the default (no tag) build is pure
+      # Go and is what the container image ships.
+      #
+      # 0-CVE gate: minor/patch dep bumps (same major) to clear the four fixable
+      # Trivy findings in the exporter binary at 0.53.0 -- GHSA-xmrv-pmrh-hhx2
+      # (aws eventstream panic DoS, reached via percona-backup-mongodb's S3
+      # client) and CVE-2026-56864/56865 (golang.org/x/mod sumdb/tlog, reached
+      # via mongo-tools). Transitive bumps only -- no forks, no major bumps,
+      # no `replace`.
+      go get github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream@v1.7.8 \
+             github.com/aws/aws-sdk-go-v2/service/s3@v1.97.3 \
+             golang.org/x/mod@v0.40.0
+      go mod tidy
+      go build -trimpath -ldflags "-s -w -X main.version=${{package.version}}" \
+        -o "${{targets.destdir}}/usr/bin/mongodb_exporter" .
+  # The exporter user is provided by apko (accounts), not the package, to avoid
+  # conflicting with wolfi-baselayout's /etc files.
+
+test:
+  pipeline:
+    - runs: mongodb_exporter --version
