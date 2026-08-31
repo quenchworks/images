@@ -34,23 +34,55 @@ pipeline:
       uri: https://github.com/google/cadvisor/archive/refs/tags/v${{package.version}}.tar.gz
       expected-sha256: __SHA256__
   - runs: |
+      set -eu
       export CGO_ENABLED=0
       export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local
       cd cmd
-      # 0-CVE gate: minimal same-major bumps of transitive modules. grpc bumped to
-      # v1.82.1 for GHSA-hrxh-6v49-42gf (xDS RBAC + HTTP/2, HIGH); grpc@1.82.1 requires
-      # the otel@1.43.0 family + x/oauth2@0.36.0, so float that cascade (otel bumped
-      # 1.41.0 -> 1.43.0 in place).
-      go get github.com/opencontainers/runc@v1.4.3 \
-             google.golang.org/grpc@v1.82.1 \
-             go.opentelemetry.io/otel@v1.43.0 \
-             go.opentelemetry.io/otel/sdk@v1.43.0 \
-             go.opentelemetry.io/otel/trace@v1.43.0 \
-             go.opentelemetry.io/otel/metric@v1.43.0 \
-             golang.org/x/oauth2@v0.36.0 \
-             golang.org/x/crypto@v0.52.0 \
-             golang.org/x/net@v0.55.0
+      # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
+      # FLOOR is a FLOOR, not a pin. A bare `go get mod@vX` fails silently in two
+      # directions: it is a NO-OP when an upstream `replace` overrides it, and it
+      # becomes a DOWNGRADE once upstream requires more than vX -- re-introducing
+      # the CVE it was added to clear. So float only what is below the floor, then
+      # assert the SHIPPED BINARY carries nothing below it.
+      #
+      # FLOOR CHECK at 0.60.5: this recipe used to force `go get x/net@v0.55.0`
+      # and `x/crypto@v0.52.0` with a bare pin. cmd/go.mod at this tag requires
+      # x/net v0.57.0 and x/crypto v0.54.0, so BOTH pins had inverted into
+      # downgrades -- and v0.55.0 is BELOW the v0.56.0 fix for CVE-2026-46600
+      # (dnsmessage panic), i.e. the "fix" was re-introducing the CVE the tag
+      # already shipped clean. Floors raised to the house values. grpc (v1.82.1,
+      # GHSA-hrxh-6v49-42gf) and its otel v1.43.0 + x/oauth2 v0.36.0 cascade are
+      # kept as floors; runc v1.4.3 is exactly what the tag requires (no-op).
+      # cmd/go.mod's only `replace`s point the cadvisor library at ../ and ../lib,
+      # neither of which is floored here.
+      FLOOR="github.com/opencontainers/runc@v1.4.3 google.golang.org/grpc@v1.82.1 go.opentelemetry.io/otel@v1.43.0 go.opentelemetry.io/otel/trace@v1.43.0 go.opentelemetry.io/otel/metric@v1.43.0 golang.org/x/oauth2@v0.36.0 golang.org/x/crypto@v0.55.0 golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0 golang.org/x/sys@v0.47.0"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is
+      # the EFFECTIVE version and a replace cannot hide behind the require line.
+      go list -m $MODS
+      need="$(go list -m $MODS | awk '{ print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
       go mod tidy
       go build -trimpath -tags netgo \
         -ldflags "-s -w -X __LDPATH__=v${{package.version}}" \
         -o "${{targets.destdir}}/usr/bin/cadvisor" ./
+      # The float is only real if it reached the BINARY. Every `dep`/`=>` line of
+      # `go version -m` must be at or above its floor -- the `=>` line is what
+      # catches a replace-shadowed float. Fail the build rather than ship it.
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/cadvisor" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor cadvisor)"
+      [ -z "$bad" ] || { echo "❌ 0-CVE float did not reach cadvisor:"; echo "$bad"; exit 1; }
