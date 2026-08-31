@@ -38,6 +38,25 @@ def run_one(py: Path) -> str:
         return f"{py.stem:20s} ERROR: timed out"
 
 
+def apps_without_checker(checks):
+    """Apps in apps/ with no checker file.
+
+    An app with no checker is INVISIBLE to this tool: it is never reported as
+    behind, at any age. That is not a gap in coverage, it is a gap that LOOKS
+    like coverage, because the summary line only counts apps it happened to
+    check. vikunja sat two releases behind carrying 2 HIGH + 3 MEDIUM CVEs
+    without ever appearing as an UPDATE for exactly this reason.
+    """
+    apps_dir = CHECK_DIR.parent.parent / "apps"
+    if not apps_dir.is_dir():
+        return []
+    have = {c.stem for c in checks}
+    return sorted(
+        d.name for d in apps_dir.iterdir()
+        if (d / "build.conf").exists() and d.name not in have
+    )
+
+
 def main() -> int:
     argv = sys.argv[1:]
     quiet = False
@@ -57,6 +76,7 @@ def main() -> int:
         else:
             names.append(a)
 
+    uncovered = []
     if names:
         checks = [CHECK_DIR / f"{n}.py" for n in names]
         missing = [c.stem for c in checks if not c.exists()]
@@ -64,6 +84,7 @@ def main() -> int:
             sys.exit(f"no checker for: {', '.join(missing)}")
     else:
         checks = sorted(p for p in CHECK_DIR.glob("*.py") if p.name != "_lib.py")
+        uncovered = apps_without_checker(checks)
 
     with cf.ThreadPoolExecutor(max_workers=workers) as ex:
         lines = list(ex.map(run_one, checks))
@@ -80,7 +101,26 @@ def main() -> int:
         if errors:
             print("\n-- errors --")
             print("\n".join(errors))
-    print(f"\nsummary: {len(checks)} apps · {len(updates)} updates · {len(errors)} errors")
+
+    # A checker that returns no candidates is indistinguishable from "current" in
+    # the summary, so name those explicitly -- same silent-failure shape as a
+    # missing checker.
+    blank = sorted(l for l in lines if "have=" in l and "latest" in l and "=[]" in l)
+    if blank:
+        print("\n-- checkers returning ZERO candidates (treat as BROKEN, not current) --")
+        print("\n".join(blank))
+
+    if uncovered:
+        print(f"\n-- {len(uncovered)} apps with NO checker (never reported as behind) --")
+        for i in range(0, len(uncovered), 8):
+            print("   " + " ".join(uncovered[i:i + 8]))
+        print("   each needs scripts/check/<slug>.py -- see docs/update-plan-2026-08-31.md")
+
+    total = len(checks) + len(uncovered)
+    print(
+        f"\nsummary: {len(checks)}/{total} apps checked · {len(updates)} updates"
+        f" · {len(errors)} errors · {len(blank)} blank · {len(uncovered)} unchecked"
+    )
     return len(updates)
 
 
