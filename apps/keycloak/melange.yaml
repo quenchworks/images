@@ -50,8 +50,15 @@ pipeline:
       #     instrumentation-2.23.0 and semconv-1.37.0 lines use only stable OTel APIs and
       #     are not flagged, so they stay. Quarkus 3.33's quarkus-opentelemetry extension
       #     re-augments against the bumped set below.
-      # (2) jackson-databind 2.21.2 -> 2.21.5 (CVE-2026-54512..54518; 2.21.5 required for
-      #     -54515). Same-minor drop-in.
+      # (2) netty-codec-http 4.1.136 -> 4.1.137.Final (the CVE is fixed there; its siblings
+      #     are not flagged at 4.1.136, and the minimal bump is the house rule).
+      #
+      # 26.7.2 SHIPS THE REST ALREADY. The swaps 26.7.1 needed for jackson-core/databind
+      # (2.21.5), micrometer-core (1.16.6), netty-codec/-haproxy/-http2/-dns (4.1.136),
+      # postgresql (42.7.13) and mariadb-java-client (3.5.9) are GONE from this recipe
+      # because upstream now bundles those exact fixed versions. Re-check on every bump:
+      # a swap whose target FILENAME no longer exists would silently create a stray jar
+      # the app-model never references instead of patching anything.
       #
       # IMPORTANT: Keycloak's baked Quarkus app-model (lib/quarkus/quarkus-application.dat)
       # pins each dependency by its EXACT jar FILENAME (no checksum) and `kc.sh build`
@@ -61,6 +68,11 @@ pipeline:
       # pom.properties (= the fixed version), so the gate sees the patched version.
       cd lib/lib/main
       swap() { # url outfile-kept-name sha256(of downloaded content)
+        # the target MUST already exist: we overwrite a bundled jar in place, keeping its
+        # filename. If a version bump renames it, creating it fresh would add a stray jar
+        # the app-model never loads and quietly leave the vulnerable one in place -- so a
+        # missing target is a build failure, not a download.
+        [ -f "$2" ] || { echo "swap target missing: $2 (upstream renamed it?)" >&2; exit 1; }
         curl -fsSL -o "$2" "$1"
         echo "$3  $2" | sha256sum -c -
       }
@@ -79,31 +91,8 @@ pipeline:
       swap "$OT/opentelemetry-sdk-logs/1.62.0/opentelemetry-sdk-logs-1.62.0.jar" io.opentelemetry.opentelemetry-sdk-logs-1.57.0.jar 51c94329bc8e335ed79027d29d49c075c11b91b39e48679edf590e784a392406
       swap "$OT/opentelemetry-sdk-metrics/1.62.0/opentelemetry-sdk-metrics-1.62.0.jar" io.opentelemetry.opentelemetry-sdk-metrics-1.57.0.jar 50b057fbf063f6801f623212f4b51b6a3fefc77837314a1316b2f54894c8b5d4
       swap "$OT/opentelemetry-sdk-trace/1.62.0/opentelemetry-sdk-trace-1.62.0.jar" io.opentelemetry.opentelemetry-sdk-trace-1.57.0.jar fb6c0953b229a6da1db813135ae11a621bf9da56b7356c1e93049ed4b088c232
-      # micrometer-core 1.16.3 -> 1.16.6: CVE-2026-40983. Same keep-the-filename trick as
-      # the otel swaps above -- the classes are the patched ones and Trivy reads the jar's
-      # internal pom.properties, so the gate sees 1.16.6.
-      MM="https://repo1.maven.org/maven2/io/micrometer"
-      swap "$MM/micrometer-core/1.16.6/micrometer-core-1.16.6.jar" io.micrometer.micrometer-core-1.16.3.jar 1957ef2deaffbc1fb98cebfd0f5b3109ecf19c994d7e5378598c20747ba8d68b
-      swap "https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-databind/2.21.5/jackson-databind-2.21.5.jar" com.fasterxml.jackson.core.jackson-databind-2.21.2.jar 507418c0fafd38b2b2cfb704521630da613a8e4cc8381195a6f418017883e2c0
-      # (3) jackson-core 2.21.2 -> 2.21.5 (same Jul-2026 cluster; databind 2.21.5 above needs a
-      #     matching-or-newer jackson-core). Content-swap keeping the 2.21.2 filename.
-      swap "https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-core/2.21.5/jackson-core-2.21.5.jar" com.fasterxml.jackson.core.jackson-core-2.21.2.jar b64b5874162b503a0e58a8f7758266e8dd9f91bf49e3a59ae0b5f47589a231b7
-      # (4) netty 4.1.135 -> 4.1.136.Final for the Jul-2026-flagged codec jars (codec/haproxy/
-      #     http/http2/dns). Netty is ABI-stable within 4.1.x, so bumping the flagged jars
-      #     against the 4.1.135 remainder is safe. Content-swap keeping the 4.1.135 filenames.
-      #     netty-codec-dns carries GHSA-mfg7-5gfp-c4w3 (MEDIUM, DNS record-decoder memory
-      #     leak on malformed domain names); netty-resolver-dns (its only consumer here) is
-      #     not flagged and stays at 4.1.135 -- same 4.1.x line, ABI-compatible.
       NET="https://repo1.maven.org/maven2/io/netty"
-      swap "$NET/netty-codec/4.1.136.Final/netty-codec-4.1.136.Final.jar" io.netty.netty-codec-4.1.135.Final.jar 2de4fc13005c7740b46427a47ee04265a19779c147d53e583f441889b1148159
-      swap "$NET/netty-codec-haproxy/4.1.136.Final/netty-codec-haproxy-4.1.136.Final.jar" io.netty.netty-codec-haproxy-4.1.135.Final.jar 841be7fc6f1c929ecc63c70a909e0df085b4e80e44680acf46708f0e93e68037
-      # netty-codec-http alone moves to 4.1.137 (CVE fixed there; its siblings are not
-      # flagged at 4.1.136, and the minimal bump is the house rule).
-      swap "$NET/netty-codec-http/4.1.137.Final/netty-codec-http-4.1.137.Final.jar" io.netty.netty-codec-http-4.1.135.Final.jar 0535bb5a736472bef5c948d15eb273c4ab9f796656fc7c5d6b982ad92bddbd49
-      swap "$NET/netty-codec-http2/4.1.136.Final/netty-codec-http2-4.1.136.Final.jar" io.netty.netty-codec-http2-4.1.135.Final.jar 14f67ae095c056b062aa0ee2c7b01f6b78004cf3620a6e9061bcb637f079387a
-      swap "$NET/netty-codec-dns/4.1.136.Final/netty-codec-dns-4.1.136.Final.jar" io.netty.netty-codec-dns-4.1.135.Final.jar 89bddc4ec42756c41a0195a50a1323a324836162b6712a843c3de5c29096c93b
-      # (5) org.postgresql:postgresql 42.7.11 -> 42.7.12 (Jul-2026). Content-swap keeping name.
-      swap "https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.12/postgresql-42.7.12.jar" org.postgresql.postgresql-42.7.11.jar 31fbf6f06b2217fb51d5100cee51b22625cc81640da0679b47914e54c1e6377c
+      swap "$NET/netty-codec-http/4.1.137.Final/netty-codec-http-4.1.137.Final.jar" io.netty.netty-codec-http-4.1.136.Final.jar 0535bb5a736472bef5c948d15eb273c4ab9f796656fc7c5d6b982ad92bddbd49
       cd ../../..
   - runs: |
       # Run the augmentation (`kc.sh build`) at IMAGE BUILD time so runtime is optimized
