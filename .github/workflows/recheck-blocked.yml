@@ -30,10 +30,25 @@ jobs:
           MELANGE_VER=v0.53.0
           curl -fsSL "https://github.com/chainguard-dev/melange/releases/download/${MELANGE_VER}/melange_${MELANGE_VER#v}_linux_amd64.tar.gz" \
             | sudo tar xz --strip-components=1 -C /usr/local/bin
-          APKO_VER="$(gh api repos/chainguard-dev/apko/releases/latest --jq .tag_name)"
+          # Resolve "latest" from the github.com redirect, NOT `gh api`. `gh` sends
+          # GITHUB_TOKEN, and an upstream org can have an IP allow list that then
+          # rejects the authenticated request from a runner IP -- which is exactly
+          # how this step started failing:
+          #   gh: ... the `aquasecurity` organization has an IP allow list enabled,
+          #   and your IP address is not permitted to access this resource. (HTTP 403)
+          # The redirect is unauthenticated, so no allow list applies and it does not
+          # consume the API rate limit either. apko gets the same treatment: it is the
+          # same pattern and would fail the same way the day chainguard-dev enables one.
+          latest_tag() {
+            curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$1/releases/latest" \
+              | sed 's#.*/tag/##'
+          }
+          APKO_VER="$(latest_tag chainguard-dev/apko)"
+          test -n "${APKO_VER}"
           curl -fsSL "https://github.com/chainguard-dev/apko/releases/download/${APKO_VER}/apko_${APKO_VER#v}_linux_amd64.tar.gz" \
             | sudo tar xz --strip-components=1 -C /usr/local/bin
-          TRIVY_VER="$(gh api repos/aquasecurity/trivy/releases/latest --jq .tag_name)"
+          TRIVY_VER="$(latest_tag aquasecurity/trivy)"
+          test -n "${TRIVY_VER}"
           curl -fsSL "https://github.com/aquasecurity/trivy/releases/download/${TRIVY_VER}/trivy_${TRIVY_VER#v}_Linux-64bit.tar.gz" \
             | sudo tar xz -C /usr/local/bin trivy
           trivy image --download-db-only
