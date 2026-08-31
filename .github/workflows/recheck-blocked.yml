@@ -65,6 +65,18 @@ jobs:
           for conf in apps/*/build.conf; do
             grep -q 'BLOCKED=1' "$conf" || continue
             app="$(basename "$(dirname "$conf")")"
+            # An app can be blocked precisely BECAUSE it has no recipe to gate --
+            # istio-proxyv2 is build.conf only, since Istio's Envoy needs a Bazel
+            # toolchain melange cannot drive. Without this skip, the fallback
+            # `cp apko.yaml ...` fails, set -e propagates out of the subshell, and
+            # the single most permanently-blocked app kills the whole sweep before
+            # any other app is reported.
+            if [ ! -f "apps/$app/apko.yaml" ]; then
+              echo "SKIP $app (no apko.yaml -- nothing to gate)"
+              echo "| $app | - | ⏭ no recipe to gate |" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+            echo "::group::re-gate $app"
             ( cd "apps/$app" || exit 0
               rm -rf packages image.tar melange.rendered.yaml apko.rendered.yaml
               # shellcheck disable=SC1091
@@ -85,8 +97,10 @@ jobs:
               else
                 echo "STILL_BLOCKED"
               fi
-              rm -rf packages image.tar melange.rsa* ) > /tmp/res 2>&1
+              rm -rf packages image.tar melange.rsa* ) > /tmp/res 2>&1 || true
             result="$(tail -1 /tmp/res)"
+            echo "$app -> ${result:-NO_RESULT}"
+            echo "::endgroup::"
             ver="$(cd "apps/$app" && source build.conf 2>/dev/null && echo "${VERSIONS[$(( ${#VERSIONS[@]} - 1 ))]}" 2>/dev/null || echo '?')"
             case "$result" in
               PASS) mark="✅ NOW 0-CVE — unblock + publish"; NEWLY_PASSING="$NEWLY_PASSING $app";;
@@ -95,6 +109,12 @@ jobs:
             echo "| $app | $ver | $mark |" >> "$GITHUB_STEP_SUMMARY"
           done
           echo "newly_passing=$NEWLY_PASSING" >> "$GITHUB_OUTPUT"
+          # Completing the sweep IS success. A blocked app that is still blocked is
+          # the expected result, not a workflow failure -- failing on it makes
+          # "upstream still has not fixed this" indistinguishable from "the workflow
+          # broke", which is exactly how this job sat red without anyone learning
+          # anything from it.
+          echo "sweep completed" 
 
       - name: Open a tracking issue for any newly-passing app
         if: ${{ steps.gate.outputs.newly_passing != '' && steps.gate.outputs.newly_passing != ' ' }}
