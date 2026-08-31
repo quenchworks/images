@@ -19,7 +19,7 @@
 # (no NSS at runtime); the binary dynamically links glibc, which melange's SO
 # scanner turns into a runtime dep so apko pulls glibc into the image.
 #
-# go.mod declares go 1.25.7; we build with go-1.26 (newest, clears stdlib CVE
+# go.mod declares go 1.26.4; we build with go-1.26 (newest, clears stdlib CVE
 # advisories) and GOTOOLCHAIN=local so go.mod's directive does not fetch a
 # toolchain. GOFLAGS=-mod=mod lets the module graph resolve patched deps.
 package:
@@ -46,7 +46,7 @@ environment:
       - ca-certificates-bundle
       - go-1.26
       # UI toolchain: the Vue 3 frontend is built with vite. package.json requires
-      # node >=24 and pnpm@10 (corepack); pnpm is installed locally via npm below.
+      # node >=24 and pnpm@11 (corepack); pnpm is installed locally via npm below.
       - nodejs-24
       - npm
 
@@ -64,10 +64,11 @@ pipeline:
       export HOME="$(mktemp -d)"
       export PUPPETEER_SKIP_DOWNLOAD=true
       export CYPRESS_INSTALL_BINARY=0
-      # Install pnpm@10 (frontend/package.json pins pnpm@10) into a private prefix
-      # on PATH -- avoids writing to the global node prefix.
+      # Install pnpm@11: frontend/package.json pins packageManager pnpm@11.19.0 and its
+      # lockfile is v11, which pnpm 10 cannot read. Private prefix on PATH avoids writing
+      # to the global node prefix. Re-check this pin on every version bump.
       export PNPM_PREFIX="$(mktemp -d)"
-      npm install -g --prefix "$PNPM_PREFIX" pnpm@10
+      npm install -g --prefix "$PNPM_PREFIX" pnpm@11
       export PATH="$PNPM_PREFIX/bin:${PATH}"
       pnpm --version
       (
@@ -89,22 +90,35 @@ pipeline:
       export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's 1.25
       export GO111MODULE=on
       VERPKG="code.vikunja.io/api/pkg/version"
-      # Minimal safe dep bumps the comprehensive Trivy gate flags on v2.3.0's module
-      # graph. All are same-major minor/patch bumps (no API break, no fork), resolved
-      # via GOFLAGS=-mod=mod:
-      #   golang.org/x/net    v0.50.0 -> 0.55.0 (html XSS, http2 DoS, idna, CVE-2026-25681/27136/27141/33814/39821/42502/42506/25680)
-      #   golang.org/x/crypto v0.48.0 -> 0.52.0 (ssh channel-open DoS, CVE-2026-39827)
-      #   golang.org/x/image  v0.38.0 -> 0.43.0 (webp/tiff/vp8 DoS, CVE-2026-33812/33813/46599/46601)
-      #   github.com/go-chi/chi/v5     v5.2.2 -> v5.2.4 (open redirect, CVE-2025-69725)
-      #   github.com/Azure/go-ntlmssp  -> v0.1.1 (NTLM parse DoS, CVE-2026-32952)
+      # Minimal safe dep bumps the comprehensive Trivy gate flags on the module graph.
+      # All are same-major minor/patch bumps (no API break, no fork), resolved via
+      # GOFLAGS=-mod=mod. Each is a FLOOR ABOVE what the tag ships:
+      #   golang.org/x/net    v0.57.0 -> v0.58.0 (html XSS, http2 DoS, idna)
+      #   golang.org/x/text   v0.40.0 -> v0.41.0 (moves in lockstep with x/net)
+      #   golang.org/x/crypto v0.54.0 -> v0.55.0 (ssh channel-open DoS, CVE-2026-39827)
+      #   golang.org/x/image  v0.44.0 -> v0.45.0 (webp/tiff/vp8 DoS, CVE-2026-33812/33813/46599/46601)
+      #   golang.org/x/mod    v0.37.0 -> v0.40.0 (GOSUMDB/tlog verification bypass, CVE-2026-56864/56865)
+      #
+      # DROPPED at v2.5.0 -- the tag now ships these AT OR ABOVE the pins this recipe
+      # used to force, so `go get <pin>` would DOWNGRADE and reintroduce the CVE:
+      #   github.com/go-chi/chi/v5    tag v5.3.1 >= old pin v5.2.4 (CVE-2025-69725)
+      #   github.com/labstack/echo/v5 tag v5.3.1 >= old pin v5.2.0 (CVE-2026-55677)
+      #   github.com/Azure/go-ntlmssp tag v0.1.1 == old pin v0.1.1 (CVE-2026-32952)
+      # Re-check every bump: `go get M@V` is EXACT, not a floor.
       go get golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0
       go get golang.org/x/crypto@v0.55.0
       go get golang.org/x/image@v0.45.0
-      go get github.com/go-chi/chi/v5@v5.2.4
-      #   github.com/labstack/echo/v5 v5.0.3 -> v5.2.0 (URL path decoding info disclosure, CVE-2026-55677)
-      #   golang.org/x/mod            v0.38.0 -> v0.40.0 (GOSUMDB/tlog verification bypass, CVE-2026-56864/56865)
-      go get github.com/Azure/go-ntlmssp@v0.1.1 github.com/labstack/echo/v5@v5.2.0 golang.org/x/mod@v0.40.0
+      go get golang.org/x/mod@v0.40.0
       go mod tidy
+      # Assert the floats reached the resolved graph (a silent downgrade would pass the
+      # build and fail only at scan time).
+      for want in golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0 \
+                  golang.org/x/crypto@v0.55.0 golang.org/x/image@v0.45.0 \
+                  golang.org/x/mod@v0.40.0; do
+        m="${want%@*}"; v="${want#*@}"
+        got="$(go list -m -f '{{.Version}}' "$m")"
+        [ "$got" = "$v" ] || { echo "FLOAT LOST: $m resolved $got, wanted $v" >&2; exit 1; }
+      done
       # Mirror upstream's release ldflags/tags so `vikunja version` reports the real
       # release. netgo+osusergo keep DNS/os-user pure-Go; sqlite stays CGO (mattn).
       go build -trimpath \
