@@ -17,6 +17,8 @@ package:
       - python-3.13
       - libgcc
       - glibc
+      # uuid-ossp links against libuuid at runtime (see --with-uuid=e2fs below).
+      - libuuid
 
 environment:
   contents:
@@ -31,6 +33,7 @@ environment:
       - openssl-dev
       - readline-dev
       - zlib-dev
+      - util-linux-dev   # libuuid headers, for --with-uuid=e2fs (uuid-ossp)
       - icu-dev
       - linux-headers
       - pkgconf
@@ -53,16 +56,24 @@ pipeline:
         --with-readline \
         --with-zlib \
         --with-icu \
+        --with-uuid=e2fs \
         --with-system-tzdata=/usr/share/zoneinfo
       make -j"$(nproc)"
       make DESTDIR="${{targets.destdir}}" install
   # Build + install a curated set of dependency-free contrib extensions from the
   # SAME source tree (no extra external packages). These all build with the configure
   # flags above; btree_gin is required by Temporal's visibility schema. We do NOT run a
-  # blanket `make -C contrib install` because some contribs (uuid-ossp, sepgsql, bool_plperl,
+  # blanket `make -C contrib install` because some contribs (sepgsql, bool_plperl,
   # ...) need optional deps we don't configure and would fail the build.
+  #
+  # uuid-ossp IS in the list: it needs --with-uuid, which configure now sets to e2fs
+  # (libuuid, from util-linux-dev). It is not optional in practice -- Ory Hydra's and
+  # Kratos's FIRST migration calls `CREATE EXTENSION "uuid-ossp"`, so without it their
+  # migrate initContainer dies with
+  #   ERROR: extension "uuid-ossp" is not available (SQLSTATE 0A000)
+  # and both charts' release gates fail at install with a CrashLoopBackOff.
   - runs: |
-      for ext in btree_gin btree_gist pg_trgm pgcrypto hstore citext pg_stat_statements intarray ltree unaccent fuzzystrmatch tablefunc; do
+      for ext in btree_gin btree_gist pg_trgm pgcrypto hstore citext pg_stat_statements intarray ltree unaccent fuzzystrmatch tablefunc uuid-ossp; do
         make -C "contrib/$ext" -j"$(nproc)"
         make -C "contrib/$ext" DESTDIR="${{targets.destdir}}" install
       done
