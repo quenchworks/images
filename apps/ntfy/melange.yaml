@@ -96,12 +96,48 @@ pipeline:
       export GOFLAGS=-mod=mod
       export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's 1.25.8
       export GO111MODULE=on
-      # 0-CVE gate float: golang.org/x/text v0.38.0 -> v0.39.0 (CVE-2026-56852:
-      # infinite loop on invalid input). Minor, API-compatible.
-      go get golang.org/x/text@v0.41.0 google.golang.org/grpc@v1.82.1 go.opentelemetry.io/otel@v1.43.0 go.opentelemetry.io/otel/sdk@v1.43.0 go.opentelemetry.io/otel/trace@v1.43.0 go.opentelemetry.io/otel/metric@v1.43.0 golang.org/x/oauth2@v0.36.0
+      # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
+      #   golang.org/x/text      CVE-2026-56852 infinite loop on invalid input
+      #   google.golang.org/grpc GHSA-hrxh-6v49-42gf xDS/HTTP2
+      #   go.opentelemetry.io/*  coherent set pulled by the grpc floor
+      #   golang.org/x/oauth2    CVE-2026-30204
+      #
+      # FLOOR is a FLOOR, not a pin. A bare `go get mod@vX` fails silently in two
+      # directions: it is a NO-OP when an upstream `replace` overrides it, and it
+      # becomes a DOWNGRADE once upstream requires more than vX -- re-introducing
+      # the CVE it was added to clear. So float only what is below the floor, then
+      # assert the SHIPPED BINARY carries nothing below it.
+      # 2.28.0 already ships grpc 1.83.2 and otel 1.46.0, i.e. ABOVE five of these
+      # floors -- the old bare `go get` line would have downgraded all five.
+      FLOOR="golang.org/x/text@v0.41.0 google.golang.org/grpc@v1.82.1 go.opentelemetry.io/otel@v1.43.0 go.opentelemetry.io/otel/sdk@v1.43.0 go.opentelemetry.io/otel/trace@v1.43.0 go.opentelemetry.io/otel/metric@v1.43.0 golang.org/x/oauth2@v0.36.0"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is
+      # the EFFECTIVE version and a replace cannot hide behind the require line.
+      go list -m $MODS
+      need="$(go list -m $MODS | awk '{ print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
       go mod tidy
       # Mirror upstream ldflags so `ntfy --version` reports the real release.
       # No git in the tarball, so commit/date are stamped statically.
       go build -trimpath \
         -ldflags "-s -w -X main.version=${{package.version}} -X main.commit=release -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         -o "${{targets.destdir}}/usr/bin/ntfy" .
+      # The float is only real if it reached the BINARY. Every `dep`/`=>` line of
+      # `go version -m` must be at or above its floor -- the `=>` line is what
+      # catches a replace-shadowed float. Fail the build rather than ship it.
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/ntfy" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor ntfy)"
+      [ -z "$bad" ] || { echo "❌ 0-CVE float did not reach the binary:"; echo "$bad"; exit 1; }
