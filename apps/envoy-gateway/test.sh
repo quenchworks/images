@@ -62,7 +62,15 @@ fi
 # The data plane and CRD versions this control plane is coupled to. Empty means the
 # build lost its module info (a stripped/rebuilt binary), which would also mean the
 # chart cannot tell which envoy image and Gateway API CRD bundle to pin.
-echo "$proxy_ver" | grep -qE '^distroless-v[0-9]+\.[0-9]+\.[0-9]+$' \
+# Two shapes are both legitimate. Through 1.8.x upstream's default proxy ref was a
+# plain tag, so this stamped "distroless-v1.38.3". From 1.9.0 the default is pinned
+# by digest (envoyproxy/envoy:distroless-v1.39.1@sha256:<hex>) and upstream's own
+# version code takes the ref's tag by splitting on ':', which cuts the digest in
+# half -- so 1.9.1 legitimately reports "distroless-v1.39.1@sha256" (verified by
+# running the built 1.9.1 image; the trailing hex really is absent from the binary's
+# output, it is not truncated by this test). Accept both and keep asserting the
+# semver, which is the part the chart needs to pin the data plane.
+echo "$proxy_ver" | grep -qE '^distroless-v[0-9]+\.[0-9]+\.[0-9]+(@sha256(:[0-9a-f]{64})?)?$' \
   || { echo "ENVOY_PROXY_VERSION looks wrong: '$proxy_ver'"; exit 1; }
 echo "$gwapi_ver" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$' \
   || { echo "GATEWAYAPI_VERSION missing (lost build info): '$gwapi_ver'"; exit 1; }
