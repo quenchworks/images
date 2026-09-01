@@ -1,13 +1,21 @@
-# Repackages Wolfi's own `gradle-9` apk with the bundled jackson patched, so the
-# 0-CVE gate passes without waiting on a Wolfi rebuild. Wolfi's gradle-9 dist
-# ships jackson-databind-2.18.8.jar under lib/ -> CVE-2026-54515 (MEDIUM, fixed
-# in jackson 2.18.9). We install Wolfi's gradle tree verbatim from the build
-# environment, then swap every bundled jackson-*-2.18.8.jar for the coordinated
-# 2.18.9 release from Maven Central (sha256-pinned) and update Gradle's module
-# descriptor sidecars (lib/<mod>.properties: alias.version + jarFile) so the
-# launcher resolves the new jars. Clean-room-consistent: the gradle bits are
-# Wolfi's, the jackson jars are Maven Central's official artifacts. The Trivy
-# gate still applies in full.
+# Repackages Wolfi's own `gradle-9` apk, patching the bundled jackson ONLY when
+# Wolfi still ships the vulnerable line. Wolfi's gradle-9 shipped
+# jackson-databind-2.18.8.jar under lib/ -> CVE-2026-54515 (MEDIUM, fixed in
+# jackson 2.18.9), so this recipe swapped every bundled jackson-*-2.18.8.jar for
+# the coordinated 2.18.9 release from Maven Central (sha256-pinned) and rewrote
+# Gradle's module descriptor sidecars (lib/<mod>.properties: alias.version +
+# jarFile). Clean-room-consistent: the gradle bits are Wolfi's, the jackson jars
+# are Maven Central's official artifacts. The Trivy gate still applies in full.
+#
+# 2026-08-31: the swap is now CONDITIONAL on 2.18.8 actually being bundled, and
+# that is a correctness fix, not tidying. gradle-9 9.7.1-r0 bundles jackson
+# 2.22.x -- Wolfi finally rebuilt against a fixed line. The unconditional swap
+# would then have found no 2.18.8 jar to remove and no 2.18.8 string to sed, so
+# it would have ADDED 2.18.9 jars ALONGSIDE the bundled 2.22 ones: two jackson
+# versions on Gradle's classpath, with step (3)'s "did any 2.18.8 survive" check
+# still reporting clean. Same silent-downgrade shape as a stale `go get mod@vX`
+# float pin. If a future Wolfi line is vulnerable again, the Trivy gate says so
+# rather than this recipe guessing a swap for a line it was never derived for.
 #
 # TEMPLATE NOTE: __VER__ (gradle X.Y.Z, the image tag), __GRADLEVER__ (the exact
 # Wolfi gradle-9 apk pin), and __JDKVER__ (JDK LTS) are substituted by
@@ -16,7 +24,7 @@ package:
   name: quench-gradle
   version: __VER__
   epoch: 0
-  description: "Quenchworks hardened Gradle, repackaged from Wolfi gradle-9 with jackson 2.18.9 (CVE-2026-54515 patched)"
+  description: "Quenchworks hardened Gradle, repackaged from Wolfi gradle-9 (bundled jackson patched when Wolfi still ships the vulnerable line)"
   copyright:
     - license: Apache-2.0
   dependencies:
@@ -48,7 +56,9 @@ pipeline:
       LIB="$D/usr/share/java/gradle/lib"
 
       # 2) Swap each bundled jackson jar for the 2.18.9 coordinated release and
-      #    rewrite its Gradle module descriptor so the launcher finds it.
+      #    rewrite its Gradle module descriptor so the launcher finds it -- but ONLY
+      #    for the line this swap was derived against. Adding 2.18.9 next to a
+      #    NEWER bundled line would put two jackson versions on the classpath.
       M=https://repo1.maven.org/maven2
       swap() {  # <artifact> <maven-group-path> <sha256>
         art="$1"; gpath="$2"; sha="$3"
@@ -59,14 +69,20 @@ pipeline:
                -e "s/^jarFile=${art}-2\.18\.8\.jar$/jarFile=${art}-2.18.9.jar/" \
                "$LIB/${art}.properties"
       }
-      swap jackson-annotations     com/fasterxml/jackson/core     798c85b86e7420d0b4eb91e7b3e37d4bee673c61de37a616ba51a7539631e6b7
-      swap jackson-core            com/fasterxml/jackson/core     e03144f48c8d5307da2894570b4972aab8c72f22440f8dcdb745be2485ce2024
-      swap jackson-databind        com/fasterxml/jackson/core     71595a3f7ff58344ec0496a9f9ec9f623ef7b85b45402d88f1ca261f1bc4b42c
-      swap jackson-datatype-jdk8   com/fasterxml/jackson/datatype c0f2490297fd3d376e28eb3bdb58e8c99e4a079493f5dabd70cd0c7ab1713696
-      swap jackson-datatype-jsr310 com/fasterxml/jackson/datatype 1b35df59d068f97e7b89e1cc2244644ffeadbf31aff970dc112fff0cabba8e9c
-
-      # jackson-bom is jar-less (BOM alias); keep its recorded version consistent.
-      sed -i 's/^alias\.version=2\.18\.8$/alias.version=2.18.9/' "$LIB/jackson-bom.properties"
+      have="$(ls "$LIB"/jackson-databind-*.jar | sed -e 's|.*/jackson-databind-||' -e 's|\.jar$||')"
+      echo "Wolfi gradle bundles jackson-databind $have"
+      if [ "$have" = 2.18.8 ]; then
+        swap jackson-annotations     com/fasterxml/jackson/core     798c85b86e7420d0b4eb91e7b3e37d4bee673c61de37a616ba51a7539631e6b7
+        swap jackson-core            com/fasterxml/jackson/core     e03144f48c8d5307da2894570b4972aab8c72f22440f8dcdb745be2485ce2024
+        swap jackson-databind        com/fasterxml/jackson/core     71595a3f7ff58344ec0496a9f9ec9f623ef7b85b45402d88f1ca261f1bc4b42c
+        swap jackson-datatype-jdk8   com/fasterxml/jackson/datatype c0f2490297fd3d376e28eb3bdb58e8c99e4a079493f5dabd70cd0c7ab1713696
+        swap jackson-datatype-jsr310 com/fasterxml/jackson/datatype 1b35df59d068f97e7b89e1cc2244644ffeadbf31aff970dc112fff0cabba8e9c
+        # jackson-bom is jar-less (BOM alias); keep its recorded version consistent.
+        sed -i 's/^alias\.version=2\.18\.8$/alias.version=2.18.9/' "$LIB/jackson-bom.properties"
+      else
+        echo "bundled jackson is not the vulnerable 2.18.8 line; repackaging Wolfi's"
+        echo "tree verbatim and letting the Trivy gate judge it."
+      fi
 
       # 3) Gate the swap itself: no vulnerable jackson jar may remain.
       if ls "$LIB"/jackson-*-2.18.8.jar >/dev/null 2>&1; then
