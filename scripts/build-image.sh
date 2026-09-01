@@ -173,6 +173,37 @@ trivy image --input image.tar --exit-code 1 --ignore-unfixed \
   --severity CRITICAL,HIGH,MEDIUM,LOW --scanners vuln \
   --detection-priority comprehensive --quiet "${VEX_ARG[@]}"
 echo "✅ 0 fixable CVEs ($SCAN_ARCH)"
+
+# 0-CVE proves nothing about whether the image RUNS. CI builds and then runs
+# apps/<app>/test.sh before publishing, so until now a wrong or stale assertion in
+# that test -- or a genuinely unbootable image -- could only ever surface in CI,
+# after a public window was already open. istiod and envoy-gateway both failed
+# there while passing this gate cleanly. Run the same test.sh here, the same way CI
+# invokes it (from the app dir, with the version as the second argument), so a local
+# gate means "0-CVE AND boots". Only for the arch matching the host: running a
+# foreign-arch image under QEMU is slow and its timeouts are not representative.
+if [ "${BOOT:-1}" = "1" ] && [ -x ./test.sh ]; then
+  host_arch="$(uname -m)"
+  if [ "$SCAN_ARCH" = "$host_arch" ]; then
+    echo "🚀 boot test ($SCAN_ARCH) ..."
+    boot_out="$(docker load -i image.tar 2>&1)" || { echo "$boot_out"; exit 1; }
+    # A tagged tar prints "Loaded image: repo:tag"; an untagged one prints
+    # "Loaded image ID: sha256:...", and that id is a usable ref. Never reconstruct
+    # the ref by hand -- take whatever docker load reports.
+    boot_img="$(printf '%s\n' "$boot_out" \
+      | sed -n -e 's/^Loaded image: //p' -e 's/^Loaded image ID: //p' | head -1)"
+    [ -n "$boot_img" ] || {
+      echo "❌ docker load produced no usable image ref:"; printf '%s\n' "$boot_out"; exit 1; }
+    docker tag "$boot_img" "$APP-boot:local"
+    ./test.sh "$APP-boot:local" "$VERSION" || {
+      echo "❌ boot test FAILED for $APP:$VERSION ($SCAN_ARCH) -- 0-CVE but does not run."
+      exit 1
+    }
+    echo "✅ boot test passed ($SCAN_ARCH)"
+  else
+    echo "⏭  boot test skipped: $SCAN_ARCH image on a $host_arch host (CI covers it)"
+  fi
+fi
 done
 
 if [ "$PUSH" != "1" ]; then
