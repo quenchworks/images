@@ -195,7 +195,15 @@ if [ "${BOOT:-1}" = "1" ] && [ -x ./test.sh ]; then
     [ -n "$boot_img" ] || {
       echo "❌ docker load produced no usable image ref:"; printf '%s\n' "$boot_out"; exit 1; }
     docker tag "$boot_img" "$APP-boot:local"
-    ./test.sh "$APP-boot:local" "$VERSION" || {
+    # Several tests create a scratch dir with `mktemp -d` and bind-mount it into the
+    # container. This docker daemon refuses to share anything under /tmp ("mounts
+    # denied: the path /tmp/tmp.XXXX is not shared from the host"), which fails the
+    # test with docker's own exit 125 and looks exactly like a broken image. Point
+    # mktemp at a path the daemon will mount. CI's runners share /tmp, so this only
+    # matters locally; it is harmless there.
+    BOOT_TMP="$HOME/.cache/quenchworks-boot-tmp"
+    mkdir -p "$BOOT_TMP"
+    TMPDIR="$BOOT_TMP" ./test.sh "$APP-boot:local" "$VERSION" || {
       echo "❌ boot test FAILED for $APP:$VERSION ($SCAN_ARCH) -- 0-CVE but does not run."
       exit 1
     }
