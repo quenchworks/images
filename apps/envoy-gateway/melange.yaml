@@ -40,8 +40,10 @@ pipeline:
       set -eu
       export CGO_ENABLED=0
       export GOFLAGS=-mod=mod
-      # go.mod asks for go 1.26.5 (1.8.x) / 1.26.6 (1.9.x); Wolfi's go-1.26 is 1.26.7,
+      # go.mod asks for go 1.26.5 (1.8.x) / 1.26.7 (1.9.1); Wolfi's go-1.26 is 1.26.7,
       # so the installed toolchain satisfies both and must not fetch another one.
+      # 1.9.1 sits EXACTLY on 1.26.7 -- if Wolfi's go-1.26 ever regresses below that,
+      # GOTOOLCHAIN=local fails the build loudly rather than fetching a toolchain.
       export GOTOOLCHAIN=local
 
       # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
