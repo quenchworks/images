@@ -63,8 +63,17 @@ jobs:
           echo "|---|---|---|" >> "$GITHUB_STEP_SUMMARY"
           NEWLY_PASSING=""
           for conf in apps/*/build.conf; do
-            grep -q 'BLOCKED=1' "$conf" || continue
+            # SOURCE the file and test the variable -- do not grep for the string.
+            # `grep -q 'BLOCKED=1'` matches the text anywhere, including prose like
+            # "This app was never BLOCKED=1; the note ...", so the sweep was
+            # re-gating five apps that are not blocked at all (dotnet, opensearch,
+            # n8n-runners, jenkins-inbound-agent, grafana) -- burning ~45min of
+            # build slot each AND listing them in a "blocked apps" report, which is
+            # how they came to be described as blocked in the first place.
+            # This matches how build-<app>.yml decides: "${BLOCKED:-0}" = "1".
             app="$(basename "$(dirname "$conf")")"
+            blocked="$( ( set +u; . "$conf" >/dev/null 2>&1; echo "${BLOCKED:-0}" ) )"
+            [ "$blocked" = "1" ] || continue
             # An app can be blocked precisely BECAUSE it has no recipe to gate --
             # istio-proxyv2 is build.conf only, since Istio's Envoy needs a Bazel
             # toolchain melange cannot drive. Without this skip, the fallback
