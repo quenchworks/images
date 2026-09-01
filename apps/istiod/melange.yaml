@@ -41,7 +41,12 @@ pipeline:
       # pass floored only the two the aarch64 build surfaced; a full re-gate then
       # showed three more, including a CRITICAL -- so the floor is now the whole
       # set the gate actually reports, not just the first two it happened to name:
-      #   golang.org/x/text      CVE-2026-56852       (v0.38.0, floor v0.39.0)
+      #   golang.org/x/text      CVE-2026-56852       (v0.38.0, floor v0.41.0)
+      #     -- v0.39.0 clears the CVE but x/crypto@v0.55.0 REQUIRES x/text
+      #     >= v0.41.0, and `go get` refuses the inconsistent pair outright:
+      #       go: golang.org/x/crypto@v0.55.0 requires golang.org/x/text@v0.41.0
+      #     A floor set has to be internally coherent, not just individually
+      #     above each advisory. v0.41.0 is what the other recipes float to.
       #   google.golang.org/grpc GHSA-hrxh-6v49-42gf  (v1.81.1, floor v1.82.1)
       #   golang.org/x/crypto    CVE-2026-56854 CRIT  (v0.53.0, floor v0.55.0)
       #   github.com/google/cel-go GHSA-gcjh-h69q-9w9g (v0.28.1, floor v0.29.0)
@@ -52,7 +57,7 @@ pipeline:
       # upstream `replace` and a DOWNGRADE once upstream requires more than vX.
       # Float only what is below the floor, then assert the shipped BINARY
       # carries nothing below it.
-      FLOOR="golang.org/x/text@v0.39.0 google.golang.org/grpc@v1.82.1 golang.org/x/crypto@v0.55.0 github.com/google/cel-go@v0.29.0 github.com/prometheus/prometheus@v0.311.3"
+      FLOOR="golang.org/x/text@v0.41.0 google.golang.org/grpc@v1.82.1 golang.org/x/crypto@v0.55.0 github.com/google/cel-go@v0.29.0 github.com/prometheus/prometheus@v0.311.3"
       MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
       below_floor() {
         awk -v floor="$FLOOR" -v tag="$1" '
