@@ -15,10 +15,21 @@ contents:
     - wolfi-baselayout
     - ca-certificates-bundle
     # PHP runtime (base bundles session + sqlite3 lib) + DB driver extensions so
-    # Adminer can connect to MySQL/MariaDB, PostgreSQL and SQLite. Missing drivers
-    # only hide a login option; they never stop the page from serving.
+    # Adminer can connect to MySQL/MariaDB, PostgreSQL and SQLite.
+    #
+    # mysqlnd is NOT optional here: pdo_mysql and mysqli are linked against it, so
+    # without it BOTH fail to load at PHP startup with
+    #   undefined symbol: mysqlnd_global_stats
+    # and Adminer answers a MySQL login with "None of the supported PHP extensions
+    # (MySQLi, MySQL, PDO_MySQL) are available." The page still serves and
+    # PostgreSQL/SQLite still work, so the image looks healthy and the 0-CVE gate
+    # passes -- only an actual MySQL login reveals it. Every other PHP app in this
+    # catalog (matomo, phpmyadmin, drupal, wordpress, nextcloud) already pairs
+    # mysqlnd with these two; adminer was the one that did not.
     - php-8.3
     - php-8.3-pdo
+    - php-8.3-mysqlnd              # native MySQL driver backend (pdo_mysql/mysqli need it)
+    - php-8.3-mysqlnd-config
     - php-8.3-pdo_mysql
     - php-8.3-mysqli
     - php-8.3-pdo_pgsql
