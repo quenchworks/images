@@ -127,24 +127,47 @@ pipeline:
       #              break is absorbed by moving clickhouse-go/v2 v2.8.3 -> v2.32.0
       #              (the minimal clickhouse-go that pins ch-go 0.65.0). coroot's
       #              ch/ + clickhouse/ driver usage compiles unchanged on this pair.
-      go get golang.org/x/crypto@v0.55.0
-      go get golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0
-      # grpc bumped 1.79.3 -> 1.82.1 for GHSA-hrxh-6v49-42gf (xDS RBAC + HTTP/2, HIGH);
-      # grpc@1.82.1 requires the otel@1.43.0 family + x/oauth2@0.36.0 (otel 1.41.0 -> 1.43.0).
-      go get google.golang.org/grpc@v1.82.1
-      go get go.opentelemetry.io/otel@v1.43.0
-      go get go.opentelemetry.io/otel/sdk@v1.43.0
-      go get go.opentelemetry.io/otel/metric@v1.43.0
-      go get go.opentelemetry.io/otel/trace@v1.43.0
-      go get golang.org/x/oauth2@v0.36.0
-      go get github.com/buger/jsonparser@v1.1.2
-      go get github.com/slack-go/slack@v0.23.1
-      go get github.com/prometheus/prometheus@v0.311.3
-      go get github.com/ClickHouse/clickhouse-go/v2@v2.32.0
-      go get github.com/ClickHouse/ch-go@v0.65.0
+      # FLOOR is a FLOOR, not a pin (docs/go-module-float.md). A bare
+      # `go get mod@vX` fails silently in two directions: it is a NO-OP when an
+      # upstream `replace` overrides it, and it becomes a DOWNGRADE once upstream
+      # requires more than vX -- re-introducing the CVE it was added to clear.
+      # So float only what is below the floor, one module at a time (the original
+      # sequencing, preserved: MVS raises only what is asked for and the
+      # ch-go/clickhouse-go pair must settle in that order), then assert the
+      # SHIPPED BINARY carries nothing below the floor.
+      # 1.25.0 still requires the same low versions 1.23.3 did, so today every
+      # floor floats UP; the assertion is what keeps that true after a future bump.
+      # grpc 1.79.3 -> 1.82.1 is GHSA-hrxh-6v49-42gf (xDS RBAC + HTTP/2, HIGH);
+      # grpc@1.82.1 requires the otel@1.43.0 family + x/oauth2@0.36.0.
+      FLOOR="golang.org/x/crypto@v0.55.0 golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0 google.golang.org/grpc@v1.82.1 go.opentelemetry.io/otel@v1.43.0 go.opentelemetry.io/otel/sdk@v1.43.0 go.opentelemetry.io/otel/metric@v1.43.0 go.opentelemetry.io/otel/trace@v1.43.0 golang.org/x/oauth2@v0.36.0 github.com/buger/jsonparser@v1.1.2 github.com/slack-go/slack@v0.23.1 github.com/prometheus/prometheus@v0.311.3 github.com/ClickHouse/clickhouse-go/v2@v2.32.0 github.com/ClickHouse/ch-go@v0.65.0"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is
+      # the EFFECTIVE version and a replace cannot hide behind the require line.
+      go list -m $MODS
+      need="$(go list -m $MODS | awk '{ print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      for m in $need; do go get "$m"; done
       go mod tidy
       # Build with -tags slicelabels (keeps labels.Labels as a slice; see above).
       # Mirror upstream ldflags so coroot reports the real release at startup.
       go build -tags slicelabels -trimpath \
         -ldflags "-s -w -X main.version=${{package.version}}" \
         -o "${{targets.destdir}}/usr/bin/coroot" .
+      # The float is only real if it reached the BINARY. Every `dep`/`=>` line of
+      # `go version -m` must be at or above its floor -- the `=>` line is what
+      # catches a replace-shadowed float. Fail the build rather than ship it.
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/coroot" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor coroot)"
+      [ -z "$bad" ] || { echo "❌ 0-CVE float did not reach the binary:"; echo "$bad"; exit 1; }
