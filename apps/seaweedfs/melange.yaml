@@ -48,19 +48,19 @@ pipeline:
       # same major, API-compatible -- no fork/force):
       #   golang.org/x/image        v0.41.0 -> v0.43.0 (CVE-2026-33813 WEBP DoS,
       #                             CVE-2026-46601 VP8-chunk WebP DoS)
-      #   github.com/apache/thrift  v0.22.0 -> v0.23.0 (CVE-2026-41602
-      #                             TFramedTransport integer overflow)
+      #   github.com/apache/thrift  v0.22.0 -> v0.24.0 (CVE-2026-41602
+      #                             TFramedTransport integer overflow, CVE-2026-43871)
       # thrift is special: upstream go.mod REQUIRES v0.23.0 but PINS IT BACK to
       # v0.22.0 with a `replace`, because v0.23.0 uses math.MaxUint32 as an
       # untyped int constant (lib/go/thrift/framed_transport.go) which overflows
       # int on 32-bit GOARCHes. We build ONLY 64-bit (x86_64/aarch64, see
       # apko.yaml) where int is 64-bit, so v0.23.0 is safe -- retarget the
-      # replace to v0.23.0 to pick up the CVE fix rather than dropping it.
+      # replace to v0.24.0 to pick up the CVE fixes rather than dropping it.
       # NB: no `go mod tidy` -- tidy walks the full module graph (incl. heavy
       # test-only deps like iceberg-go's docker/testcontainers imports) and fails
       # on network resets; with GOFLAGS=-mod=mod the `go build ./weed` below
       # auto-resolves go.sum for only the packages it actually compiles.
-      go mod edit -replace github.com/apache/thrift=github.com/apache/thrift@v0.23.0
+      go mod edit -replace github.com/apache/thrift=github.com/apache/thrift@v0.24.0
       go get golang.org/x/image@v0.45.0
       # grpc GHSA-hrxh-6v49-42gf -> 1.82.1 (+ coherent otel 1.43.0 + oauth2 0.36.0
       # cascade). No tidy (see note below); -mod=mod resolves go.sum at build.
