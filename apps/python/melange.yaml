@@ -267,7 +267,13 @@ pipeline:
           assert not missing, f"wheel layout changed, missing {missing}"
 
           vendor_txt = zin.read("pip/_vendor/vendor.txt").decode()
-          assert "msgpack==1.1.2" in vendor_txt, "seed wheel no longer pins msgpack 1.1.2 -- drop this shim"
+          # Accept either: the seed wheel now ships msgpack 1.2.1 while pip's bundled
+          # CycloneDX still claims 1.1.2, so "the wheel moved" does NOT mean the shim
+          # is done. Asserting 1.1.2 here failed the build on 2026-09-06 even though
+          # the SBOM correction below still had real work to do. Anything else is
+          # unexpected and still stops the build.
+          assert ("msgpack==1.1.2" in vendor_txt) or ("msgpack==1.2.1" in vendor_txt), \
+              f"seed wheel pins an unexpected msgpack: {[l for l in vendor_txt.splitlines() if 'msgpack' in l]}"
           new_vendor = "".join(
               l for l in vendor_txt.replace("msgpack==1.1.2", "msgpack==1.2.1").splitlines(keepends=True)
               if not l.startswith("setuptools==")
