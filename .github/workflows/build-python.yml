@@ -2,7 +2,7 @@ name: build-python
 
 # LANGUAGE-RUNTIMES track. Hardened OpenJDK (JDK) base images, assembled
 # straight from Wolfi's versioned `openpython-N-default-python` packages with apko --
-# NO melange/from-source step: Wolfi already packages CPython and pip. A MATRIX
+# NO melange/from-source step, since Wolfi already packages OpenJDK. A MATRIX
 # fans out over the latest 3 LTS lines; each one runs a NATIVE per-arch apko
 # build (no QEMU), the hard 0-CVE Trivy gate, then a per-version merge job that
 # assembles + signs + attests the multi-arch index.
@@ -82,13 +82,28 @@ jobs:
           curl -fsSL "https://github.com/chainguard-dev/apko/releases/download/${APKO_VER}/apko_${APKO_VER#v}_linux_${{ matrix.arch.platform }}.tar.gz" \
             | sudo tar xz --strip-components=1 -C /usr/local/bin
           apko version | head -1
+          MELANGE_VER=v0.53.0
+          curl -fsSL "https://github.com/chainguard-dev/melange/releases/download/${MELANGE_VER}/melange_${MELANGE_VER#v}_linux_${{ matrix.arch.platform }}.tar.gz" \
+            | sudo tar xz --strip-components=1 -C /usr/local/bin
+          melange version | head -1
+          sudo apt-get update -qq && sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
 
       - name: Render recipes for ${{ matrix.ver }} (build.conf render)
         run: |
           set -euo pipefail
           source build.conf
           prog="$(render '${{ matrix.ver }}')"
-          sed -e "$prog" apko.yaml > apko.rendered.yaml
+          sed -e "$prog" melange.yaml > melange.rendered.yaml
+          sed -e "$prog" apko.yaml    > apko.rendered.yaml
+
+      # Builds quench-pip-vendor-fix, which replaces pip's vendored msgpack.
+      # apko then installs it from ./packages, so this must run BEFORE the
+      # assemble step -- without it apko fails on the missing melange.rsa.pub.
+      - name: Build package (native ${{ matrix.arch.name }})
+        run: |
+          melange keygen melange.rsa
+          melange build melange.rendered.yaml --arch ${{ matrix.arch.name }} --signing-key melange.rsa --out-dir ./packages
 
       - name: Assemble single-arch image for the scan gate
         run: apko build apko.rendered.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}

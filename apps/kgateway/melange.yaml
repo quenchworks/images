@@ -77,8 +77,8 @@ pipeline:
       }
       # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is
       # the EFFECTIVE version and a replace cannot hide behind the require line.
-      GOFLAGS=-mod=mod go list -m $MODS
-      need="$(GOFLAGS=-mod=mod go list -m $MODS | awk '{ print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      GOFLAGS=-mod=mod go list -m -e $MODS
+      need="$(GOFLAGS=-mod=mod go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
       if [ -n "$need" ]; then GOFLAGS=-mod=mod go get $need; fi
       GOFLAGS=-mod=mod go mod tidy
 

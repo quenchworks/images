@@ -81,9 +81,13 @@ pipeline:
       }
       # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is
       # the EFFECTIVE version and a replace cannot hide behind the require line.
-      # A module this app does not require at all is simply absent from `go list -m`.
-      GOFLAGS=-mod=mod go list -m $MODS 2>/dev/null || true
-      need="$(GOFLAGS=-mod=mod go list -m $MODS 2>/dev/null | awk '{ print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      # A module this app does not require is NOT simply absent: plain `go list -m`
+      # FAILS on it ("not a known dependency") and kills the step, so -e is required.
+      # -e then prints the module with no version, and feeding that to below_floor
+      # would read it as below the floor and `go get` it -- ADDING a dependency the app
+      # never had. Hence the awk guard that only passes real v-prefixed versions.
+      GOFLAGS=-mod=mod go list -m -e $MODS 2>/dev/null || true
+      need="$(GOFLAGS=-mod=mod go list -m -e $MODS 2>/dev/null | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
       if [ -n "$need" ]; then GOFLAGS=-mod=mod go get $need; fi
       GOFLAGS=-mod=mod go mod tidy
 
