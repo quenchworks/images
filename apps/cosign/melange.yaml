@@ -37,9 +37,9 @@ pipeline:
       export GO111MODULE=on
       export GOTOOLCHAIN=local   # use the installed go, don't fetch go.mod's toolchain
       # Bump vulnerable Go modules to their Trivy-listed fixed versions (0-CVE gate).
-      go get golang.org/x/net@v0.58.0 golang.org/x/sys@v0.47.0 google.golang.org/grpc@v1.82.1 golang.org/x/text@v0.41.0 golang.org/x/crypto@v0.55.0 golang.org/x/mod@v0.40.0
+      go get golang.org/x/net@v0.58.0 golang.org/x/sys@v0.47.0 google.golang.org/grpc@v1.83.2 golang.org/x/text@v0.41.0 golang.org/x/crypto@v0.56.0 golang.org/x/mod@v0.40.0
       go mod edit -replace golang.org/x/net=golang.org/x/net@v0.58.0
-      go mod edit -replace golang.org/x/crypto=golang.org/x/crypto@v0.55.0
+      go mod edit -replace golang.org/x/crypto=golang.org/x/crypto@v0.56.0
       go mod tidy || true
       go build -trimpath \
         -ldflags "-s -w -X sigs.k8s.io/release-utils/version.gitVersion=v${{package.version}}" \

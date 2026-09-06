@@ -318,8 +318,8 @@ pipeline:
       # CVE-2026-39882 (MEDIUM): the otel otlptrace + otlptracehttp exporters are
       # pinned at v1.34.0 in go.mod while the rest of the otel set is v1.43.0;
       # bump the two laggards to v1.43.0 (the fixed version) to clear the gate.
-      go get go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.43.0
-      go get go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.43.0
+      go get go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.44.0
+      go get go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.44.0
       # Three FIXABLE gobinary CVEs in harbor_core's Go module graph; clear them
       # with dep bumps (all leaf/patch/minor bumps -- plain `go get`, NO
       # `go mod tidy`, to avoid a full-module tidy walking generated dirs):
@@ -338,7 +338,7 @@ pipeline:
       #   go.mongodb.org/mongo-driver v1.17.6 -> v1.17.7 (CVE-2026-2303)
       #   golang.org/x/net           v0.55.0 -> v0.56.0 (CVE-2026-46600)
       #   golang.org/x/text          v0.37.0 -> v0.39.0 (CVE-2026-56852)
-      go get golang.org/x/crypto@v0.55.0 golang.org/x/net@v0.58.0 golang.org/x/sys@v0.47.0 google.golang.org/grpc@v1.82.1 golang.org/x/text@v0.41.0 go.mongodb.org/mongo-driver@v1.17.7
+      go get golang.org/x/crypto@v0.56.0 golang.org/x/net@v0.58.0 golang.org/x/sys@v0.47.0 google.golang.org/grpc@v1.83.2 golang.org/x/text@v0.41.0 go.mongodb.org/mongo-driver@v1.17.7
       GITCOMMIT="v${{package.version}}"
       LDFLAGS="-w -s \
         -X github.com/goharbor/harbor/src/pkg/version.GitCommit=${GITCOMMIT} \
