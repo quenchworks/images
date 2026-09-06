@@ -70,25 +70,12 @@ pipeline:
       PYV=3.13
       SP="$VENV/lib/python$PYV/site-packages"
       export SP
-      if grep -q '^msgpack==1\.1\.2$' "$SP/pip/_vendor/vendor.txt" 2>/dev/null; then
-        mp=$(mktemp -d)
-        "$VENV/bin/python" -c "import hashlib,sys,tarfile,urllib.request as u; b=u.urlopen('https://files.pythonhosted.org/packages/31/f9/c0a1c127f9049db9155afc316952ea571720dd01833ff5e4d7e8e6352dbb/msgpack-1.2.1.tar.gz',timeout=300).read(); assert hashlib.sha256(b).hexdigest()=='04c721c2c7448767e9e3f2520a475663d8ee0f09c31890f6d2bd70fd636a9647', 'msgpack sdist sha mismatch'; open(sys.argv[1]+'/m.tgz','wb').write(b); tarfile.open(sys.argv[1]+'/m.tgz').extractall(sys.argv[1],filter='data')" "$mp"
-        for f in __init__.py exceptions.py ext.py fallback.py; do
-          install -m0644 "$mp/msgpack-1.2.1/msgpack/$f" "$SP/pip/_vendor/msgpack/$f"
-        done
-        "$VENV/bin/python" -m compileall -q --invalidation-mode unchecked-hash "$SP/pip/_vendor/msgpack"
-        sed -i -e 's/^msgpack==1\.1\.2$/msgpack==1.2.1/' -e '/^setuptools==/d' "$SP/pip/_vendor/vendor.txt"
-        "$VENV/bin/python" -c "from pip._vendor import msgpack; assert msgpack.__version__=='1.2.1', msgpack.__version__; print('vendored msgpack ->', msgpack.__version__)"
-        # pip also ships a CycloneDX of its vendored set and scanners read it directly,
-        # so a stale copy keeps the finding alive after the code is fixed. Written as a
-        # ONE-LINER: a multi-line python -c body would sit at column 0 and terminate the
-        # surrounding YAML block scalar. setuptools is dropped -- pip lists it but vendors
-        # no files for it.
-        "$VENV/bin/python" -c "import json;p='$SP/pip/_vendor/bom.cdx.json';d=json.load(open(p));c=[x for x in d.get('components',[]) if x.get('name')!='setuptools'];[x.update(version='1.2.1',purl='pkg:pypi/msgpack@1.2.1') for x in c if x.get('name')=='msgpack'];d.__setitem__('components',c);json.dump(d,open(p,'w'),indent=2);print('corrected pip bom.cdx.json')"
-        rm -rf "$mp"
-      else
-        echo "pip no longer vendors msgpack 1.1.2 -- drop this block"; exit 1
-      fi
+      # The pip vendored-msgpack shim that used to live here is GONE (2026-09-06).
+      # It replaced pip's vendored msgpack 1.1.2 (GHSA-6v7p-g79w-8964) with 1.2.1, and
+      # was deliberately written to `exit 1` the day pip stopped vendoring 1.1.2 rather
+      # than silently patching nothing. That day came: pip now vendors msgpack 1.2.1,
+      # the guard fired, and every Python-family build failed on it. Removing the shim
+      # is what the guard was asking for -- do not re-add it.
 
       # SECURITY BUMPS (only if the 0-CVE gate flags a transitive pip dep): bump the
       # affected package to its patched release WITHOUT weakening the gate, then

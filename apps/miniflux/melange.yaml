@@ -59,6 +59,34 @@ pipeline:
       go mod tidy
       # Mirror upstream ldflags so `miniflux -version` reports the real release.
       LDFLAGS="-s -w -X 'miniflux.app/v2/internal/version.Version=${{package.version}}'"
+      # 2026-09-06: the nightly scan and this app's own 0-CVE gate flagged the shared
+      # Go modules below in the published image; this recipe had no float at all.
+      # FLOOR, not a bare `go get mod@vX`: an exact pin is a silent no-op under a
+      # `replace` and becomes a silent DOWNGRADE once upstream requires more,
+      # re-introducing the CVE while the gate still reports green (docs/go-module-float.md).
+      FLOOR="golang.org/x/crypto@v0.56.0 google.golang.org/grpc@v1.83.2 golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0 golang.org/x/sys@v0.47.0"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is
+      # the EFFECTIVE version and a replace cannot hide behind the require line.
+      # A module this app does not require at all is simply absent from `go list -m`.
+      GOFLAGS=-mod=mod go list -m $MODS 2>/dev/null || true
+      need="$(GOFLAGS=-mod=mod go list -m $MODS 2>/dev/null | awk '{ print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then GOFLAGS=-mod=mod go get $need; fi
+      GOFLAGS=-mod=mod go mod tidy
+
       go build -trimpath -ldflags "$LDFLAGS" \
         -o "${{targets.destdir}}/usr/bin/miniflux" .
 

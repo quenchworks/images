@@ -14,19 +14,13 @@
 contents:
   keyring:
     - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
-    - ./melange.rsa.pub
   repositories:
     - https://packages.wolfi.dev/os
-    - "@local ./packages"
   packages:
     - wolfi-baselayout
     - ca-certificates-bundle
     - python-__VER__            # the pinned CPython minor release from Wolfi
     - py__VER__-pip             # matching pip for this exact interpreter
-    # Replaces pip's vendored msgpack 1.1.2 (GHSA-6v7p-g79w-8964) with 1.2.1.
-    # Temporary: delete once Wolfi ships a pip that has fixed this upstream.
-    # See melange.yaml -- it fails the build when that day arrives.
-    - quench-pip-vendor-fix@local
 
 accounts:
   groups:
