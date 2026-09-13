@@ -41,6 +41,12 @@ pipeline:
   - runs: |
       # Lean server: InnoDB stays (default); the heavy/optional engines and tooling
       # are disabled to cut build time and image size.
+      # -DPLUGIN_DUCKDB=NO: DuckDB is new in the 11.4.13 / 12.3.3 line and its vendored
+      # C++ tree fails to build here (storage/duckdb/CMakeFiles/duckdb_build.dir). It is
+      # an optional analytics engine, not part of what this image serves. The flag sits
+      # in the list below with no comment beside it on purpose: a `#` inside a
+      # backslash-continued command ends the command, which is how the first attempt
+      # turned the next flag into `/bin/sh: -DPLUGIN_DUCKDB=NO: not found`.
       cmake -B build -G "Unix Makefiles" \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX=/usr \
@@ -53,10 +59,6 @@ pipeline:
         -DWITH_MARIABACKUP=ON \
         -DWITH_WSREP=ON \
         -DSKIP_TESTS=ON \
-        # DuckDB is new in the 11.4.13 / 12.3.3 line and its vendored C++ tree fails
-        # to build here (storage/duckdb/CMakeFiles/duckdb_build.dir). It is an
-        # optional analytics engine, not part of what this image serves, so it is
-        # disabled alongside the other heavyweight optional engines below.
         -DPLUGIN_DUCKDB=NO \
         -DPLUGIN_MROONGA=NO \
         -DPLUGIN_ROCKSDB=NO \
