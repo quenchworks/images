@@ -91,10 +91,38 @@ pipeline:
       export GOFLAGS=-mod=mod
       export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's 1.26.0
       export GO111MODULE=on
-      # 0-CVE gate bump (patch, same major, no API break):
-      #   golang.org/x/text v0.38.0 -> v0.39.0 (CVE-2026-56852: infinite loop on
-      #                     invalid input). tidy keeps it in the graph at the bump.
-      go get golang.org/x/text@v0.41.0 golang.org/x/net@v0.58.0 golang.org/x/crypto@v0.55.0 golang.org/x/sys@v0.47.0 google.golang.org/grpc@v1.82.1 golang.org/x/mod@v0.40.0 golang.org/x/image@v0.45.0
+      # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
+      #   golang.org/x/text    CVE-2026-56852 infinite loop on invalid input
+      #   golang.org/x/net     CVE-2026-46600
+      #   golang.org/x/crypto / x/sys / x/mod / x/image / grpc  house floor set
+      #
+      # FLOOR is a FLOOR, not a pin. A bare `go get mod@vX` fails silently in two
+      # directions: it is a NO-OP when an upstream `replace` overrides it, and it
+      # becomes a DOWNGRADE once upstream requires more than vX -- re-introducing
+      # the CVE it was added to clear. So float only what is below the floor, then
+      # assert the SHIPPED BINARIES carry nothing below it.
+      # 3.18.0 already requires grpc 1.83.1, ABOVE this floor -- the old bare
+      # `go get` line would have downgraded it.
+      FLOOR="golang.org/x/text@v0.41.0 golang.org/x/net@v0.58.0 golang.org/x/crypto@v0.56.0 golang.org/x/sys@v0.47.0 google.golang.org/grpc@v1.83.2 golang.org/x/mod@v0.40.0 golang.org/x/image@v0.45.0"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is
+      # the EFFECTIVE version and a replace cannot hide behind the require line.
+      go list -m -e $MODS
+      need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
       go mod tidy
       VERPKG="go.woodpecker-ci.org/woodpecker/v3/version"
       LDFLAGS="-s -w -X ${VERPKG}.Version=${{package.version}}"
@@ -112,6 +140,17 @@ pipeline:
       CGO_ENABLED=0 go build -trimpath -ldflags "${LDFLAGS}" \
         -o "${{targets.destdir}}/usr/bin/woodpecker-cli" \
         go.woodpecker-ci.org/woodpecker/v3/cmd/cli
+
+      # The float is only real if it reached the BINARIES. Every `dep`/`=>` line of
+      # `go version -m` must be at or above its floor -- the `=>` line is what
+      # catches a replace-shadowed float. Fail the build rather than ship it.
+      # `go version -m` only reports what a binary links, so a floor a given
+      # binary does not import is simply not checked.
+      for b in woodpecker-server woodpecker-agent woodpecker-cli; do
+        bad="$(go version -m "${{targets.destdir}}/usr/bin/$b" \
+          | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor "$b")"
+        [ -z "$bad" ] || { echo "❌ 0-CVE float did not reach the binary:"; echo "$bad"; exit 1; }
+      done
 
       # license marker for provenance
       install -d "${{targets.destdir}}/usr/share/doc/woodpecker"

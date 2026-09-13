@@ -84,8 +84,8 @@ pipeline:
       }
       # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is
       # the EFFECTIVE version and a replace cannot hide behind the require line.
-      go list -m $MODS
-      need="$(go list -m $MODS | awk '{ print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      go list -m -e $MODS
+      need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
       if [ -n "$need" ]; then go get $need; fi
       go mod tidy
       # No guard needed for the go-kms-wrapping pair: a mixed core/wrapper pair is a

@@ -57,14 +57,44 @@ pipeline:
       # Stamp the real version into the //go:embed'd VERSION file (a tarball has
       # no .git, so upstream's versiongetter would otherwise write v0.0.0).
       printf 'v%s' "${{package.version}}" > internal/core/VERSION
-      # 0-CVE gate: 1.19.3 already requires webtransport-go v0.11.1 (CVE-2026-57497),
-      # x/net v0.57.0, x/crypto v0.54.0, x/sys v0.47.0 and x/text v0.40.0, so nothing
-      # needs floating up; hold x/text at the version this release ships (pinning the
-      # older v0.39.0 here would downgrade the module graph).
-      go get golang.org/x/text@v0.41.0 github.com/go-git/go-git/v5@v5.19.2
+      # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
+      # 1.20.1 already requires webtransport-go v0.11.1 (CVE-2026-57497), x/net,
+      # x/crypto, x/sys and x/text v0.41.0, so today nothing needs floating up.
+      #
+      # FLOOR is a FLOOR, not a pin. A bare `go get mod@vX` fails silently in two
+      # directions: it is a NO-OP when an upstream `replace` overrides it, and it
+      # becomes a DOWNGRADE once upstream requires more than vX -- re-introducing
+      # the CVE it was added to clear. So float only what is below the floor, then
+      # assert the SHIPPED BINARY carries nothing below it.
+      FLOOR="golang.org/x/text@v0.41.0 github.com/go-git/go-git/v5@v5.19.2"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is
+      # the EFFECTIVE version and a replace cannot hide behind the require line.
+      go list -m -e $MODS
+      need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
       go mod tidy
       go build -trimpath -ldflags "-s -w" \
         -o "${{targets.destdir}}/usr/bin/mediamtx" .
+      # The float is only real if it reached the BINARY. Every `dep`/`=>` line of
+      # `go version -m` must be at or above its floor -- the `=>` line is what
+      # catches a replace-shadowed float. Fail the build rather than ship it.
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/mediamtx" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor mediamtx)"
+      [ -z "$bad" ] || { echo "❌ 0-CVE float did not reach the binary:"; echo "$bad"; exit 1; }
       # Ship the upstream default config at a path MediaMTX auto-discovers
       # (/etc/mediamtx/mediamtx.yml). Operators mount their own at this path.
       install -Dm644 mediamtx.yml "${{targets.destdir}}/etc/mediamtx/mediamtx.yml"
