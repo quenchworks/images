@@ -53,6 +53,11 @@ pipeline:
         -DWITH_MARIABACKUP=ON \
         -DWITH_WSREP=ON \
         -DSKIP_TESTS=ON \
+        # DuckDB is new in the 11.4.13 / 12.3.3 line and its vendored C++ tree fails
+        # to build here (storage/duckdb/CMakeFiles/duckdb_build.dir). It is an
+        # optional analytics engine, not part of what this image serves, so it is
+        # disabled alongside the other heavyweight optional engines below.
+        -DPLUGIN_DUCKDB=NO \
         -DPLUGIN_MROONGA=NO \
         -DPLUGIN_ROCKSDB=NO \
         -DPLUGIN_TOKUDB=NO \
