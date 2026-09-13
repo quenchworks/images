@@ -163,7 +163,12 @@ pipeline:
       # taken as an npm PREBUILT above (its vendored abseil will not compile under
       # GCC 16), so the ignore is intentional -- declare it instead of letting the
       # install exit 1 with the decision left implicit.
-      pnpm config set ignoredBuiltDependencies "re2" --location project 2>/dev/null || true
+      # Write the key directly rather than with `pnpm config set`: that writes a
+      # SCALAR ("ignoredBuiltDependencies: re2") and current pnpm requires a
+      # SEQUENCE, so pnpm then fails parsing its own file with
+      # "line N column M: unexpected event: expected sequence start".
+      sed -i '/^ignoredBuiltDependencies:/,/^[^ -]/{/^ignoredBuiltDependencies:/d; /^  *- /d}' pnpm-workspace.yaml 2>/dev/null || true
+      printf 'ignoredBuiltDependencies:\n  - re2\n' >> pnpm-workspace.yaml
       pnpm install --prod --no-frozen-lockfile --config.strictDepBuilds=false
 
       # Prove every override that names an EXACT resolved version actually applied. pnpm

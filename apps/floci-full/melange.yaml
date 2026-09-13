@@ -67,7 +67,11 @@ pipeline:
       # validate/canonicalize/testCompatibility for AVRO+JSON+PROTOBUF plus the
       # ProtoParser column conversion against apicurio 3.3.0 + wire 6.4.0 +
       # protobuf-java 4.35.0 -- all passed, including BACKWARD-incompat detection.
-      sed -i 's|<apicurio.version>2.6.9.Final</apicurio.version>|<apicurio.version>3.3.0</apicurio.version>|' pom.xml
+      # Match whatever 2.x the pom currently declares, not one exact string: upstream
+      # moved 2.6.9.Final -> 2.6.13.Final and the exact-match sed then applied nothing,
+      # which the grep below correctly turned into a failed build rather than a
+      # silently un-bumped apicurio. The grep is what proves the rewrite happened.
+      sed -i -E 's|<apicurio\.version>[^<]*</apicurio\.version>|<apicurio.version>3.3.0</apicurio.version>|' pom.xml
       grep -q '<apicurio.version>3.3.0</apicurio.version>' pom.xml
 
       # QuenchWorks CVE-2026-50559 (HIGH): quarkus-vertx-http 3.36.0 auth bypass,
