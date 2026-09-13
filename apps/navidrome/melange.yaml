@@ -18,7 +18,10 @@
 #      full-text search). zlib is linked in (upstream pulls zlib-dev), so
 #      zlib-dev + zlib-static are present for the static link.
 #
-# go.mod declares go 1.26; we build with go-1.26 and GOTOOLCHAIN=local so no
+# go.mod now requires go >= 1.27, so this builds with go-1.27. Building on
+# go-1.26 failed with "go.mod requires go >= 1.27 (running go 1.26.8;
+# GOTOOLCHAIN=local)" -- GOTOOLCHAIN=local is deliberate, it stops go from
+# silently downloading a toolchain, so the pinned package has to be new enough.
 # toolchain is fetched. Version is stamped via -X on consts.gitTag (kept with the
 # "v" prefix; upstream trims it at runtime) and consts.gitSha (non-empty, else
 # the reported version is "dev"). The GitHub archive is not a git checkout, so
@@ -45,7 +48,7 @@ environment:
       - busybox
       - bash
       - ca-certificates-bundle
-      - go-1.26
+      - go-1.27
       # CGO SQLite (mattn/go-sqlite3) is statically linked; zlib is pulled in by
       # the upstream build, so ship the dev headers + static archive for the link.
       - zlib-dev
@@ -82,7 +85,7 @@ pipeline:
       set -eu
       export CGO_ENABLED=1
       export GOFLAGS=-mod=mod
-      export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch a toolchain
+      export GOTOOLCHAIN=local      # use the installed go-1.27, do not fetch a toolchain
       export GO111MODULE=on
       GIT_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo release)"
       VERPKG="github.com/navidrome/navidrome/consts"
@@ -91,7 +94,34 @@ pipeline:
       # API-compatible bump within the module graph -- not a fork/force.
       #   golang.org/x/net v0.55.0 -> v0.56.0 (CVE-2026-46600: panic parsing an
       #   invalid SVCB/HTTPS DNS RR).
-      go get golang.org/x/image@v0.45.0 golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0
+      #
+      # FLOOR is a FLOOR, not a pin (docs/go-module-float.md). A bare
+      # `go get mod@vX` fails silently in two directions: it is a NO-OP when an
+      # upstream `replace` overrides it, and it becomes a DOWNGRADE once upstream
+      # requires more than vX -- re-introducing the CVE it was added to clear.
+      # So float only what is below the floor, then assert the SHIPPED BINARY
+      # carries nothing below it.
+      FLOOR="golang.org/x/image@v0.45.0 golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is
+      # the EFFECTIVE version and a replace cannot hide behind the require line.
+      # 0.63.2 has a `replace go.senan.xyz/taglib => …`, but on none of these.
+      go list -m $MODS
+      need="$(go list -m $MODS | awk '{ print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
       go mod tidy
       # netgo,sqlite_fts5 match upstream GO_BUILD_TAGS. Static link like the
       # upstream "standalone distribution" build (-extldflags '-static -latomic').
@@ -100,3 +130,9 @@ pipeline:
           -X ${VERPKG}.gitTag=v${{package.version}} \
           -X ${VERPKG}.gitSha=${GIT_SHA}" \
         -o "${{targets.destdir}}/usr/bin/navidrome" .
+      # The float is only real if it reached the BINARY. Every `dep`/`=>` line of
+      # `go version -m` must be at or above its floor -- the `=>` line is what
+      # catches a replace-shadowed float. Fail the build rather than ship it.
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/navidrome" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor navidrome)"
+      [ -z "$bad" ] || { echo "❌ 0-CVE float did not reach the binary:"; echo "$bad"; exit 1; }
