@@ -50,8 +50,16 @@ pipeline:
       #     instrumentation-2.23.0 and semconv-1.37.0 lines use only stable OTel APIs and
       #     are not flagged, so they stay. Quarkus 3.33's quarkus-opentelemetry extension
       #     re-augments against the bumped set below.
-      # (2) netty-codec-http 4.1.136 -> 4.1.137.Final (the CVE is fixed there; its siblings
-      #     are not flagged at 4.1.136, and the minimal bump is the house rule).
+      # (2) netty family 4.1.136 -> 4.1.137.Final IN LOCKSTEP -- all 17 io.netty.* jars
+      #     under lib/lib/main/. The nightly scan flags io.netty:netty-handler (fix:
+      #     4.2.17.Final / 4.1.137.Final), and netty modules must move as ONE set: a
+      #     lone handler beside 4.1.136 siblings mixes two builds of one library.
+      #     Within the 4.1 patch line the hop is ABI-compatible (the codec-http swap
+      #     has cleared the gate since 26.7.1). A version bump does NOT fix this:
+      #     upstream 26.7.3 builds on the SAME quarkus 3.33.3.1 BOM, which still pins
+      #     netty 4.1.136.Final. Trivy reads the fixed version from each jar's internal
+      #     pom.properties. The separate netty-tcnative-classes 2.0.78 line is not
+      #     flagged and stays.
       #
       # 26.7.2 SHIPS THE REST ALREADY. The swaps 26.7.1 needed for jackson-core/databind
       # (2.21.5), micrometer-core (1.16.6), netty-codec/-haproxy/-http2/-dns (4.1.136),
@@ -91,27 +99,28 @@ pipeline:
       swap "$OT/opentelemetry-sdk-logs/1.62.0/opentelemetry-sdk-logs-1.62.0.jar" io.opentelemetry.opentelemetry-sdk-logs-1.57.0.jar 51c94329bc8e335ed79027d29d49c075c11b91b39e48679edf590e784a392406
       swap "$OT/opentelemetry-sdk-metrics/1.62.0/opentelemetry-sdk-metrics-1.62.0.jar" io.opentelemetry.opentelemetry-sdk-metrics-1.57.0.jar 50b057fbf063f6801f623212f4b51b6a3fefc77837314a1316b2f54894c8b5d4
       swap "$OT/opentelemetry-sdk-trace/1.62.0/opentelemetry-sdk-trace-1.62.0.jar" io.opentelemetry.opentelemetry-sdk-trace-1.57.0.jar fb6c0953b229a6da1db813135ae11a621bf9da56b7356c1e93049ed4b088c232
-      # --- PLANNED (not yet implemented): netty-handler 4.1.136 -> 4.1.137.Final ------
-      # The nightly scan flags io.netty:netty-handler (fix: 4.2.17.Final / 4.1.137.Final).
-      # Verified in the published 26.7.2 image: the WHOLE netty family sits at
-      # 4.1.136.Final under /opt/keycloak/lib/lib/main/ (17 jars: buffer, codec, codec-dns,
-      # codec-haproxy, codec-http [already carries 4.1.137 content via the swap below],
-      # codec-http2, codec-socks, common, handler, handler-proxy, resolver, resolver-dns,
-      # transport, transport-classes-epoll, transport-native-epoll -linux-{x86_64,aarch_64},
-      # transport-native-unix-common; netty-tcnative-classes 2.0.78 is a separate line).
-      # A version bump does NOT fix this: upstream 26.7.3 builds on the SAME quarkus
-      # 3.33.3.1 BOM, which still pins netty 4.1.136.Final (verified in
-      # quarkus-bom-3.33.3.1.pom). PLAN: extend the NET= set below with swap() lines for
-      # handler + its siblings (common, buffer, codec, transport, resolver, and the
-      # codec-dns/-http2/-socks/-haproxy, handler-proxy, resolver-dns, epoll/unix-common
-      # natives) from https://repo1.maven.org/maven2/io/netty/<artifact>/4.1.137.Final/
-      # (all verified present), overwriting in place and keeping the 4.1.136.Final
-      # FILENAMES -- the quarkus app-model pins exact filenames; sha256s to be computed
-      # from the real downloads. RISK: netty modules must move as ONE lockstep set -- a
-      # lone handler beside 4.1.136 siblings mixes two builds of one library; within the
-      # 4.1 patch line the hop is ABI-compatible (the shipped codec-http swap proves it).
+      # The swaps overwrite each bundled jar IN PLACE, keeping its upstream
+      # 4.1.136.Final FILENAME (the quarkus app-model pins exact filenames and
+      # `kc.sh build` pre-flights their existence); a missing target hard-fails via
+      # swap() -- upstream renaming a jar must break the build, never silently skip.
       NET="https://repo1.maven.org/maven2/io/netty"
+      swap "$NET/netty-buffer/4.1.137.Final/netty-buffer-4.1.137.Final.jar" io.netty.netty-buffer-4.1.136.Final.jar f474b14c7734f15e0540394cb6f39d67777b7581a42919e4ac89d253d4efd929
+      swap "$NET/netty-codec/4.1.137.Final/netty-codec-4.1.137.Final.jar" io.netty.netty-codec-4.1.136.Final.jar 9987b6a660b0a6b1f0d791485dae33180b3d1c63687c006fe6d3fd025e9e3798
+      swap "$NET/netty-codec-dns/4.1.137.Final/netty-codec-dns-4.1.137.Final.jar" io.netty.netty-codec-dns-4.1.136.Final.jar 2d9a33ce41bd9f6f607df95039e42518a1fca16f83c9bbfe72beb57df6e2489f
+      swap "$NET/netty-codec-haproxy/4.1.137.Final/netty-codec-haproxy-4.1.137.Final.jar" io.netty.netty-codec-haproxy-4.1.136.Final.jar 5ffa58b94c5ac48fb7e41843c18acf7a268e90b5b85423987829c9291ce3a5df
       swap "$NET/netty-codec-http/4.1.137.Final/netty-codec-http-4.1.137.Final.jar" io.netty.netty-codec-http-4.1.136.Final.jar 0535bb5a736472bef5c948d15eb273c4ab9f796656fc7c5d6b982ad92bddbd49
+      swap "$NET/netty-codec-http2/4.1.137.Final/netty-codec-http2-4.1.137.Final.jar" io.netty.netty-codec-http2-4.1.136.Final.jar 576ddcfb51b78e86f145c9a52b60e500b1a1d5a257cafec8aa5416ffba044b49
+      swap "$NET/netty-codec-socks/4.1.137.Final/netty-codec-socks-4.1.137.Final.jar" io.netty.netty-codec-socks-4.1.136.Final.jar 4a6190e08988c058bfeef2b5965e71946439c771abf721c68f4039b4e7b023e8
+      swap "$NET/netty-common/4.1.137.Final/netty-common-4.1.137.Final.jar" io.netty.netty-common-4.1.136.Final.jar d31926b01adcc07af86f5e27b81b6d6c115df17d366e835d1fc3f5a1924e7e52
+      swap "$NET/netty-handler/4.1.137.Final/netty-handler-4.1.137.Final.jar" io.netty.netty-handler-4.1.136.Final.jar d0e4c6ee4779f59f6ab2fb5d388e4f57147c82270164b37945764bb9bda96a44
+      swap "$NET/netty-handler-proxy/4.1.137.Final/netty-handler-proxy-4.1.137.Final.jar" io.netty.netty-handler-proxy-4.1.136.Final.jar 843de10c4cef34cbc1a5344090f1b57db532fbebf141559862da675f6b656df4
+      swap "$NET/netty-resolver/4.1.137.Final/netty-resolver-4.1.137.Final.jar" io.netty.netty-resolver-4.1.136.Final.jar b4cf2aeedd9fc7c8c439bbfe574f63cfe5b83392e88bbc07ca0e8424b7cff955
+      swap "$NET/netty-resolver-dns/4.1.137.Final/netty-resolver-dns-4.1.137.Final.jar" io.netty.netty-resolver-dns-4.1.136.Final.jar 898d63ca62ed68ff46543c5344f969424b417f1e8d082fe2bb0181ba10144194
+      swap "$NET/netty-transport/4.1.137.Final/netty-transport-4.1.137.Final.jar" io.netty.netty-transport-4.1.136.Final.jar 6251adc2a2921572382732a2db188d4f4f2251fd6ebb49c5d44bbf33d6bfb1a7
+      swap "$NET/netty-transport-classes-epoll/4.1.137.Final/netty-transport-classes-epoll-4.1.137.Final.jar" io.netty.netty-transport-classes-epoll-4.1.136.Final.jar 55049554b799dc8e53bf234fffa36e001f7b5b65c32994b9bd59fc6356f1c52f
+      swap "$NET/netty-transport-native-unix-common/4.1.137.Final/netty-transport-native-unix-common-4.1.137.Final.jar" io.netty.netty-transport-native-unix-common-4.1.136.Final.jar 8056e7637f9948f953314894cf995ab664711b66c73c4cd5b593ae84f0b1048c
+      swap "$NET/netty-transport-native-epoll/4.1.137.Final/netty-transport-native-epoll-4.1.137.Final-linux-x86_64.jar" io.netty.netty-transport-native-epoll-4.1.136.Final-linux-x86_64.jar 185db6053e0e9573d36fa4eb6567b26139afaa4daa7bf5a068e661568304542b
+      swap "$NET/netty-transport-native-epoll/4.1.137.Final/netty-transport-native-epoll-4.1.137.Final-linux-aarch_64.jar" io.netty.netty-transport-native-epoll-4.1.136.Final-linux-aarch_64.jar 82fb63a2dc90c0bddb81e04065a1c06fb4c5be722ad5d64b46491daf8b6f9a01
       cd ../../..
   - runs: |
       # Run the augmentation (`kc.sh build`) at IMAGE BUILD time so runtime is optimized
