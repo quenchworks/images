@@ -67,99 +67,21 @@ pipeline:
       # must read the default conf (to seed the writable mount) and exec the launchers.
       chmod -R a+rX "$dest"
 
-      # ---- 0-CVE jar remediation (same-major standalone swaps) + drop shaded parquet-jackson ----
-      # Swap vulnerable STANDALONE lib/ jars for their same-major Trivy-fixed versions
-      # from Maven Central (ABI-safe), then DROP the one shaded uber-jar that cannot take
-      # a standalone swap. netty (Bolt) and shiro (auth) are exercised end-to-end by test.sh.
-      cd "$dest/lib"
-      MC="https://repo1.maven.org/maven2"
-      swap() { # <group-path> <artifact> <oldver> <newver> [classifier]
-        grp="$1"; art="$2"; old="$3"; new="$4"; cls="${5:-}"
-        # The old jar MUST exist: if the dist moved on and no longer ships it, this
-        # block's pins are stale and running them would DOWNGRADE the dist's newer
-        # jar to `new` (that is how the netty block re-introduced a CRITICAL on
-        # 2026.09.14). Fail loudly instead; whoever bumps the dist version updates
-        # the swap block in the same commit.
-        if [ -n "$cls" ]; then
-          test -f "${art}-${old}-${cls}.jar" \
-            || { echo "swap(): ${art}-${old}-${cls}.jar not in dist -- block is stale, update it"; exit 1; }
-          rm -f "${art}-${old}-${cls}.jar"
-          curl -fsSL "$MC/${grp}/${art}/${new}/${art}-${new}-${cls}.jar" -o "${art}-${new}-${cls}.jar"
-          test -s "${art}-${new}-${cls}.jar"
-        else
-          test -f "${art}-${old}.jar" \
-            || { echo "swap(): ${art}-${old}.jar not in dist -- block is stale, update it"; exit 1; }
-          rm -f "${art}-${old}.jar"
-          curl -fsSL "$MC/${grp}/${art}/${new}/${art}-${new}.jar" -o "${art}-${new}.jar"
-          test -s "${art}-${new}.jar"
-        fi
-      }
-      # JACKSON SWAPS DELETED 2026-09-14: the 2026.08.1 dist ships jackson 2.22.1
-      # (annotations 2.22), newer than the 2.21.5 fix these swaps targeted and carrying
-      # none of the 2026-545xx findings. The hardened swap() caught the drift on the
-      # first build after the dist moved ("jackson-databind-2.21.2.jar not in dist").
-      # Re-add swaps only against whatever version the CURRENT dist actually ships.
-      # --- PLANNED: netty-handler 4.2.16.Final is flagged by the nightly scan (fix:
-      # 4.2.17.Final). TWO options; the version bump WINS:
-      #   (1) PREFERRED -- bump to the upstream 2026.08 line (2026.08.1): upstream's pom
-      #       pins netty.version=4.2.17.Final there, so the dist bundles the fixed
-      #       handler and this whole netty block collapses. Add the line + sha256 in
-      #       apps/neo4j/build.conf (discovery already reports NEW LINE 2026.08).
-      #   (2) Interim surgery on 2026.05.0: verified in the published image, the set
-      #       sits at 4.2.16.Final in /opt/neo4j/lib (buffer, codec-base,
-      #       codec-compression, codec-haproxy, codec-http [already 4.2.17], common,
-      #       handler, resolver, transport, transport-classes-epoll/-kqueue,
-      #       native-epoll -linux-{x86_64,aarch_64}, native-kqueue
-      #       -osx-{aarch_64,x86_64}, native-unix-common; tcnative-classes 2.0.77 is a
-      #       separate line). 4.2.17.Final exists for every artifact (verified by HEAD
-      #       request): https://repo1.maven.org/maven2/io/netty/<artifact>/4.2.17.Final/
-      #       -- change the loop below to 4.2.14.Final -> 4.2.17.Final and DELETE the
-      #       now-dead netty-codec-http 4.2.16->4.2.17 line further down.
-      # RISK: netty must move as ONE lockstep set within 4.2.x (mixing builds of one
-      # library is what breaks the app); test.sh exercises Bolt + HTTP end-to-end.
-      # NETTY SWAPS DELETED 2026-09-14: the 2026.08.1 dist itself ships the whole
-      # netty family at 4.2.17.Final (verified by listing the pinned tarball), so
-      # there is nothing left to swap. The old 4.2.14 -> 4.2.16 lines had turned into
-      # a silent DOWNGRADE: their rm targets no longer exist in the dist, so each rm
-      # no-op'd and the block downloaded 4.2.16 jars over the dist's 4.2.17,
-      # re-introducing CVE-2026-75595 (CRITICAL). Do not re-add netty swaps without
-      # re-checking which version the CURRENT dist ships.
-      # jetty 12.1.8 -> 12.1.10 (Jul-2026 jetty wave). Neo4j's embedded HTTP server links
-      # against a SINGLE coherent jetty version -- mixing 12.1.8 + 12.1.10 makes its HTTP
-      # endpoints 500 (probes fail -> CrashLoop). So bump the WHOLE org.eclipse.jetty.* set
-      # neo4j ships (core + http2 + ee8 + ee), not just the CVE-flagged jars, in lockstep.
-      # (jetty-servlet-api-4.0.9 is the servlet API spec jar, a different artifact -- leave it.)
-      for a in jetty-alpn-java-server jetty-alpn-server jetty-http jetty-io \
-               jetty-session jetty-util jetty-server jetty-security jetty-xml; do
-        swap org/eclipse/jetty "$a" 12.1.8 12.1.10
-      done
-      for a in jetty-http2-common jetty-http2-hpack jetty-http2-server; do
-        swap org/eclipse/jetty/http2 "$a" 12.1.8 12.1.10
-      done
-      for a in jetty-ee8-nested jetty-ee8-security jetty-ee8-servlet jetty-ee8-webapp; do
-        swap org/eclipse/jetty/ee8 "$a" 12.1.8 12.1.10
-      done
-      swap org/eclipse/jetty/ee jetty-ee-webapp 12.1.8 12.1.10
-      # shiro 2.1.0 -> 2.2.1 (CVE-2026-49268 HIGH LDAP injection + CVE-2026-43827 session
-      # fixation); whole module set bumped in lockstep (shiro pins ${project.version}).
-      for a in shiro-core shiro-cache shiro-config-core shiro-lang shiro-event \
-               shiro-crypto-cipher shiro-crypto-core shiro-crypto-hash; do
-        swap org/apache/shiro "$a" 2.1.0 2.2.1
-      done
-      # In shiro 2.2.x the argon2/bcrypt hash providers moved to group org.apache.shiro.crypto.
-      swap org/apache/shiro/crypto shiro-hashes-argon2 2.1.0 2.2.1
-      swap org/apache/shiro/crypto shiro-hashes-bcrypt 2.1.0 2.2.1
-      # (The 2026-08-26 netty-codec-http swap line is gone: the 2026.08.1 dist ships
-      # codec-http 4.2.17.Final itself, so there was nothing left to swap.)
-      swap org/apache/logging/log4j log4j-api 2.25.4 2.25.5
-      # DROP the shaded parquet-jackson uber-jar: it SHADES jackson-databind 2.21.3
-      # (CVE-2026-54512..54518) as relocated classes, so a standalone swap cannot reach it,
-      # and no newer parquet-jackson shades a fixed jackson. It is used ONLY by the niche
-      # Parquet import/export format; the core graph DB + Bolt do not load it at boot, so
-      # removing it does not affect normal operation (Parquet I/O format is disabled).
-      rm -f parquet-jackson-1.17.1.jar
-      cd - >/dev/null
-      chmod -R a+rX "$dest"
+      # ---- 0-CVE jar remediation: NONE NEEDED on 2026.08.1 ----------------------
+      # Every swap this recipe used to carry is gone: the 2026.08.1 dist already ships
+      # at or above each fix version. Verified by listing the pinned tarball:
+      #   netty  4.2.17.Final (whole family)   jackson 2.22.1 / annotations 2.22
+      #   jetty  12.1.11 (> the 12.1.10 fix)   shiro   3.0.0  (> the 2.2.1 fix)
+      #   log4j  2.26.1  (> the 2.25.5 fix)    parquet-jackson 1.18.0, which SHADES
+      #                                        jackson-databind 2.22.1 (fixed), so the
+      #                                        old `rm` of the uber-jar is unnecessary
+      #                                        and Parquet I/O works again.
+      # Every one of those blocks had gone stale the moment the dist moved, and a stale
+      # block is not inert: its `rm` no-ops on a filename that no longer exists, then it
+      # downloads the OLDER jar over the dist's newer one. That is exactly how the netty
+      # block re-introduced CVE-2026-75595 (CRITICAL) on build #22. Deleting them is the
+      # fix; re-add a swap only against the version the CURRENT dist actually ships, and
+      # keep the `test -f` assertion so a future dist bump fails loudly instead.
 
       # bake a config-from-env entrypoint. A read-only rootfs means data/, logs/, run/
       # and the conf dir all live under writable mounts; the entrypoint relocates them
