@@ -37,8 +37,10 @@ contents:
     - docker-cli                    # `docker` -- drives the mounted host daemon (CVE-tracked)
     - docker-compose                # `docker compose` v2 plugin (/usr/libexec/docker/cli-plugins)
     - docker-cli-buildx             # `docker buildx` plugin (/usr/libexec/docker/cli-plugins)
-    - mc                            # minio client (Wolfi 0.20250813.083541 == upstream RELEASE.2025-08-13T08-35-41Z)
-    - quench-coolify-helper-tools@local  # from-source pack, railpack, nixpacks, mise + seeding entrypoint
+    # mc (minio client) is BUILT FROM SOURCE inside quench-coolify-helper-tools --
+    # Wolfi's mc apk never fixes golang.org/x/net CVE-2026-46600 (secdb bucket "0"),
+    # so the apk package was dropped here in favor of the house x/* float.
+    - quench-coolify-helper-tools@local  # from-source pack, railpack, nixpacks, mise, mc + seeding entrypoint
 
 # RUNS AS ROOT -- by design (see header). No `accounts.run-as`: the image stays uid 0 so
 # it can read the mounted host docker socket and drive the build toolchain.
@@ -67,7 +69,7 @@ annotations:
   org.opencontainers.image.url: "https://quench-works.com"
   org.opencontainers.image.vendor: "Quenchworks"
   org.opencontainers.image.title: "quench-coolify-helper"
-  org.opencontainers.image.description: "Hardened Coolify build-engine helper (PRIVILEGED BY DESIGN: runs as root with the host docker socket mounted). Docker CLI + compose + buildx + buildpacks pack/nixpacks/railpack/mise + minio mc, all CVE-tracked Wolfi or from-source."
+  org.opencontainers.image.description: "Hardened Coolify build-engine helper (PRIVILEGED BY DESIGN: runs as root with the host docker socket mounted). Docker CLI + compose + buildx (Wolfi) + buildpacks pack/nixpacks/railpack/mise + minio mc (from-source), all CVE-tracked Wolfi or from-source."
   # coolify-helper is Apache-2.0 (Coolify). Bundled tools: pack Apache-2.0, railpack MIT,
   # nixpacks MIT, mise MIT, docker/compose/buildx Apache-2.0, mc AGPL-3.0 (minio client).
   org.opencontainers.image.licenses: "Apache-2.0 AND AGPL-3.0-or-later"

@@ -136,9 +136,33 @@ pipeline:
       export GOPATH="$(mktemp -d)"
       export GOCACHE="$(mktemp -d)"
       cd cloudflared-src
-      # 0-CVE gate: this release's module graph now trails the fixed x/net/x/text
-      # (x/net CVE-2026-46600, x/text CVE-2026-56852). Float them, then tidy.
-      go get golang.org/x/net@v0.58.0 golang.org/x/sys@v0.47.0 google.golang.org/grpc@v1.83.2 golang.org/x/crypto@v0.56.0 golang.org/x/text@v0.41.0 github.com/gorilla/websocket@v1.5.3 && go mod tidy
+      # 0-CVE gate: this release's module graph trails fixed releases across x/net,
+      # x/sys, grpc, x/crypto, x/text, gorilla/websocket (CVE-2026-84304/-84445/-84303
+      # in grpc, CVE-2026-56855/-78662 in x/crypto, plus the older x/net/x/text CVEs).
+      # FLOOR is a floor, not a pin: a bare `go get M@V` sets an EXACT version and
+      # silently downgrades once cloudflared's own go.mod moves past it on a future
+      # bump -- float ONLY the modules that are actually below floor.
+      FLOOR="golang.org/x/net@v0.58.0 golang.org/x/sys@v0.47.0 google.golang.org/grpc@v1.83.2 golang.org/x/crypto@v0.56.0 golang.org/x/text@v0.41.0 github.com/gorilla/websocket@v1.5.3"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is
+      # the EFFECTIVE version and a replace cannot hide behind the require line.
+      go list -m -e $MODS
+      need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
+      go mod tidy
       # Mirror the upstream Makefile's VERSION_FLAGS (-X main.Version=...); also stamp
       # BuiltForPackageManager so cloudflared's self-updater refuses to overwrite the
       # managed binary inside the immutable image. -buildvcs=false keeps the main module
@@ -196,15 +220,18 @@ pipeline:
           "picomatch": "2.3.2",
           "semver": "7.8.5",
           "ws": "7.5.11",
-          "mysql2": "3.9.8",
+          "mysql2": "3.24.4",           // CVE-2026-84375 (GHSA-3f6p-5ww8-9rcr, auth-plugin
+                                        // downgrade) + GHSA-rgwj-5xj2-c3m3 (zlib-inflate DoS);
+                                        // fixed at 3.22.0 / 3.23.1 respectively, newest used
           "ip": "1.1.9",
           "brace-expansion": "5.0.9",   // CVE-2026-14257 then CVE-2026-69152 (which landed
                                         // ON 5.0.8, the version pinned to fix the first);
                                         // see the interop step below
-          "js-yaml": "4.3.1",           // CVE in 4.3.0
+          "js-yaml": "4.3.2",           // CVE in 4.3.0/4.3.1 (CVE-2026-84375, DoS in YAML parsing)
           "minimatch": "3.1.5",
           "braces": "3.0.3",
-          "lodash": "4.18.1"
+          "lodash": "4.18.1",
+          "decode-uri-component": "0.5.0"  // CVE-2026-45822 (DoS via crafted input), <0.5.0 all affected
         };
         j.overrides = Object.assign({}, j.overrides, pins);
         // glob (pulled by pm2 7) needs minimatch ^5, which the global 3.1.5 pin does not
