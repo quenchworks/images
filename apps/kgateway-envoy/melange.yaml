@@ -56,14 +56,34 @@ pipeline:
       # so no toolchain download.
       export GOTOOLCHAIN=local
 
-      # ---- 0-CVE gate: no module float is needed at these tags ----------------
-      # envoyinit is a thin shim -- bootstrap transform plus syscall.Exec -- and its
-      # dependency tree is a small subset of the controller's, so both shipped tags
-      # build 0-fixable on x86_64 and aarch64 with no `go get` floor. Note it does NOT
-      # link istio.io/istio, which is why this app needs no VEX file while
-      # apps/kgateway does. When a float DOES become necessary, copy the
-      # FLOOR/below_floor pattern from apps/envoy-gateway/melange.yaml and read
-      # docs/go-module-float.md first.
+      # 2026-09-14: the nightly scan flagged google.golang.org/grpc below its fix
+      # (CVE-2026-84304, CVE-2026-84445, CVE-2026-84303) in the published image; this
+      # recipe had no float at all. FLOOR, not a bare `go get mod@vX`, per
+      # docs/go-module-float.md: an exact pin is a no-op under a `replace` and becomes
+      # a DOWNGRADE once upstream requires more. Note envoyinit does NOT link
+      # istio.io/istio, which is why this app needs no VEX file while apps/kgateway
+      # does.
+      FLOOR="google.golang.org/grpc@v1.83.2 golang.org/x/crypto@v0.56.0 golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0 golang.org/x/sys@v0.47.0"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # -e + the version guard: plain `go list -m M` FAILS when the app does not
+      # require M, and -e's version-less output would otherwise be read as
+      # below-floor and `go get`ed, ADDING a dependency the app never had.
+      GOFLAGS=-mod=mod go list -m -e $MODS 2>/dev/null || true
+      need="$(GOFLAGS=-mod=mod go list -m -e $MODS 2>/dev/null | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then GOFLAGS=-mod=mod go get $need; fi
+      GOFLAGS=-mod=mod go mod tidy
 
       go build -trimpath \
         -ldflags "-s -w -X github.com/kgateway-dev/kgateway/v2/pkg/version.Version=v${{package.version}}" \
