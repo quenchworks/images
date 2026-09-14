@@ -143,6 +143,21 @@ pipeline:
       swap server/solr-webapp/webapp/WEB-INF/lib jetty-client-12.0.36.jar 1e188b18e8ff6b60ca743e9c9cc39c35f8b6b1b6a7dc07cbdd06800672a1ee02 "https://repo1.maven.org/maven2/org/eclipse/jetty/jetty-client/12.0.36/jetty-client-12.0.36.jar" jetty-client-12.0.27.jar
       swap server/solr-webapp/webapp/WEB-INF/lib jetty-http2-client-12.0.36.jar c63277d48780b9b8f17be7fafe0f772ebb54f90032bcfc7c7513df111be785b1 "https://repo1.maven.org/maven2/org/eclipse/jetty/http2/jetty-http2-client/12.0.36/jetty-http2-client-12.0.36.jar" jetty-http2-client-12.0.27.jar
       swap server/solr-webapp/webapp/WEB-INF/lib jetty-http2-client-transport-12.0.36.jar 82801f3803ac0018d6f28f41db74b316154f5a3e3b797960fff957435351b700 "https://repo1.maven.org/maven2/org/eclipse/jetty/http2/jetty-http2-client-transport/12.0.36/jetty-http2-client-transport-12.0.36.jar" jetty-http2-client-transport-12.0.27.jar
+      # --- PLANNED (not yet implemented): netty 4.2.16 -> 4.2.17.Final set -------------
+      # The nightly scan now flags netty-handler at 4.2.16.Final (fix: 4.2.17.Final).
+      # Verified in the published 10.0.0 image: netty sits in TWO dirs --
+      # server/solr-webapp/webapp/WEB-INF/lib/ (buffer, codec-base, common, handler,
+      # resolver, transport, transport-classes-epoll, transport-native-epoll
+      # -linux-x86_64, transport-native-unix-common, all at 4.2.16.Final) and
+      # modules/opentelemetry/lib/ (codec-compression, codec-http2, codec-socks,
+      # handler-proxy at 4.2.16.Final; codec-http already 4.2.17.Final). tcnative 2.0.70
+      # and the shaded netty inside grpc-netty-shaded-1.83.1 (scan-verified when pinned)
+      # are separate. 10.0.0 is the newest upstream solr -- NO version bump; surgery.
+      # 4.2.17.Final exists for every artifact (verified by HEAD request):
+      # https://repo1.maven.org/maven2/io/netty/<artifact>/4.2.17.Final/. Fix is
+      # MECHANICAL: bump every netty-*-4.2.16.Final swap below to 4.2.17.Final and
+      # recompute the sha256 pins from real downloads. RISK: netty must move as ONE
+      # lockstep set within 4.2.x; the boot + core-create/query smoke test guards it.
       swap server/solr-webapp/webapp/WEB-INF/lib netty-buffer-4.2.16.Final.jar cc36ae9fbd0b03fe755eb4eb4424ca53b59cfd297d7fd47d49e5b1059beded6c "https://repo1.maven.org/maven2/io/netty/netty-buffer/4.2.16.Final/netty-buffer-4.2.16.Final.jar" netty-buffer-4.2.6.Final.jar
       swap server/solr-webapp/webapp/WEB-INF/lib netty-codec-base-4.2.16.Final.jar feb410225938d9970de6b624a0c031d079804fa5cc5e1ec6e9298f16db5998a7 "https://repo1.maven.org/maven2/io/netty/netty-codec-base/4.2.16.Final/netty-codec-base-4.2.16.Final.jar" netty-codec-base-4.2.6.Final.jar
       swap server/solr-webapp/webapp/WEB-INF/lib netty-common-4.2.16.Final.jar 9825ee68a0dc4cd2b53e2f532502401b2211bad9b77e8b04882d9e64487283ff "https://repo1.maven.org/maven2/io/netty/netty-common/4.2.16.Final/netty-common-4.2.16.Final.jar" netty-common-4.2.6.Final.jar

@@ -98,6 +98,20 @@ pipeline:
       swap logback-classic-1.5.35.jar 1a0ba277c4d177862731c820099913013255892c79e05b5371307f174f089878 "$M/ch/qos/logback/logback-classic/1.5.35/logback-classic-1.5.35.jar" 'logback-classic-1.5.18.jar'
       swap lz4-java-1.11.1.jar e5e31b195fcc7e9c5da4b191af3b0082ee616c13f61cbd79409ffa65e4dd5c47 "$M/at/yawk/lz4/lz4-java/1.11.1/lz4-java-1.11.1.jar" 'lz4-java-1.10.1.jar'
       swap logback-core-1.5.35.jar d8c38ea6871eefccf769f83e1afd07280e29fa0d1dd281092a77eb77c880ace6 "$M/ch/qos/logback/logback-core/1.5.35/logback-core-1.5.35.jar" 'logback-core-1.5.18.jar'
+      # --- PLANNED (not yet implemented): netty-handler 4.1.136 -> 4.1.137.Final ------
+      # The nightly scan flags io.netty:netty-handler (fix: 4.1.137.Final). Verified in
+      # the published 5.0.9 image: this whole set PLUS netty-all sits at 4.1.136.Final in
+      # /opt/cassandra/lib (all, buffer, codec, common, handler, handler-proxy,
+      # handler-ssl-ocsp, resolver, transport, transport-classes-epoll/-kqueue,
+      # transport-native-epoll {no-classifier, -linux-x86_64, -linux-aarch_64},
+      # transport-native-unix-common; tcnative 2.0.70 is a separate line). 5.0.9 is the
+      # newest published cassandra (6.0 = alphas only), so there is NO version bump --
+      # jar surgery. Every artifact exists at
+      # https://repo1.maven.org/maven2/io/netty/<artifact>/4.1.137.Final/ (verified,
+      # incl. netty-all). Fix is MECHANICAL: set NV=4.1.137.Final and recompute all 16
+      # sha256 pins from real downloads. RISK: netty must move as ONE lockstep set incl.
+      # netty-all (it bundles the same classes as the modules -- netty-all at a different
+      # version than the modules is a guaranteed classpath clash).
       NV=4.1.136.Final
       swap netty-all-$NV.jar 75cb7db3492915953aa19c566e477fb371ae2b32aa12bc4fe85bd7a2a6b8f5e8 "$M/io/netty/netty-all/$NV/netty-all-$NV.jar" 'netty-all-4.1.130.Final.jar'
       swap netty-buffer-$NV.jar c88f13fc41156fde5df918c7b240038dfbe97ac57576163f208630391789b5d5 "$M/io/netty/netty-buffer/$NV/netty-buffer-$NV.jar" 'netty-buffer-4.1.130.Final.jar'

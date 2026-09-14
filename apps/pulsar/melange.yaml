@@ -130,6 +130,23 @@ pipeline:
       # is clean at 4.1.136). An earlier duplicate swap for this jar was removed: THIS
       # line runs later and re-downloaded 4.1.136 after it, leaving both jars on the
       # classpath -- the last-swap-wins twin of the last-float-wins module lesson.
+      # --- PLANNED (not yet implemented): netty family 4.1.136 -> 4.1.137.Final -------
+      # The nightly scan now flags netty-handler at 4.1.136.Final (fix: 4.1.137.Final).
+      # Verified in the published 4.2.4 image: the whole io.netty family sits at
+      # io.netty-netty-*-4.1.136.Final in /opt/pulsar/lib (buffer, codec, codec-dns,
+      # codec-haproxy, codec-http2, codec-socks, common, handler, handler-proxy,
+      # resolver, resolver-dns, resolver-dns-classes-macos, resolver-dns-native-macos
+      # -osx-{aarch_64,x86_64}, transport, transport-classes-epoll, transport-native-epoll
+      # -linux-{x86_64,aarch_64}, transport-native-unix-common); netty-codec-http already
+      # runs 4.1.137.Final via the swap below; tcnative 2.0.78 and the io_uring incubator
+      # line (0.0.26.Final) are separate and not flagged. 4.2.4 is the newest upstream
+      # pulsar -- NO version bump; jar surgery. Every artifact exists at
+      # https://repo1.maven.org/maven2/io/netty/<artifact>/4.1.137.Final/ (verified by
+      # HEAD request). Fix is MECHANICAL: add `swap io/netty <artifact>
+      # 4.1.136.Final 4.1.137.Final [sha256]` lines for the family -- swap()'s
+      # three-case logic fails loudly if the dist moves. RISK: netty must move as ONE
+      # lockstep set; within the 4.1 patch line the hop is ABI-compatible (the shipped
+      # codec-http 4.1.137 precedent proves it).
       swap io/netty netty-codec-http    4.1.136.Final 4.1.137.Final 0535bb5a736472bef5c948d15eb273c4ab9f796656fc7c5d6b982ad92bddbd49
       # at.yawk.lz4:lz4-java 1.10.3 -> 1.11.1 (CVE-2026-59949: the native XXHash
       # implementations can crash the JVM on invalid byte-array ranges). Backs the lz4

@@ -91,6 +91,25 @@ pipeline:
       swap "$OT/opentelemetry-sdk-logs/1.62.0/opentelemetry-sdk-logs-1.62.0.jar" io.opentelemetry.opentelemetry-sdk-logs-1.57.0.jar 51c94329bc8e335ed79027d29d49c075c11b91b39e48679edf590e784a392406
       swap "$OT/opentelemetry-sdk-metrics/1.62.0/opentelemetry-sdk-metrics-1.62.0.jar" io.opentelemetry.opentelemetry-sdk-metrics-1.57.0.jar 50b057fbf063f6801f623212f4b51b6a3fefc77837314a1316b2f54894c8b5d4
       swap "$OT/opentelemetry-sdk-trace/1.62.0/opentelemetry-sdk-trace-1.62.0.jar" io.opentelemetry.opentelemetry-sdk-trace-1.57.0.jar fb6c0953b229a6da1db813135ae11a621bf9da56b7356c1e93049ed4b088c232
+      # --- PLANNED (not yet implemented): netty-handler 4.1.136 -> 4.1.137.Final ------
+      # The nightly scan flags io.netty:netty-handler (fix: 4.2.17.Final / 4.1.137.Final).
+      # Verified in the published 26.7.2 image: the WHOLE netty family sits at
+      # 4.1.136.Final under /opt/keycloak/lib/lib/main/ (17 jars: buffer, codec, codec-dns,
+      # codec-haproxy, codec-http [already carries 4.1.137 content via the swap below],
+      # codec-http2, codec-socks, common, handler, handler-proxy, resolver, resolver-dns,
+      # transport, transport-classes-epoll, transport-native-epoll -linux-{x86_64,aarch_64},
+      # transport-native-unix-common; netty-tcnative-classes 2.0.78 is a separate line).
+      # A version bump does NOT fix this: upstream 26.7.3 builds on the SAME quarkus
+      # 3.33.3.1 BOM, which still pins netty 4.1.136.Final (verified in
+      # quarkus-bom-3.33.3.1.pom). PLAN: extend the NET= set below with swap() lines for
+      # handler + its siblings (common, buffer, codec, transport, resolver, and the
+      # codec-dns/-http2/-socks/-haproxy, handler-proxy, resolver-dns, epoll/unix-common
+      # natives) from https://repo1.maven.org/maven2/io/netty/<artifact>/4.1.137.Final/
+      # (all verified present), overwriting in place and keeping the 4.1.136.Final
+      # FILENAMES -- the quarkus app-model pins exact filenames; sha256s to be computed
+      # from the real downloads. RISK: netty modules must move as ONE lockstep set -- a
+      # lone handler beside 4.1.136 siblings mixes two builds of one library; within the
+      # 4.1 patch line the hop is ABI-compatible (the shipped codec-http swap proves it).
       NET="https://repo1.maven.org/maven2/io/netty"
       swap "$NET/netty-codec-http/4.1.137.Final/netty-codec-http-4.1.137.Final.jar" io.netty.netty-codec-http-4.1.136.Final.jar 0535bb5a736472bef5c948d15eb273c4ab9f796656fc7c5d6b982ad92bddbd49
       cd ../../..

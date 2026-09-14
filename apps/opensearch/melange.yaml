@@ -400,6 +400,23 @@ pipeline:
       [ "$patched" -gt 0 ] || { echo "❌ no plugin dir received the patched calcite -- layout changed"; exit 1; }
       echo "calcite 1.42.0 installed into $patched plugin dir(s)"
       rm -rf "$cal"
+      # --- PLANNED (not yet implemented): netty 4.2.16 -> 4.2.17.Final set -------------
+      # The nightly scan now flags netty-handler at 4.2.16.Final content (fix:
+      # 4.2.17.Final). Verified in the published 3.8.0 image: the 4.2.16.Final set sits
+      # in FOUR dirs -- modules/transport-netty4/, plugins/opensearch-ml/,
+      # plugins/opensearch-notifications/, plugins/opensearch-performance-analyzer/
+      # (netty-codec-http already carries 4.2.17.Final via block (2c); the
+      # netty-transport-classes-epoll-4.1.124.Final in ml/notifications is a separate
+      # 4.1.x line, not part of this set). 3.8.0 is the newest upstream OpenSearch, so
+      # there is NO version bump -- jar surgery. 4.2.17.Final exists on Maven Central
+      # for EVERY artifact in the nettyswap/nettyquic lists (verified by HEAD request):
+      # https://repo1.maven.org/maven2/io/netty/<artifact>/4.2.17.Final/. Fix is
+      # MECHANICAL: change the two 4.2.16.Final literals in block (4) to 4.2.17.Final,
+      # recompute all sha256 pins from real downloads, then DELETE the netty-codec-http
+      # nettyswap line (block (2c) already renamed it to 4.2.17.Final, so that find
+      # matches nothing and would only re-download). RISK: netty must move as ONE
+      # lockstep set within 4.2.x; test.sh's remote-reindex assertion guards the
+      # httpclient5/netty client path that neither boot nor the chart gate exercises.
       # (4) netty 4.2.15.Final -> 4.2.16.Final (Jul-2026 netty wave). Standalone io.netty jars
       #     in transport-netty4 + the ml/notifications/performance-analyzer plugins (the
       #     opensearch-security / -security-analytics plugins that also carried netty are

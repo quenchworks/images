@@ -74,6 +74,20 @@ pipeline:
       swap jackson-databind-2.21.5.jar 507418c0fafd38b2b2cfb704521630da613a8e4cc8381195a6f418017883e2c0 "$M/com/fasterxml/jackson/core/jackson-databind/2.21.5/jackson-databind-2.21.5.jar" jackson-databind-2.15.2.jar
       swap logback-classic-1.5.35.jar 1a0ba277c4d177862731c820099913013255892c79e05b5371307f174f089878 "$M/ch/qos/logback/logback-classic/1.5.35/logback-classic-1.5.35.jar" logback-classic-1.3.15.jar
       swap logback-core-1.5.35.jar d8c38ea6871eefccf769f83e1afd07280e29fa0d1dd281092a77eb77c880ace6 "$M/ch/qos/logback/logback-core/1.5.35/logback-core-1.5.35.jar" logback-core-1.3.15.jar
+      # --- PLANNED (not yet implemented): netty-handler 4.1.136 -> 4.1.137.Final ------
+      # The nightly scan flags io.netty:netty-handler (fix: 4.1.137.Final). Verified in
+      # the published 3.9.5 image: this whole set sits at 4.1.136.Final in
+      # /opt/zookeeper/lib (buffer, codec, common, handler, resolver, transport,
+      # transport-classes-epoll, transport-native-unix-common, transport-native-epoll
+      # -linux-x86_64 only -- the dist ships no aarch64 native; tcnative 2.0.74 is a
+      # separate line). Every artifact exists at
+      # https://repo1.maven.org/maven2/io/netty/<artifact>/4.1.137.Final/ (verified).
+      # 3.9.5 is the newest PUBLISHED zookeeper (dlcdn); a release-3.9.6 tag exists and
+      # branch-3.9 already pins netty.version=4.1.137.Final -- when 3.9.6 publishes, a
+      # VERSION BUMP supersedes this swap (drop the netty swaps with it). Until then the
+      # fix is MECHANICAL: set NV=4.1.137.Final and recompute the 9 sha256 pins from
+      # real downloads. RISK: none beyond lockstep -- swap() already moves the whole
+      # set to one version; mixing netty versions across lib/ is what breaks the app.
       NV=4.1.136.Final
       swap netty-buffer-$NV.jar c88f13fc41156fde5df918c7b240038dfbe97ac57576163f208630391789b5d5 "$M/io/netty/netty-buffer/$NV/netty-buffer-$NV.jar" netty-buffer-4.1.130.Final.jar
       swap netty-codec-$NV.jar 2de4fc13005c7740b46427a47ee04265a19779c147d53e583f441889b1148159 "$M/io/netty/netty-codec/$NV/netty-codec-$NV.jar" netty-codec-4.1.130.Final.jar
