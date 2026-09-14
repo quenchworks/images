@@ -414,7 +414,10 @@ pipeline:
       # satisfied here, so no cascade is needed.
       # None of thanos' `replace` directives cover a floated module (they redirect
       # capnp, gomemcache, kuberesolver, galaxycache, kingpin, zenhack/util).
-      go get google.golang.org/grpc@v1.83.2 golang.org/x/text@v0.41.0
+      # x/crypto added 2026-09-14: the gate flagged v0.55.0 (CVE-2026-56855,
+      # CVE-2026-78662) in the published image; this line floated grpc and text but
+      # not crypto, so crypto stayed at whatever the graph resolved.
+      go get google.golang.org/grpc@v1.83.2 golang.org/x/text@v0.41.0 golang.org/x/crypto@v0.56.0
       go get github.com/thanos-io/promql-engine@v0.0.0-20260713055003-6e924468ac44
       # otel is NOT one module. The comment above was right that go.opentelemetry.io/otel
       # itself is pulled up to 1.44.0 by prometheus, but the otel repo publishes each
