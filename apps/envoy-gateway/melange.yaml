@@ -65,10 +65,13 @@ pipeline:
       #   is here so a future patch that does link it cannot fail the gate on publish
       #   day. Drop it once no line requires oras below 2.6.2.
       # Neither tag carries any `replace` directive, so nothing shadows the float.
-      # x/net, x/text, x/crypto and grpc are already at or above the house floors on
-      # both lines (0.57.0 / 0.40.0 / 0.54.0 / 1.82.1), so they are not listed: an
-      # unnecessary floor is dead weight that inverts into a downgrade later.
-      FLOOR="github.com/google/cel-go@v0.29.2 golang.org/x/mod@v0.40.0 oras.land/oras-go/v2@v2.6.2 google.golang.org/grpc@v1.83.2"
+      # x/net, x/text and grpc are already at or above the house floors on both
+      # lines (0.57.0 / 0.40.0 / 1.82.1), so they are not listed: an unnecessary
+      # floor is dead weight that inverts into a downgrade later.
+      # x/crypto added 2026-09-14: 1.9.1's go.mod requires v0.55.0 (indirect),
+      # below the v0.56.0 fix for CVE-2026-56855 / CVE-2026-78662 (x/crypto/ssh
+      # DoS). No `replace` covers it, so a plain float reaches the binary.
+      FLOOR="github.com/google/cel-go@v0.29.2 golang.org/x/mod@v0.40.0 oras.land/oras-go/v2@v2.6.2 google.golang.org/grpc@v1.83.2 golang.org/x/crypto@v0.56.0"
       MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
       # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
       below_floor() {
