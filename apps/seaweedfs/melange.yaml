@@ -90,6 +90,12 @@ pipeline:
       go list -m -e $MODS 2>/dev/null || true
       need="$(go list -m -e $MODS 2>/dev/null | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
       if [ -n "$need" ]; then go get $need; fi
+      # The floor cannot see the difference between upstream's branch requirement
+      # `v1.85.0-dev` and the advisory's fix commit: below_floor compares three numeric
+      # segments, under which v1.85.0-dev and v1.85.0-dev.0.2026... coerce equal. Pin
+      # the fix commit explicitly. Not the bare-pin downgrade trap: upstream tracks the
+      # same branch, so MVS keeps whichever is higher.
+      go get google.golang.org/grpc@v1.85.0-dev.0.20260825072537-93e31b48545e
       # COMMIT is consumed by `weed version` / Prometheus metrics. The
       # VERSION_NUMBER is compiled in from weed/util/version/constants.go, so we
       # only need to stamp the commit. Build the single `weed` main package.
