@@ -112,7 +112,16 @@ pipeline:
              -e 's/parser\.ParseExpr(/parser.NewParser(parser.Options{}).ParseExpr(/g' prom/http.go
       sed -i 's/parser\.ParseExpr(/parser.NewParser(parser.Options{}).ParseExpr(/g' api/forms/forms.go
       sed -i 's/storage\.NewMergeSeriesSet(sets, storage\.ChainedSeriesMerge)/storage.NewMergeSeriesSet(sets, 0, storage.ChainedSeriesMerge)/' prom/clickhouse.go
-      printf '\nfunc (s sample) ST() int64 { return 0 }\n' >> prom/clickhouse_querier.go
+      # Only add the ST() shim if upstream does not define it. coroot 1.26.0 added
+      # its own `func (s sample) ST() int64` (clickhouse_querier.go:205), so an
+      # unconditional append now declares the method twice and the build fails with
+      # "method sample.ST already declared". Skipping here is correct rather than a
+      # silent no-op: either branch leaves exactly one ST() on the type.
+      if grep -q ') ST() int64' prom/clickhouse_querier.go; then
+        echo "note: upstream already defines sample.ST(), skipping the shim"
+      else
+        printf '\nfunc (s sample) ST() int64 { return 0 }\n' >> prom/clickhouse_querier.go
+      fi
       # --- CVE bumps (all verified to compile against the ported source) --------
       # These clear the fixable advisories the comprehensive Trivy gate flags on
       # the pinned dep graph:
