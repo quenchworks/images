@@ -57,8 +57,10 @@ pipeline:
       # patched version (SHA256-pinned from Maven Central; ZK globs lib/*.jar):
       #   jackson 2.15.2 -> 2.21.5 (CVE-2026-54512..54515; annotations ships "2.21")
       #   logback 1.3.15 -> 1.5.35 (CVE-2025-11226, CVE-2026-1225/9828/10532; slf4j2)
-      #   netty   4.1.130 -> 4.1.136.Final (CVE-2026-42583/44249/45416/50010/45536
-      #                              + the July-2026 wave, netty-codec CVE-2026-59901)
+      #   netty   4.1.130 -> 4.1.137.Final (CVE-2026-42583/44249/45416/50010/45536
+      #                              + the July-2026 wave, netty-codec CVE-2026-59901;
+      #                              the nightly scan also flags netty-handler, fixed
+      #                              in 4.1.137.Final)
       # netty-tcnative (2.0.74) is a separate line, not flagged -- left as-is.
       if [ "${{package.version}}" = "3.9.5" ]; then
       rm -f "$dest"/lib/jetty-*.jar "$dest"/lib/javax.servlet-api-*.jar "$dest"/lib/jline-*.jar
@@ -74,30 +76,23 @@ pipeline:
       swap jackson-databind-2.21.5.jar 507418c0fafd38b2b2cfb704521630da613a8e4cc8381195a6f418017883e2c0 "$M/com/fasterxml/jackson/core/jackson-databind/2.21.5/jackson-databind-2.21.5.jar" jackson-databind-2.15.2.jar
       swap logback-classic-1.5.35.jar 1a0ba277c4d177862731c820099913013255892c79e05b5371307f174f089878 "$M/ch/qos/logback/logback-classic/1.5.35/logback-classic-1.5.35.jar" logback-classic-1.3.15.jar
       swap logback-core-1.5.35.jar d8c38ea6871eefccf769f83e1afd07280e29fa0d1dd281092a77eb77c880ace6 "$M/ch/qos/logback/logback-core/1.5.35/logback-core-1.5.35.jar" logback-core-1.3.15.jar
-      # --- PLANNED (not yet implemented): netty-handler 4.1.136 -> 4.1.137.Final ------
-      # The nightly scan flags io.netty:netty-handler (fix: 4.1.137.Final). Verified in
-      # the published 3.9.5 image: this whole set sits at 4.1.136.Final in
-      # /opt/zookeeper/lib (buffer, codec, common, handler, resolver, transport,
-      # transport-classes-epoll, transport-native-unix-common, transport-native-epoll
-      # -linux-x86_64 only -- the dist ships no aarch64 native; tcnative 2.0.74 is a
-      # separate line). Every artifact exists at
-      # https://repo1.maven.org/maven2/io/netty/<artifact>/4.1.137.Final/ (verified).
-      # 3.9.5 is the newest PUBLISHED zookeeper (dlcdn); a release-3.9.6 tag exists and
-      # branch-3.9 already pins netty.version=4.1.137.Final -- when 3.9.6 publishes, a
-      # VERSION BUMP supersedes this swap (drop the netty swaps with it). Until then the
-      # fix is MECHANICAL: set NV=4.1.137.Final and recompute the 9 sha256 pins from
-      # real downloads. RISK: none beyond lockstep -- swap() already moves the whole
-      # set to one version; mixing netty versions across lib/ is what breaks the app.
-      NV=4.1.136.Final
-      swap netty-buffer-$NV.jar c88f13fc41156fde5df918c7b240038dfbe97ac57576163f208630391789b5d5 "$M/io/netty/netty-buffer/$NV/netty-buffer-$NV.jar" netty-buffer-4.1.130.Final.jar
-      swap netty-codec-$NV.jar 2de4fc13005c7740b46427a47ee04265a19779c147d53e583f441889b1148159 "$M/io/netty/netty-codec/$NV/netty-codec-$NV.jar" netty-codec-4.1.130.Final.jar
-      swap netty-common-$NV.jar e2f73be7ec359b46583ad875521137000eff520bafd320e730846ec9974f3be6 "$M/io/netty/netty-common/$NV/netty-common-$NV.jar" netty-common-4.1.130.Final.jar
-      swap netty-handler-$NV.jar 54bb1a59f46a3aefd117942e6acee09e555b756776bad731fc06159d89c2da28 "$M/io/netty/netty-handler/$NV/netty-handler-$NV.jar" netty-handler-4.1.130.Final.jar
-      swap netty-resolver-$NV.jar e64972fec474f5b9bd086b738154d190a923e82c4923ac550aff4f5ea9e98600 "$M/io/netty/netty-resolver/$NV/netty-resolver-$NV.jar" netty-resolver-4.1.130.Final.jar
-      swap netty-transport-$NV.jar b92881ea925721ed42fee5122a42b8bce4b84da737dbc3ca2d84dfaca52c28b6 "$M/io/netty/netty-transport/$NV/netty-transport-$NV.jar" netty-transport-4.1.130.Final.jar
-      swap netty-transport-classes-epoll-$NV.jar f6a0b631b98667f131daf4ca07a9cae1072d58e259dcbc0f8c6a053d843449c6 "$M/io/netty/netty-transport-classes-epoll/$NV/netty-transport-classes-epoll-$NV.jar" netty-transport-classes-epoll-4.1.130.Final.jar
-      swap netty-transport-native-unix-common-$NV.jar 7e014c9b13defd9d254d4e5a5edd8ab6dde17533e1152f99699a6b28b2967a8a "$M/io/netty/netty-transport-native-unix-common/$NV/netty-transport-native-unix-common-$NV.jar" netty-transport-native-unix-common-4.1.130.Final.jar
-      swap netty-transport-native-epoll-$NV-linux-x86_64.jar c3956f90241582bbbad5612c3159cffeb7c3533324759f3c3bd778ca9b176cae "$M/io/netty/netty-transport-native-epoll/$NV/netty-transport-native-epoll-$NV-linux-x86_64.jar" netty-transport-native-epoll-4.1.130.Final-linux-x86_64.jar
+      # netty 4.1.136 -> 4.1.137.Final: the nightly scan flags io.netty:netty-handler
+      # (fix 4.1.137.Final) and netty modules must move in LOCKSTEP -- a lone handler
+      # beside 4.1.136 siblings would mix two builds of one library, so swap() moves
+      # the whole 9-jar set to one version. netty-tcnative 2.0.74 is a separate line,
+      # not flagged -- left as-is. 3.9.5 is the newest PUBLISHED zookeeper (dlcdn);
+      # when 3.9.6 publishes (branch-3.9 already pins netty.version=4.1.137.Final) a
+      # VERSION BUMP supersedes this -- drop these swaps with it.
+      NV=4.1.137.Final
+      swap netty-buffer-$NV.jar f474b14c7734f15e0540394cb6f39d67777b7581a42919e4ac89d253d4efd929 "$M/io/netty/netty-buffer/$NV/netty-buffer-$NV.jar" netty-buffer-4.1.130.Final.jar
+      swap netty-codec-$NV.jar 9987b6a660b0a6b1f0d791485dae33180b3d1c63687c006fe6d3fd025e9e3798 "$M/io/netty/netty-codec/$NV/netty-codec-$NV.jar" netty-codec-4.1.130.Final.jar
+      swap netty-common-$NV.jar d31926b01adcc07af86f5e27b81b6d6c115df17d366e835d1fc3f5a1924e7e52 "$M/io/netty/netty-common/$NV/netty-common-$NV.jar" netty-common-4.1.130.Final.jar
+      swap netty-handler-$NV.jar d0e4c6ee4779f59f6ab2fb5d388e4f57147c82270164b37945764bb9bda96a44 "$M/io/netty/netty-handler/$NV/netty-handler-$NV.jar" netty-handler-4.1.130.Final.jar
+      swap netty-resolver-$NV.jar b4cf2aeedd9fc7c8c439bbfe574f63cfe5b83392e88bbc07ca0e8424b7cff955 "$M/io/netty/netty-resolver/$NV/netty-resolver-$NV.jar" netty-resolver-4.1.130.Final.jar
+      swap netty-transport-$NV.jar 6251adc2a2921572382732a2db188d4f4f2251fd6ebb49c5d44bbf33d6bfb1a7 "$M/io/netty/netty-transport/$NV/netty-transport-$NV.jar" netty-transport-4.1.130.Final.jar
+      swap netty-transport-classes-epoll-$NV.jar 55049554b799dc8e53bf234fffa36e001f7b5b65c32994b9bd59fc6356f1c52f "$M/io/netty/netty-transport-classes-epoll/$NV/netty-transport-classes-epoll-$NV.jar" netty-transport-classes-epoll-4.1.130.Final.jar
+      swap netty-transport-native-unix-common-$NV.jar 8056e7637f9948f953314894cf995ab664711b66c73c4cd5b593ae84f0b1048c "$M/io/netty/netty-transport-native-unix-common/$NV/netty-transport-native-unix-common-$NV.jar" netty-transport-native-unix-common-4.1.130.Final.jar
+      swap netty-transport-native-epoll-$NV-linux-x86_64.jar 185db6053e0e9573d36fa4eb6567b26139afaa4daa7bf5a068e661568304542b "$M/io/netty/netty-transport-native-epoll/$NV/netty-transport-native-epoll-$NV-linux-x86_64.jar" netty-transport-native-epoll-4.1.130.Final-linux-x86_64.jar
       fi  # end 3.9.5-only CVE pin
 
       # bake a config-from-env entrypoint. A read-only rootfs means zoo.cfg and the
