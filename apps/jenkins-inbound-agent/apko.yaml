@@ -26,12 +26,17 @@ contents:
     - jenkins-remoting   # the remoting agent.jar (/usr/share/jenkins/agent.jar)
     # git-lfs is NOT optional here: jenkins-utils (a hard dep of the docker-agent
     # apk) hard-depends on it UNPINNED, so it lands in the image whether we ask
-    # or not -- and Wolfi's newest, 3.7.1-r21, is built against golang.org/x/net
-    # v0.55.0 = CVE-2026-46600 (HIGH). melange.yaml builds our own git-lfs
-    # 3.7.1-r22 from source with x/net floated, into ./packages, and this line is
-    # what makes apko install it. Same package NAME, so this one package also
-    # satisfies jenkins-utils's bare `git-lfs` dep and Wolfi's r21 is never
-    # fetched.
+    # or not. melange.yaml builds our own git-lfs 3.7.1-r22 from source with the
+    # golang.org/x/* family floated (x/net, x/text, and as of 2026-09-14 x/crypto
+    # too), into ./packages, and this line is what makes apko install it. Same
+    # package NAME, so this one package also satisfies jenkins-utils's bare
+    # `git-lfs` dep and Wolfi's own git-lfs is never fetched.
+    #
+    # RE-CHECKED 2026-09-14: Wolfi has since published git-lfs 3.8.0-r1 (a real
+    # new upstream release, both arches) -- but its golang.org/x/crypto is
+    # v0.54.0, WORSE than our v0.55.0 at the time and still below the v0.56.0
+    # CVE-2026-56855/78662 need, so switching back to Wolfi's apk is still not an
+    # option. Shadow stays; see melange.yaml for the x/crypto float this added.
     #
     # THE `@local` TAG IS REQUIRED, not decoration. Measured both ways on
     # 2026-08-27: with a bare `- git-lfs`, relying on r22 > r21 winning on
@@ -40,9 +45,10 @@ contents:
     # repository pin. With `@local` it installs `git-lfs (3.7.1-r22)`.
     #
     # Consequence: the shadow does NOT expire on its own. When Wolfi publishes a
-    # git-lfs built against x/net >= 0.56.0, delete melange.yaml, drop this line
-    # plus the `@local` repo and `./melange.rsa.pub` keyring entries above, and
-    # revert the workflow to apko-only. build.conf records that condition.
+    # git-lfs built against x/net >= 0.56.0 AND x/crypto >= 0.56.0, delete
+    # melange.yaml, drop this line plus the `@local` repo and `./melange.rsa.pub`
+    # keyring entries above, and revert the workflow to apko-only. build.conf
+    # records that condition.
     - git-lfs@local
 
 accounts:

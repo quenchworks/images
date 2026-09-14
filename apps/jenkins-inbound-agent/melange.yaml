@@ -88,7 +88,13 @@ pipeline:
       # Float the golang.org/x/* family COHERENTLY, not one module at a time.
       # Raising x/net alone leaves x/text at v0.38.0 = CVE-2026-56852 (HIGH, DoS
       # on invalid UTF-8), which just moves the finding instead of clearing it.
-      go mod edit -require=golang.org/x/net@v0.58.0 -require=golang.org/x/text@v0.41.0
+      # x/crypto ADDED 2026-09-14: was v0.55.0 (fine at the time -- CVE-2026-46600
+      # only needed the x/net float above), now CVE-2026-56855 + CVE-2026-78662
+      # (both fixed 0.56.0) hit it too. Checked Wolfi's OWN newest git-lfs
+      # (3.8.0-r1, both arches) before floating further here: it still ships
+      # x/crypto v0.54.0, worse than our v0.55.0, so switching back to Wolfi's
+      # apk is not an option -- the shadow package stays, floor bumped instead.
+      go mod edit -require=golang.org/x/net@v0.58.0 -require=golang.org/x/text@v0.41.0 -require=golang.org/x/crypto@v0.57.0
       go mod tidy
       # Match upstream's own ldflags so `git lfs version` reports a real version
       # rather than the "" it prints when these are unset.
@@ -99,7 +105,7 @@ pipeline:
       # Prove the float actually landed in the binary, so a silent MVS downgrade
       # or a `go mod tidy` that drops the requirement cannot ship quietly.
       # A float is a FLOOR: accept the wanted version or anything newer.
-      for want in "golang.org/x/net v0.56.0" "golang.org/x/text v0.39.0"; do
+      for want in "golang.org/x/net v0.56.0" "golang.org/x/text v0.39.0" "golang.org/x/crypto v0.56.0"; do
         mod="${want% *}"; min="${want#* }"
         got="$(go version -m "$destdir"/usr/bin/git-lfs | awk -v m="$mod" '$2==m{print $3}' | head -1)"
         test -n "$got" || { echo "FATAL: $mod absent from the git-lfs build info"; exit 1; }
