@@ -1,19 +1,22 @@
 name: build-sonar-scanner-cli
 
-# LANGUAGE-RUNTIMES track. Hardened OpenJDK (JDK) base images, assembled
-# straight from Wolfi's versioned `opensonar-scanner-cli-N-default-sonar-scanner-cli` packages with apko --
-# NO melange/from-source step, since Wolfi already packages OpenJDK. A MATRIX
-# fans out over the latest 3 LTS lines; each one runs a NATIVE per-arch apko
-# build (no QEMU), the hard 0-CVE Trivy gate, then a per-version merge job that
-# assembles + signs + attests the multi-arch index.
+# From-source build of SonarScanner CLI (SonarSource). melange repackages the
+# OFFICIAL upstream distribution zip into `quench-sonar-scanner-cli`, swapping
+# the logback bundled in its fat jar for a patched release -- see
+# apps/sonar-scanner-cli/melange.yaml for why we stopped installing Wolfi's own
+# `sonar-scanner-cli` apk (its 0-CVE fix revision, -r3, was never published).
+# apko then layers that package on Wolfi's openjdk-21-jre. build.conf is the
+# SINGLE SOURCE OF TRUTH: prep emits the latest 3 versions (currently just
+# one, 8.1.0.6389 -- no newer SonarScanner CLI release exists upstream).
 #
-# IMAGE-ONLY: the JDK is a base/runtime image with no Helm chart, so there is
-# NO charts-repo dispatch.
+# The build matrix fans the versions x both NATIVE arches (amd64 + arm64, no
+# QEMU). Recipes render via build.conf render() (__VER__ + per-version
+# __SHA256__ dist-zip pin, arch-independent since the jar is pure Java). Per-
+# version merge job assembles the multi-arch index, signs + attests it.
 #
-# TEMPLATE: to add another LTS (or another runtime), copy a matrix entry and
-# change `ver`; apps/sonar-scanner-cli/apko.yaml carries the `__VER__` placeholder that CI
-# substitutes per entry (it also feeds JAVA_HOME). No :latest tag is ever
-# published.
+# IMAGE-ONLY: SonarScanner CLI is a standalone tool you run in CI against a
+# SonarQube server, not a service with a Helm chart -- so there is NO
+# charts-repo dispatch here.
 on:
   workflow_dispatch:
 permissions:
@@ -32,6 +35,7 @@ jobs:
     outputs:
       vers: ${{ steps.v.outputs.vers }}
       blocked: ${{ steps.v.outputs.blocked }}
+      latest: ${{ steps.v.outputs.latest }}
     steps:
       - uses: actions/checkout@v5
       - id: v
@@ -43,6 +47,7 @@ jobs:
           latest3=("${VERSIONS[@]:start}")
           echo "building: ${latest3[*]}"
           echo "vers=$(printf '%s\n' "${latest3[@]}" | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
+          echo "latest=${latest3[${#latest3[@]}-1]}" >> "$GITHUB_OUTPUT"
 
   build:
     needs: prep
@@ -50,8 +55,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # latest 3 LTS Wolfi-packaged OpenJDK lines x both native arches,
-        # driven by apps/sonar-scanner-cli/build.conf VERSIONS (the single source of truth).
+        # driven by apps/sonar-scanner-cli/build.conf VERSIONS (the single source of truth)
         ver: ${{ fromJson(needs.prep.outputs.vers) }}
         arch:
           - { name: x86_64,  platform: amd64, runner: ubuntu-latest }
@@ -63,11 +67,17 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install apko (native ${{ matrix.arch.platform }})
+      - name: Install melange and apko (native ${{ matrix.arch.platform }})
         working-directory: ${{ github.workspace }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
+          sudo apt-get update && sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          MELANGE_VER=v0.53.0
+          curl -fsSL "https://github.com/chainguard-dev/melange/releases/download/${MELANGE_VER}/melange_${MELANGE_VER#v}_linux_${{ matrix.arch.platform }}.tar.gz" \
+            | sudo tar xz --strip-components=1 -C /usr/local/bin
           # Authenticated + retried, not an anonymous api.github.com call: unauthenticated
           # requests are rate-limited on runners, and the error JSON silently yields an
           # EMPTY version, a malformed download URL, and `curl: (23)` as tar chokes on the
@@ -81,13 +91,21 @@ jobs:
           [ -n "$APKO_VER" ] || { echo "could not resolve latest apko"; exit 1; }
           curl -fsSL "https://github.com/chainguard-dev/apko/releases/download/${APKO_VER}/apko_${APKO_VER#v}_linux_${{ matrix.arch.platform }}.tar.gz" \
             | sudo tar xz --strip-components=1 -C /usr/local/bin
+          melange version | head -1
           apko version | head -1
 
-      - name: Render apko config for OpenJDK ${{ matrix.ver }} (build.conf render)
+      - name: Render recipes for ${{ matrix.ver }} (build.conf render)
         run: |
           set -euo pipefail
           source build.conf
-          sed -e "$(render '${{ matrix.ver }}')" apko.yaml > apko.rendered.yaml
+          prog="$(render '${{ matrix.ver }}')"
+          sed -e "$prog" melange.yaml > melange.rendered.yaml
+          sed -e "$prog" apko.yaml    > apko.rendered.yaml
+
+      - name: Build package from source (native ${{ matrix.arch.name }})
+        run: |
+          melange keygen melange.rsa
+          melange build melange.rendered.yaml --arch ${{ matrix.arch.name }} --signing-key melange.rsa --out-dir ./packages
 
       - name: Assemble single-arch image for the scan gate
         run: apko build apko.rendered.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}
@@ -104,12 +122,33 @@ jobs:
           severity: CRITICAL,HIGH,MEDIUM,LOW
           scanners: vuln
 
-      - name: Smoke test the single-arch image
+      # A green 0-CVE scan says nothing about whether the image RUNS. Publishing
+      # straight from the scan is how a build that could not start at all reached
+      # GHCR (elasticsearch 9.5.1: modules/apm removed, ES refused to boot, scan
+      # green). Boot the image and run its own smoke test BEFORE publishing.
+      #
+      # The second argument is the expected version; every test.sh takes it as an
+      # optional $2 and the ones that ignore it are unaffected.
+      - name: Boot test the single-arch image (must run before publish)
         run: |
-          docker load < image.tar
-          # apko load tags the image as <ref>-<arch>; the scan ref ended in the platform.
-          docker tag "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}-${{ matrix.arch.platform }}" sonar-scanner-cli-smoke:local
-          bash test.sh sonar-scanner-cli-smoke:local "3.13"
+          # Take the tag from `docker load` rather than reconstructing it: apko
+          # appends the arch to the tag it was given, so a tar built as
+          # `:scan-amd64` loads as `:scan-amd64-amd64`. Reconstructing that
+          # suffix by hand is what broke the first cut of this step.
+          # Keep the load output: the previous version piped it straight into sed, so a
+          # failure printed "no image" and threw away the only evidence of WHY.
+          out="$(docker load < image.tar 2>&1)" || true
+          printf '%s\n' "$out"
+          # Two forms exist. A tagged tar prints "Loaded image: repo:tag"; an untagged one
+          # prints "Loaded image ID: sha256:...", and that id is a perfectly good ref.
+          img="$(printf '%s\n' "$out" | sed -n -e 's/^Loaded image: //p' -e 's/^Loaded image ID: //p' | head -1)"
+          if [ -z "$img" ]; then
+            echo "FATAL: docker load produced no usable image ref (output above)"
+            echo "image.tar: $(ls -l image.tar 2>&1)"
+            exit 1
+          fi
+          docker tag "$img" sonar-scanner-cli-boot:local
+          bash test.sh sonar-scanner-cli-boot:local "${{ matrix.ver }}"
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -118,7 +157,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish the single-arch image
+      - name: Publish the single-arch image (tag = full X.Y.Z)
         run: apko publish apko.rendered.yaml "${GHCR_IMAGE}:${{ matrix.ver }}-${{ matrix.arch.platform }}" --arch ${{ matrix.arch.name }}
 
   merge:
@@ -140,7 +179,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Assemble the multi-arch index
+      - name: Assemble the multi-arch index (tag = full X.Y.Z)
         id: merge
         run: |
           docker buildx imagetools create -t "${GHCR_IMAGE}:${{ matrix.ver }}" \
@@ -175,4 +214,5 @@ jobs:
           subject-digest: ${{ steps.merge.outputs.digest }}
           push-to-registry: true
 
-      # IMAGE-ONLY: no charts-repo dispatch. The JDK is a base/runtime image.
+      # IMAGE-ONLY: no charts-repo dispatch. SonarScanner CLI is a standalone
+      # tool run in CI, not a service.
