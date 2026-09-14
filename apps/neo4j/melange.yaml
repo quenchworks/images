@@ -75,11 +75,20 @@ pipeline:
       MC="https://repo1.maven.org/maven2"
       swap() { # <group-path> <artifact> <oldver> <newver> [classifier]
         grp="$1"; art="$2"; old="$3"; new="$4"; cls="${5:-}"
+        # The old jar MUST exist: if the dist moved on and no longer ships it, this
+        # block's pins are stale and running them would DOWNGRADE the dist's newer
+        # jar to `new` (that is how the netty block re-introduced a CRITICAL on
+        # 2026.09.14). Fail loudly instead; whoever bumps the dist version updates
+        # the swap block in the same commit.
         if [ -n "$cls" ]; then
+          test -f "${art}-${old}-${cls}.jar" \
+            || { echo "swap(): ${art}-${old}-${cls}.jar not in dist -- block is stale, update it"; exit 1; }
           rm -f "${art}-${old}-${cls}.jar"
           curl -fsSL "$MC/${grp}/${art}/${new}/${art}-${new}-${cls}.jar" -o "${art}-${new}-${cls}.jar"
           test -s "${art}-${new}-${cls}.jar"
         else
+          test -f "${art}-${old}.jar" \
+            || { echo "swap(): ${art}-${old}.jar not in dist -- block is stale, update it"; exit 1; }
           rm -f "${art}-${old}.jar"
           curl -fsSL "$MC/${grp}/${art}/${new}/${art}-${new}.jar" -o "${art}-${new}.jar"
           test -s "${art}-${new}.jar"
@@ -111,18 +120,13 @@ pipeline:
       #       now-dead netty-codec-http 4.2.16->4.2.17 line further down.
       # RISK: netty must move as ONE lockstep set within 4.2.x (mixing builds of one
       # library is what breaks the app); test.sh exercises Bolt + HTTP end-to-end.
-      # netty 4.2.14.Final -> 4.2.16.Final (Jul-2026 wave on top of the earlier
-      # CVE-2026-44893/48059/44249/45416/50010/50020/45536 set).
-      for a in netty-buffer netty-codec-base netty-codec-compression netty-codec-haproxy \
-               netty-codec-http netty-common netty-handler netty-resolver netty-transport \
-               netty-transport-classes-epoll netty-transport-classes-kqueue \
-               netty-transport-native-unix-common; do
-        swap io/netty "$a" 4.2.14.Final 4.2.16.Final
-      done
-      swap io/netty netty-transport-native-epoll  4.2.14.Final 4.2.16.Final linux-aarch_64
-      swap io/netty netty-transport-native-epoll  4.2.14.Final 4.2.16.Final linux-x86_64
-      swap io/netty netty-transport-native-kqueue 4.2.14.Final 4.2.16.Final osx-aarch_64
-      swap io/netty netty-transport-native-kqueue 4.2.14.Final 4.2.16.Final osx-x86_64
+      # NETTY SWAPS DELETED 2026-09-14: the 2026.08.1 dist itself ships the whole
+      # netty family at 4.2.17.Final (verified by listing the pinned tarball), so
+      # there is nothing left to swap. The old 4.2.14 -> 4.2.16 lines had turned into
+      # a silent DOWNGRADE: their rm targets no longer exist in the dist, so each rm
+      # no-op'd and the block downloaded 4.2.16 jars over the dist's 4.2.17,
+      # re-introducing CVE-2026-75595 (CRITICAL). Do not re-add netty swaps without
+      # re-checking which version the CURRENT dist ships.
       # jetty 12.1.8 -> 12.1.10 (Jul-2026 jetty wave). Neo4j's embedded HTTP server links
       # against a SINGLE coherent jetty version -- mixing 12.1.8 + 12.1.10 makes its HTTP
       # endpoints 500 (probes fail -> CrashLoop). So bump the WHOLE org.eclipse.jetty.* set
@@ -148,8 +152,8 @@ pipeline:
       # In shiro 2.2.x the argon2/bcrypt hash providers moved to group org.apache.shiro.crypto.
       swap org/apache/shiro/crypto shiro-hashes-argon2 2.1.0 2.2.1
       swap org/apache/shiro/crypto shiro-hashes-bcrypt 2.1.0 2.2.1
-      # 2026-08-26 gate: netty-codec-http 4.2.16 and log4j-api 2.25.4 flagged.
-      swap io/netty netty-codec-http 4.2.16.Final 4.2.17.Final
+      # (The 2026-08-26 netty-codec-http swap line is gone: the 2026.08.1 dist ships
+      # codec-http 4.2.17.Final itself, so there was nothing left to swap.)
       swap org/apache/logging/log4j log4j-api 2.25.4 2.25.5
       # DROP the shaded parquet-jackson uber-jar: it SHADES jackson-databind 2.21.3
       # (CVE-2026-54512..54518) as relocated classes, so a standalone swap cannot reach it,
