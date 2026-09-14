@@ -162,6 +162,16 @@ pipeline:
         go.opentelemetry.io/otel/trace@v1.44.0 \
         go.opentelemetry.io/otel/metric@v1.44.0
       go get gopkg.in/square/go-jose.v1@v1.1.1
+      # CVE-2020-26160 (HIGH): github.com/dgrijalva/jwt-go (pulled in indirectly
+      # via Azure/go-autorest/autorest/adal) is abandoned upstream -- v3.2.0 is
+      # its last tag and there is no fixed release at that module path (Trivy's
+      # "fixed: None" is accurate, not stale). The maintained continuation
+      # golang-jwt/jwt fixes it and, through v3.2.2, is published at the SAME
+      # legacy module path/API (no go.mod of its own, +incompatible) specifically
+      # so a `replace` swaps it in as a drop-in with no caller-side changes; this
+      # is the same fix upstream distribution/distribution itself later shipped
+      # (github.com/distribution/distribution#3466).
+      go mod edit -replace github.com/dgrijalva/jwt-go=github.com/golang-jwt/jwt@v3.2.2+incompatible
       go mod tidy
       go mod vendor
 
