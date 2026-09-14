@@ -174,6 +174,15 @@ pipeline:
       # needs to stay aligned; 1.11.1's entry set is a superset of 1.10.3's and ships
       # liblz4-java.so for linux/amd64 + linux/aarch64, so both arches keep their natives.
       swap at/yawk/lz4 lz4-java 1.10.3 1.11.1 e5e31b195fcc7e9c5da4b191af3b0082ee616c13f61cbd79409ffa65e4dd5c47
+      # org.apache.thrift:libthrift 0.23.0 -> 0.24.0 (CVE-2026-43871 HIGH: a malformed
+      # frame can spin the protocol reader in an infinite loop -> DoS). 0.24.0 is the
+      # upstream fix version and is already what this catalog pins for the same CVE on
+      # the Go side (apps/cadence). libthrift is a SINGLE artifact -- no sibling module
+      # has to move with it -- so this is a standalone swap, not a lockstep set.
+      # swap()'s three-case guard covers the drift: if a later dist ships 0.24.0 itself
+      # the line reports as dead, and if it ships neither version the build fails instead
+      # of dropping a jar beside an unknown one.
+      swap org/apache/thrift libthrift 0.23.0 0.24.0 b72e321ff144e3e5211964764bd45794b96fdf250085f153c44416b35df89a07
       # Drop the shaded functions-runtime uber-jar (unused in --no-functions-worker standalone).
       rm -f "$dest/instances/java-instance.jar"
       chmod -R a+rX "$dest"
