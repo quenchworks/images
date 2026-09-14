@@ -162,16 +162,31 @@ pipeline:
         go.opentelemetry.io/otel/trace@v1.44.0 \
         go.opentelemetry.io/otel/metric@v1.44.0
       go get gopkg.in/square/go-jose.v1@v1.1.1
-      # CVE-2020-26160 (HIGH): github.com/dgrijalva/jwt-go (pulled in indirectly
-      # via Azure/go-autorest/autorest/adal) is abandoned upstream -- v3.2.0 is
-      # its last tag and there is no fixed release at that module path (Trivy's
-      # "fixed: None" is accurate, not stale). The maintained continuation
-      # golang-jwt/jwt fixes it and, through v3.2.2, is published at the SAME
-      # legacy module path/API (no go.mod of its own, +incompatible) specifically
-      # so a `replace` swaps it in as a drop-in with no caller-side changes; this
-      # is the same fix upstream distribution/distribution itself later shipped
-      # (github.com/distribution/distribution#3466).
-      go mod edit -replace github.com/dgrijalva/jwt-go=github.com/golang-jwt/jwt@v3.2.2+incompatible
+      # CVE-2020-26160 (HIGH): github.com/dgrijalva/jwt-go v3.2.0 is abandoned
+      # upstream with no fixed release at that module path. It is pulled in
+      # ONLY by github.com/Azure/go-autorest/autorest/adal (the old
+      # v10.8.1+incompatible go-autorest monolith), used transitively by
+      # registry/storage/driver/azure via azure-sdk-for-go/storage ->
+      # go-autorest/autorest.
+      #
+      # A `replace dgrijalva/jwt-go=golang-jwt/jwt@v3.2.2+incompatible` (what
+      # distribution/distribution#3466 did) does NOT work here: golang-jwt/jwt's
+      # own v3 line still self-imports its real path "github.com/golang-jwt/jwt"
+      # in its test/request/test-helper files, so `go mod tidy` errors with
+      # "github.com/golang-jwt/jwt@v3.2.2+incompatible used for two different
+      # module paths" -- the same content can't simultaneously satisfy a
+      # replace target and its own true import path.
+      #
+      # Fix instead by bumping the actual dependency: adal v0.9.20+ migrated
+      # off dgrijalva/jwt-go to github.com/golang-jwt/jwt/v4 (a proper,
+      # independently-versioned module -- no path collision possible) itself.
+      # go-autorest's later split-repo layout means `go get .../adal@v0.9.24`
+      # pulls its own go-autorest v14.2.0+incompatible + autorest v0.11.30
+      # via MVS; go.mod ends up with no dgrijalva/jwt-go requirement at all.
+      # Verified: `go build ./...` succeeds, `go list -m all | grep jwt` shows
+      # only golang-jwt/jwt/v4, and dgrijalva is absent from go.mod/go.sum/
+      # vendor and from the built binary's strings.
+      go get github.com/Azure/go-autorest/autorest/adal@v0.9.24
       go mod tidy
       go mod vendor
 
