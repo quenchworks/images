@@ -67,9 +67,11 @@ pipeline:
       #                              of 1.10.1's apart from the win32 native .so (irrelevant
       #                              on Linux), and it ships liblz4-java.so for BOTH
       #                              linux/amd64 and linux/aarch64.
-      #   netty   4.1.130 -> 4.1.136.Final (CVE-2026-42583/44249/45416/50010/45536/42578
-      #                              + the July-2026 wave on netty-codec + netty-handler-ssl-ocsp;
-      #                              stay on the 4.1.x line, no 4.2 major jump)
+      #   netty   4.1.130 -> 4.1.136.Final -> 4.1.137.Final (CVE-2026-42583/44249/45416/
+      #                              50010/45536/42578 + the July-2026 wave on netty-codec
+      #                              + netty-handler-ssl-ocsp; second hop 2026-09-14 after
+      #                              the nightly scan flagged netty-handler < 4.1.137.Final.
+      #                              Stay on the 4.1.x line, no 4.2 major jump)
       # SHA256-pinned from Maven Central (repo1.maven.org). netty-tcnative (2.0.70) is a
       # separate artifact line, not flagged -- left as-is.
       # Pinned filenames match the 5.0.8 bundle; guard so older lines (which bundle
@@ -98,40 +100,40 @@ pipeline:
       swap logback-classic-1.5.35.jar 1a0ba277c4d177862731c820099913013255892c79e05b5371307f174f089878 "$M/ch/qos/logback/logback-classic/1.5.35/logback-classic-1.5.35.jar" 'logback-classic-1.5.18.jar'
       swap lz4-java-1.11.1.jar e5e31b195fcc7e9c5da4b191af3b0082ee616c13f61cbd79409ffa65e4dd5c47 "$M/at/yawk/lz4/lz4-java/1.11.1/lz4-java-1.11.1.jar" 'lz4-java-1.10.1.jar'
       swap logback-core-1.5.35.jar d8c38ea6871eefccf769f83e1afd07280e29fa0d1dd281092a77eb77c880ace6 "$M/ch/qos/logback/logback-core/1.5.35/logback-core-1.5.35.jar" 'logback-core-1.5.18.jar'
-      # --- PLANNED (not yet implemented): netty-handler 4.1.136 -> 4.1.137.Final ------
-      # The nightly scan flags io.netty:netty-handler (fix: 4.1.137.Final). Verified in
-      # the published 5.0.9 image: this whole set PLUS netty-all sits at 4.1.136.Final in
-      # /opt/cassandra/lib (all, buffer, codec, common, handler, handler-proxy,
+      # netty: the dist bundles the whole 4.1.130.Final set (verified against the 5.0.9
+      # tarball, 15 jars: all, buffer, codec, common, handler, handler-proxy,
       # handler-ssl-ocsp, resolver, transport, transport-classes-epoll/-kqueue,
-      # transport-native-epoll {no-classifier, -linux-x86_64, -linux-aarch_64},
-      # transport-native-unix-common; tcnative 2.0.70 is a separate line). 5.0.9 is the
-      # newest published cassandra (6.0 = alphas only), so there is NO version bump --
-      # jar surgery. Every artifact exists at
-      # https://repo1.maven.org/maven2/io/netty/<artifact>/4.1.137.Final/ (verified,
-      # incl. netty-all). Fix is MECHANICAL: set NV=4.1.137.Final and recompute all 16
-      # sha256 pins from real downloads. RISK: netty must move as ONE lockstep set incl.
-      # netty-all (it bundles the same classes as the modules -- netty-all at a different
-      # version than the modules is a guaranteed classpath clash).
-      NV=4.1.136.Final
-      swap netty-all-$NV.jar 75cb7db3492915953aa19c566e477fb371ae2b32aa12bc4fe85bd7a2a6b8f5e8 "$M/io/netty/netty-all/$NV/netty-all-$NV.jar" 'netty-all-4.1.130.Final.jar'
-      swap netty-buffer-$NV.jar c88f13fc41156fde5df918c7b240038dfbe97ac57576163f208630391789b5d5 "$M/io/netty/netty-buffer/$NV/netty-buffer-$NV.jar" 'netty-buffer-4.1.130.Final.jar'
-      swap netty-codec-$NV.jar 2de4fc13005c7740b46427a47ee04265a19779c147d53e583f441889b1148159 "$M/io/netty/netty-codec/$NV/netty-codec-$NV.jar" 'netty-codec-4.1.130.Final.jar'
-      swap netty-common-$NV.jar e2f73be7ec359b46583ad875521137000eff520bafd320e730846ec9974f3be6 "$M/io/netty/netty-common/$NV/netty-common-$NV.jar" 'netty-common-4.1.130.Final.jar'
-      swap netty-handler-$NV.jar 54bb1a59f46a3aefd117942e6acee09e555b756776bad731fc06159d89c2da28 "$M/io/netty/netty-handler/$NV/netty-handler-$NV.jar" 'netty-handler-4.1.130.Final.jar'
-      swap netty-handler-proxy-$NV.jar 47400551f0444dea33629ee0c52d4e30856b2ddf00b12adf1881902957e74cf2 "$M/io/netty/netty-handler-proxy/$NV/netty-handler-proxy-$NV.jar" 'netty-handler-proxy-4.1.130.Final.jar'
-      swap netty-handler-ssl-ocsp-$NV.jar d9830d3e64fd5448a67a54deaf8ff1be40d05db1b862f98c90399a947958f249 "$M/io/netty/netty-handler-ssl-ocsp/$NV/netty-handler-ssl-ocsp-$NV.jar" 'netty-handler-ssl-ocsp-4.1.130.Final.jar'
-      swap netty-resolver-$NV.jar e64972fec474f5b9bd086b738154d190a923e82c4923ac550aff4f5ea9e98600 "$M/io/netty/netty-resolver/$NV/netty-resolver-$NV.jar" 'netty-resolver-4.1.130.Final.jar'
-      swap netty-transport-$NV.jar b92881ea925721ed42fee5122a42b8bce4b84da737dbc3ca2d84dfaca52c28b6 "$M/io/netty/netty-transport/$NV/netty-transport-$NV.jar" 'netty-transport-4.1.130.Final.jar'
-      swap netty-transport-classes-epoll-$NV.jar f6a0b631b98667f131daf4ca07a9cae1072d58e259dcbc0f8c6a053d843449c6 "$M/io/netty/netty-transport-classes-epoll/$NV/netty-transport-classes-epoll-$NV.jar" 'netty-transport-classes-epoll-4.1.130.Final.jar'
-      swap netty-transport-classes-kqueue-$NV.jar 4ed7ee5cb8c611e879d0d6621e8a1b4255e7ba5a31e5f7828d635682ef244a20 "$M/io/netty/netty-transport-classes-kqueue/$NV/netty-transport-classes-kqueue-$NV.jar" 'netty-transport-classes-kqueue-4.1.130.Final.jar'
-      swap netty-transport-native-unix-common-$NV.jar 7e014c9b13defd9d254d4e5a5edd8ab6dde17533e1152f99699a6b28b2967a8a "$M/io/netty/netty-transport-native-unix-common/$NV/netty-transport-native-unix-common-$NV.jar" 'netty-transport-native-unix-common-4.1.130.Final.jar'
+      # transport-native-unix-common, transport-native-epoll {no-classifier,
+      # -linux-x86_64, -linux-aarch_64}; tcnative 2.0.70 is a separate line, not flagged).
+      # 5.0.9 is the newest published cassandra (6.0 = alphas only), so there is NO
+      # version bump -- jar surgery. The set moves as ONE lockstep hop per netty release,
+      # netty-all included: it bundles the same classes as the modules, so netty-all at a
+      # different version than the modules is a guaranteed classpath clash. 2026-09-14:
+      # 4.1.136.Final -> 4.1.137.Final after the nightly scan flagged netty-handler; every
+      # artifact incl. the epoll arch natives exists at 4.1.137.Final on Maven Central
+      # (pins recomputed from the real downloads). swap() asserts each bundled jar is
+      # present, so a future dist that changes its bundled netty line fails the build
+      # instead of silently shipping a half-mixed set.
+      NV=4.1.137.Final
+      swap netty-all-$NV.jar 3c21d10662148be5e1dc37adea6866faf0e43096a2174c2ef12a4553b45c3af2 "$M/io/netty/netty-all/$NV/netty-all-$NV.jar" 'netty-all-4.1.130.Final.jar'
+      swap netty-buffer-$NV.jar f474b14c7734f15e0540394cb6f39d67777b7581a42919e4ac89d253d4efd929 "$M/io/netty/netty-buffer/$NV/netty-buffer-$NV.jar" 'netty-buffer-4.1.130.Final.jar'
+      swap netty-codec-$NV.jar 9987b6a660b0a6b1f0d791485dae33180b3d1c63687c006fe6d3fd025e9e3798 "$M/io/netty/netty-codec/$NV/netty-codec-$NV.jar" 'netty-codec-4.1.130.Final.jar'
+      swap netty-common-$NV.jar d31926b01adcc07af86f5e27b81b6d6c115df17d366e835d1fc3f5a1924e7e52 "$M/io/netty/netty-common/$NV/netty-common-$NV.jar" 'netty-common-4.1.130.Final.jar'
+      swap netty-handler-$NV.jar d0e4c6ee4779f59f6ab2fb5d388e4f57147c82270164b37945764bb9bda96a44 "$M/io/netty/netty-handler/$NV/netty-handler-$NV.jar" 'netty-handler-4.1.130.Final.jar'
+      swap netty-handler-proxy-$NV.jar 843de10c4cef34cbc1a5344090f1b57db532fbebf141559862da675f6b656df4 "$M/io/netty/netty-handler-proxy/$NV/netty-handler-proxy-$NV.jar" 'netty-handler-proxy-4.1.130.Final.jar'
+      swap netty-handler-ssl-ocsp-$NV.jar 6a85347e2d598d28da934cc4d8f68b9990ab7052d8366876b820adfa9a5a81df "$M/io/netty/netty-handler-ssl-ocsp/$NV/netty-handler-ssl-ocsp-$NV.jar" 'netty-handler-ssl-ocsp-4.1.130.Final.jar'
+      swap netty-resolver-$NV.jar b4cf2aeedd9fc7c8c439bbfe574f63cfe5b83392e88bbc07ca0e8424b7cff955 "$M/io/netty/netty-resolver/$NV/netty-resolver-$NV.jar" 'netty-resolver-4.1.130.Final.jar'
+      swap netty-transport-$NV.jar 6251adc2a2921572382732a2db188d4f4f2251fd6ebb49c5d44bbf33d6bfb1a7 "$M/io/netty/netty-transport/$NV/netty-transport-$NV.jar" 'netty-transport-4.1.130.Final.jar'
+      swap netty-transport-classes-epoll-$NV.jar 55049554b799dc8e53bf234fffa36e001f7b5b65c32994b9bd59fc6356f1c52f "$M/io/netty/netty-transport-classes-epoll/$NV/netty-transport-classes-epoll-$NV.jar" 'netty-transport-classes-epoll-4.1.130.Final.jar'
+      swap netty-transport-classes-kqueue-$NV.jar 88d0ac216f9c7be690a9d0157778570d6f4c61f885863da1fccec7fcaee35557 "$M/io/netty/netty-transport-classes-kqueue/$NV/netty-transport-classes-kqueue-$NV.jar" 'netty-transport-classes-kqueue-4.1.130.Final.jar'
+      swap netty-transport-native-unix-common-$NV.jar 8056e7637f9948f953314894cf995ab664711b66c73c4cd5b593ae84f0b1048c "$M/io/netty/netty-transport-native-unix-common/$NV/netty-transport-native-unix-common-$NV.jar" 'netty-transport-native-unix-common-4.1.130.Final.jar'
       # netty-transport-native-epoll ships 3 files (no-classifier + 2 per-arch natives).
       # Each swap below names its exact old file, so they are removed individually --
       # a bulk `rm -f ...Final*.jar` here would delete all three up front and leave the
       # three swaps asserting against globs that can never match.
-      swap netty-transport-native-epoll-$NV.jar 41a30e3e096091695ef7b7cf16c85802bbc05d4be94643ecc5e8a8d9759acb77 "$M/io/netty/netty-transport-native-epoll/$NV/netty-transport-native-epoll-$NV.jar" 'netty-transport-native-epoll-4.1.130.Final.jar'
-      swap netty-transport-native-epoll-$NV-linux-x86_64.jar c3956f90241582bbbad5612c3159cffeb7c3533324759f3c3bd778ca9b176cae "$M/io/netty/netty-transport-native-epoll/$NV/netty-transport-native-epoll-$NV-linux-x86_64.jar" 'netty-transport-native-epoll-4.1.130.Final-linux-x86_64.jar'
-      swap netty-transport-native-epoll-$NV-linux-aarch_64.jar f264cf4bcc1e97ad148cd4f0d8777eacf404cd4ed80830de3f8a2359f60edc38 "$M/io/netty/netty-transport-native-epoll/$NV/netty-transport-native-epoll-$NV-linux-aarch_64.jar" 'netty-transport-native-epoll-4.1.130.Final-linux-aarch_64.jar'
+      swap netty-transport-native-epoll-$NV.jar b2eb04dbb6ec6cc8fc00aed37bb86b7aed1ccb87722eda44c90652a7d41fbdfe "$M/io/netty/netty-transport-native-epoll/$NV/netty-transport-native-epoll-$NV.jar" 'netty-transport-native-epoll-4.1.130.Final.jar'
+      swap netty-transport-native-epoll-$NV-linux-x86_64.jar 185db6053e0e9573d36fa4eb6567b26139afaa4daa7bf5a068e661568304542b "$M/io/netty/netty-transport-native-epoll/$NV/netty-transport-native-epoll-$NV-linux-x86_64.jar" 'netty-transport-native-epoll-4.1.130.Final-linux-x86_64.jar'
+      swap netty-transport-native-epoll-$NV-linux-aarch_64.jar 82fb63a2dc90c0bddb81e04065a1c06fb4c5be722ad5d64b46491daf8b6f9a01 "$M/io/netty/netty-transport-native-epoll/$NV/netty-transport-native-epoll-$NV-linux-aarch_64.jar" 'netty-transport-native-epoll-4.1.130.Final-linux-aarch_64.jar'
       fi  # end 5.0.x jar swap
 
       # the dist ships conf/ and launchers with restrictive perms; the nonroot runtime
