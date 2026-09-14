@@ -187,6 +187,12 @@ pipeline:
       # only golang-jwt/jwt/v4, and dgrijalva is absent from go.mod/go.sum/
       # vendor and from the built binary's strings.
       go get github.com/Azure/go-autorest/autorest/adal@v0.9.24
+      # adal v0.9.24 lands on golang-jwt/jwt/v4 v4.5.0, which carries its own
+      # CVE-2025-30204 (HIGH, excessive memory during header parsing; fixed in
+      # 4.5.2) and CVE-2024-51744 (LOW, fixed in 4.5.1). Migrating off the
+      # abandoned module is only half the job -- the replacement has to be
+      # floated past its own advisories too.
+      go get github.com/golang-jwt/jwt/v4@v4.5.2
       go mod tidy
       go mod vendor
 
