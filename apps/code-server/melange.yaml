@@ -103,6 +103,14 @@ pipeline:
       patch_pkg "$dest/lib/vscode/node_modules" undici      https://registry.npmjs.org/undici/-/undici-7.29.0.tgz           ec2005d822734765fc08c3ee5d50b1f720bf1c3fc6235ab028e5cc61c85a3a70
       patch_pkg "$dest/node_modules"            body-parser https://registry.npmjs.org/body-parser/-/body-parser-2.3.0.tgz 031d7f6c5142e31be91d36a43f541f02a505943e3b871aa44ef5fb6939be258e
 
+      # GHSA-wx77-rp39-c6vg (ReDoS in the `markdown` npm package, fixed: null) is
+      # a name-collision false positive, same shape as the npm-extension FP above:
+      # the only "markdown" package.json in the whole tree is VS Code's built-in
+      # markdown-basics grammar extension (name:"markdown", version:"30.0.0", no
+      # JS logic, just tmLanguage/snippets), not evilstreak/markdown-js. It is
+      # NOT removed -- unlike the npm-scripts panel, this is core Markdown syntax
+      # highlighting, and there is no real vulnerable code shipped to fix.
+
 test:
   pipeline:
     - runs: |
