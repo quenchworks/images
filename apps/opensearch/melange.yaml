@@ -400,7 +400,7 @@ pipeline:
       [ "$patched" -gt 0 ] || { echo "❌ no plugin dir received the patched calcite -- layout changed"; exit 1; }
       echo "calcite 1.42.0 installed into $patched plugin dir(s)"
       rm -rf "$cal"
-      # (4) netty 4.2.15.Final -> 4.2.17.Final content swap (2026-09-14; second hop of
+      # (4) netty 4.2.16.Final -> 4.2.17.Final content swap (2026-09-14; second hop of
       #     the Jul-2026 netty wave -- the nightly scan flagged netty-handler at 4.2.16
       #     content, fix 4.2.17.Final). Standalone io.netty jars in
       #     modules/transport-netty4 + plugins/opensearch-{ml,notifications,
@@ -409,23 +409,23 @@ pipeline:
       #     in the nettyswap list: block (2c) already renamed it to 4.2.17.Final, and a
       #     line here would silently match nothing. 3.8.0 is the newest upstream
       #     OpenSearch, so there is NO version bump -- jar surgery. netty is ABI-stable
-      #     within 4.2.x -> content-swap in place keeping the bundled 4.2.15 filename;
+      #     within 4.2.x -> content-swap in place keeping the bundled 4.2.16 filename;
       #     Trivy reads the jar's internal pom.properties (= 4.2.17) -> clean. The set
       #     MUST move as ONE lockstep set within 4.2.x; test.sh's remote-reindex
       #     assertion guards the httpclient5/netty client path that neither boot nor the
       #     chart gate exercises. NOTE: opensearch-ml/-notifications also ship
       #     netty-transport-classes-epoll-4.1.124 (a separate 4.1.x line, not part of
-      #     this 4.2.15 set); left as-is.
+      #     this 4.2.16 set); left as-is.
       nd=$(mktemp -d)
       nettyswap() { # <artifact> <sha256-of-4.2.17>
         curl -fsSL -o "$nd/$1-4.2.17.Final.jar" "$MC/io/netty/$1/4.2.17.Final/$1-4.2.17.Final.jar"
         echo "$2  $nd/$1-4.2.17.Final.jar" | sha256sum -c -
         local n=0
         while IFS= read -r j; do cp "$nd/$1-4.2.17.Final.jar" "$j"; n=$((n+1)); done \
-          < <(find "$dest" -name "$1-4.2.15.Final.jar")
+          < <(find "$dest" -name "$1-4.2.16.Final.jar")
         # a find that matches nothing must fail the build: a silent no-op would ship the
         # unswapped jar (the codec-http line in the previous hop hid exactly this way).
-        [ "$n" -gt 0 ] || { echo "FATAL: no $1-4.2.15.Final.jar in the dist -- the bundled netty line moved, re-triage block (4)"; exit 1; }
+        [ "$n" -gt 0 ] || { echo "FATAL: no $1-4.2.16.Final.jar in the dist -- the bundled netty line moved, re-triage block (4)"; exit 1; }
       }
       nettyswap netty-buffer                        0d249178ec0204b35a6ad3e5ac8a6c2ecb3eb496c6cdae40b8eca4fa3cb6a0c7
       nettyswap netty-codec                         ac76f972446a2f72818441f746d0e73c58519a4687bf680d2b687d7dc5e28e2e
@@ -445,7 +445,7 @@ pipeline:
       nettyswap netty-transport-native-unix-common  e01aa467b9104de54a57c08c290f70b22e53ec97cf5583c87c112170ef5832cc
       # netty-codec-native-quic ships a base jar + per-OS classifier jars (transport-netty4).
       nettyquic() { # <classifier-suffix, "" for the base jar> <sha256-of-4.2.17>
-        f="netty-codec-native-quic-4.2.17.Final$1.jar"; o="netty-codec-native-quic-4.2.15.Final$1.jar"
+        f="netty-codec-native-quic-4.2.17.Final$1.jar"; o="netty-codec-native-quic-4.2.16.Final$1.jar"
         curl -fsSL -o "$nd/$f" "$MC/io/netty/netty-codec-native-quic/4.2.17.Final/$f"
         echo "$2  $nd/$f" | sha256sum -c -
         local n=0
