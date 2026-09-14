@@ -10,7 +10,12 @@
 # n8n has ONE native module in the prod tree: sqlite3 (the default standalone DB driver,
 # via @n8n/typeorm), compiled/fetched via node-gyp + node-pre-gyp. So the build env needs
 # python3 + build-base (make/g++) + npm (so node-pre-gyp finds the PREBUILT binary first
-# instead of a GCC-16 source compile) on top of nodejs-22. We prune caches after install.
+# instead of a GCC-16 source compile) on top of nodejs-24. We prune caches after install.
+#
+# NODE 24, not 22: n8n 2.36.0+ hard-requires Node >=24 (package.json engines) to ship fixes
+# for a run of n8n-authored CVEs (see build.conf, 2026-09-14). sqlite3 ships N-API
+# (napi-v3/v6) prebuilds, which are ABI-stable across Node majors, so the bump carries no
+# native-recompile risk for the one compiled module in this tree.
 #
 # LICENSE — CAUTION: fair-code, NOT OSI. Sustainable Use License v1.0 for the bulk of the
 # code; ".ee." files need a commercial n8n Enterprise License (LICENSE_EE.md).
@@ -23,7 +28,7 @@ package:
     - license: LicenseRef-n8n-Sustainable-Use-License-1.0
   dependencies:
     runtime:
-      - nodejs-22              # n8n requires Node >=22.22 (package.json engines)
+      - nodejs-24              # n8n requires Node >=24.0.0 as of 2.36.0 (package.json engines)
       - ca-certificates-bundle # TLS to external DBs, SMTP, webhooks, integrations, update checks
       - tzdata                 # n8n schedules workflows against the configured timezone
 
@@ -37,7 +42,7 @@ environment:
       - build-base             # make + g++ for node-gyp (native module: sqlite3)
       - busybox
       - ca-certificates-bundle
-      - nodejs-22
+      - nodejs-24
       - npm                    # node-pre-gyp probes a PREBUILT sqlite3 binary via npm FIRST;
                                # without npm that path fails and it falls back to a GCC-16
                                # source compile. With npm present the prebuilt is used.
@@ -98,8 +103,7 @@ pipeline:
         const p=JSON.parse(fs.readFileSync("package.json","utf8"));
         // vulnerable DIRECT deps -> bump the declaration to the Trivy fixed version
         Object.assign(p.dependencies,{
-          "@opentelemetry/core":"2.8.0",  // direct 2.7.1 < 2.8.0 (fix)
-          "nodemailer":"9.0.1",           // direct 8.0.10 (fix = 9.0.1, major)
+          "nodemailer":"9.1.1",           // direct 8.0.10; GHSA-2x7j/8m3c/cc9r/wmmp all need >= 9.1.0/9.1.1
           "tar":"7.5.22",                 // direct ^7.5.16 (CVE-2026-59873 CRIT +3, GHSA-r292 MED -> 7.5.21;
                                           // 7.5.22 is the newest 7.5.x, so the weekly node-tar
                                           // advisories have some headroom before the next bump)
@@ -112,12 +116,25 @@ pipeline:
                                           // the install. The @3-scoped override below now
                                           // agrees with this spec (same value), so it only
                                           // moves the TRANSITIVE 3.x copies.
-          "ws":"8.21.0"                   // direct 8.20.1 < 8.21.0 (fix)
+          "ws":"8.21.0",                  // direct 8.20.1 < 8.21.0 (fix)
+          "multer":"2.4.0"                // direct ^2.2.0; CVE-2026-77037/77078/82333 HIGH +
+                                          // 77063 LOW need >= 2.3.0; 2.4.0 (newest 2.x, npm
+                                          // latest) also carries the CVE-2026-88932 fix.
+                                          // Satisfies the ^2.2.0 range n8n itself declares.
+          // csv-parse: n8n 2.38.7 already bumped its OWN direct dep to 7.0.2 (was 6.2.1 in
+          // 2.32.7) -- past the CVE-2026-85063 fix floor on its own; no bump needed here.
+          // @opentelemetry/core: n8n 2.38.7 already ships 2.10.0 direct (was 2.7.1) -- past
+          // the 2.8.0 fix floor on its own; the prior dependencies+overrides pin is dropped.
         });
         // transitive copies (+ direct deps already AT the fix: langsmith/uuid/@azure/identity/tar)
         p.overrides=Object.assign(p.overrides||{},{
           "xlsx":"npm:@e965/xlsx@0.20.3",
-          "adm-zip":"0.6.0",              // transitive 0.5.18 < 0.6.0 (CVE-2026-39244 HIGH)
+          "adm-zip":"0.6.1",              // transitive; CVE-2026-76845 (symlink arbitrary file
+                                          // overwrite). OSVs affected/fixed data for this CVE
+                                          // is self-contradictory about 0.6.0; diffing the
+                                          // v0.6.0 vs v0.6.1 GitHub tags shows 0.6.1 is what
+                                          // actually adds the lstat-based assertPathSafe guard,
+                                          // so 0.6.1 is the real fix, not 0.6.0.
           "@anthropic-ai/sdk":"0.91.1",
           "brace-expansion":"5.0.9",      // CVE-2026-14257 + follow-ons; 5.0.9 is the same
                                           // major as the 5.0.8 this was pinned to, so the CJS
@@ -127,7 +144,6 @@ pipeline:
                                           // matches the direct-dep bump above (npm rule)
           "vm2":"3.11.6",                 // 3.11.5 flagged, 3.11.6 is the fix
           "@azure/identity@3":"4.2.1",    // only the transitive 3.4.2 (direct is 4.13.0, safe)
-          "@opentelemetry/core":"2.8.0",
           "@opentelemetry/exporter-prometheus":"0.217.0",
           "@opentelemetry/sdk-node@<0.217.0":"0.217.0",  // only the transitive 0.204.0 (direct is ^0.217.0)
           "@tootallnate/once":"2.0.1",
@@ -136,16 +152,22 @@ pipeline:
           "fast-xml-parser":"5.7.0",
           "form-data":"4.0.6",
           "@hono/node-server":"2.0.10",   // transitive (GHSA-9mqv-5hh9-4cgg MEDIUM; 2.0.5 still vuln)
+          "js-yaml":"4.3.2",              // transitive; CVE-2026-84375 (was completely unpinned)
           "langsmith":"0.6.0",
           "linkify-it":"5.0.2",           // transitive (CVE-2026-59887 HIGH; was 5.0.1)
-          "nodemailer":"9.0.1",
+          "mysql2":"3.23.1",              // transitive via @langchain/community/@n8n/typeorm/
+                                          // n8n-nodes-base (all dedupe onto one copy);
+                                          // GHSA-3f6p HIGH (auth-plugin downgrade) needs
+                                          // >= 3.22.0, GHSA-rgwj MEDIUM (zlib-inflate DoS)
+                                          // needs >= 3.23.1
+          "nodemailer":"9.1.1",
           "@opentelemetry/propagator-jaeger":"2.9.0",  // transitive (CVE-2026-59892 HIGH)
           "protobufjs":"8.6.6",           // transitive 8.6.0 < 8.6.6 (CVE-2026-59876/59877)
-          "qs":"6.15.2",
-          "sanitize-html":"2.17.5",       // transitive 2.17.4 (CVE-2026-53606 MEDIUM). Not a
-                                          // direct dep of n8n, so it belongs in overrides, not
-                                          // dependencies. Exact 2.17.5 = the fix version; 2.17.6
-                                          // exists but the minimal bump is the house rule.
+          "qs":"6.16.0",                  // CVE-2026-82417/82562 landed on the prior 6.15.2 pin
+          "sanitize-html":"2.17.7",       // transitive. CVE-2026-63670/84371 landed on the
+                                          // prior 2.17.5 pin (two more advisories after it).
+                                          // Not a direct dep of n8n, so it belongs in
+                                          // overrides, not dependencies.
                                           // NOTE: this whole script is passed to node inside a
                                           // SINGLE-QUOTED shell argument, so it must contain no
                                           // apostrophe anywhere -- one closes the quote and
@@ -155,6 +177,10 @@ pipeline:
           "tar@7":"7.5.22",               // n8n-nodes-base pins tar 7.5.17 EXACTLY, so this copy
                                           // cannot float (CVE-2026-59873 CRIT/59874 HIGH/59871 MED,
                                           // GHSA-r292-9mhp-454m MED needs >= 7.5.21)
+          "toml":"4.2.0",                 // transitive via the snowflake-sdk config-file parser
+                                          // (CVE-2026-63376/77465). 3->4 is a major bump but
+                                          // toml.parse() is unchanged; smoke-tested against
+                                          // the real installed copy.
           "undici@5":"6.28.0",            // ONLY the 5.x copy; see the undici note below
           "uuid":"11.1.1",
           "ws":"8.21.0"
@@ -247,7 +273,7 @@ pipeline:
       # `fetch(input, { ...init, dispatcher })` — all three unchanged in 6.x (verified against the
       # published 6.28.0 tarball: module.exports.Agent/fetch are present, connect.lookup is still
       # honoured, and fetch still reads init.dispatcher). undici 6's one hard break, dropping
-      # Node < 18.17, is moot on Wolfi nodejs-22 (>=22.22 is already n8n's own engines floor).
+      # Node < 18.17, is moot on Wolfi nodejs-24 (>=24.0.0 is already n8n's own engines floor).
       # 6.28.0 (newest 6.x) rather than the bare 6.27.0 fix floor: it satisfies the ^6.27.0
       # consumers above, so the tree DEDUPES onto one copy instead of keeping nested duplicates,
       # and it is the version those consumers already floated to in the last build.
