@@ -425,12 +425,13 @@ pipeline:
       mkdir -p internal/namesgenerator internal/workerlabel
       cp ../docker-src/pkg/namesgenerator/names-generator.go internal/namesgenerator/
       cp ../docker-src/builder/builder-next/worker/label/label.go internal/workerlabel/
-      # busybox grep has no --include; find the .go files explicitly.
-      find . -name '*.go' -type f | xargs grep -lF 'github.com/docker/docker/pkg/namesgenerator' 2>/dev/null \
-        | xargs -r sed -i 's|github.com/docker/docker/pkg/namesgenerator|github.com/docker/buildx/internal/namesgenerator|g'
-      find . -name '*.go' -type f | xargs grep -lF 'github.com/docker/docker/builder/builder-next/worker/label' 2>/dev/null \
-        | xargs -r sed -i 's|github.com/docker/docker/builder/builder-next/worker/label|github.com/docker/buildx/internal/workerlabel|g'
-      if find . -name '*.go' -type f | xargs grep -Eq 'github.com/docker/docker/pkg/namesgenerator|github.com/docker/docker/builder/builder-next' 2>/dev/null; then
+      # rewrite every .go file unconditionally: sed is a no-op on files without
+      # the pattern, and find -exec + avoids xargs' exit-123 on grep no-match.
+      find . -name '*.go' -type f -exec sed -i \
+        -e 's|github.com/docker/docker/pkg/namesgenerator|github.com/docker/buildx/internal/namesgenerator|g' \
+        -e 's|github.com/docker/docker/builder/builder-next/worker/label|github.com/docker/buildx/internal/workerlabel|g' \
+        {} +
+      if find . -name '*.go' -type f -exec grep -Eq 'github.com/docker/docker/pkg/namesgenerator|github.com/docker/docker/builder/builder-next' {} +; then
         echo "FATAL: docker/docker reference survived the compat rewrite"; exit 1
       fi
       # buildx v0.37.1 still pins github.com/docker/docker v28.5.2+incompatible.
