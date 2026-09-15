@@ -243,6 +243,14 @@ pipeline:
       # satisfies the upgraded go directive.
       # lifecycle >= v0.21.16 finished its own docker/docker -> moby split; this
       go get github.com/buildpacks/lifecycle@v0.21.19
+      # The first real gate run on this recipe flagged two modules in the pack
+      # binary: x/crypto (CVE-2026-56854 HIGH + 56855/78662) and x/mod
+      # (CVE-2026-56864 HIGH + 56865). lifecycle's graph leaves both below their
+      # fixes. Pin exactly those two as self-replaces, which tidy preserves;
+      # nothing else is floored here, because pinning the wider set against
+      # lifecycle's own requirements is what produced the incoherent otel graph.
+      go mod edit -replace golang.org/x/crypto=golang.org/x/crypto@v0.56.0
+      go mod edit -replace golang.org/x/mod=golang.org/x/mod@v0.40.0
       # the acceptance test tree imports otel semconv paths that the upgraded
       # otel renamed; nothing in it ships, so drop it before resolving.
       rm -rf acceptance testdata
