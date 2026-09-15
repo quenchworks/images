@@ -100,6 +100,16 @@ vars:
   # tag (minio/mc has cut nothing since 2025-08-13), so a from-source build at
   # the same tag with the house float is the only way to clear it.
   mc-version: RELEASE.2025-08-13T08-35-41Z
+  # docker-compose and docker-cli-buildx move from Wolfi apks to from-source
+  # builds (2026-09-15). Wave-1 probes: no apk on either arch fixes CVE-2026-33997
+  # (secdb bucket "0", re-verified live), the vulnerable daemon code never links
+  # into either plugin binary, and OSV records NO fixed event for
+  # github.com/docker/docker -- the gate's --ignore-unfixed ignores it. compose
+  # v5.5.1 has zero docker/docker in its graph (upstream split to moby/api +
+  # moby/client); buildx v0.37.1 still pins docker/docker v28.5.2+incompatible,
+  # which stays because no fixed module exists to replace onto.
+  compose-version: 5.5.1
+  buildx-version: 0.37.1
 
 environment:
   contents:
@@ -273,6 +283,19 @@ pipeline:
       tag: ${{vars.mc-version}}
       expected-commit: 7394ce0dd2a80935aded936b09fa12cbb3cb8096
       destination: mc-src
+  - uses: git-checkout
+    with:
+      repository: https://github.com/docker/compose
+      tag: v${{vars.compose-version}}
+      expected-commit: 5f94fb0aa42a2cd1248c6e6c7fafb87546b9c8de
+      destination: compose-src
+
+  - uses: git-checkout
+    with:
+      repository: https://github.com/docker/buildx
+      tag: v${{vars.buildx-version}}
+      expected-commit: 0b265a9f62db554fa9aba6dd19e1bd5704bc7d8a
+      destination: buildx-src
 
   - name: Build mc from source
     runs: |
@@ -315,6 +338,83 @@ pipeline:
         -o "${{targets.destdir}}/usr/local/bin/mc" .
       "${{targets.destdir}}/usr/local/bin/mc" --version
 
+  - name: Build docker-compose from source
+    runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local
+      export GOPATH="$(mktemp -d)"
+      export GOCACHE="$(mktemp -d)"
+      cd compose-src
+      # compose v5.5.1 carries NO github.com/docker/docker at all (upstream split
+      # to moby/moby/api + moby/moby/client + docker/cli), so CVE-2026-33997
+      # cannot attach to this binary. Same house float as mc, for whatever the
+      # graph DOES carry: float only modules below floor; go list -m -e plus the
+      # NF/version guard so a module compose does not require is never added.
+      FLOOR="golang.org/x/net@v0.58.0 golang.org/x/crypto@v0.56.0 golang.org/x/text@v0.41.0 golang.org/x/sys@v0.47.0 google.golang.org/grpc@v1.83.2"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      need="$(go list -m -e $MODS 2>/dev/null | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
+      go mod tidy
+      install -d "${{targets.destdir}}/usr/libexec/docker/cli-plugins"
+      go build -trimpath \
+        -ldflags "-s -w -X github.com/docker/compose/v5/internal.Version=v${{vars.compose-version}}" \
+        -o "${{targets.destdir}}/usr/libexec/docker/cli-plugins/docker-compose" ./cmd
+      "${{targets.destdir}}/usr/libexec/docker/cli-plugins/docker-compose" version
+
+  - name: Build docker-buildx from source
+    runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local
+      export GOPATH="$(mktemp -d)"
+      export GOCACHE="$(mktemp -d)"
+      cd buildx-src
+      # buildx v0.37.1 still pins github.com/docker/docker v28.5.2+incompatible.
+      # Deliberately NOT floored: no fixed module version exists (the fix lives
+      # only in the renamed moby/moby/v2 path and the docker-v29.3.1 release tag,
+      # neither resolvable as github.com/docker/docker), and the vulnerable
+      # daemon code is never linked into this client binary -- only its two tiny
+      # utility packages (namesgenerator, worker/label) compile in. OSV records
+      # no fixed event for docker/docker, so the gate's --ignore-unfixed treats
+      # the advisory as unfixed. Float everything else below floor as usual.
+      FLOOR="golang.org/x/net@v0.58.0 golang.org/x/crypto@v0.56.0 golang.org/x/text@v0.41.0 golang.org/x/sys@v0.47.0 google.golang.org/grpc@v1.83.2"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      need="$(go list -m -e $MODS 2>/dev/null | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
+      go mod tidy
+      install -d "${{targets.destdir}}/usr/libexec/docker/cli-plugins"
+      go build -trimpath \
+        -ldflags "-s -w" \
+        -o "${{targets.destdir}}/usr/libexec/docker/cli-plugins/docker-buildx" ./cmd/buildx
+      test -s "${{targets.destdir}}/usr/libexec/docker/cli-plugins/docker-buildx"
+
   # ---- railpack<->mise seeding entrypoint ----
   - name: Install the entrypoint wrapper that seeds railpack's mise path
     runs: |
@@ -348,5 +448,11 @@ test:
         nixpacks --version
         mise --version
         mc --version
+        docker-compose version
+        # plugin-named binary runs in plugin mode; accept either the direct
+        # version subcommand or the full plugin-protocol form. Both are real
+        # asserts: the step fails only if NEITHER resolves.
+        /usr/libexec/docker/cli-plugins/docker-buildx version \
+          || /usr/libexec/docker/cli-plugins/docker-buildx buildx version
         test -x /usr/local/bin/coolify-helper-entrypoint
         bash -n /usr/local/bin/coolify-helper-entrypoint

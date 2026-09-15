@@ -35,8 +35,12 @@ contents:
     - git-lfs                       # large-file repos (CVE-tracked)
     - openssh-client                # git over ssh + deploy keys (CVE-tracked)
     - docker-cli                    # `docker` -- drives the mounted host daemon (CVE-tracked)
-    - docker-compose                # `docker compose` v2 plugin (/usr/libexec/docker/cli-plugins)
-    - docker-cli-buildx             # `docker buildx` plugin (/usr/libexec/docker/cli-plugins)
+    # docker-compose + docker-cli-buildx apks DROPPED 2026-15: no apk on either
+    # arch fixes CVE-2026-33997 (secdb "0" bucket). Both plugins are now built
+    # from source inside quench-coolify-helper-tools at the same upstream tags
+    # (compose v5.5.1 has no docker/docker in its module graph; buildx v0.37.1's
+    # daemon-side advisory never links in) and land at the same
+    # /usr/libexec/docker/cli-plugins paths the docker CLI scans.
     # mc (minio client) is BUILT FROM SOURCE inside quench-coolify-helper-tools --
     # Wolfi's mc apk never fixes golang.org/x/net CVE-2026-46600 (secdb bucket "0"),
     # so the apk package was dropped here in favor of the house x/* float.
