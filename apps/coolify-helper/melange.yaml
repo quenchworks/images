@@ -181,7 +181,7 @@ pipeline:
       # Only the parser family: mounts.go itself is NOT copied -- it drags in
       # idtools/stringid/safepath and friends. Its MountPoint struct is rebuilt
       # below with just the fields the parsers set and pack reads.
-      for f in parser.go linux_parser.go windows_parser.go lcow_parser.go validate.go; do
+      for f in parser.go linux_parser.go windows_parser.go lcow_parser.go validate.go volume_copy.go volume_unix.go volume_windows.go; do
         cp "../docker-src/volume/mounts/$f" internal/ddcompat/mounts/
       done
       cat > internal/ddcompat/mounts/mountpoint.go <<'DEOF'
@@ -190,6 +190,7 @@ pipeline:
       import (
               "github.com/buildpacks/pack/internal/ddcompat/types/mount"
               "github.com/buildpacks/pack/internal/ddcompat/volume"
+              "github.com/pkg/errors"
       )
 
       // MountPoint is a minimal copy of docker/docker volume/mounts.MountPoint,
@@ -210,6 +211,14 @@ pipeline:
               ID          string
               Spec        mount.Mount
               SkipMountpointCreation bool
+      }
+
+      func errInvalidMode(mode string) error {
+              return errors.Errorf("invalid mode: %v", mode)
+      }
+
+      func errInvalidSpec(spec string) error {
+              return errors.Errorf("invalid volume specification: '%s'", spec)
       }
       DEOF
       cp ../docker-src/api/types/mount/*.go internal/ddcompat/types/mount/
