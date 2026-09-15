@@ -32,7 +32,14 @@ contents:
     - ca-certificates-bundle        # TLS trust for registries + downloads
     - tini                          # PID 1 init that reaps build child processes
     - git                           # clone the app repo to build (CVE-tracked)
-    - git-lfs                       # large-file repos (CVE-tracked)
+    # git-lfs@local, NOT the Wolfi apk: Wolfi's 3.8.0-r1 ships x/crypto v0.54.0
+    # (CVE-2026-56854 HIGH + 56855/78662). melange.yaml builds our own from
+    # source with the x/* float and ships it as a `git-lfs` subpackage. The
+    # `@local` tag is the repository pin that makes apko take ours; without it
+    # apko resolves to Wolfi's regardless of version. `git` hard-depends on
+    # git-lfs, so this cannot simply be dropped. When Wolfi ships a git-lfs
+    # built against x/crypto >= 0.56.0, drop the subpackage and this pin.
+    - git-lfs@local                 # large-file repos (CVE-tracked)
     - openssh-client                # git over ssh + deploy keys (CVE-tracked)
     - docker-cli                    # `docker` -- drives the mounted host daemon (CVE-tracked)
     # docker-compose + docker-cli-buildx apks DROPPED 2026-15: no apk on either

@@ -114,6 +114,7 @@ vars:
   # (volume/mounts + its three leaf deps; namesgenerator; worker/label). Each
   # copied file was import-checked at this tag: stdlib-only.
   docker-version: 28.5.2
+  git-lfs-version: 3.8.0
 
 environment:
   contents:
@@ -468,6 +469,49 @@ pipeline:
         -o "${{targets.destdir}}/usr/libexec/docker/cli-plugins/docker-buildx" ./cmd/buildx
       test -s "${{targets.destdir}}/usr/libexec/docker/cli-plugins/docker-buildx"
 
+  - name: Build git-lfs from source with the golang.org/x/* float
+    runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local
+      export GOPATH="$(mktemp -d)"
+      export GOCACHE="$(mktemp -d)"
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/usr/bin"
+      cd "$(mktemp -d)"
+      # Wolfi's git-lfs apk (3.8.0-r1, both arches) ships golang.org/x/crypto
+      # v0.54.0 and carries CVE-2026-56854 HIGH plus CVE-2026-56855/78662. `git`
+      # hard-depends on git-lfs, so apko cannot drop it; the fix is to ship our
+      # own and pin apko to it with `git-lfs@local`. Same approach as
+      # apps/jenkins-inbound-agent, here as a subpackage so this app keeps one
+      # melange file.
+      git clone --depth 1 --branch v${{vars.git-lfs-version}} https://github.com/git-lfs/git-lfs.git src
+      cd src
+      # v3.8.0 is an ANNOTATED tag: `git ls-remote refs/tags/v3.8.0` returns the
+      # tag object, not the commit. This is the dereferenced commit, which is
+      # what the clone checks out.
+      got="$(git rev-parse HEAD)"
+      test "$got" = "aece9221f8c09221a14395d964806b956289bc07" \
+        || { echo "FATAL: git-lfs v${{vars.git-lfs-version}} is $got, expected aece9221f8c09221a14395d964806b956289bc07"; exit 1; }
+      # Float the x/* family coherently: raising x/crypto alone would leave
+      # x/net and x/text behind and just move the finding.
+      go mod edit -require=golang.org/x/net@v0.58.0 -require=golang.org/x/text@v0.41.0 -require=golang.org/x/crypto@v0.57.0
+      go mod tidy
+      go build -trimpath -buildvcs=false \
+        -ldflags "-s -w -X github.com/git-lfs/git-lfs/v3/config.GitCommit=v${{vars.git-lfs-version}}" \
+        -o "$destdir/usr/bin/git-lfs" ./
+      chmod 0755 "$destdir/usr/bin/git-lfs"
+      # Prove the float reached the binary. A float is a FLOOR: accept the
+      # wanted version or newer, so an MVS bump does not fail the build.
+      for want in "golang.org/x/net v0.58.0" "golang.org/x/text v0.41.0" "golang.org/x/crypto v0.56.0"; do
+        mod="${want% *}"; min="${want#* }"
+        got="$(go version -m "$destdir/usr/bin/git-lfs" | awk -v m="$mod" '$2==m{print $3}' | head -1)"
+        test -n "$got" || { echo "FATAL: $mod absent from the git-lfs build info"; exit 1; }
+        lo="$(printf '%s\n%s\n' "${min#v}" "${got#v}" | sort -V | head -1)"
+        test "$lo" = "${min#v}" || { echo "FATAL: $mod is $got, below the $min floor"; exit 1; }
+      done
+
   # ---- railpack<->mise seeding entrypoint ----
   - name: Install the entrypoint wrapper that seeds railpack's mise path
     runs: |
@@ -491,6 +535,19 @@ pipeline:
       EOF
       chmod 0755 "$destdir/usr/local/bin/coolify-helper-entrypoint"
       bash -n "$destdir/usr/local/bin/coolify-helper-entrypoint"
+
+subpackages:
+  # Ships as its own apk named `git-lfs` so it can replace Wolfi's. apko takes
+  # it because apko.yaml pins `git-lfs@local`: the resolver follows the
+  # repository pin, not the highest version across repositories, so this
+  # package's version does not have to outrank Wolfi's 3.8.0-r1.
+  - name: git-lfs
+    description: "git-lfs built from source with the golang.org/x/* float, replacing Wolfi's apk"
+    pipeline:
+      - runs: |
+          set -eu
+          install -d "${{targets.subpkgdir}}/usr/bin"
+          mv "${{targets.destdir}}/usr/bin/git-lfs" "${{targets.subpkgdir}}/usr/bin/git-lfs"
 
 test:
   pipeline:
