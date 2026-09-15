@@ -258,7 +258,10 @@ pipeline:
       done
       # lifecycle >= v0.21.16 finished its own docker/docker -> moby split; this
       go get github.com/buildpacks/lifecycle@v0.21.19
-      go mod tidy
+      # the acceptance test tree imports otel semconv paths that the upgraded
+      # otel renamed; nothing in it ships, so drop it before resolving.
+      rm -rf acceptance testdata
+      go mod tidy -e
       if grep -qE '^\s*github\.com/docker/docker ' go.mod; then
         echo "FATAL: github.com/docker/docker still in go.mod -- elimination failed"; exit 1
       fi
