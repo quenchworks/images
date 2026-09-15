@@ -279,7 +279,7 @@ pipeline:
         go mod edit -replace "${mod}=${want}"
       done
       [ -z "$below2" ] || go mod tidy
-      if grep -q 'github.com/docker/docker' go.mod; then
+      if grep -qE '^\s*github\.com/docker/docker ' go.mod; then
         echo "FATAL: github.com/docker/docker still in go.mod -- elimination failed"; exit 1
       fi
       # Mirror the upstream Makefile build target: ldflags inject the version into
@@ -563,7 +563,7 @@ pipeline:
         go mod edit -replace "${mod}=${want}"
       done
       [ -z "$below2" ] || go mod tidy
-      if grep -q 'github.com/docker/docker' go.mod; then
+      if grep -qE '^\s*github\.com/docker/docker ' go.mod; then
         echo "FATAL: github.com/docker/docker still in go.mod -- elimination failed"; exit 1
       fi
       install -d "${{targets.destdir}}/usr/libexec/docker/cli-plugins"
