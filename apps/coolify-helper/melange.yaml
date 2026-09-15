@@ -226,26 +226,51 @@ pipeline:
       if grep -Rq 'github.com/docker/docker' internal/ddcompat pkg/client/process_volumes.go; then
         echo "FATAL: docker/docker reference survived the compat rewrite"; exit 1
       fi
-      # 0-CVE gate: pack v0.38.2's bundled module graph trails fixed releases across
-      # x/net, x/crypto, x/text, x/mod, go-git/go-billy, buildkit, moby/go-archive,
-      # circl, selinux, otel and docker/cli. Float ONLY modules below their floor (a
-      # bare `go get M@V` would silently downgrade once upstream needs more).
-      # docker/cli is deliberately NOT floored here: it is a major-version-29
-      # +incompatible module, and a self-replace cannot express that version
-      # shape. buildkit's own requirement (>=v29.5.3) pulls it via MVS anyway.
-      # docker/docker was REMOVED from this floor
-      # on 2026-09-15: pinning it held the module at v28.5.2 while Trivy counts
-      # CVE-2026-33997 as fixed at 29.3.1. The module is now eliminated from the
-      # build by the import rewrite at the top of this step, and a guard fails
-      # the build if it ever reappears in go.mod.
-      # docker/docker
-      # CVE-2026-33997 has no reachable fixed module (newest is v28.5.2+incompatible;
-      # the 29.x daemon only ships as the split moby/moby/api + moby/moby/client
-      # modules, which pack does not import). Same upstream-gated wall documented in
-      # build.conf and in apps/{gitness,grype,kratos,hydra,vault} -- BLOCKED, not fixed
-      # here; this float only keeps pack compiling against the newer go-connections.
-      set -x
-      FLOOR="golang.org/x/net@v0.58.0 golang.org/x/crypto@v0.56.0 golang.org/x/text@v0.41.0 golang.org/x/sys@v0.47.0 golang.org/x/mod@v0.40.0 github.com/moby/buildkit@v0.31.1 github.com/moby/go-archive@v0.3.0 github.com/opencontainers/selinux@v1.15.1 github.com/cloudflare/circl@v1.6.3 go.opentelemetry.io/otel@v1.44.0 github.com/go-git/go-git/v5@v5.19.2 github.com/containerd/containerd/v2@v2.3.5 github.com/moby/go-archive@v0.3.0 github.com/prometheus/prometheus@v0.311.3 github.com/go-git/go-billy/v5@v5.9.0"
+      # Pack's module graph comes from lifecycle v0.21.19's own coherent
+      # requirements (buildkit v0.32.2, containerd v2.3.5 via MVS, go-archive
+      # v0.3.3, otel v1.45.0 matched to its code). No self-replaces: pinning
+      # otel down while lifecycle needs it up built an incoherent hybrid graph
+      # that failed to resolve. GOTOOLCHAIN=local stays: the env's go-1.26
+      # satisfies the upgraded go directive.
+      # lifecycle >= v0.21.16 finished its own docker/docker -> moby split; this
+      go get github.com/buildpacks/lifecycle@v0.21.19
+      # the acceptance test tree imports otel semconv paths that the upgraded
+      # otel renamed; nothing in it ships, so drop it before resolving.
+      rm -rf acceptance testdata
+      go mod tidy -e
+      if grep -qE '^\s*github\.com/docker/docker ' go.mod; then
+        echo "FATAL: github.com/docker/docker still in go.mod -- elimination failed"; exit 1
+      fi
+      # Mirror the upstream Makefile build target: ldflags inject the version into
+      # pkg/client.Version; main package is the repo root (main.go imports ./cmd).
+      go build -trimpath \
+        -ldflags "-s -w -X 'github.com/buildpacks/pack/pkg/client.Version=${{vars.pack-version}}'" \
+        -o "${{targets.destdir}}/usr/local/bin/pack" .
+      "${{targets.destdir}}/usr/local/bin/pack" version
+
+  # ---- railpack (Go) -- railwayapp/railpack v0.23.0 ----
+  - uses: git-checkout
+    with:
+      repository: https://github.com/railwayapp/railpack
+      tag: v${{vars.railpack-version}}
+      expected-commit: ffdb0331677897577eafe61edc600aafdec387be
+      destination: railpack-src
+
+  - name: Build railpack from source
+    runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local   # use the installed go-1.26, never fetch a toolchain
+      export GOPATH="$(mktemp -d)"
+      export GOCACHE="$(mktemp -d)"
+      cd railpack-src
+      # 0-CVE gate: railpack v0.23.0's bundled module graph trails fixed releases
+      # across x/net, x/crypto, x/text, x/mod, containerd/v2, buildkit, grpc,
+      # in-toto-golang and otel/sdk. railpack does NOT import docker/docker (`go mod
+      # why github.com/docker/docker` answers "main module does not need it"), so
+      # unlike pack there is no upstream-gated wall here -- this float is a full fix.
+      FLOOR="golang.org/x/net@v0.58.0 golang.org/x/crypto@v0.56.0 golang.org/x/text@v0.41.0 golang.org/x/sys@v0.47.0 golang.org/x/mod@v0.40.0 google.golang.org/grpc@v1.83.2 github.com/containerd/containerd/v2@v2.3.5 github.com/moby/buildkit@v0.31.1 github.com/in-toto/in-toto-golang@v0.11.0 github.com/moby/go-archive@v0.3.0 github.com/prometheus/prometheus@v0.311.3 go.opentelemetry.io/otel/sdk@v1.44.0"
       # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
       # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is
       # the EFFECTIVE version and a replace cannot hide behind the require line.
@@ -256,7 +281,215 @@ pipeline:
       for f in $FLOOR; do
         go mod edit -replace "${f%%@*}=${f}"
       done
-      # lifecycle >= v0.21.16 finished its own docker/docker -> moby split; this
+      go mod tidy
+      # Mirror .goreleaser.yml: main ./cmd/cli, binary railpack, version ldflag.
+      go build -trimpath \
+        -ldflags "-s -w -X main.version=${{vars.railpack-version}}" \
+        -o "${{targets.destdir}}/usr/local/bin/railpack" ./cmd/cli
+      "${{targets.destdir}}/usr/local/bin/railpack" --version
+
+  # ---- nixpacks (Rust) -- railwayapp/nixpacks v1.41.0 ----
+  - uses: git-checkout
+    with:
+      repository: https://github.com/railwayapp/nixpacks
+      tag: v${{vars.nixpacks-version}}
+      expected-commit: bece51fbebac1d59709061a36e59dc9e0cf7ad3f
+      destination: nixpacks-src
+
+  - name: Build nixpacks from source
+    runs: |
+      set -eu
+      export CARGO_HOME="$(mktemp -d)"
+      cd nixpacks-src
+      # Single binary crate `nixpacks` (src/main.rs). Release profile, locked deps.
+      cargo build --release --locked --bin nixpacks
+      install -Dm0755 target/release/nixpacks "${{targets.destdir}}/usr/local/bin/nixpacks"
+      "${{targets.destdir}}/usr/local/bin/nixpacks" --version
+
+  # ---- mise (Rust) -- jdx/mise v2026.3.17 ----
+  - uses: git-checkout
+    with:
+      repository: https://github.com/jdx/mise
+      tag: v${{vars.mise-version}}
+      expected-commit: 073698a857f1237d0359e203ca52ce8b3957f5bd
+      destination: mise-src
+
+  - name: Build mise from source
+    runs: |
+      set -eu
+      export CARGO_HOME="$(mktemp -d)"
+      cd mise-src
+      # mise is the workspace root binary crate. Build release; openssl-dev satisfies
+      # its native-tls link. Stable path /usr/local/bin/mise; the entrypoint seeds the
+      # railpack-expected /tmp/railpack/mise/mise-<version> copy at start.
+      cargo build --release --bin mise
+      install -Dm0755 target/release/mise "${{targets.destdir}}/usr/local/bin/mise"
+      "${{targets.destdir}}/usr/local/bin/mise" --version
+
+  # ---- mc (Go) -- minio/mc, upstream's newest release tag ----
+  # Was a Wolfi apk (`mc`); dropped from apko.yaml because Wolfi's secdb (secfixes
+  # bucket "0") shows NO mc apk release, past or future, ever fixes
+  # golang.org/x/net CVE-2026-46600 -- this is not a lag that a rebuild clears.
+  - uses: git-checkout
+    with:
+      repository: https://github.com/minio/mc
+      tag: ${{vars.mc-version}}
+      expected-commit: 7394ce0dd2a80935aded936b09fa12cbb3cb8096
+      destination: mc-src
+  - name: Build mc from source
+    runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local   # use the installed go-1.26, never fetch a toolchain
+      export GOPATH="$(mktemp -d)"
+      export GOCACHE="$(mktemp -d)"
+      cd mc-src
+      # 0-CVE gate: mc's RELEASE.2025-08-13T08-35-41Z go.mod carries x/net v0.42.0,
+      # x/sys v0.34.0, x/text v0.27.0, x/crypto v0.40.0 (indirect), grpc v1.71.0
+      # (indirect) -- all below their fixed releases. Float ONLY modules below floor.
+      FLOOR="golang.org/x/net@v0.58.0 golang.org/x/crypto@v0.56.0 golang.org/x/text@v0.41.0 golang.org/x/sys@v0.47.0 google.golang.org/grpc@v1.83.2 github.com/containerd/containerd/v2@v2.3.5 github.com/moby/go-archive@v0.3.0 github.com/prometheus/prometheus@v0.311.3"
+      # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
+      # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is
+      # the EFFECTIVE version and a replace cannot hide behind the require line.
+      # Pin every floor module as a self-replace BEFORE tidy: tidy preserves
+      # replaces, but reverts bare indirect requires to the graph's MVS minimum
+      # (how railpack shipped x/crypto v0.54 against a v0.56 floor). Replaces
+      # for modules the app does not use are dropped by tidy on their own.
+      for f in $FLOOR; do
+        go mod edit -replace "${f%%@*}=${f}"
+      done
+      go mod tidy
+      # Mirror upstream's buildscripts/gen-ldflags.go (Version/ReleaseTag/CommitID);
+      # CopyrightYear/CommitID are stamped statically since there is no git history
+      # in a melange source fetch beyond this checkout's own commit.
+      go build -trimpath \
+        -ldflags "-s -w -X github.com/minio/mc/cmd.Version=${{vars.mc-version}} -X github.com/minio/mc/cmd.CopyrightYear=2025 -X github.com/minio/mc/cmd.ReleaseTag=${{vars.mc-version}} -X github.com/minio/mc/cmd.CommitID=7394ce0dd2a80935aded936b09fa12cbb3cb8096 -X github.com/minio/mc/cmd.ShortCommitID=7394ce0dd2a8" \
+        -o "${{targets.destdir}}/usr/local/bin/mc" .
+      "${{targets.destdir}}/usr/local/bin/mc" --version
+
+  - name: Build docker-compose from source
+    runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local
+      export GOPATH="$(mktemp -d)"
+      export GOCACHE="$(mktemp -d)"
+      cd compose-src
+      # compose v5.5.1 carries NO github.com/docker/docker at all (upstream split
+      # to moby/moby/api + moby/moby/client + docker/cli), so CVE-2026-33997
+      # cannot attach to this binary. Same house float as mc, for whatever the
+      # graph DOES carry: float only modules below floor; go list -m -e plus the
+      # NF/version guard so a module compose does not require is never added.
+      FLOOR="golang.org/x/net@v0.58.0 golang.org/x/crypto@v0.56.0 golang.org/x/text@v0.41.0 golang.org/x/sys@v0.47.0 google.golang.org/grpc@v1.83.2 github.com/containerd/containerd/v2@v2.3.5 github.com/moby/go-archive@v0.3.0 github.com/prometheus/prometheus@v0.311.3"
+      # Pin every floor module as a self-replace BEFORE tidy: tidy preserves
+      # replaces, but reverts bare indirect requires to the graph's MVS minimum
+      # (how railpack shipped x/crypto v0.54 against a v0.56 floor). Replaces
+      # for modules the app does not use are dropped by tidy on their own.
+      for f in $FLOOR; do
+        go mod edit -replace "${f%%@*}=${f}"
+      done
+      go mod tidy
+      install -d "${{targets.destdir}}/usr/libexec/docker/cli-plugins"
+      go build -trimpath \
+        -ldflags "-s -w -X github.com/docker/compose/v5/internal.Version=v${{vars.compose-version}}" \
+        -o "${{targets.destdir}}/usr/libexec/docker/cli-plugins/docker-compose" ./cmd
+      "${{targets.destdir}}/usr/libexec/docker/cli-plugins/docker-compose" version
+
+  - name: Build docker-buildx from source
+    runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GOTOOLCHAIN=local
+      export GOPATH="$(mktemp -d)"
+      export GOCACHE="$(mktemp -d)"
+      cd buildx-src
+      # ---- eliminate github.com/docker/docker (CVE-2026-33997, gate-counted) --
+      # buildx v0.37.1 imports it in exactly two places, both tiny utilities:
+      # pkg/namesgenerator (stdlib-only) and builder/builder-next/worker/label
+      # (stdlib-only). Copy both from docker-src into buildx's internal tree,
+      # rewrite the import sites, and tidy drops the module. Upstream's own
+      # migration to the split moby modules is pending; re-triage this block
+      # when buildx releases past v0.37.1.
+      mkdir -p internal/namesgenerator internal/workerlabel
+      cp ../docker-src/pkg/namesgenerator/names-generator.go internal/namesgenerator/
+      cp ../docker-src/builder/builder-next/worker/label/label.go internal/workerlabel/
+      grep -rlF 'github.com/docker/docker/pkg/namesgenerator' --include='*.go' . \
+        | xargs -r sed -i 's|github.com/docker/docker/pkg/namesgenerator|github.com/docker/buildx/internal/namesgenerator|g'
+      grep -rlF 'github.com/docker/docker/builder/builder-next/worker/label' --include='*.go' . \
+        | xargs -r sed -i 's|github.com/docker/docker/builder/builder-next/worker/label|github.com/docker/buildx/internal/workerlabel|g'
+      if grep -Rq 'github.com/docker/docker/pkg/namesgenerator\|github.com/docker/docker/builder/builder-next' --include='*.go' .; then
+        echo "FATAL: docker/docker reference survived the compat rewrite"; exit 1
+      fi
+      # buildx v0.37.1 still pins github.com/docker/docker v28.5.2+incompatible.
+      # Deliberately NOT floored: no fixed module version exists (the fix lives
+      # only in the renamed moby/moby/v2 path and the docker-v29.3.1 release tag,
+      # neither resolvable as github.com/docker/docker), and the vulnerable
+      # daemon code is never linked into this client binary -- only its two tiny
+      # utility packages (namesgenerator, worker/label) compile in. OSV records
+      # no fixed event for docker/docker, so the gate's --ignore-unfixed treats
+      # the advisory as unfixed. Float everything else below floor as usual.
+      FLOOR="golang.org/x/net@v0.58.0 golang.org/x/crypto@v0.56.0 golang.org/x/text@v0.41.0 golang.org/x/sys@v0.47.0 google.golang.org/grpc@v1.83.2 github.com/containerd/containerd/v2@v2.3.5 github.com/moby/go-archive@v0.3.0 github.com/prometheus/prometheus@v0.311.3"
+      # Pin every floor module as a self-replace BEFORE tidy: tidy preserves
+      # replaces, but reverts bare indirect requires to the graph's MVS minimum
+      # (how railpack shipped x/crypto v0.54 against a v0.56 floor). Replaces
+      # for modules the app does not use are dropped by tidy on their own.
+      for f in $FLOOR; do
+        go mod edit -replace "${f%%@*}=${f}"
+      done
+      go mod tidy
+      if grep -qE '^\s*github\.com/docker/docker ' go.mod; then
+        echo "FATAL: github.com/docker/docker still in go.mod -- elimination failed"; exit 1
+      fi
+      install -d "${{targets.destdir}}/usr/libexec/docker/cli-plugins"
+      go build -trimpath \
+        -ldflags "-s -w" \
+        -o "${{targets.destdir}}/usr/libexec/docker/cli-plugins/docker-buildx" ./cmd/buildx
+      test -s "${{targets.destdir}}/usr/libexec/docker/cli-plugins/docker-buildx"
+
+  # ---- railpack<->mise seeding entrypoint ----
+  - name: Install the entrypoint wrapper that seeds railpack's mise path
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/usr/local/bin"
+      cat > "$destdir/usr/local/bin/coolify-helper-entrypoint" <<EOF
+      #!/usr/bin/env bash
+      # Seed the mise binary at the path railpack hardcodes (/tmp/railpack/mise/mise-<ver>)
+      # from our from-source /usr/local/bin/mise, so railpack never tries to download a
+      # glibc mise (which would fail on this musl image). Then exec whatever CMD was given.
+      set -euo pipefail
+      MISE_VERSION="${{vars.mise-version}}"
+      RAILPACK_MISE_DIR="/tmp/railpack/mise"
+      mkdir -p "\$RAILPACK_MISE_DIR"
+      if [ ! -x "\$RAILPACK_MISE_DIR/mise-\$MISE_VERSION" ]; then
+        cp /usr/local/bin/mise "\$RAILPACK_MISE_DIR/mise-\$MISE_VERSION"
+        chmod 0755 "\$RAILPACK_MISE_DIR/mise-\$MISE_VERSION"
+      fi
+      exec "\$@"
+      EOF
+      chmod 0755 "$destdir/usr/local/bin/coolify-helper-entrypoint"
+      bash -n "$destdir/usr/local/bin/coolify-helper-entrypoint"
+
+test:
+  pipeline:
+    - runs: |
+        set -eu
+        pack version
+        railpack --version
+        nixpacks --version
+        mise --version
+        mc --version
+        docker-compose version
+        # plugin-named binary runs in plugin mode; accept either the direct
+        # version subcommand or the full plugin-protocol form. Both are real
+        # asserts: the step fails only if NEITHER resolves.
+        /usr/libexec/docker/cli-plugins/docker-buildx version \
+          || /usr/libexec/docker/cli-plugins/docker-buildx buildx version
+        test -x /usr/local/bin/coolify-helper-entrypoint
+        bash -n /usr/local/bin/coolify-helper-entrypoint
       go get github.com/buildpacks/lifecycle@v0.21.19
       # the acceptance test tree imports otel semconv paths that the upgraded
       # otel renamed; nothing in it ships, so drop it before resolving.
