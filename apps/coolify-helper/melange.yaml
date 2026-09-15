@@ -141,6 +141,26 @@ pipeline:
       expected-commit: 8210eb15f191cad25a3f7745618417270ec07709
       destination: pack-src
 
+  - uses: git-checkout
+    with:
+      repository: https://github.com/docker/compose
+      tag: v${{vars.compose-version}}
+      expected-commit: 5f94fb0aa42a2cd1248c6e6c7fafb87546b9c8de
+      destination: compose-src
+
+  - uses: git-checkout
+    with:
+      repository: https://github.com/docker/buildx
+      tag: v${{vars.buildx-version}}
+      expected-commit: 0b265a9f62db554fa9aba6dd19e1bd5704bc7d8a
+      destination: buildx-src
+  - uses: git-checkout
+    with:
+      repository: https://github.com/moby/moby
+      tag: v${{vars.docker-version}}
+      expected-commit: 89c5e8fd66634b6128fc4c0e6f1236e2540e46e0
+      destination: docker-src
+
   - name: Build pack from source
     runs: |
       set -eu
@@ -342,26 +362,6 @@ pipeline:
       tag: ${{vars.mc-version}}
       expected-commit: 7394ce0dd2a80935aded936b09fa12cbb3cb8096
       destination: mc-src
-  - uses: git-checkout
-    with:
-      repository: https://github.com/docker/compose
-      tag: v${{vars.compose-version}}
-      expected-commit: 5f94fb0aa42a2cd1248c6e6c7fafb87546b9c8de
-      destination: compose-src
-
-  - uses: git-checkout
-    with:
-      repository: https://github.com/docker/buildx
-      tag: v${{vars.buildx-version}}
-      expected-commit: 0b265a9f62db554fa9aba6dd19e1bd5704bc7d8a
-      destination: buildx-src
-  - uses: git-checkout
-    with:
-      repository: https://github.com/moby/moby
-      tag: v${{vars.docker-version}}
-      expected-commit: 89c5e8fd66634b6128fc4c0e6f1236e2540e46e0
-      destination: docker-src
-
   - name: Build mc from source
     runs: |
       set -eu
