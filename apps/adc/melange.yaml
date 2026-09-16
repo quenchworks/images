@@ -36,7 +36,7 @@
 # blind here. `pnpm audit --prod` on the build tree is therefore the real CVE
 # gate for this app, and it runs below as a HARD gate, not a comment.
 #
-# At 0.27.1 that audit found 8 HIGH advisories across three packages. All three
+# At 0.27.1 that audit found 9 HIGH advisories across three packages. All three
 # are floated to their fixed releases (a FLOOR, not a downgrade-proof pin --
 # every value is the newest release of the line the tree already resolved):
 #
@@ -49,12 +49,22 @@
 #                                itself was raised. Verified bundled: the built
 #                                main.cjs carries a js-yaml legal banner and its
 #                                size moves when this changes.
-#   fast-uri    4.0.0 -> 4.1.2   three host-confusion advisories (backslash
+#   fast-uri    4.0.0 -> 4.1.4   FOUR host-confusion advisories (backslash
 #                                authority delimiter / introducer, failed IDN
-#                                canonicalization). Upstream already carries a
-#                                `fast-uri: ">=3.1.2"` override; two overlapping
-#                                selectors for one package are ambiguous, so that
-#                                line is REPLACED rather than supplemented.
+#                                canonicalization, and the 4.0.1+ follow-up that
+#                                landed on the versions pinned to fix the first
+#                                three). All four are patched in >=4.1.3, and the
+#                                earlier 4.1.2 pin cleared only three of them --
+#                                the fourth is what failed the audit gate on
+#                                2026-09-16. The pin is 4.1.4, not the newest
+#                                4.1.5: pnpm-workspace.yaml sets
+#                                `minimumReleaseAge: 1440`, and 4.1.5 published
+#                                2026-09-15T07:35Z is inside that 24h window on a
+#                                same-day rebuild. Raise it once 4.1.5 has aged.
+#                                Upstream already carries a `fast-uri: ">=3.1.2"`
+#                                override; two overlapping selectors for one
+#                                package are ambiguous, so that line is REPLACED
+#                                rather than supplemented.
 #   brace-expansion 5.0.6 -> 5.0.9  CVE-2026-14257 and the two follow-ups that
 #                                landed on the versions pinned to fix it. 5.0.9
 #                                adds the EXPANSION_MAX_LENGTH accumulator bound.
@@ -159,7 +169,7 @@ pipeline:
                   "  'brace-expansion@5.0.6': 5.0.9",  # CVE-2026-14257 + 2 follow-ons;
                                                        # EXACT selector: the tree's other
                                                        # copy (2.1.1) is not affected
-                  "  fast-uri: 4.1.2",                 # 3 host-confusion advisories
+                  "  fast-uri: 4.1.4",                 # 4 host-confusion advisories (>=4.1.3)
               ]
               added = True
       assert added, "overrides: block not found in pnpm-workspace.yaml"
