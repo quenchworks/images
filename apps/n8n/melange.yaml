@@ -144,8 +144,29 @@ pipeline:
                                           // matches the direct-dep bump above (npm rule)
           "vm2":"3.11.6",                 // 3.11.5 flagged, 3.11.6 is the fix
           "@azure/identity@3":"4.2.1",    // only the transitive 3.4.2 (direct is 4.13.0, safe)
+          "@opentelemetry/core@<2.8.0":"2.11.0",  // CVE-2026-54285 (oversized-baggage-header DoS)
+                                          // needs >= 2.8.0. The direct dep IS already 2.10.0 --
+                                          // which is why the old unscoped pin looked redundant
+                                          // and was dropped -- but 20 TRANSITIVE copies stayed
+                                          // behind at 2.6.0 / 2.7.1 (one under @n8n/agents +
+                                          // @opentelemetry/exporter-prometheus, the rest nested
+                                          // under @microsoft/agents-a365-observability). Scoped
+                                          // `<2.8.0` because an unscoped key would EOVERRIDE
+                                          // against the 2.10.0 direct edge; 2.11.0 is npm latest
+                                          // and the tree already floats three copies there, so
+                                          // the laggards DEDUPE onto it instead of adding a copy.
           "@opentelemetry/exporter-prometheus":"0.217.0",
           "@opentelemetry/sdk-node@<0.217.0":"0.217.0",  // only the transitive 0.204.0 (direct is ^0.217.0)
+          "@tiptap/core":"3.31.3",        // transitive via @n8n/design-system (3.27.0). GHSA-j95f
+                                          // HIGH (quadratic ReDoS in Markdown attribute parsing)
+                                          // needs >= 3.30.5, GHSA-cp6q MEDIUM (mergeAttributes
+                                          // turns an own __proto__ key into inherited executable
+                                          // DOM attributes) >= 3.30.4. 3.31.3 rather than the
+                                          // bare 3.30.5 floor because it is what MOST of the
+                                          // tree already asks for: 14 of the 18 @tiptap/*
+                                          // extensions peer-pin @tiptap/core to EXACTLY 3.31.3,
+                                          // so this moves the tree TOWARD its own peer set, not
+                                          // away from it. Same 3.x major throughout.
           "@tootallnate/once":"2.0.1",
           "ajv@7":"8.18.0",               // only the 7.x copy
           "axios":"1.18.0",               // transitive 1.16.0 < 1.18.0 (GHSA-gcfj-64vw-6mp9 HIGH +9)
@@ -155,6 +176,19 @@ pipeline:
           "js-yaml":"4.3.2",              // transitive; CVE-2026-84375 (was completely unpinned)
           "langsmith":"0.6.0",
           "linkify-it":"5.0.2",           // transitive (CVE-2026-59887 HIGH; was 5.0.1)
+          "markdown-it":"14.3.2",         // transitive via @n8n/design-system, which declares
+                                          // ^13.0.2 -- the tree has exactly ONE copy, at 13.0.2.
+                                          // CVE-2026-2327 (ReDoS) fixes at 14.1.1 and
+                                          // CVE-2026-48988 (quadratic smartquotes/typographer)
+                                          // at 14.2.0, so 14.x is the floor and 13.x has no fix
+                                          // at all -- the major bump is forced, not chosen.
+                                          // 14.3.2 is the newest 14.x (15.x exists but is a
+                                          // second major past the fix, no reason to take it).
+                                          // Safe for this consumer: 14.0.0s breaking changes are
+                                          // the Node >=18 floor (moot on nodejs-24) and internal
+                                          // entities/punycode dep swaps; the MarkdownIt() +
+                                          // .render() surface design-system uses is unchanged --
+                                          // smoke-tested against the real installed copy.
           "mysql2":"3.23.1",              // transitive via @langchain/community/@n8n/typeorm/
                                           // n8n-nodes-base (all dedupe onto one copy);
                                           // GHSA-3f6p HIGH (auth-plugin downgrade) needs
