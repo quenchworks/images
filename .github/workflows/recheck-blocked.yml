@@ -17,6 +17,16 @@ permissions:
 jobs:
   recheck:
     runs-on: ubuntu-latest
+    # Sharded because the register grew from ~10 apps to 92 on 2026-09-16, when
+    # every zlib-walled app got a measured BLOCKED=1. Sequentially that is well
+    # past the 6h job cap (the comment below prices a heavy app at ~45min), and a
+    # job killed at the cap writes no summary and opens no issue, so the weekly
+    # detector would fail silently. Ten shards put 9-10 apps in each.
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     steps:
       - uses: actions/checkout@v5
 
@@ -55,13 +65,20 @@ jobs:
 
       - name: Re-gate every BLOCKED=1 app (x86_64)
         id: gate
+        env:
+          SHARD: ${{ matrix.shard }}
+          SHARDS: 10
         run: |
           set -uo pipefail
-          echo "## Blocked-app re-check ($(date -u +%Y-%m-%d))" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Blocked-app re-check, shard ${SHARD} ($(date -u +%Y-%m-%d))" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| app | newest | 0-CVE gate |" >> "$GITHUB_STEP_SUMMARY"
           echo "|---|---|---|" >> "$GITHUB_STEP_SUMMARY"
           NEWLY_PASSING=""
+          # Counts every blocked app, then keeps only this shard's slice. The
+          # counter advances on blocked apps alone, so the split does not move
+          # when an unrelated app is added to apps/.
+          IDX=0
           for conf in apps/*/build.conf; do
             # SOURCE the file and test the variable -- do not grep for the string.
             # `grep -q 'BLOCKED=1'` matches the text anywhere, including prose like
@@ -74,6 +91,8 @@ jobs:
             app="$(basename "$(dirname "$conf")")"
             blocked="$( ( set +u; . "$conf" >/dev/null 2>&1; echo "${BLOCKED:-0}" ) )"
             [ "$blocked" = "1" ] || continue
+            this=$(( IDX % SHARDS )); IDX=$(( IDX + 1 ))
+            [ "$this" = "$SHARD" ] || continue
             # An app can be blocked precisely BECAUSE it has no recipe to gate --
             # istio-proxyv2 is build.conf only, since Istio's Envoy needs a Bazel
             # toolchain melange cannot drive. Without this skip, the fallback
