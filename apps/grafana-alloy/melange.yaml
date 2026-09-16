@@ -92,26 +92,26 @@ pipeline:
       # whose replace directives MVS honours -- the float has to happen here.
       cd collector
 
-      # ---- drop the last github.com/docker/docker importer -------------------
-      # CVE-2026-33997 (docker/docker v28.5.2+incompatible, "fixed in 29.3.1") is
-      # unreachable by floating: proxy.golang.org still answers
+      # ---- github.com/docker/docker: upstream-gated, do NOT retry the ----------
+      # ---- cadvisor route (measured 2026-09-16, run 35099396906) ---------------
+      # CVE-2026-33997 cannot be floated: proxy.golang.org answers
       # v28.5.2+incompatible for @latest on both github.com/docker/docker and
-      # github.com/moby/moby, and the v29 code ships only as the split modules
-      # github.com/moby/moby/{api,client} plus moby/moby/v2 betas. The fix is to
-      # stop importing it. By 1.19.2 alloy's other three importers are already
-      # gone -- prometheus v0.313.2 discovery/moby and
-      # opentelemetry-collector-contrib internal/metadataproviders v0.158.0 both
-      # moved to github.com/moby/moby/client -- leaving only cadvisor, which
-      # upstream alloy still holds on an old fork commit:
+      # github.com/moby/moby, and the v29 code ships only as
+      # github.com/moby/moby/{api,client} plus moby/moby/v2 betas.
+      #
+      # By 1.19.2 three of alloy's four importers are gone (prometheus v0.313.2
+      # discovery/moby and opentelemetry-collector-contrib metadataproviders
+      # v0.158.0 both moved to github.com/moby/moby/client), leaving only
+      # cadvisor, held by upstream's
       #   replace github.com/google/cadvisor => github.com/grafana/cadvisor v0.0.0-20260204200106-...
-      # Grafana rebased that fork on 2026-09-14 (branch grafana-v0.60.5-noglobals,
-      # tracking google/cadvisor v0.60.5, which is on github.com/moby/moby/client)
-      # but has not repointed alloy at it yet. Do that here. This is a PIN, so the
-      # assertion below is the thing that keeps it honest: if a future alloy
-      # version reintroduces docker/docker by any path, the build fails rather
-      # than shipping the CVE behind a green gate.
-      go mod edit -replace \
-        github.com/google/cadvisor=github.com/grafana/cadvisor@v0.0.0-20260914142459-6f984a063abc
+      # Repointing that replace at Grafana's rebased fork
+      # (grafana-v0.60.5-noglobals, 6f984a063abc, which IS on moby/moby/client)
+      # was tried and does not compile: cadvisor v0.60 moved cache/memory,
+      # container, manager, metrics, storage and utils/sysfs into the separate
+      # github.com/google/cadvisor/cmd module, and alloy's
+      # internal/static/integrations/cadvisor imports them at their old
+      # root-module paths. Clearing this needs alloy to port that integration to
+      # the v0.60 layout -- not something a float can do from here.
 
       # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
       # FLOOR is a FLOOR, not a pin: a hardcoded bump becomes a DOWNGRADE the
@@ -162,15 +162,6 @@ pipeline:
           { if (h) { print h; h = "" } }
           END { if (h) print h }' | below_floor alloy)"
       [ -z "$bad" ] || { echo "❌ 0-CVE float did not reach alloy:"; echo "$bad"; exit 1; }
-
-      # github.com/docker/docker cannot be floated past CVE-2026-33997 (see above),
-      # so the only acceptable state is its absence from the linked binary. Assert
-      # it, or a reintroduced importer ships the CVE behind a green-looking gate.
-      ! go version -m "${{targets.destdir}}/usr/bin/alloy" \
-        | awk '$1 == "dep" || $1 == "=>" { print $2 }' \
-        | grep -qx 'github.com/docker/docker' \
-        || { echo "❌ github.com/docker/docker is back in the alloy binary:"; \
-             go version -m "${{targets.destdir}}/usr/bin/alloy" | grep -n 'docker/docker'; exit 1; }
 
 test:
   pipeline:
