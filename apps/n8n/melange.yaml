@@ -286,12 +286,17 @@ pipeline:
       const cmp = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
       // Recurse manually rather than glob: nested copies live many levels down, and
       // readdirSync/isDirectory does not follow symlinks, so nothing is visited twice.
+      // A dir named undici only counts as an INSTALLED COPY when its parent is node_modules.
+      // n8n also vendors a SOURCE dir of that name (@n8n/backend-network/dist/http/undici,
+      // its fetch wrapper) which has no package.json -- matching on the name alone reads it
+      // as a copy and dies on ENOENT.
       const walk = (dir, out = []) => {
+        const inNodeModules = path.basename(dir) === "node_modules";
         for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
           if (!e.isDirectory()) continue;
           const p = path.join(dir, e.name);
-          if (e.name === "undici") out.push(p);
-          else walk(p, out);
+          if (inNodeModules && e.name === "undici") out.push(p);
+          walk(p, out);
         }
         return out;
       };
