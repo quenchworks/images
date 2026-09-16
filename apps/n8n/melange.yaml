@@ -181,7 +181,9 @@ pipeline:
                                           // (CVE-2026-63376/77465). 3->4 is a major bump but
                                           // toml.parse() is unchanged; smoke-tested against
                                           // the real installed copy.
-          "undici@5":"6.28.0",            // ONLY the 5.x copy; see the undici note below
+          // undici: no override. 2.38.7 resolves every copy above its CVE fix floor on its
+          // own (root 7.29.1, 7.29.0, 4x 6.28.1) and the 5.x edge the old `undici@5` pin
+          // existed for is GONE -- see the undici floor assert below for the evidence.
           "uuid":"11.1.1",
           "ws":"8.21.0"
         });
@@ -250,36 +252,64 @@ pipeline:
       node -e "if (require('minimatch').braceExpand('a{b,c}').join()!=='ab,ac')
                  throw new Error('minimatch braceExpand broken');"
 
-      # --- undici 5.29.0 -> 6.x: why the scoped `undici@5` override is the right knob -----
-      # undici is NOT a dependency of n8n. Exactly ONE edge in the tree wants the 5.x line:
-      # @ai-sdk/provider-utils 4.0.41 (the `ai-v6` head, resolved from every @ai-sdk/* provider's
-      # ^4.0.27) newly added `undici: ^5.29.0` — 4.0.40 had no undici dep at all. That single
-      # edge hoists undici 5.29.0 to the tree root, where it carries 9 advisories
-      # (CVE-2026-12151 HIGH + CVE-2026-9679/6733/11525 -> 6.27.0; CVE-2026-1525/1526/1527/2229
-      # -> 6.24.0; CVE-2026-22036 -> 6.23.0). Every OTHER undici consumer in the tree already
-      # wants a patched line (n8n-nodes-base / @n8n/ai-utilities / @n8n/ai-workflow-builder /
-      # @qdrant/js-client-rest ^6.27.0; @n8n/agents / @n8n/instance-ai / @n8n/backend-network /
-      # @n8n_io/license-sdk ^7.24.0+) and scans clean, so only the 5.x copy must move — hence
-      # the version-scoped key, same style as `tar@6` / `@azure/identity@3`.
+      # --- undici: per-major CVE fix FLOOR, asserted on every copy in the tree -------------
+      # What this used to be, and why it went stale on 2.38.7: the recipe pinned `undici@5` ->
+      # 6.28.0 and asserted the ROOT copy started with "6.". Both halves are now wrong.
+      # @ai-sdk/provider-utils -- the single edge that ever wanted the 5.x line -- moved
+      # 4.0.41 -> 5.0.41 and now declares `undici ^7.29.0`, so NO 5.x edge remains and that
+      # override matched nothing (verified: resolving the 2.38.7 tree with and without it
+      # yields byte-identical undici placements). With the 5.x edge gone the root hoists to
+      # 7.29.1 -- NEWER than the old pin and clean -- which is exactly what startsWith("6.")
+      # rejected. An equality/prefix check on ONE copy is the wrong invariant: it goes stale
+      # every time the tree floats forward, and it says nothing about the five NESTED copies.
       #
-      # PARENT-bumping does not work here: the only provider-utils line that drops undici 5 is
-      # 5.0.15 (`latest`, undici ^7.28.0), a MAJOR that every @ai-sdk/* provider in this tree
-      # peer-pins away from; and pinning DOWN to 4.0.40 would delete 4.0.41's whole reason for
-      # adding undici — createSafeNodeFetch(), which wraps fetch with a DNS-pinning Agent. So the
-      # leaf moves instead.
+      # So the assert becomes the real invariant -- every copy is at or above the fix floor for
+      # its own major -- which passes a newer line on its own and only fails a genuinely
+      # vulnerable copy. Floors are the highest fixed version per major across undici's whole
+      # advisory set (OSV, queried 2026-09-16):
+      #   6.x -> 6.28.0  (GHSA-8xcm-r25x-g524 / m8rv-5g2x-5cg5 / v3r7-h72x-cjcm, all `< 6.28.0`)
+      #   7.x -> 7.29.0  (those same three, plus GHSA-4cwx-7wf7-3272 HIGH and GHSA-jr45-8vmc-qm54)
+      #   8.x -> 8.9.0   (GHSA-38rv-x7px-6hhq HIGH + the same three; no 8.x copy in this tree yet)
+      # There is NO clean 5.x and no clean anything below 6: those three advisories declare a
+      # bare `< 6.28.0` range that spans the entire 5 line, so an unlisted major fails outright
+      # rather than passing unchecked. A new advisory landing above a floor is the one thing
+      # that should force an edit here -- that is the assert doing its job, not going stale.
       #
-      # 5 -> 6 IS A MAJOR, and it is safe for this consumer. provider-utils' entire undici surface
-      # is `const { Agent, fetch } = require("undici")`, `new Agent({ connect: { lookup } })`, and
-      # `fetch(input, { ...init, dispatcher })` — all three unchanged in 6.x (verified against the
-      # published 6.28.0 tarball: module.exports.Agent/fetch are present, connect.lookup is still
-      # honoured, and fetch still reads init.dispatcher). undici 6's one hard break, dropping
-      # Node < 18.17, is moot on Wolfi nodejs-24 (>=24.0.0 is already n8n's own engines floor).
-      # 6.28.0 (newest 6.x) rather than the bare 6.27.0 fix floor: it satisfies the ^6.27.0
-      # consumers above, so the tree DEDUPES onto one copy instead of keeping nested duplicates,
-      # and it is the version those consumers already floated to in the last build.
-      node -e "const v=require('undici/package.json').version, u=require('undici');
-               if (!v.startsWith('6.') || typeof u.Agent!=='function' || typeof u.fetch!=='function')
-                 throw new Error('undici override missing or incompatible: '+v);"
+      # Resolved tree for 2.38.7 (11 declarers, 6 copies): root 7.29.1; 7.29.0 under
+      # @qdrant/js-client-rest; 6.28.1 under n8n-nodes-base / @n8n/ai-workflow-builder /
+      # discord.js / @discordjs/rest. All clean. The API-surface check stays too, on the root
+      # copy: provider-utils uses only `Agent` + `fetch` + `init.dispatcher`, so if a future
+      # float moves those exports the build must fail rather than ship a broken createSafeNodeFetch.
+      node - <<'JSEOF'
+      const fs = require("fs"), path = require("path");
+      const FLOOR = { 6: [6, 28, 0], 7: [7, 29, 0], 8: [8, 9, 0] };
+      const cmp = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+      // Recurse manually rather than glob: nested copies live many levels down, and
+      // readdirSync/isDirectory does not follow symlinks, so nothing is visited twice.
+      const walk = (dir, out = []) => {
+        for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+          if (!e.isDirectory()) continue;
+          const p = path.join(dir, e.name);
+          if (e.name === "undici") out.push(p);
+          else walk(p, out);
+        }
+        return out;
+      };
+      const copies = walk("node_modules");
+      if (!copies.length) throw new Error("undici not found under node_modules");
+      const bad = [];
+      for (const dir of copies) {
+        const v = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")).version;
+        const n = v.split("-")[0].split(".").map(Number);
+        const floor = FLOOR[n[0]];
+        if (!floor || cmp(n, floor) < 0) bad.push(dir + " @ " + v);
+      }
+      if (bad.length) throw new Error("undici below the per-major CVE fix floor: " + bad.join(", "));
+      const u = require(path.resolve("node_modules/undici"));
+      if (typeof u.Agent !== "function" || typeof u.fetch !== "function")
+        throw new Error("undici API surface changed: Agent/fetch missing from the root copy");
+      console.log("undici: " + copies.length + " copy(ies), all at or above the per-major fix floor");
+      JSEOF
 
       # --- strip foreign-arch + musl prebuilt native binaries ---------------------------
       # n8n's tree VENDORS prebuilt .node/.so binaries for every platform/arch/libc inside
