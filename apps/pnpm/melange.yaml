@@ -44,9 +44,13 @@ pipeline:
       # versions. Security update, not a gate weaken -- same major/minor line, so each is
       # a drop-in: tar >= 7.5.21 clears GHSA-r292-9mhp-454m (uncontrolled recursion in
       # mapHas/filesFilter => uncatchable stack-overflow DoS on crafted long paths).
-      # pnpm bundles TWO copies: dist/node_modules (the running CLI) and
-      # artifacts/exe/dist/node_modules (the standalone-executable payload) -- both are
-      # scanned, so both get checked. npm tarballs extract under package/.
+      # Every vendored copy is scanned, so every one gets checked. The SET of copies moves
+      # between releases (<= 11.26.x shipped a second one under artifacts/exe/dist/, the
+      # standalone-executable payload; 11.27.0 dropped artifacts/ from the npm tarball
+      # altogether), so the copies are DISCOVERED rather than hardcoded, with an assert that
+      # at least one was found -- a layout change that hides the vendored tar still fails the
+      # build loudly instead of silently shipping an unpatched copy. Tarballs extract under
+      # package/.
       #
       # The version below is a FLOOR, not a pin -- the npm flavour of trap #2 in
       # docs/go-module-float.md. pnpm vendors its own tar and moves it on its own cadence
@@ -87,8 +91,15 @@ pipeline:
       TAR_FLOOR=7.5.22
       TAR_URL=https://registry.npmjs.org/tar/-/tar-7.5.22.tgz
       TAR_SHA=b792c2d1c7fc770910522ca1ffc29eee02ee38de4fa3a01e7832eb705879c6c6
-      patch_pkg "$dest/dist/node_modules"              tar "$TAR_FLOOR" "$TAR_URL" "$TAR_SHA"
-      patch_pkg "$dest/artifacts/exe/dist/node_modules" tar "$TAR_FLOOR" "$TAR_URL" "$TAR_SHA"
+      # find output is captured BEFORE the loop, so patch_pkg replacing a dir mid-iteration
+      # cannot perturb the list.
+      found=0
+      for d in $(find "$dest" -type d -path '*/node_modules/tar'); do
+        found=$((found + 1))
+        patch_pkg "$(dirname "$d")" tar "$TAR_FLOOR" "$TAR_URL" "$TAR_SHA"
+      done
+      [ "$found" -gt 0 ] || { echo "no vendored tar anywhere under $dest -- layout changed" >&2; exit 1; }
+      echo "patched/verified $found vendored tar copies"
 
       # PATH launcher; the .cjs carries `#!/usr/bin/env node`. The image
       # entrypoint runs it through node explicitly (shell-less rootfs).
