@@ -133,6 +133,12 @@ pipeline:
       #     2.1.2) are affected too and 5.0.8 is the only fix; see the interop step below.
       #   * tar -> 7.5.22 (GHSA-r292-9mhp-454m MED needs >= 7.5.21). Overridden rather than left
       #     to float because n8n packages pin tar EXACTLY; 7.5.22 is the newest 7.5.x.
+      #   * qs 6.15.2 -> 6.16.0 (CVE-2026-82417 + CVE-2026-82562 DoS). Transitive via n8n-core
+      #     and @n8n/backend-network (both pin 6.15.2 exactly, so it cannot float); same 6.x
+      #     major, no API change.
+      #   * stream-json 1.9.1 -> 3.5.0 (CVE-2026-71429 DoS). Transitive via @n8n/backend-common
+      #     (pinned 1.9.1 exactly). 3.5.0 is the first fixed release, so the two-major jump is
+      #     forced -- and 3.x is an ESM-only API redesign, hence the migration step below.
       node -e '
         const fs=require("fs");const p=JSON.parse(fs.readFileSync("package.json","utf8"));
         // nanoid is a DIRECT dep here (pinned 3.3.8), and npm refuses an override that
@@ -144,6 +150,8 @@ pipeline:
           "fast-xml-parser":"5.7.0",
           "nanoid@3":"3.3.18",
           "nanoid@5":"5.1.6",
+          "qs":"6.16.0",
+          "stream-json":"3.5.0",
           "tar":"7.5.22",
           "uuid":"11.1.1"
         });
@@ -195,6 +203,98 @@ pipeline:
                  if (typeof b!=='function'||b('a{b,c}').join()!=='ab,ac')
                    throw new Error('brace-expansion CJS interop broken at $d');"
       done
+
+      # --- qs / stream-json: assert the overrides landed, then migrate stream-json's API ---
+      # An override that silently does not apply would ship a false green, so every installed
+      # copy is checked against the pin BEFORE anything else. stream-json 3.5.0 additionally
+      # needs a consumer-side migration: it is ESM-only with a redesigned API, and the one
+      # consumer in this tree (@n8n/backend-common's dist/utils/flatted-async.js) speaks 1.x:
+      #   require('stream-json/Assembler')  -> subpath gone; it is './assembler.js' now, and the
+      #                                        3.x exports map has no extensionless resolution
+      #   parser()                          -> an async generator in 3.x, not a Transform stream;
+      #                                        the pipe()-able one is parserStream()
+      #   asm.on('done', cb)                -> Assembler is no longer an EventEmitter; asm.onDone(cb)
+      # Rewrite exactly those three at every consumer. The CVE fix itself is untouched: no
+      # .trivyignore, no --skip, no VEX.
+      python3.13 - <<'PYEOF'
+      import json, os, re
+
+      def copies(name):
+          # os.walk, not glob: a hidden store dir (pnpm's node_modules/.pnpm/) is invisible to
+          # glob's **. Symlinks are not followed, so nothing is visited twice. The parent must
+          # be a node_modules dir -- an INSTALLED package always is, whereas a vendored source
+          # folder that merely shares the name is not (langsmith ships a .../internal/qs/ with
+          # no package.json, which an unanchored match would try to read).
+          return sorted(os.path.join(r, name, 'package.json')
+                        for r, dirs, _ in os.walk('node_modules')
+                        if name in dirs and os.path.basename(r) == 'node_modules')
+
+      for name, want in (('qs', '6.16.0'), ('stream-json', '3.5.0')):
+          found = [(p, json.load(open(p))['version']) for p in copies(name)]
+          stale = [(p, v) for p, v in found if v != want]
+          assert not stale, "%s override missing or incompatible: %s" % (name, stale)
+          # Absence is legitimate (a later runner may drop the dep); the override is then a
+          # no-op. What must fail is a copy that EXISTS and escaped the pin -- caught above.
+          print("%s: %d copy(ies) at %s" % (name, len(found), want or ''))
+
+      migrated = []
+      for root, dirs, files in os.walk('node_modules'):
+          if os.path.basename(root) == 'stream-json':
+              dirs[:] = []
+              continue
+          for f in files:
+              if not f.endswith('.js'):
+                  continue
+              p = os.path.join(root, f)
+              try:
+                  src = open(p, encoding='utf-8').read()
+              except (UnicodeDecodeError, OSError):
+                  continue
+              if 'stream-json' not in src:
+                  continue
+              out = src.replace('stream-json/Assembler', 'stream-json/assembler.js')
+              # \b, not '.parser(': tsc emits the indirect-call form `(0, mod.parser)()`, so the
+              # token is followed by ')' rather than '('. \b also leaves `.parserStream` alone.
+              bindings = re.findall(r'(?:const|var|let)\s+(\w+)\s*=\s*require\(["\']stream-json["\']\)', out)
+              for var in bindings:
+                  out = re.sub(r'\b%s\.parser\b' % re.escape(var), '%s.parserStream' % var, out)
+              out = re.sub(r"\.on\((['\"])done\1\s*,\s*", '.onDone(', out)
+              if out != src:
+                  open(p, 'w', encoding='utf-8').write(out)
+                  migrated.append(p)
+              left = [m for m in ('stream-json/Assembler', ".on('done'", '.on("done"') if m in out]
+              left += ['%s.parser' % v for v in bindings if re.search(r'\b%s\.parser\b' % re.escape(v), out)]
+              assert not left, "stream-json 1.x API survived the migration at %s: %s" % (p, left)
+      print("stream-json: migrated %d consumer file(s) to the 3.x API" % len(migrated))
+      PYEOF
+      # Prove the migration on the REAL installed consumers: the flatted parser must still
+      # return what it returned on 1.9.1. A future stream-json that moves the API again fails
+      # the build here instead of at runtime inside a workflow.
+      node - <<'JSEOF'
+      const fs = require("fs"), path = require("path"), hits = [];
+      (function walk(d) {
+        for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+          const p = path.join(d, e.name);
+          if (e.isDirectory()) { if (e.name !== "stream-json") walk(p); }
+          else if (e.name.endsWith(".js")) {
+            let s; try { s = fs.readFileSync(p, "utf8"); } catch { continue; }
+            if (s.includes("stream-json") && s.includes("parseFlattedAsync")) hits.push(p);
+          }
+        }
+      })("node_modules");
+      if (!hits.length) {
+        console.error("stream-json: no flatted consumer found -- the 3.x migration is unproven, re-check the tree");
+        process.exit(1);
+      }
+      (async () => {
+        for (const p of hits) {
+          const r = await require(path.resolve(p)).parseFlattedAsync(JSON.stringify([{ a: "1" }, "x"]));
+          if (JSON.stringify(r) !== '{"a":"x"}')
+            throw new Error("parseFlattedAsync regressed at " + p + ": " + JSON.stringify(r));
+        }
+        console.log("stream-json: " + hits.length + " flatted consumer(s) parse correctly on 3.x");
+      })().catch(e => { console.error(e.message); process.exit(1); });
+      JSEOF
 
       # Strip foreign-arch + musl prebuilt native binaries (the JS runner pulls n8n-core /
       # n8n-workflow, whose deps vendor multi-arch .node files: @sentry/node-*, isolated-vm,
