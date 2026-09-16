@@ -121,29 +121,80 @@ pipeline:
       need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
       if [ -n "$need" ]; then go get $need; fi
       go mod tidy
-      # --- BLOCKED: github.com/docker/docker ------------------------------------
-      # Re-verified 2026-08-27 against the real gate, and this is the ONLY residue:
-      # with the floors above the binary scans down to exactly two findings, both in
-      # github.com/docker/docker v27.1.1 (gitness's own pin, reached from
-      # gitspace/infraprovider/pipeline code across 11 files -- it is genuinely
-      # linked, not just present in go.mod):
-      #   CVE-2026-33997 MEDIUM  fixed only in "29.3.1"
-      #   CVE-2025-54410 LOW     fixed in 25.0.13 / 28.0.0
-      # Neither fix is reachable:
-      #   * v29 does not exist at this module path. proxy.golang.org returns
-      #     v28.5.2+incompatible as @latest for BOTH github.com/docker/docker and
-      #     github.com/moby/moby; the v29 line ships only as the split
-      #     github.com/moby/moby/{api,client} modules and pre-release
-      #     github.com/moby/moby/v2 v2.0.0-beta.* -- different import paths, so a
-      #     move is an API migration, i.e. a fork of gitness.
-      #   * floating to v28.5.2 (which would clear the LOW) breaks a THIRD-PARTY
-      #     module: github.com/drone-runners/drone-runner-docker calls the docker-25-era
-      #     `types.NetworkCreate`, removed in docker 28 --
-      #       engine/engine.go:95: undefined: types.NetworkCreate
-      #     and its newest release (v1.8.5, requires docker v25.0.6) still does, so
-      #     there is nothing to bump to; only a fork of that module would fix it.
-      # So this image stays BLOCKED (BLOCKED=1 in build.conf) and is not published.
-      # It goes green the moment gitness (and drone-runner-docker) move to moby v29.
+      # --- sever github.com/docker/docker (CVE-2026-33997, CVE-2025-54410) -------
+      # With the floors above, the ONLY findings left in the binary were two in
+      # github.com/docker/docker v27.1.1 (re-measured 2026-09-16, unchanged since
+      # 2026-08-27):
+      #   CVE-2026-33997 MEDIUM  Trivy wants "29.3.1"  (daemon plugin-install path)
+      #   CVE-2025-54410 LOW     Trivy wants 25.0.13 / 28.0.0 (daemon firewalld path)
+      # Upgrading is impossible: proxy.golang.org still returns v28.5.2+incompatible
+      # as @latest for BOTH github.com/docker/docker and github.com/moby/moby, so v29
+      # does not exist at this module path at all (it ships only as the split
+      # github.com/moby/moby/{api,client} modules and pre-release moby/moby/v2
+      # v2.0.0-beta.*, i.e. different import paths), and floating to v28.5.2 -- which
+      # would clear only the LOW anyway -- breaks github.com/drone-runners/drone-runner-docker,
+      # whose newest release v1.8.5 still calls the docker-25-era types.NetworkCreate.
+      #
+      # So we SEVER the dependency instead of fighting its version, the same play that
+      # cleared this exact CVE from apps/coolify-helper. `go list -deps ./cmd/gitness`
+      # shows the linked docker packages are ENTIRELY client-side -- api/types/*, api,
+      # client, errdefs, pkg/stdcopy, internal/multierror -- so neither vulnerable
+      # daemon code path is even in the binary; only the module label is. Those
+      # packages are copied into a local module `github.com/harness/gitness/ddcompat`
+      # and every `github.com/docker/docker/` import is rewritten to it, in gitness's
+      # own tree AND in a local copy of drone-runner-docker (the only other module in
+      # the build graph that imports docker/docker). Result: docker/docker is gone
+      # from `go version -m`, and the binary scans 0.
+      #
+      # busybox-safe: `find -exec ... +`, never `xargs` (busybox xargs exits 123 when
+      # the command matches nothing and `set -e` then kills the step silently).
+      DD="github.com/harness/gitness/ddcompat"
+      go mod download github.com/docker/docker github.com/drone-runners/drone-runner-docker
+      DOCKER_DIR="$(go list -m -f '{{.Dir}}' github.com/docker/docker)"
+      DRONE_DIR="$(go list -m -f '{{.Dir}}' github.com/drone-runners/drone-runner-docker)"
+
+      rm -rf ddcompat && mkdir -p ddcompat/api ddcompat/pkg ddcompat/internal
+      cp -r "$DOCKER_DIR/api/types"           ddcompat/api/types
+      cp    "$DOCKER_DIR/api/"*.go            ddcompat/api/
+      cp -r "$DOCKER_DIR/client"              ddcompat/client
+      cp -r "$DOCKER_DIR/errdefs"             ddcompat/errdefs
+      cp -r "$DOCKER_DIR/pkg/stdcopy"         ddcompat/pkg/stdcopy
+      cp -r "$DOCKER_DIR/internal/multierror" ddcompat/internal/multierror
+      cp    "$DOCKER_DIR/LICENSE" "$DOCKER_DIR/NOTICE" ddcompat/
+      chmod -R u+w ddcompat
+      find ddcompat -name '*_test.go' -type f -delete
+      # Keep only the api/types subpackages the binary links. The daemon-side ones
+      # (backend, build, ...) drag in pkg/streamformatter and moby/buildkit.
+      KEEP="blkiodev checkpoint container events filters image mount network registry strslice swarm system time versions volume"
+      for d in ddcompat/api/types/*/; do
+        n="$(basename "$d")"
+        case " $KEEP " in *" $n "*) ;; *) rm -rf "$d" ;; esac
+      done
+      # docker/docker ships NO go.mod (that is why it is +incompatible); vendor.mod is
+      # its real require list. Seed ddcompat from it -- a bare module/go stub makes
+      # `go mod tidy` resolve every missing dep at @latest, which picks go-connections
+      # v0.8.1, and that release dropped sockets.DialPipe so client.go stops compiling.
+      sed -e "s|^module .*|module ${DD}|" "$DOCKER_DIR/vendor.mod" > ddcompat/go.mod
+
+      rewrite() { find "$1" -name '*.go' -type f -exec sed -i -e "s|github.com/docker/docker/|${DD}/|g" {} +; }
+      rewrite ddcompat
+      for d in app cli cmd infraprovider registry types; do rewrite "./$d"; done
+
+      rm -rf third_party && mkdir -p third_party
+      cp -r "$DRONE_DIR" third_party/drone-runner-docker
+      chmod -R u+w third_party/drone-runner-docker
+      rewrite third_party/drone-runner-docker
+      ( cd third_party/drone-runner-docker
+        go mod edit -droprequire github.com/docker/docker
+        go mod edit -require "${DD}@v0.0.0" -replace "${DD}=../../ddcompat" )
+
+      go mod edit -require "${DD}@v0.0.0" -replace "${DD}=./ddcompat"
+      go mod edit -replace "github.com/drone-runners/drone-runner-docker=./third_party/drone-runner-docker"
+      ( cd ddcompat && go mod tidy )
+      ( cd third_party/drone-runner-docker && go mod tidy )
+      go mod tidy
+      # The sever is only real if docker/docker left the BINARY; assert that below,
+      # next to the float assertion.
       V="${{package.version}}"
       MAJ="${V%%.*}"; REST="${V#*.}"; MIN="${REST%%.*}"; PAT="${REST#*.}"
       VERPKG="github.com/harness/gitness/version"
@@ -159,3 +210,9 @@ pipeline:
       bad="$(go version -m "${{targets.destdir}}/usr/bin/gitness" \
         | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor gitness)"
       [ -z "$bad" ] || { echo "0-CVE float did not reach the binary:"; echo "$bad"; exit 1; }
+      # Same discipline for the sever: github.com/docker/docker must not appear in the
+      # shipped binary's module list at all.
+      if go version -m "${{targets.destdir}}/usr/bin/gitness" \
+           | awk '$1 == "dep" || $1 == "=>" { print $2 }' | grep -qx 'github.com/docker/docker'; then
+        echo "sever failed: github.com/docker/docker is still linked into the binary"; exit 1
+      fi
