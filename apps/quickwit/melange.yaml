@@ -19,9 +19,11 @@
 # BUILD DEPS mirror upstream's Dockerfile bin-builder: protobuf-dev (protoc) for the
 # tonic/prost .proto codegen, clang + llvm + cmake for the native deps (the release
 # feature set builds a bundled librdkafka from C source via cmake, and tikv-jemalloc
-# builds jemalloc from source), openssl-dev for the system OpenSSL the openssl-support
-# feature links (perl is present because openssl-sys build scripts probe with perl),
-# plus build-base. We build the shipping subset of upstream's `release-feature-set`
+# builds jemalloc from source), curl-dev for a header that the bundled librdkafka
+# includes unconditionally (see the package comment), openssl-dev for the system
+# OpenSSL the openssl-support feature links (perl is present because openssl-sys build
+# scripts probe with perl), plus build-base. We build the shipping subset of
+# upstream's `release-feature-set`
 # (jemalloc, openssl-support, kafka, kinesis, vrl, azure/gcs storage, postgres
 # metastore) -- see the note on the cargo build step for what is left off and why.
 #
@@ -62,6 +64,17 @@ environment:
       - busybox
       - bash
       - curl
+      - curl-dev                # librdkafka 2.12.1 (vendored by rdkafka-sys) guards
+                                # its `#include <curl/curl.h>` with `#ifdef
+                                # WITH_OAUTHBEARER_OIDC`, but its cmake template
+                                # emits that option as `#cmakedefine01`, i.e. always
+                                # `#define WITH_OAUTHBEARER_OIDC 0` -- so the #ifdef
+                                # is ALWAYS true and the header is pulled in even
+                                # though rdkafka-sys passes -DWITH_CURL=0. Upstream
+                                # bug, still present in librdkafka 2.13.0, so bumping
+                                # rdkafka-sys does not fix it. Headers only:
+                                # WITH_CURL stays 0, so no curl symbol is referenced
+                                # and nothing links libcurl.
       - git
       - cmake                   # bundled librdkafka + jemalloc build from C source
       - clang                   # native C/C++ deps in the crate tree
