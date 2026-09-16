@@ -37,51 +37,47 @@ pipeline:
       cp -r bin conf lib LICENSE.txt NOTICE.txt "$dest/"
       find "$dest/bin" -name '*.cmd' -delete
 
-      # --- QuenchWorks CVE pin (3.9.5) --------------------------------------------
-      # Two findings are fixable ONLY across a prohibited MAJOR bump; both live in
-      # OPTIONAL components, so we DROP them rather than fork upstream:
-      #   (a) Jetty 9.4 AdminServer  -> lib/jetty-*.jar (fix only in Jetty 12).
-      #       The embedded AdminServer is disabled by default here
-      #       (admin.enableServer=false in the entrypoint); core ZooKeeper serves
-      #       clients over its binary protocol + the four-letter-word (4lw) commands
-      #       and needs no HTTP admin. javax.servlet-api is a jetty-only dep, dropped
-      #       with it. AdminServerFactory returns the no-op DummyAdminServer.
-      #   (b) JLine 3 telnet CLI     -> lib/jline-*.jar (fix only in JLine 4).
-      #       JLine only adds line-editing/history to the interactive zkCli shell;
-      #       ZooKeeperMain loads it reflectively and falls back to a plain reader
-      #       when absent, so zkCli (create/get/ls/delete) still works.
-      #   TRADE-OFF: no built-in HTTP AdminServer endpoint and no Jetty-backed
-      #   Prometheus metrics exporter (use 4lw commands / an external exporter);
-      #   zkCli loses arrow-key history/editing but stays fully functional.
-      # The remaining findings are STANDALONE same-major jars -> direct swap to the
-      # patched version (SHA256-pinned from Maven Central; ZK globs lib/*.jar):
-      #   jackson 2.15.2 -> 2.21.5 (CVE-2026-54512..54515; annotations ships "2.21")
-      #   logback 1.3.15 -> 1.5.35 (CVE-2025-11226, CVE-2026-1225/9828/10532; slf4j2)
-      #   netty   4.1.130 -> 4.1.137.Final (CVE-2026-42583/44249/45416/50010/45536
-      #                              + the July-2026 wave, netty-codec CVE-2026-59901;
-      #                              the nightly scan also flags netty-handler, fixed
-      #                              in 4.1.137.Final)
-      # netty-tcnative (2.0.74) is a separate line, not flagged -- left as-is.
-      if [ "${{package.version}}" = "3.9.5" ]; then
-      rm -f "$dest"/lib/jetty-*.jar "$dest"/lib/javax.servlet-api-*.jar "$dest"/lib/jline-*.jar
+      # --- QuenchWorks CVE pin (3.9.6) --------------------------------------------
+      # Re-verified 2026-09-16 against the jar list the pinned 3.9.6 tarball actually
+      # ships. It was version-gated to 3.9.5 and so went DEAD on the 3.9.6 bump, which
+      # is why the gate regressed. Gate is now unconditional -- VERSIONS=(3.9.6).
+      # DROPPED (fixable only across a prohibited MAJOR bump, and OPTIONAL here):
+      #   lib/jetty-*.jar  -- Jetty 9.4.58.v20250814 AdminServer stack (http, io,
+      #     security, server, servlet, util, util-ajax). CVE-2026-2332, CVE-2026-10050,
+      #     CVE-2026-6790, CVE-2024-6763. 9.4.58 is the NEWEST 9.4.x on Maven Central
+      #     (verified: no 9.4.60/9.4.63 exists, the 9.4 line is EOL) -- every fix is
+      #     Jetty 12 only, so there is nothing to swap TO. The embedded AdminServer is
+      #     disabled by default here (admin.enableServer=false in the entrypoint);
+      #     core ZooKeeper serves clients over its binary protocol + the four-letter-word
+      #     (4lw) commands and needs no HTTP admin. AdminServerFactory falls back to the
+      #     no-op DummyAdminServer. javax.servlet-api is a jetty-only dep, dropped with it.
+      #   TRADE-OFF: no built-in HTTP AdminServer endpoint and no Jetty-backed Prometheus
+      #   metrics exporter (use 4lw commands / an external exporter).
+      # KEPT that earlier versions dropped or swapped -- upstream caught up, do NOT
+      # re-add these lines, they would DOWNGRADE:
+      #   jline   3.30.14-jdk8 (was 3.25.1, dropped for GHSA-2r2c-cx56-8933) -- clean,
+      #           so zkCli keeps its line-editing/history.
+      #   jackson 2.22/2.22.2  (was 2.15.2, swapped to 2.21.5) -- already newer.
+      #   netty   4.1.137.Final (was 4.1.130, swapped) -- already at the swap target.
+      # SWAPPED (standalone same-line jar, SHA256-pinned from Maven Central; ZK globs lib/*.jar):
+      #   logback 1.3.15 -> 1.5.38 (CVE-2025-11226, CVE-2026-1225/9828/10532; newest
+      #     1.5.x, all four need >= 1.5.34). 1.3.x is the Java 8 line and 1.5.x targets
+      #     Java 11 bytecode (verified major 55) -- fine on this image's Java 21 JRE.
+      #     Both logback jars move in lockstep, and the dist already ships slf4j-api 2.0.13
+      #     which the 1.5.x line requires.
+      rm -f "$dest"/lib/jetty-*.jar "$dest"/lib/javax.servlet-api-*.jar
       M=https://repo1.maven.org/maven2
       swap() { # newfile sha256 url oldfile
         local nf="$1" sha="$2" url="$3" old="$4"
+        # the old jar MUST be there: a silently-absent target means upstream moved and
+        # the download would ADD a jar beside an unknown version instead of replacing it.
+        test -f "$dest/lib/$old" || { echo "FATAL: $old not shipped -- re-audit this swap"; ls "$dest/lib/"; exit 1; }
         rm -f "$dest/lib/$old"
         wget -q -O "$dest/lib/$nf" "$url"
         echo "$sha  $dest/lib/$nf" | sha256sum -c - >/dev/null
       }
-      swap jackson-annotations-2.21.jar 53ca085f4a150f703f49e1aabd935bd03b43e1ea3d55d135438292af22cef56b "$M/com/fasterxml/jackson/core/jackson-annotations/2.21/jackson-annotations-2.21.jar" jackson-annotations-2.15.2.jar
-      swap jackson-core-2.21.5.jar b64b5874162b503a0e58a8f7758266e8dd9f91bf49e3a59ae0b5f47589a231b7 "$M/com/fasterxml/jackson/core/jackson-core/2.21.5/jackson-core-2.21.5.jar" jackson-core-2.15.2.jar
-      swap jackson-databind-2.21.5.jar 507418c0fafd38b2b2cfb704521630da613a8e4cc8381195a6f418017883e2c0 "$M/com/fasterxml/jackson/core/jackson-databind/2.21.5/jackson-databind-2.21.5.jar" jackson-databind-2.15.2.jar
-      swap logback-classic-1.5.35.jar 1a0ba277c4d177862731c820099913013255892c79e05b5371307f174f089878 "$M/ch/qos/logback/logback-classic/1.5.35/logback-classic-1.5.35.jar" logback-classic-1.3.15.jar
-      swap logback-core-1.5.35.jar d8c38ea6871eefccf769f83e1afd07280e29fa0d1dd281092a77eb77c880ace6 "$M/ch/qos/logback/logback-core/1.5.35/logback-core-1.5.35.jar" logback-core-1.3.15.jar
-      # netty swaps DELETED 2026-09-16: superseded by the 3.9.6 bump exactly as
-      # the old comment predicted. Verified by listing the pinned 3.9.6 tarball:
-      # it bundles the whole io.netty family at 4.1.137.Final natively, so there
-      # is nothing left to swap. Do not re-add netty swaps without checking what
-      # the CURRENT dist ships -- a stale swap downgrades instead of no-opping.
-      fi  # end 3.9.5-only CVE pin
+      swap logback-classic-1.5.38.jar afb439c61fa287c9e1925523b13baab03617e724406a389d48b61c2c3e46b700 "$M/ch/qos/logback/logback-classic/1.5.38/logback-classic-1.5.38.jar" logback-classic-1.3.15.jar
+      swap logback-core-1.5.38.jar a855a0fc97b1d06f4efb1c3bba5ebd0eb508d8b58e68e89e4bbc23a85135c883 "$M/ch/qos/logback/logback-core/1.5.38/logback-core-1.5.38.jar" logback-core-1.3.15.jar
 
       # bake a config-from-env entrypoint. A read-only rootfs means zoo.cfg and the
       # data/log dirs live under writable mounts; ZOO_* env vars override every default.
