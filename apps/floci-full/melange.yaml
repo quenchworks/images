@@ -116,6 +116,20 @@ pipeline:
              '                <artifactId>postgresql</artifactId>\n'
              '                <version>42.7.12</version>\n'
              '            </dependency>')
+      # 3) The DM pin above loses to a DIRECT dependency that carries its own
+      #    explicit <version> -- and floci declares httpclient5 5.5.1 directly
+      #    (it is what docker-java-transport-httpclient5 wants). CVE-2026-64607
+      #    has no 5.5.x fix, so rewrite the direct element's version too.
+      src, k = re.subn(
+          r'(<groupId>org\.apache\.httpcomponents\.client5</groupId>\s*'
+          r'<artifactId>httpclient5</artifactId>\s*<version>)[^<]*(</version>)',
+          r'\g<1>5.6.3\g<2>', src)
+      stuck = [v for v in re.findall(
+          r'<groupId>org\.apache\.httpcomponents\.client5</groupId>\s*'
+          r'<artifactId>httpclient5</artifactId>\s*<version>([^<]*)</version>', src)
+          if v != '5.6.3']
+      if not k or stuck:
+          raise SystemExit(f"httpclient5 direct-dep pin FAILED (rewrote {k}, left {stuck})")
       m = re.search(r'<dependencyManagement>\s*<dependencies>', src)
       if m:
           src = src[:m.end()] + pin + src[m.end():]
