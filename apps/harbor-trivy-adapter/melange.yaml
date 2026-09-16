@@ -90,45 +90,62 @@ pipeline:
       # GOEXPERIMENT=jsonv2; enable it for the trivy build (upstream's release
       # CI builds with the same experiment for the 0.70 line).
       ( cd trivy
-        # Controlled CVE bumps -- v0.70.0's pinned deps carry FIXABLE gobinary
-        # CVEs (the workflow's gobinary scan is the hard gate). Bump only the
-        # affected modules to a fixed release (MINOR/PATCH, same major):
+        # ---- 0-CVE module float (docs/go-module-float.md) --------------------
+        # Trivy's pinned deps carry FIXABLE gobinary CVEs; the workflow's
+        # gobinary scan is the hard gate. FLOOR is a FLOOR, not a pin: the old
+        # hardcoded `go get X@vN` chain turns into a DOWNGRADE the moment
+        # trivy's own go.mod moves past one of these, silently re-introducing
+        # the CVE the bump was added to clear. Only modules genuinely BELOW
+        # their floor are touched.
+        #
+        # Floors are applied as SELF-REPLACES, not `go get`: most of these are
+        # `// indirect` here, and a bare `go get` on an indirect require is
+        # reverted to the graph's MVS minimum by the next resolution. That is
+        # exactly why containerd used to need bumping LAST, right before tidy --
+        # a sibling `go get` kept knocking containerd/v2 back down. `go mod
+        # tidy` never drops a replace, so ordering stops mattering.
+        #
         #   containerd            CVE-2026-46680 (runAsNonRoot bypass) +
         #                         CVE-2026-53488                       -> 1.7.33
-        #   containerd/v2         CVE-2026-53488                       -> 2.2.5
+        #   containerd/v2         CVE-2026-53488 + CVE-2026-53495 (CRI
+        #                         ExecSync goroutine leak DoS; fixed in
+        #                         2.0.12/2.2.8/2.3.5 -- take the fix on the
+        #                         v2.2 line trivy is already on)        -> 2.2.8
         #   go-git/go-billy/v5    CVE-2026-44973/44740                 -> 5.9.0
-        #   go-git/go-git/v5      CVE-2026-45022/41506/45571/45570 +   -> 5.19.1
+        #   go-git/go-git/v5      CVE-2026-45022/41506/45571/45570 +   -> 5.19.2
         #                         GHSA-w5pp-99ch-qj29
         #   in-toto-golang        GHSA-pmwq-pjrm-6p5r (negation)       -> 0.11.0
         #   sigstore/rekor        CVE-2026-48702                       -> 1.5.2
         #   sigstore/timestamp-authority/v2 CVE-2026-49835            -> 2.1.0
-        #   sigstore/sigstore-go  CVE-2026-49834 (multi-log bypass)    -> 1.2.0
-        #   golang.org/x/crypto   CVE-2026-39827 + ssh CVE cluster     -> 0.52.0
-        #   golang.org/x/net      CVE-2026-25681/27136/39821/42502 +   -> 0.55.0
+        #   sigstore/sigstore-go  CVE-2026-49834 (multi-log bypass)    -> 1.3.0
+        #   golang.org/x/crypto   CVE-2026-39827 + ssh CVE cluster     -> 0.56.0
+        #   golang.org/x/net      CVE-2026-25681/27136/39821/42502 +   -> 0.58.0
         #                         html/idna cluster
-        #   oras.land/oras-go/v2  CVE-2026-50151/50162/48978           -> 2.6.1
-        #   google.golang.org/grpc GHSA-hrxh-6v49-42gf (xDS RBAC + HTTP/2, HIGH) -> 1.82.1
-        #                         (pulls the otel 1.43 + oauth2 0.36 coherent cascade)
-        go get github.com/go-git/go-billy/v5@v5.9.0
-        go get github.com/go-git/go-git/v5@v5.19.2
-        go get github.com/in-toto/in-toto-golang@v0.11.0
-        go get github.com/sigstore/rekor@v1.5.2
-        go get github.com/sigstore/timestamp-authority/v2@v2.1.0
-        go get github.com/sigstore/sigstore-go@v1.3.0
-        go get golang.org/x/crypto@v0.56.0 golang.org/x/mod@v0.40.0 github.com/moby/buildkit@v0.32.2
-        go get golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0
-        go get oras.land/oras-go/v2@v2.6.2
-        go get google.golang.org/grpc@v1.83.2 \
-          go.opentelemetry.io/otel@v1.44.0 \
-          go.opentelemetry.io/otel/sdk@v1.44.0 \
-          go.opentelemetry.io/otel/trace@v1.44.0 \
-          go.opentelemetry.io/otel/metric@v1.44.0 \
-          golang.org/x/oauth2@v0.36.0
-        # containerd bumps go LAST: a sibling module's graph resolution during a
-        # later `go get` downgrades containerd/v2 back to v2.2.4 if the bump runs
-        # earlier, so re-assert it as an explicit require right before tidy.
-        go get github.com/containerd/containerd@v1.7.33
-        go get github.com/containerd/containerd/v2@v2.2.5
+        #   oras.land/oras-go/v2  CVE-2026-50151/50162/48978           -> 2.6.2
+        #   google.golang.org/grpc GHSA-hrxh-6v49-42gf (xDS RBAC + HTTP/2, HIGH) -> 1.83.2
+        #                         (pulls the otel 1.44 + oauth2 0.36 coherent cascade)
+        FLOOR="github.com/containerd/containerd@v1.7.33 github.com/containerd/containerd/v2@v2.2.8 github.com/go-git/go-billy/v5@v5.9.0 github.com/go-git/go-git/v5@v5.19.2 github.com/in-toto/in-toto-golang@v0.11.0 github.com/sigstore/rekor@v1.5.2 github.com/sigstore/timestamp-authority/v2@v2.1.0 github.com/sigstore/sigstore-go@v1.3.0 github.com/moby/buildkit@v0.32.2 golang.org/x/crypto@v0.56.0 golang.org/x/mod@v0.40.0 golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0 golang.org/x/oauth2@v0.36.0 oras.land/oras-go/v2@v2.6.2 google.golang.org/grpc@v1.83.2 go.opentelemetry.io/otel@v1.44.0 go.opentelemetry.io/otel/sdk@v1.44.0 go.opentelemetry.io/otel/trace@v1.44.0 go.opentelemetry.io/otel/metric@v1.44.0"
+        MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+        # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
+        below_floor() {
+          awk -v floor="$FLOOR" -v tag="$1" '
+            BEGIN { n = split(floor, f, " ")
+                    for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+            ($1 in want) {
+              split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+              for (i = 1; i <= 3; i++) {
+                if ((g[i] + 0) > (w[i] + 0)) next
+                if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+              }
+            }'
+        }
+        # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so
+        # $NF is the EFFECTIVE version and a replace cannot hide behind the
+        # require line. -e keeps modules absent from this graph from aborting.
+        go list -m -e $MODS
+        need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' \
+          | below_floor go.mod | awk '{ print $1 }')"
+        for f in $need; do go mod edit -replace "${f%%@*}=${f}"; done
         # tidy over trivy's very large graph (enlarged by the rekor/tsa bumps)
         # intermittently trips DNS timeouts on the sandbox resolver mid-download.
         # The module cache persists across retries in this sandbox, so a bounded
@@ -142,6 +159,19 @@ pipeline:
         GOEXPERIMENT=jsonv2 go build -trimpath \
           -ldflags="-s -w -X=github.com/aquasecurity/trivy/pkg/version/app.ver=v__TRIVY__" \
           -o "${{targets.destdir}}/usr/bin/trivy" ./cmd/trivy
+
+        # The float is only real if it reached the BINARY -- assert the OUTCOME,
+        # not the edit. `go version -m` prints a `dep` line and, when the module
+        # was replaced, an immediately following `=>` line holding the version
+        # actually LINKED. Collapse each pair to that effective version (a
+        # replace-shadowed float shows up as a `=>` below the floor) and fail
+        # the build rather than ship a green-looking recipe that pinned nothing.
+        bad="$(go version -m "${{targets.destdir}}/usr/bin/trivy" | awk '
+            $1 == "dep" { if (h) print h; h = $2 " " $3; next }
+            $1 == "=>"  { h = $2 " " $3; next }
+            { if (h) { print h; h = "" } }
+            END { if (h) print h }' | below_floor trivy)"
+        [ -z "$bad" ] || { echo "❌ 0-CVE float did not reach trivy:"; echo "$bad"; exit 1; }
       )
 
       # ---- scanner-trivy adapter ----
