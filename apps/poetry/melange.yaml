@@ -1,0 +1,325 @@
+# COPIED from apps/python/melange.yaml, rendered with __VER__=3.13 (the python minor
+# this image ships). poetry pulls py3.13-pip for Poetry's venv tooling, so it inherits
+# pip's bundled-manifest findings verbatim -- they come from the VENDORED tree of
+# py3.13-pip-base, not from the poetry apk (verified from the apk SBOMs). Keep this
+# file in lockstep with apps/python/melange.yaml; retire both together.
+# pip-manifest shim: makes pip's bundled manifests tell the truth about pip's
+# own vendored tree. It changes NO code -- only metadata that is already wrong.
+#
+# WHY THIS EXISTS (all four rows MEASURED against py3.14-pip-base-26.2.1-r1 on
+# 2026-09-16; the 3.12 / 3.13 builds of the same pip release match):
+#
+#   artifact                          msgpack   setuptools
+#   pip/_vendor/msgpack/__init__.py   1.2.1     (no directory at all)
+#   pip/_vendor/vendor.txt            1.2.1     70.3.0   <- phantom
+#   pip/_vendor/bom.cdx.json          1.1.2     70.3.0   <- both stale
+#   /var/lib/db/sbom/py*-pip-base-*   1.2.1     70.3.0   <- phantom
+#   the venv seed wheel's vendor.txt  1.2.1     70.3.0   <- phantom
+#
+# So pip ships TWO manifest lies, and scanners read the manifests, not the tree:
+#
+#   1. PHANTOM SETUPTOOLS. vendor.txt (and everything generated from it) claims
+#      setuptools==70.3.0, but pip vendors NO setuptools -- there is no
+#      pip/_vendor/setuptools directory. Trivy reads the line as a lockfile
+#      entry and reports CVE-2025-47273 + CVE-2026-59890 against code that is
+#      not in the image.
+#
+#   2. STALE CYCLONEDX MSGPACK. pip's own bom.cdx.json still says msgpack 1.1.2
+#      (GHSA-6v7p-g79w-8964) while the vendored sources, vendor.txt, the SPDX
+#      and the seed wheel all say 1.2.1. Upstream fixed the code and forgot to
+#      regenerate the CycloneDX.
+#
+# This package deletes the phantom setuptools entries and re-labels the stale
+# CycloneDX msgpack entry. It NEVER invents a version: the msgpack number it
+# writes is read out of pip/_vendor/msgpack/__init__.py in the build
+# environment, so the manifest can only ever be corrected to what the image
+# actually contains. That is the opposite of gate-weakening -- the manifest is
+# made to match the filesystem, never the other way round.
+#
+# HISTORY: this file used to ALSO install real upstream msgpack 1.2.1 sources
+# over a genuinely vulnerable vendored 1.1.2. pip has since shipped that fix
+# itself, so the download, the file swap, the pyc regeneration and the
+# vendor.txt msgpack rewrite are all gone. Only the manifest half remains.
+#
+# RETIREMENT CONDITION -- delete this file, drop quench-pip-vendor-fix from
+# apko.yaml, and strip the melange steps from the workflow when ALL of these
+# are true of the pip Wolfi packages:
+#   * pip/_vendor/vendor.txt no longer carries a `setuptools==` line;
+#   * pip/_vendor/bom.cdx.json lists no setuptools component AND its msgpack
+#     version equals the one in pip/_vendor/msgpack/__init__.py;
+#   * the py<ver>-pip-base SPDX lists no setuptools package;
+#   * the venv seed wheel's vendor.txt carries no `setuptools==` line.
+# Every one of those is asserted below, so you do not have to check by hand:
+# the day any of them stops needing a fix, the build FAILS and names it. A step
+# that finds nothing to do is never allowed to pass quietly.
+package:
+  name: quench-pip-vendor-fix
+  version: 2.0.0
+  epoch: 0
+  description: "Drops pip's phantom vendored setuptools 70.3.0 and re-labels its stale CycloneDX msgpack entry"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    # We take ownership of files installed by the pip package. Without this apk
+    # refuses to overwrite another package's files.
+    # The vendored tree is owned by py<ver>-pip-base (which provides py3-pip),
+    # NOT by the py<ver>-pip metapackage -- naming the wrong one still fails.
+    replaces:
+      - py__VER__-pip-base
+      - py3-pip
+      # The seed wheel used by `python -m venv` carries its OWN second copy of
+      # the vendored manifests, so it has to be rewritten as well.
+      - py3-pip-wheel
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - python-__VER__
+      - py__VER__-pip
+
+pipeline:
+  - name: Verify the shim is still needed
+    runs: |
+      set -e
+      SP=/usr/lib/python__VER__/site-packages
+      VT="$SP/pip/_vendor/vendor.txt"
+      test -f "$VT" || { echo "no vendor.txt at $VT"; exit 1; }
+
+      # RETIREMENT SIGNAL. vendor.txt is where the phantom line originates and
+      # every other manifest is generated from it. Once upstream drops it there
+      # is nothing here to strip, and shipping the shim anyway would be a
+      # no-op that quietly hides whatever pip vendors next.
+      if ! grep -q '^setuptools==' "$VT"; then
+        echo "pip no longer lists a phantom setuptools in vendor.txt."
+        echo "RETIRE THE SHIM: check the CycloneDX / SPDX / seed-wheel conditions"
+        echo "in the header, then delete apps/python/melange.yaml + apps/poetry/melange.yaml,"
+        echo "drop quench-pip-vendor-fix from both apko.yaml files, and remove the"
+        echo "melange steps from both workflows."
+        exit 1
+      fi
+      echo "vendor.txt still claims: $(grep '^setuptools==' "$VT")"
+
+      # The line is only safe to delete while it is genuinely phantom. If pip
+      # ever really starts vendoring setuptools, the finding becomes REAL and
+      # stripping it would be gate-weakening -- so fail instead.
+      if [ -e "$SP/pip/_vendor/setuptools" ]; then
+        echo "pip now really vendors setuptools -- the line is no longer phantom."
+        echo "Do NOT strip it; pin the fixed version instead."
+        exit 1
+      fi
+
+  - name: Drop the phantom setuptools line from vendor.txt
+    runs: |
+      set -e
+      SP=/usr/lib/python__VER__/site-packages
+      DEST="${{targets.destdir}}$SP/pip/_vendor"
+      install -d "$DEST"
+      # Derived from the pip actually present in the build environment, so this
+      # never carries a stale copy of some other pip release's manifest.
+      sed '/^setuptools==/d' "$SP/pip/_vendor/vendor.txt" > "$DEST/vendor.txt"
+      chmod 0644 "$DEST/vendor.txt"
+
+      ! grep -q '^setuptools==' "$DEST/vendor.txt" || { echo "setuptools line still present"; exit 1; }
+      # Exactly one line removed: proof we edited this manifest and nothing else.
+      before=$(wc -l < "$SP/pip/_vendor/vendor.txt")
+      after=$(wc -l < "$DEST/vendor.txt")
+      test "$((before - after))" -eq 1 || { echo "vendor.txt lost $((before - after)) lines, expected 1"; exit 1; }
+
+  # Two bundled bills-of-materials are generated at pip/Wolfi package build time
+  # and then shipped inside the image: pip's own CycloneDX
+  # (pip/_vendor/bom.cdx.json) and Wolfi's SPDX for py<ver>-pip-base. Scanners
+  # read them directly, so they -- not the source files -- are what actually
+  # drives the reported findings.
+  - name: Correct the bundled SBOMs
+    runs: |
+      set -e
+      export DESTDIR="${{targets.destdir}}"
+      export PYMINOR="__VER__"
+      python3 - <<'PYEOF'
+      import glob, json, os, pathlib, re
+
+      destdir = pathlib.Path(os.environ["DESTDIR"])
+      minor = os.environ["PYMINOR"]
+      vendor = pathlib.Path(f"/usr/lib/python{minor}/site-packages/pip/_vendor")
+
+      def out(rel):
+          p = destdir / rel.lstrip("/")
+          p.parent.mkdir(parents=True, exist_ok=True)
+          return p
+
+      # The ONLY source of the msgpack version we are allowed to write: the
+      # vendored sources actually present in this build environment. Nothing
+      # here can ever claim a version the image does not contain.
+      m = re.search(r'__version__\s*=\s*"([^"]+)"',
+                    (vendor / "msgpack" / "__init__.py").read_text())
+      assert m, "cannot read the vendored msgpack version from __init__.py"
+      msgpack_real = m.group(1)
+      print(f"vendored msgpack sources are {msgpack_real}")
+
+      # --- pip's own CycloneDX -------------------------------------------
+      cdx_rel = f"usr/lib/python{minor}/site-packages/pip/_vendor/bom.cdx.json"
+      cdx = json.loads(pathlib.Path("/", cdx_rel).read_text())
+      comps = cdx.get("components", [])
+
+      stale = [c for c in comps if c.get("name") == "setuptools"]
+      assert stale, ("CycloneDX no longer lists setuptools -- see the RETIREMENT "
+                     "CONDITION in the header")
+      dropped_refs = {c.get("bom-ref") for c in stale} | {c.get("purl") for c in stale}
+      dropped_refs.discard(None)
+
+      kept, relabelled = [], 0
+      for c in comps:
+          if c.get("name") == "setuptools":
+              continue  # not vendored on disk; proven by the earlier assertion
+          if c.get("name") == "msgpack" and c.get("version") != msgpack_real:
+              c["version"] = msgpack_real
+              c["purl"] = f"pkg:pypi/msgpack@{msgpack_real}"
+              c["bom-ref"] = f"pkg:pypi/msgpack@{msgpack_real}"
+              relabelled += 1
+          kept.append(c)
+      cdx["components"] = kept
+
+      if "dependencies" in cdx:
+          cdx["dependencies"] = [d for d in cdx["dependencies"]
+                                 if d.get("ref") not in dropped_refs]
+          for d in cdx["dependencies"]:
+              if "dependsOn" in d:
+                  d["dependsOn"] = [r for r in d["dependsOn"] if r not in dropped_refs]
+      out(cdx_rel).write_text(json.dumps(cdx, indent=2) + "\n")
+      print(f"CycloneDX: dropped {len(stale)} phantom setuptools, "
+            f"re-labelled {relabelled} stale msgpack entry to {msgpack_real}")
+
+      # --- Wolfi's SPDX for the pip package ------------------------------
+      spdx_src = glob.glob(f"/var/lib/db/sbom/py{minor}-pip-base-*.spdx.json")
+      assert len(spdx_src) == 1, f"expected one pip-base SPDX, got {spdx_src}"
+      spdx_src = spdx_src[0]
+      spdx = json.loads(pathlib.Path(spdx_src).read_text())
+
+      drop_ids, kept_pkgs, spdx_relabelled = set(), [], 0
+      for p in spdx.get("packages", []):
+          if p.get("name") == "setuptools":
+              drop_ids.add(p.get("SPDXID"))
+              continue
+          if p.get("name") == "msgpack" and p.get("versionInfo") != msgpack_real:
+              p["versionInfo"] = msgpack_real
+              for ref in p.get("externalRefs", []):
+                  if ref.get("referenceType") == "purl":
+                      ref["referenceLocator"] = f"pkg:pypi/msgpack@{msgpack_real}"
+              spdx_relabelled += 1
+          kept_pkgs.append(p)
+      assert drop_ids, ("the pip-base SPDX no longer lists setuptools -- see the "
+                        "RETIREMENT CONDITION in the header")
+      spdx["packages"] = kept_pkgs
+
+      # Leaving relationships that point at a removed package makes the
+      # document invalid, so prune them alongside it.
+      if "relationships" in spdx:
+          spdx["relationships"] = [
+              r for r in spdx["relationships"]
+              if r.get("relatedSpdxElement") not in drop_ids
+              and r.get("spdxElementId") not in drop_ids
+          ]
+      out(f"var/lib/db/sbom/{os.path.basename(spdx_src)}").write_text(
+          json.dumps(spdx, indent=2) + "\n")
+      print(f"SPDX: dropped {len(drop_ids)} phantom setuptools, "
+            f"re-labelled {spdx_relabelled} msgpack entry")
+      PYEOF
+
+  # `python -m venv` seeds the new environment from a bundled pip wheel, and
+  # that wheel embeds its OWN copy of pip/_vendor -- manifests included, with
+  # the same two lies. Fixing only the installed site-packages would leave every
+  # venv created from this image carrying the phantom setuptools entry, so the
+  # wheel gets the same treatment and its RECORD hashes are recomputed to match.
+  - name: Rewrite the venv seed wheel
+    runs: |
+      set -e
+      export DESTDIR="${{targets.destdir}}"
+      python3 - <<'PYEOF'
+      import base64, glob, hashlib, json, os, pathlib, re, zipfile
+
+      src = glob.glob("/usr/share/python-wheels/pip-*-py3-none-any.whl")
+      assert len(src) == 1, f"expected exactly one pip seed wheel, got {src}"
+      src = src[0]
+
+      dest = pathlib.Path(os.environ["DESTDIR"]) / "usr/share/python-wheels" / os.path.basename(src)
+      dest.parent.mkdir(parents=True, exist_ok=True)
+
+      def record_line(path, data):
+          digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode()
+          return f"{path},sha256={digest},{len(data)}"
+
+      with zipfile.ZipFile(src) as zin:
+          names = set(zin.namelist())
+          fixed = {}
+
+          # Same rule as the image tree: the msgpack version we may write is
+          # read out of the wheel's own vendored sources, never assumed.
+          m = re.search(r'__version__\s*=\s*"([^"]+)"',
+                        zin.read("pip/_vendor/msgpack/__init__.py").decode())
+          assert m, "cannot read the seed wheel's vendored msgpack version"
+          msgpack_real = m.group(1)
+
+          vendor_txt = zin.read("pip/_vendor/vendor.txt").decode()
+          assert "\nsetuptools==" in "\n" + vendor_txt, (
+              "the seed wheel's vendor.txt no longer pins a phantom setuptools -- "
+              "see the RETIREMENT CONDITION in the header")
+          fixed["pip/_vendor/vendor.txt"] = "".join(
+              l for l in vendor_txt.splitlines(keepends=True)
+              if not l.startswith("setuptools==")
+          ).encode()
+
+          # The wheel ships its own stale copy of the CycloneDX too.
+          if "pip/_vendor/bom.cdx.json" in names:
+              cdx = json.loads(zin.read("pip/_vendor/bom.cdx.json"))
+              stale = [c for c in cdx.get("components", []) if c.get("name") == "setuptools"]
+              dropped = {c.get("bom-ref") for c in stale} | {c.get("purl") for c in stale}
+              dropped.discard(None)
+              kept = []
+              for c in cdx.get("components", []):
+                  if c.get("name") == "setuptools":
+                      continue
+                  if c.get("name") == "msgpack" and c.get("version") != msgpack_real:
+                      c["version"] = msgpack_real
+                      c["purl"] = f"pkg:pypi/msgpack@{msgpack_real}"
+                      c["bom-ref"] = f"pkg:pypi/msgpack@{msgpack_real}"
+                  kept.append(c)
+              cdx["components"] = kept
+              if "dependencies" in cdx:
+                  cdx["dependencies"] = [d for d in cdx["dependencies"]
+                                         if d.get("ref") not in dropped]
+                  for d in cdx["dependencies"]:
+                      if "dependsOn" in d:
+                          d["dependsOn"] = [r for r in d["dependsOn"] if r not in dropped]
+              fixed["pip/_vendor/bom.cdx.json"] = (json.dumps(cdx, indent=2) + "\n").encode()
+
+          record_name = next(n for n in names if n.endswith(".dist-info/RECORD"))
+          record = {}
+          for line in zin.read(record_name).decode().splitlines():
+              if line:
+                  record[line.split(",")[0]] = line
+
+          for path, data in fixed.items():
+              record[path] = record_line(path, data)
+          record[record_name] = f"{record_name},,"
+
+          # Deterministic: fixed timestamp, original member order preserved.
+          with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zout:
+              for item in zin.infolist():
+                  if item.filename == record_name:
+                      data = ("\n".join(record[n] for n in record) + "\n").encode()
+                  else:
+                      data = fixed.get(item.filename) or zin.read(item.filename)
+                  info = zipfile.ZipInfo(item.filename, date_time=(1980, 1, 1, 0, 0, 0))
+                  info.external_attr = item.external_attr
+                  info.compress_type = zipfile.ZIP_DEFLATED
+                  zout.writestr(info, data)
+
+      with zipfile.ZipFile(dest) as z:
+          assert b"\nsetuptools==" not in b"\n" + z.read("pip/_vendor/vendor.txt")
+      print(f"rewrote seed wheel -> {dest}")
+      PYEOF
