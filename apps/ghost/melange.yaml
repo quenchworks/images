@@ -109,6 +109,19 @@ pipeline:
                                                  # 76172, hostname/IDN/IPv6 SSRF confusion) landed
                                                  # ON 3.1.5 itself. 3.1.x is the only 3.x clearing
                                                  # all of them (ajv 8 wants fast-uri ^3).
+        # hono: a DIRECT dependency, exact-pinned at 4.12.18 in Ghost's package.json, and
+        # reached again as a peer of @x402/hono (^4.0.0) and mppx (>=4.12.18). 19 findings
+        # at 4.12.18 -- CVE-2026-54290 HIGH (CORS reflects any origin), 47673/47674/47675/
+        # 47676, 54286-54289, 59895-59897, 69207, 71848/71849/71850, 84363/84364/84365 --
+        # with fixed versions laddering 4.12.21 -> 4.12.25 -> 4.12.27 -> 4.12.34 -> 4.13.5.
+        # 4.13.8 is npm `latest` and clears the whole ladder in one pin.
+        # Deliberately an UNSCOPED key, not a `hono@<4.13.8` selector: pnpm matches a
+        # selector against the spec a dependent DECLARES, and mppx declares an
+        # open-ended `>=4.12.18`, which is not a subset of `<4.13.8` and so might not
+        # match. Only ONE hono major exists in this tree (every declared spec is 4.x), so
+        # a blanket override cannot drag anything across a major. The assertion below
+        # proves every installed copy landed on it.
+        "  hono: 4.13.8",                        # CVE-2026-54290 HIGH + 18 more, see above
         "  'jsonwebtoken@<9.0.0': 9.0.3",        # CVE-2022-23539/23540/23541
         "  'multer@<2.4.0': 2.4.0",              # CVE-2026-5079/5038 fixed at 2.2.0, then
                                                  # CVE-2026-77037/77078/82333 HIGH + 77063 LOW
@@ -226,6 +239,17 @@ pipeline:
               print(f"  {p} present:", sorted(have.get(p, ())) or "none")
           sys.exit(1)
       print("override check: no banned resolved version survived")
+      # (package, the ONLY version allowed to exist) for every UNSCOPED override, where the
+      # pin has to reach EVERY installed copy -- not just "the flagged one is gone". A
+      # second copy at a stale version is exactly how a pin reads correct and does nothing.
+      pinned = [("hono", "4.13.8")]
+      drift = [(p, sorted(have.get(p, ()))) for p, v in pinned if have.get(p, set()) != {v}]
+      if drift:
+          for p, got in drift:
+              want = dict(pinned)[p]
+              print(f"FATAL: every {p} copy must be {want}; installed: {got or 'none'}")
+          sys.exit(1)
+      print("override check: every pinned package has exactly one copy, at the pin")
       ASSERT
 
       # --- CVE-2024-34448 (@tryghost/members-csv CSV injection): FIXED UPSTREAM in 6.54.0 --
@@ -295,6 +319,78 @@ pipeline:
                  if (typeof b!=='function'||b('a{b,c}').join()!=='ab,ac')
                    throw new Error('brace-expansion CJS interop broken at $d');"
       done
+
+      # --- TypeScript 7's Go compiler must not ship in a runtime image -------------------
+      # TS7 rewrote tsc in Go and distributes it as a per-platform package whose only real
+      # payload is a 24 MB GO BINARY: @typescript/typescript-linux-{x64,arm64}/lib/tsc
+      # (the rest of the package is .d.ts lib declarations). Trivy scans that binary as a
+      # gobinary and reports the Go stdlib it was COMPILED WITH -- 11 findings on both
+      # arches: stdlib CVE-2026-33818/39821/39822/46600/56853/56858/56859/56860/56862/42505
+      # plus golang.org/x/text CVE-2026-56852. Their "Fixed version" column lists Go
+      # TOOLCHAIN releases (1.25.13, 1.26.6, 1.27.0-rc.3), which is the tell: none of it is
+      # Ghost's code and no npm pin can move it -- only Microsoft rebuilding tsc on a newer
+      # Go can, and we ship whatever they published.
+      #
+      # It is genuinely BUILD-TIME ONLY, verified three ways before deleting:
+      #   * pnpm-lock.yaml marks `typescript@7.0.2` itself `optional: true` -- it is here
+      #     only as an OPTIONAL PEER of abitype/viem/@x402-*/mppx, and every one of those
+      #     peerDependenciesMeta entries marks typescript optional.
+      #   * Ghost's own tree never requires 'typescript' and never spawns tsc.
+      #   * Ghost ships as precompiled JS; nothing type-checks at boot.
+      # So this REMOVES the vulnerable code from the image. It is not a gate bypass: no
+      # .trivyignore, no VEX, no severity change, no skipped assertion.
+      #
+      # Written as a generic sweep rather than an rm of a hardcoded path, so the three ways
+      # this normally rots are all fatal instead of silent: a MOVED path (the sweep finding
+      # nothing fails the build), a NEW Go binary that is not tsc (refused, never deleted
+      # blind), and a SURVIVING binary (re-scanned after the delete).
+      python3 - <<'PYEOF'
+      import os, sys
+      MAGIC = b"\xff Go buildinf:"   # the build-info blob Trivy keys its gobinary scan on
+
+      def go_binaries():
+          hits = []
+          # followlinks defaults to False, so pnpm's symlink farm is not walked twice.
+          for root, _dirs, files in os.walk("node_modules"):
+              for fn in files:
+                  p = os.path.join(root, fn)
+                  if os.path.islink(p):
+                      continue
+                  try:
+                      if os.path.getsize(p) < 1 << 20:      # a Go binary is multi-MB
+                          continue
+                      with open(p, "rb") as fh:
+                          if fh.read(4) != b"\x7fELF":      # cheap gate before the full read
+                              continue
+                          fh.seek(0)
+                          blob = fh.read()
+                  except OSError:
+                      continue
+                  if MAGIC in blob:
+                      hits.append(p)
+          return sorted(hits)
+
+      found = go_binaries()
+      if not found:
+          print("FATAL: no Go binary found under node_modules. The TS7 tsc sweep matched "
+                "nothing -- either the dependency moved or the detection broke. Re-verify "
+                "against the gate's gobinary targets before relaxing this.")
+          sys.exit(1)
+      alien = [p for p in found
+               if os.path.basename(p) != "tsc" or "/@typescript/typescript-" not in p]
+      if alien:
+          print("FATAL: refusing to delete Go binaries that are not the TS7 compiler.")
+          print("       Prove each is build-time only before adding it here:", alien)
+          sys.exit(1)
+      for p in found:
+          print("removing build-time Go binary: %s (%d bytes)" % (p, os.path.getsize(p)))
+          os.remove(p)
+      left = go_binaries()
+      if left:
+          print("FATAL: Go binaries survived the sweep:", left)
+          sys.exit(1)
+      print("tsc sweep: %d Go binary(ies) removed, 0 remain in the shipped tree" % len(found))
+      PYEOF
 
       # Trim build-time cruft that bloats the image and the CVE surface but is never run:
       # caches, source maps for vendored deps, and pnpm's own store metadata.
