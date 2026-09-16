@@ -38,10 +38,12 @@ pipeline:
       set -eu
       export CGO_ENABLED=0
       export GOFLAGS=-mod=mod
-      # ---- rclone: v1.75.0 or nothing -------------------------------------------
+      # ---- rclone: v1.75.1 or nothing -------------------------------------------
       # Every rclone below v1.75.0 carries CVE-2026-49980 (CRITICAL RCE) plus 17 more
-      # advisories; v1.75.0 is the first clean release. Telegraf 1.39.3 requires it
-      # already. The 1.37/1.38 lines pin v1.69.3 and still call the pre-1.74 rclone
+      # advisories, and v1.75.0 itself carries 9 more (CVE-2026-88013..88046, one
+      # CRITICAL); v1.75.1 is the first clean release. Even 1.39.3 only requires
+      # v1.75.0, so all three lines move. The 1.37/1.38 lines pin v1.69.3 and still
+      # call the pre-1.74 rclone
       # API (fs.LogOutput, vfs.New without a ctx), so those two call sites are ported
       # exactly the way upstream ported them in 1.39.x -- no behaviour change, and
       # plugins/common/slog.NewLogger already exists in both older trees.
@@ -69,6 +71,77 @@ pipeline:
         echo "$RF matches neither the pre-1.74 nor the post-1.74 rclone API -- refusing"
         exit 1
       fi
+      # ---- drop the test harness that leaks into the RELEASE binary -------------
+      # testutil/container.go is a testcontainers-go wrapper, but it is NOT a
+      # _test.go file, and plugins/processors/filepath/filepath_test_helpers.go
+      # (also not a _test.go file) imports package testutil. So the whole
+      # testcontainers -> docker/cli -> docker/docker tree links into the shipped
+      # telegraf binary. Nothing outside _test.go uses the Container type, so
+      # delete the file and assert testcontainers is unreachable afterwards.
+      [ -f testutil/container.go ] || { echo "testutil/container.go is gone -- recheck the leak"; exit 1; }
+      rm testutil/container.go
+      if grep -rl '"github.com/testcontainers/testcontainers-go' --include='*.go' . | grep -qv '_test\.go$'; then
+        echo "testcontainers-go is still reachable from non-test code"; exit 1
+      fi
+
+      # ---- sever github.com/docker/docker (CVE-2026-33997) ----------------------
+      # The CVE cannot be floated away: proxy.golang.org answers
+      # v28.5.2+incompatible for @latest on BOTH github.com/docker/docker and
+      # github.com/moby/moby, and the v29 code ships only as
+      # github.com/moby/moby/{api,client} plus moby/moby/v2 betas -- different
+      # import paths, so there is no v29.3.1 on the path Trivy names. A
+      # self-replace cannot express it either (a +incompatible major is rejected:
+      # "should be v0 or v1, not v29").
+      #
+      # So sever it, the play that cleared this same CVE on apps/gitness,
+      # apps/coolify-helper and apps/grafana-alloy. Telegraf's own use is entirely
+      # CLIENT-side (api/types*, client, pkg/stdcopy from inputs/docker,
+      # inputs/docker_log, inputs/ecs and common/docker), so neither vulnerable
+      # daemon path is in the binary; only the module label is. Copy that client
+      # closure into a local module, repoint the imports, and assert docker/docker
+      # left the binary.
+      #
+      # 1.39.3 needs none of this -- upstream finished the migration to
+      # github.com/moby/moby/{api,client} there -- so the block is conditional on
+      # an importer actually being present.
+      #
+      # busybox-safe: `find -exec ... +`, never `xargs` -- busybox xargs exits 123
+      # when nothing matches and `set -e` then kills the step with no message.
+      DD="github.com/influxdata/telegraf/internal/ddcompat"
+      if grep -rq '"github.com/docker/docker/' --include='*.go' plugins internal cmd; then
+        go mod download github.com/docker/docker
+        DOCKER_DIR="$(go list -m -f '{{.Dir}}' github.com/docker/docker)"
+        rm -rf internal/ddcompat && mkdir -p internal/ddcompat/api internal/ddcompat/pkg
+        cp -r "$DOCKER_DIR/api/types"   internal/ddcompat/api/types
+        cp    "$DOCKER_DIR/api/"*.go    internal/ddcompat/api/
+        cp -r "$DOCKER_DIR/client"      internal/ddcompat/client
+        cp -r "$DOCKER_DIR/pkg/stdcopy" internal/ddcompat/pkg/stdcopy
+        cp    "$DOCKER_DIR/LICENSE" "$DOCKER_DIR/NOTICE" internal/ddcompat/
+        chmod -R u+w internal/ddcompat
+        find internal/ddcompat -name '*_test.go' -type f -delete
+        # Keep exactly the api/types subpackages the client closure reaches. The
+        # daemon-side ones (backend, plugins, auxprogress) pull in
+        # pkg/streamformatter and moby/buildkit, which are not copied, so
+        # `go mod tidy` would fail on them.
+        KEEP="blkiodev build checkpoint common container events filters image mount network registry storage strslice swarm system time versions volume"
+        for d in internal/ddcompat/api/types/*/; do
+          n="$(basename "$d")"
+          case " $KEEP " in *" $n "*) ;; *) rm -rf "$d" ;; esac
+        done
+        # docker/docker ships NO go.mod (hence +incompatible); vendor.mod is its
+        # real require list. Seed ddcompat from it -- a bare module/go stub makes
+        # `go mod tidy` resolve the missing deps at @latest, which picks
+        # go-connections v0.8.1, and that release dropped sockets.DialPipe so
+        # client/client.go stops compiling.
+        sed -e "s|^module .*|module ${DD}|" "$DOCKER_DIR/vendor.mod" > internal/ddcompat/go.mod
+        find . -name '*.go' -type f -exec sed -i -e "s|github.com/docker/docker/|${DD}/|g" {} +
+        go mod edit -require "${DD}@v0.0.0" -replace "${DD}=./internal/ddcompat"
+        ( cd internal/ddcompat && go mod tidy )
+        if grep -rq '"github.com/docker/docker/' --include='*.go' .; then
+          echo "sever incomplete: github.com/docker/docker is still imported"; exit 1
+        fi
+      fi
+
       # ---- 0-CVE module float (docs/go-module-float.md) -------------------------
       # FLOOR is a FLOOR, not a pin. A bare `go get mod@vX` fails silently in two
       # directions: it is a NO-OP when an upstream `replace` overrides it, and it
@@ -82,18 +155,29 @@ pipeline:
       # go refuse the whole command ("rclone@v1.75.0 requires grpc@v1.84.0-dev, not
       # grpc@v1.82.1"). Float rclone first, then recompute -- by then grpc is above
       # its floor on rclone's account and is left alone.
-      RCLONE_FLOOR="github.com/rclone/rclone@v1.75.0"
+      RCLONE_FLOOR="github.com/rclone/rclone@v1.75.1"
       # 2026-08-30: gate caught software.sslmate.com/src/go-pkcs12 v0.7.0
       # (GHSA-mpwr-8vm7-h73f, auth bypass in pkcs12.Decode; fix v0.7.2) on
       # 1.37.3 -- floored below, verified to reach the binary like the rest.
-      FLOOR="golang.org/x/mod@v0.40.0 golang.org/x/net@v0.58.0 golang.org/x/sys@v0.47.0 golang.org/x/text@v0.41.0 golang.org/x/crypto@v0.56.0 google.golang.org/grpc@v1.83.2 software.sslmate.com/src/go-pkcs12@v0.7.2"
+      #
+      # 2026-09-16, first run to reach the gate (35106420706, 66 rows over 12
+      # modules): the rest of this list. grpc is the odd one -- rclone requires
+      # a MASTER pseudo-version (v1.84.0-dev...), so the released fixes 1.82.2 and
+      # 1.83.2 are both BELOW what is in the graph and floor to them would be a
+      # no-op; CVE-2026-84445's fix on that branch is the pseudo-version below,
+      # which is what Trivy names as the third fixed version. kinesis shares
+      # GHSA-xmrv-pmrh-hhx2 with cloudwatchlogs and has its own fixed version.
+      FLOOR="golang.org/x/mod@v0.40.0 golang.org/x/net@v0.58.0 golang.org/x/sys@v0.47.0 golang.org/x/text@v0.41.0 golang.org/x/crypto@v0.56.0 google.golang.org/grpc@v1.85.0-dev.0.20260825072537-93e31b48545e software.sslmate.com/src/go-pkcs12@v0.7.2 github.com/antchfx/xpath@v1.3.6 github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs@v1.65.0 github.com/aws/aws-sdk-go-v2/service/kinesis@v1.43.5 github.com/google/cel-go@v0.29.0 github.com/gopacket/gopacket@v1.6.1 github.com/moby/go-archive@v0.3.0 github.com/nats-io/nats-server/v2@v2.12.6 github.com/pion/dtls/v3@v3.1.4 github.com/prometheus/prometheus@v0.311.3 github.com/rabbitmq/amqp091-go@v1.13.0"
       # The go-pkcs12 entry sat outside the closing quote from 2026-08-30 until
       # 2026-09-16, so the shell ran it as a command (exit 127) and no build has
-      # succeeded since. Assert the list is whole rather than trust the quoting.
-      for m in golang.org/x/mod golang.org/x/net golang.org/x/sys golang.org/x/text \
-               golang.org/x/crypto google.golang.org/grpc software.sslmate.com/src/go-pkcs12; do
-        case " $FLOOR " in *" $m@"*) ;; *) echo "FLOOR is missing $m"; exit 1 ;; esac
+      # succeeded since. Assert the list arrived WHOLE rather than trust the
+      # quoting: an entry that falls outside the quotes drops the count, and one
+      # that loses its version is not a floor at all. Bump the count when adding.
+      n=0
+      for e in $FLOOR; do
+        case "$e" in *@v*) n=$((n + 1)) ;; *) echo "FLOOR entry carries no @version: $e"; exit 1 ;; esac
       done
+      [ "$n" = 17 ] || { echo "FLOOR parsed as $n entries, expected 17 -- check the quoting"; exit 1; }
       # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
       below_floor() {
         awk -v floor="$1" -v tag="$2" '
@@ -127,3 +211,13 @@ pipeline:
         | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' \
         | below_floor "$RCLONE_FLOOR $FLOOR" telegraf)"
       [ -z "$bad" ] || { echo "0-CVE float did not reach the binary:"; echo "$bad"; exit 1; }
+      # The sever is only real if docker/docker left the BINARY, and the harness
+      # removal is only real if testcontainers went with it. Assert both, so a
+      # future version that reintroduces an importer fails loudly instead of
+      # shipping the CVE behind a green-looking gate.
+      for m in github.com/docker/docker github.com/testcontainers/testcontainers-go; do
+        if go version -m "${{targets.destdir}}/usr/bin/telegraf" \
+             | awk '$1 == "dep" || $1 == "=>" { print $2 }' | grep -qx "$m"; then
+          echo "sever failed: $m is still linked into telegraf"; exit 1
+        fi
+      done
