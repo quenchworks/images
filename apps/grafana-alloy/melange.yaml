@@ -92,27 +92,6 @@ pipeline:
       # whose replace directives MVS honours -- the float has to happen here.
       cd collector
 
-      # ---- github.com/docker/docker: upstream-gated, do NOT retry the ----------
-      # ---- cadvisor route (measured 2026-09-16, run 35099396906) ---------------
-      # CVE-2026-33997 cannot be floated: proxy.golang.org answers
-      # v28.5.2+incompatible for @latest on both github.com/docker/docker and
-      # github.com/moby/moby, and the v29 code ships only as
-      # github.com/moby/moby/{api,client} plus moby/moby/v2 betas.
-      #
-      # By 1.19.2 three of alloy's four importers are gone (prometheus v0.313.2
-      # discovery/moby and opentelemetry-collector-contrib metadataproviders
-      # v0.158.0 both moved to github.com/moby/moby/client), leaving only
-      # cadvisor, held by upstream's
-      #   replace github.com/google/cadvisor => github.com/grafana/cadvisor v0.0.0-20260204200106-...
-      # Repointing that replace at Grafana's rebased fork
-      # (grafana-v0.60.5-noglobals, 6f984a063abc, which IS on moby/moby/client)
-      # was tried and does not compile: cadvisor v0.60 moved cache/memory,
-      # container, manager, metrics, storage and utils/sysfs into the separate
-      # github.com/google/cadvisor/cmd module, and alloy's
-      # internal/static/integrations/cadvisor imports them at their old
-      # root-module paths. Clearing this needs alloy to port that integration to
-      # the v0.60 layout -- not something a float can do from here.
-
       # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
       # FLOOR is a FLOOR, not a pin: a hardcoded bump becomes a DOWNGRADE the
       # moment upstream moves past it, re-introducing the CVE it was added to
@@ -126,14 +105,7 @@ pipeline:
       # require is reverted to the graph's MVS minimum by the next resolution.
       # A replace is not. GOFLAGS=-mod=mod lets `go build` write the go.sum
       # entries for whatever the replaces pull in, so no `go mod tidy` is needed.
-      #
-      # NOT in FLOOR, deliberately: github.com/cilium/ebpf@v0.22.0 (CVE-2026-10722,
-      # LOW, hits 1.17.1 only). v0.22.0 drops btf.FlushKernelSpec, which
-      # grafana/opentelemetry-ebpf-instrumentation v1.18.4 -- the version 1.17.1
-      # pins -- calls, so the floor breaks that line's build outright (measured,
-      # run 35099937413). 1.18.1 and 1.19.2 take it fine. Re-add it once 1.17 has
-      # aged out of the three-minor window.
-      FLOOR="golang.org/x/net@v0.58.0 golang.org/x/crypto@v0.56.0 golang.org/x/text@v0.41.0 golang.org/x/sys@v0.47.0 golang.org/x/mod@v0.40.0 golang.org/x/oauth2@v0.36.0 google.golang.org/grpc@v1.83.2 go.opentelemetry.io/otel@v1.44.0 go.opentelemetry.io/otel/sdk@v1.44.0 go.opentelemetry.io/otel/trace@v1.44.0 go.opentelemetry.io/otel/metric@v1.44.0 github.com/apache/thrift@v0.24.0 github.com/go-git/go-git/v5@v5.19.2"
+      FLOOR="golang.org/x/net@v0.58.0 golang.org/x/crypto@v0.56.0 golang.org/x/text@v0.41.0 golang.org/x/sys@v0.47.0 golang.org/x/mod@v0.40.0 golang.org/x/oauth2@v0.36.0 google.golang.org/grpc@v1.83.2 go.opentelemetry.io/otel@v1.44.0 go.opentelemetry.io/otel/sdk@v1.44.0 go.opentelemetry.io/otel/trace@v1.44.0 go.opentelemetry.io/otel/metric@v1.44.0 github.com/apache/thrift@v0.24.0 github.com/cilium/ebpf@v0.22.0 github.com/go-git/go-git/v5@v5.19.2"
       MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
       # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
       below_floor() {
@@ -155,6 +127,79 @@ pipeline:
         | below_floor go.mod | awk '{ print $1 }')"
       for f in $need; do go mod edit -replace "${f%%@*}=${f}"; done
 
+      # ---- sever github.com/docker/docker (CVE-2026-33997) --------------------
+      # The CVE cannot be floated away: proxy.golang.org answers
+      # v28.5.2+incompatible for @latest on BOTH github.com/docker/docker and
+      # github.com/moby/moby, and the v29 code ships only as
+      # github.com/moby/moby/{api,client} plus moby/moby/v2 betas -- different
+      # import paths, so there is no v29.3.1 on the path Trivy names. A
+      # self-replace cannot express it either (a +incompatible major is rejected:
+      # "should be v0 or v1, not v29").
+      #
+      # So sever it, the play that cleared this same CVE on apps/gitness and
+      # apps/coolify-helper. Alloy's own tree imports docker/docker nowhere; at
+      # 1.18.1 and 1.19.2 the single importer left in the graph is cadvisor, held
+      # by upstream's `replace github.com/google/cadvisor => github.com/grafana/cadvisor`
+      # (prometheus v0.312.0+ discovery/moby and opentelemetry-collector-contrib
+      # metadataproviders v0.153.0+ both moved to github.com/moby/moby/client).
+      # And what cadvisor uses is entirely client-side -- client, api/types/system,
+      # api/types/image, api/types/container, api/types -- so neither vulnerable
+      # daemon path is in the binary; only the module label is.
+      #
+      # DEAD END, do not retry: repointing the cadvisor replace at Grafana's
+      # rebased fork (grafana-v0.60.5-noglobals, which IS on moby/moby/client)
+      # does not compile -- cadvisor v0.60 moved cache/memory, container, manager,
+      # metrics, storage and utils/sysfs into the separate
+      # github.com/google/cadvisor/cmd module and alloy still imports them at
+      # their old root-module paths (measured, run 35099396906).
+      #
+      # busybox-safe: `find -exec ... +`, never `xargs` -- busybox xargs exits 123
+      # when nothing matches and `set -e` then kills the step with no message.
+      DD="github.com/grafana/alloy/otel_engine/ddcompat"
+      go mod download github.com/docker/docker github.com/google/cadvisor
+      DOCKER_DIR="$(go list -m -f '{{.Dir}}' github.com/docker/docker)"
+      CAD_DIR="$(go list -m -f '{{.Dir}}' github.com/google/cadvisor)"
+
+      rm -rf ddcompat && mkdir -p ddcompat/api
+      cp -r "$DOCKER_DIR/api/types" ddcompat/api/types
+      cp    "$DOCKER_DIR/api/"*.go  ddcompat/api/
+      cp -r "$DOCKER_DIR/client"    ddcompat/client
+      cp    "$DOCKER_DIR/LICENSE" "$DOCKER_DIR/NOTICE" ddcompat/
+      chmod -R u+w ddcompat
+      find ddcompat -name '*_test.go' -type f -delete
+      # Keep exactly the api/types subpackages the client closure reaches. The
+      # daemon-side ones (backend, plugins, auxprogress) pull in pkg/streamformatter
+      # and moby/buildkit, which are not copied, so `go mod tidy` would fail on them.
+      KEEP="blkiodev build checkpoint common container events filters image mount network registry storage strslice swarm system time versions volume"
+      for d in ddcompat/api/types/*/; do
+        n="$(basename "$d")"
+        case " $KEEP " in *" $n "*) ;; *) rm -rf "$d" ;; esac
+      done
+      # docker/docker ships NO go.mod (hence +incompatible); vendor.mod is its real
+      # require list. Seed ddcompat from it -- a bare module/go stub makes `go mod
+      # tidy` resolve the missing deps at @latest, which picks go-connections
+      # v0.8.1, and that release dropped sockets.DialPipe so client.go stops
+      # compiling.
+      sed -e "s|^module .*|module ${DD}|" "$DOCKER_DIR/vendor.mod" > ddcompat/go.mod
+
+      rewrite() { find "$1" -name '*.go' -type f -exec sed -i -e "s|github.com/docker/docker/|${DD}/|g" {} +; }
+      rewrite ddcompat
+
+      rm -rf third_party && mkdir -p third_party
+      cp -r "$CAD_DIR" third_party/cadvisor
+      chmod -R u+w third_party/cadvisor
+      rewrite third_party/cadvisor
+      ( cd third_party/cadvisor
+        go mod edit -droprequire github.com/docker/docker
+        go mod edit -require "${DD}@v0.0.0" -replace "${DD}=../../ddcompat" )
+
+      # Only the MAIN module's replaces apply, so cadvisor's own DD replace above
+      # is for its local tidy -- this pair is what the build actually uses.
+      go mod edit -require "${DD}@v0.0.0" -replace "${DD}=./ddcompat"
+      go mod edit -replace "github.com/google/cadvisor=./third_party/cadvisor"
+      ( cd ddcompat && go mod tidy )
+      ( cd third_party/cadvisor && go mod tidy )
+
       go build -trimpath -tags "netgo embedalloyui" -ldflags "${LDFLAGS}" \
         -o "${{targets.destdir}}/usr/bin/alloy" .
 
@@ -169,6 +214,15 @@ pipeline:
           { if (h) { print h; h = "" } }
           END { if (h) print h }' | below_floor alloy)"
       [ -z "$bad" ] || { echo "❌ 0-CVE float did not reach alloy:"; echo "$bad"; exit 1; }
+
+      # The sever is only real if docker/docker left the BINARY. Assert it, so a
+      # future version that reintroduces an importer fails loudly instead of
+      # shipping the CVE behind a green-looking gate.
+      if go version -m "${{targets.destdir}}/usr/bin/alloy" \
+           | awk '$1 == "dep" || $1 == "=>" { print $2 }' \
+           | grep -qx 'github.com/docker/docker'; then
+        echo "sever failed: github.com/docker/docker is still linked into alloy"; exit 1
+      fi
 
 test:
   pipeline:
