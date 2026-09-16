@@ -88,9 +88,59 @@ pipeline:
       LDFLAGS="-s -w -X ${VERPKG}.Version=v${{package.version}} -X ${VERPKG}.Branch=HEAD -X ${VERPKG}.BuildUser=quenchworks"
       # main.go lives in the ./collector module; it replaces github.com/grafana/alloy
       # => ../, so the parent packages (embedded UI, build.Version) compile in.
+      # ./collector is the MAIN module of this build, so it is the only go.mod
+      # whose replace directives MVS honours -- the float has to happen here.
       cd collector
+
+      # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
+      # FLOOR is a FLOOR, not a pin: a hardcoded bump becomes a DOWNGRADE the
+      # moment upstream moves past it, re-introducing the CVE it was added to
+      # clear. Alloy spans three minor lines here and each one sits at a
+      # different point (1.19.2 is already above every x/* floor and only needs
+      # crypto+grpc; 1.17.1 needs the lot), so the selection has to be computed,
+      # never written out per version.
+      #
+      # Floors are applied as SELF-REPLACES, not `go get`: every module below is
+      # `// indirect` in collector/go.mod, and a bare `go get` on an indirect
+      # require is reverted to the graph's MVS minimum by the next resolution.
+      # A replace is not. GOFLAGS=-mod=mod lets `go build` write the go.sum
+      # entries for whatever the replaces pull in, so no `go mod tidy` is needed.
+      FLOOR="golang.org/x/net@v0.58.0 golang.org/x/crypto@v0.56.0 golang.org/x/text@v0.41.0 golang.org/x/sys@v0.47.0 golang.org/x/mod@v0.40.0 golang.org/x/oauth2@v0.36.0 google.golang.org/grpc@v1.83.2 go.opentelemetry.io/otel@v1.44.0 go.opentelemetry.io/otel/sdk@v1.44.0 go.opentelemetry.io/otel/trace@v1.44.0 go.opentelemetry.io/otel/metric@v1.44.0"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF
+      # is the EFFECTIVE version and a replace cannot hide behind the require line.
+      go list -m -e $MODS
+      need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' \
+        | below_floor go.mod | awk '{ print $1 }')"
+      for f in $need; do go mod edit -replace "${f%%@*}=${f}"; done
+
       go build -trimpath -tags "netgo embedalloyui" -ldflags "${LDFLAGS}" \
         -o "${{targets.destdir}}/usr/bin/alloy" .
+
+      # The float is only real if it reached the BINARY. `go version -m` prints a
+      # `dep` line and, when the module was replaced, an immediately following
+      # `=>` line holding the version that was actually LINKED. Collapse each
+      # pair to that effective version (a replace-shadowed float shows up here as
+      # a `=>` below the floor) and fail the build rather than ship it.
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/alloy" | awk '
+          $1 == "dep" { if (h) print h; h = $2 " " $3; next }
+          $1 == "=>"  { h = $2 " " $3; next }
+          { if (h) { print h; h = "" } }
+          END { if (h) print h }' | below_floor alloy)"
+      [ -z "$bad" ] || { echo "❌ 0-CVE float did not reach alloy:"; echo "$bad"; exit 1; }
 
 test:
   pipeline:
