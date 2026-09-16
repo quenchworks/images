@@ -117,6 +117,16 @@ jobs:
       # The second argument is the expected version; every test.sh takes it as an
       # optional $2 and the ones that ignore it are unaffected.
       - name: Boot test the single-arch image (must run before publish)
+        # Runs even when the scan gate failed. Ghost is walled behind zlib
+        # CVE-2026-85091, which has no fix anywhere (Wolfi tops out at
+        # 1.3.2.1_rc20260601-r0, upstream never tagged 1.3.3), so the gate will
+        # stay red until Wolfi ships it -- and with the default `success()`
+        # condition that means the boot test NEVER runs. Every recipe change in
+        # the meantime would then land with zero evidence the image still boots,
+        # which is precisely the failure this step was added to catch.
+        # This cannot leak a publish: "Log in to GHCR" and "Publish" keep their
+        # default success() condition, so a failed gate still skips both.
+        if: ${{ !cancelled() }}
         run: |
           # Take the tag from `docker load` rather than reconstructing it: apko
           # appends the arch to the tag it was given, so a tar built as
