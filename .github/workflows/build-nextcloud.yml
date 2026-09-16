@@ -132,6 +132,13 @@ jobs:
       # The second argument is the expected version; every test.sh takes it as an
       # optional $2 and the ones that ignore it are unaffected.
       - name: Boot test the single-arch image (must run before publish)
+        # Runs even when the scan gate failed. This app is walled behind zlib
+        # CVE-2026-85091, which has no fix anywhere, so the gate stays red and
+        # with the default success() condition the boot test never runs at all.
+        # Every recipe change would then land with no evidence the image still
+        # boots. This cannot leak a publish: the GHCR login and publish steps
+        # keep their default success() condition, so a red gate still skips both.
+        if: ${{ !cancelled() }}
         run: |
           # Take the tag from `docker load` rather than reconstructing it: apko
           # appends the arch to the tag it was given, so a tar built as
