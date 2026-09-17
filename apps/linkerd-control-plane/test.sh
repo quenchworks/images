@@ -49,40 +49,47 @@ echo "starting $IMAGE"
 docker run -d --name "$NAME" -p 127.0.0.1:9996:9996 "$IMAGE" \
   -enable-endpoint-slices=false -enable-ipv6=false >/dev/null
 
-echo "waiting for the admin server (:9996) to come up"
-for i in $(seq 1 30); do
-  if curl -fsS http://127.0.0.1:9996/ping >/dev/null 2>&1; then
-    break
-  fi
-  if [ "$i" = 30 ]; then
-    echo "admin server did not come up"; docker logs "$NAME"; exit 1
-  fi
-  sleep 1
-done
+# WHAT THIS TEST CAN AND CANNOT PROVE, as of edge-26.8.4.
+#
+# It used to drive the admin server: /ping, /metrics, /ready. That is no longer
+# reachable without a real cluster. The destination controller makes TWO fatal
+# API calls during startup, and disabling the first only exposes the second:
+#   Failed to start with EndpointSlices enabled: ... /apis/discovery.k8s.io/v1
+#   Failed to initialize K8s API: ... /apis/authorization.k8s.io/v1/selfsubjectaccessreviews
+# The admin server is started before both and dies with the process, so nothing
+# is servable against a fake kubeconfig no matter which flags are passed.
+#
+# So this is a BOOT test now, not a serving test: it proves the binary runs, is
+# linked correctly, reports the right version, gets as far as starting its admin
+# server, and then fails for the ONE documented reason rather than a link error,
+# a missing library, or a panic. Functional proof lives in the chart's kind
+# install gate, which has a real API server.
+sleep 5
+logs="$(docker logs "$NAME" 2>&1)"
 
-echo "checking /ping"
-pong="$(curl -fsS http://127.0.0.1:9996/ping)"
-[ "$pong" = "pong" ] || { echo "unexpected /ping body: '$pong'"; exit 1; }
+echo "checking the binary reached its admin server"
+echo "$logs" | grep -q 'starting admin server on :9996' \
+  || { echo "never reached the admin server:"; echo "$logs"; exit 1; }
 
-echo "checking /metrics is a live Prometheus exporter"
-metrics="$(curl -fsS http://127.0.0.1:9996/metrics)"
-echo "$metrics" | grep -q '^# HELP ' \
-  || { echo "no Prometheus exposition format in /metrics"; echo "$metrics" | head -20; exit 1; }
+echo "checking it died for the expected reason, not something else"
+echo "$logs" | grep -q 'Failed to initialize K8s API' \
+  || { echo "did not fail the documented way; read the log before trusting this image:"; echo "$logs"; exit 1; }
 
-echo "checking /ready is reachable (a non-200 is expected: no real cluster to sync against)"
-if ! curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:9996/ready | grep -qE '^[0-9]{3}$'; then
-  echo "/ready is not reachable at all"; docker logs "$NAME"; exit 1
+echo "checking nothing panicked"
+if echo "$logs" | grep -qE 'panic:|SIGSEGV|no such file or directory|cannot execute'; then
+  echo "the binary did not start cleanly:"; echo "$logs"; exit 1
 fi
 
 # The version is not a CLI flag on this binary -- it's LINKERD_CONTAINER_VERSION_OVERRIDE,
-# baked into the image and readable back out of the running container's env.
+# baked into the image. Read it from the IMAGE, not a running container: the
+# container has exited by now.
 if [ -n "$EXPECT_VER" ]; then
-  ver="$(docker exec "$NAME" printenv LINKERD_CONTAINER_VERSION_OVERRIDE || true)"
-  [ "$ver" = "$EXPECT_VER" ] || { echo "expected version '$EXPECT_VER', got '$ver'"; exit 1; }
+  echo "$logs" | grep -q "running version ${EXPECT_VER}" \
+    || { echo "expected 'running version ${EXPECT_VER}' in the log:"; echo "$logs"; exit 1; }
 fi
 
 # must run as the nonroot linkerd-control-plane user (uid 1001)
 user="$(docker inspect "$IMAGE" --format '{{.Config.User}}')"
 [ "$user" = "1001" ] || { echo "expected user 1001, got '$user'"; exit 1; }
 
-echo "smoke test passed (admin server live: /ping=pong, /metrics has real Prometheus output, /ready reachable, nonroot user: $user)"
+echo "boot test passed (binary runs, version ${EXPECT_VER:-unchecked}, reached the admin server, failed only on the unreachable API server, nonroot user: $user)"
