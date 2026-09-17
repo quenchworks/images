@@ -79,8 +79,8 @@ pipeline:
       # at ./_build, so the manifest's `../../../internal/obi-src` resolves to the
       # absolute path /internal/obi-src inside the build sandbox — extract there so
       # the vendored manifest can stay byte-for-byte identical to upstream's.
-      OBI_VERSION=v0.10.0
-      OBI_SHA256=151ef5d04bff9660743148ff20d5c833222b0b45ab15245a2968a3f7f4366dec
+      OBI_VERSION=v0.13.0
+      OBI_SHA256=fd0066942e83328dee88c410f5fb455c49ea0ef61fda8979c1cd5f790c7c03a0
       OBI_TARBALL="obi-${OBI_VERSION}-source-generated.tar.gz"
       curl -fSL --retry 3 --retry-delay 1 -o "/tmp/${OBI_TARBALL}" \
         "https://github.com/open-telemetry/opentelemetry-ebpf-instrumentation/releases/download/${OBI_VERSION}/${OBI_TARBALL}"
@@ -88,29 +88,15 @@ pipeline:
       mkdir -p /internal/obi-src
       tar xzf "/tmp/${OBI_TARBALL}" --strip-components=1 -C /internal/obi-src
 
-      # cilium/ebpf CVE-2026-10722 (LOW, DoS), fixed in v0.22.0. obi v0.10.0 requires
-      # v0.21.0 and obi is the ONLY thing in the distribution that imports it.
-      #
-      # Floating it in ./_build does nothing: `go get github.com/cilium/ebpf@v0.22.0` there
-      # adds a requirement no package in _build imports, so it never gets downloaded and the
-      # build keeps obi's version. Confirmed from the build log -- the float printed its
-      # intent and then downloaded x/text, x/mod, x/net and x/crypto, with no ebpf line.
-      #
-      # For a module brought in by a local `replace`, its OWN go.mod supplies its
-      # requirements, so the floor belongs here, in the replaced tree.
-      ( cd /internal/obi-src
-        go mod edit -require=github.com/cilium/ebpf@v0.22.0
-        grep -q 'github.com/cilium/ebpf v0.22.0' go.mod \
-          || { echo "FATAL: ebpf floor did not land in obi-src/go.mod"; exit 1; }
-        # ebpf v0.22.0 REMOVED btf.FlushKernelSpec along with the global kernel-BTF
-        # cache it flushed (LoadKernelSpec no longer caches), so the two calls obi
-        # makes after loading its tracers have nothing left to flush -- drop them
-        # and the then-unused btf import. Verified: obi-src compiles cleanly
-        # against v0.22.0 with only this change.
-        f=pkg/ebpf/tracer_linux.go
-        n="$(grep -c 'btf\.FlushKernelSpec()' "$f" || true)"
-        [ "$n" = "2" ] || { echo "FATAL: expected 2 FlushKernelSpec calls in $f, found $n"; exit 1; }
-        sed -i '/btf\.FlushKernelSpec()/d; /"github\.com\/cilium\/ebpf\/btf"$/d' "$f" )
+      # cilium/ebpf CVE-2026-10722 (LOW, DoS) needed a floor + a source patch while obi
+      # was on v0.21.0. It is now UPSTREAM-FIXED and both are gone: obi v0.13.0's own
+      # go.mod already requires github.com/cilium/ebpf v0.22.0, and the 0.161.0 manifest
+      # dropped its `github.com/cilium/ebpf => v0.21.0` replace, so nothing pulls it back
+      # down. The btf.FlushKernelSpec patch is gone too -- v0.22.0 removed that API and
+      # obi no longer calls it (0 occurrences in pkg/ebpf/tracer_linux.go), so the old
+      # `expected 2 FlushKernelSpec calls` assertion would now FATAL on a clean tree.
+      # If a future obi regresses below v0.22.0, reinstate the floor in obi-src/go.mod
+      # (a `replace` in the manifest overrides every require, so raise the replace too).
 
       # Install the OpenTelemetry Collector Builder (ocb) pinned to the exact
       # version used to cut the official otelcol-contrib 0.154.0 release.
@@ -135,13 +121,6 @@ pipeline:
       # so no version ldflag is needed.
       (
         cd _build
-        # The official manifest itself carries
-        #   replaces: github.com/cilium/ebpf => github.com/cilium/ebpf v0.21.0
-        # which ocb copies into _build/go.mod. A replace OVERRIDES every require,
-        # so the v0.22.0 floor in obi-src/go.mod above was selected by MVS and then
-        # replaced straight back down to v0.21.0 (the built binary's buildinfo
-        # showed "dep cilium/ebpf v0.22.0 => v0.21.0"). Raise the replace itself.
-        go mod edit -replace='github.com/cilium/ebpf=github.com/cilium/ebpf@v0.22.0'
         # ONLY-RAISE float. An unconditional `go get mod@ver` INVERTS into a downgrade
         # the moment upstream passes the pin, and `go get` then cascades that downgrade
         # into every dependent that required the newer version. That is exactly how
