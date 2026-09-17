@@ -36,7 +36,18 @@ cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
 echo "starting $IMAGE"
-docker run -d --name "$NAME" -p 127.0.0.1:9996:9996 "$IMAGE" >/dev/null
+# EndpointSlices is ON by default and, since edge-26.x, its API-access probe is
+# fatal at startup: with an unreachable kubeconfig the destination controller
+# dies on
+#   Failed to start with EndpointSlices enabled: ... dial tcp 127.0.0.1:6443:
+#   connect: connection refused
+# before the admin server can serve, so the boot test cannot use the defaults.
+# Turning it off also forces -enable-ipv6=false, because main.go Fatals on
+# "If --enable-ipv6=true then --enable-endpoint-slices needs to be true"
+# (controller/cmd/destination/main.go:74). Both flags are for THIS boot test
+# only; the chart runs the controller with upstream's defaults.
+docker run -d --name "$NAME" -p 127.0.0.1:9996:9996 "$IMAGE" \
+  -enable-endpoint-slices=false -enable-ipv6=false >/dev/null
 
 echo "waiting for the admin server (:9996) to come up"
 for i in $(seq 1 30); do

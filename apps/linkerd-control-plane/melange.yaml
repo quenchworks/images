@@ -84,7 +84,13 @@ pipeline:
       bad="$(below_floor "$FLOOR" controller < linked-modules.txt)"
       [ -z "$bad" ] || { echo "0-CVE float did not reach the binary:"; echo "$bad"; exit 1; }
       # Same trick istiod uses, for the same reason: read controller/cmd/destination
-      # main.go before assuming this, don't guess. Its k8s client construction
+      # main.go before assuming this, don't guess. The paragraph below held when it
+      # was written and NO LONGER DOES at edge-26.8.4: pkgK8s.EndpointSliceAccess
+      # now runs before the informers and log.Fatalf's when it cannot reach the API
+      # server, so an unreachable kubeconfig kills the process rather than being
+      # retried. test.sh passes -enable-endpoint-slices=false -enable-ipv6=false to
+      # get past it. Re-read main.go on every version bump; this comment has already
+      # been wrong once. Its k8s client construction
       # (pkgK8s.NewAPI / k8s.InitializeAPI) only PARSES the kubeconfig -- no dial
       # happens until the informers' List/Watch calls, which run after the admin
       # HTTP server is already started in its own goroutine. What DOES block main()
