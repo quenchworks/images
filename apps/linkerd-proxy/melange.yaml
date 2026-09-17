@@ -72,6 +72,15 @@ pipeline:
   - runs: |
       set -eu
       export CARGO_NET_GIT_FETCH_WITH_CLI=true
+      # kubert-prometheus-tokio has a compile_error! that fires without this, so
+      # the build cannot complete at all:
+      #   error: RUSTFLAGS='--cfg tokio_unstable' must be set to use `tokio-metrics/rt`
+      # Upstream's own Dockerfile sets RUSTFLAGS="-D warnings -A deprecated
+      # --cfg tokio_unstable" at release/v2.366.0. Only the cfg is copied here:
+      # -D warnings promotes every warning to an error, which is right for their CI
+      # and wrong for ours, where a newer rustc emitting one new warning would break
+      # a build that is otherwise fine.
+      export RUSTFLAGS='--cfg tokio_unstable'
       export LINKERD2_PROXY_VERSION="__VER__"
       export LINKERD2_PROXY_VENDOR="QuenchWorks"
       cargo auditable build --release --locked -p linkerd2-proxy
