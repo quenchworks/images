@@ -23,20 +23,28 @@ def current(app):
     return out
 
 # ---- sources -------------------------------------------------------------
+def _gh(path, jq):
+    """One `gh api` call, RAISING when the call itself fails.
+
+    Without this a rate-limited or network-failed call returns an empty stdout,
+    which is indistinguishable from "this repo cuts no stable releases" and is
+    reported as zero candidates. openbao read as BROKEN CHECK that way on
+    2026-09-18 while upstream was in fact current at v2.6.2. An exception makes
+    the sweep say the check ERRORED, which is the truth.
+    """
+    r = subprocess.run(["gh", "api", path, "-q", jq], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"gh api {path} failed ({r.returncode}): {r.stderr.strip()[:300]}")
+    return [t.strip().lstrip("v") for t in r.stdout.split() if t.strip()]
+
 def github(repo):
     """Stable, non-draft release tags (v-stripped). Newest first-ish."""
-    out = subprocess.run(
-        ["gh", "api", f"repos/{repo}/releases?per_page=40", "-q",
-         '.[]|select(.prerelease==false and .draft==false)|.tag_name'],
-        capture_output=True, text=True).stdout.split()
-    return [t.strip().lstrip("v") for t in out if t.strip()]
+    return _gh(f"repos/{repo}/releases?per_page=40",
+               '.[]|select(.prerelease==false and .draft==false)|.tag_name')
 
 def github_tags(repo):
     """Plain git tags (for repos that don't cut GitHub Releases)."""
-    out = subprocess.run(
-        ["gh", "api", f"repos/{repo}/tags?per_page=40", "-q", '.[].name'],
-        capture_output=True, text=True).stdout.split()
-    return [t.strip().lstrip("v") for t in out if t.strip()]
+    return _gh(f"repos/{repo}/tags?per_page=40", '.[].name')
 
 def github_asset_releases(repo):
     """Release tags that actually ship a downloadable asset (prereleases included).
@@ -48,11 +56,8 @@ def github_asset_releases(repo):
     build with curl exit 22. Filtering on assets keeps the checker honest about what is
     actually installable.
     """
-    out = subprocess.run(
-        ["gh", "api", f"repos/{repo}/releases?per_page=40", "-q",
-         '.[]|select(.draft==false and (.assets|length)>0)|.tag_name'],
-        capture_output=True, text=True).stdout.split()
-    return [t.strip().lstrip("v") for t in out if t.strip()]
+    return _gh(f"repos/{repo}/releases?per_page=40",
+               '.[]|select(.draft==false and (.assets|length)>0)|.tag_name')
 
 def npm(pkg):
     data = json.load(urllib.request.urlopen(f"https://registry.npmjs.org/{pkg}", timeout=30))
