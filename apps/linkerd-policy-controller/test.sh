@@ -22,8 +22,16 @@ NAME="quench-linkerd-policy-controller-smoke-$$"
 cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
+# --default-opaque-ports is the ONE argument with no default. Everything else in
+# policy-controller/runtime/src/args.rs either carries a default_value, is an
+# Option, or is a bool flag; this one is a bare `#[clap(long)] String`, so
+# starting with no arguments dies with "one or more required arguments were not
+# provided" before the admin server binds. The value is upstream's own
+# proxy.opaquePorts default from charts/linkerd-control-plane/values.yaml, not a
+# number invented here.
 echo "starting $IMAGE"
-docker run -d --name "$NAME" -p 127.0.0.1:9990:9990 -p 127.0.0.1:8090:8090 "$IMAGE" >/dev/null
+docker run -d --name "$NAME" -p 127.0.0.1:9990:9990 -p 127.0.0.1:8090:8090 "$IMAGE" \
+  --default-opaque-ports=25,587,3306,4444,5432,6379,9300,11211 >/dev/null
 
 echo "waiting for the admin server (:9990) to come up"
 up=""
