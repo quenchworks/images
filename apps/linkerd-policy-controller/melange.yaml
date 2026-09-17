@@ -90,9 +90,18 @@ pipeline:
       # --precise, not a range, and asserted afterwards: `cargo update -p` can
       # silently no-op when the lockfile pins a version the manifest's requirement
       # cannot move past, which would leave an inert float that reads correct.
-      cargo update -p rand --precise 0.9.3
-      cargo tree -p rand@0.9.3 --depth 0 >/dev/null 2>&1 \
+      # The spec is rand@0.9.2, not rand: the tree carries TWO rand versions and a
+      # bare `-p rand` is ambiguous, which cargo refuses outright (run on 90d80b2:
+      # "multiple `rand` packages ... rand@0.9.2, rand@0.10.2"). Only 0.9.2 is
+      # affected; 0.10.2 is already past that advisory's 0.10.1 fix and is left
+      # alone, which is the point of floating rather than pinning.
+      cargo update -p rand@0.9.2 --precise 0.9.3
+      cargo tree -i rand@0.9.3 >/dev/null 2>&1 \
         || { echo "rand did not move to 0.9.3; the manifest requirement probably forbids it"; exit 1; }
+      # And the vulnerable one must be GONE, not merely joined by a fixed sibling.
+      if cargo tree -i rand@0.9.2 >/dev/null 2>&1; then
+        echo "rand 0.9.2 is still in the tree after the float"; exit 1
+      fi
       # --locked still holds: the lockfile was updated on disk above, so the build
       # itself changes nothing and a drifting dependency graph still fails loudly.
       cargo auditable build --release --locked -p linkerd-policy-controller
