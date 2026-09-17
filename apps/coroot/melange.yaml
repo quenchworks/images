@@ -87,41 +87,19 @@ pipeline:
       export GOFLAGS=-mod=mod
       export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's 1.25.5
       export GO111MODULE=on
-      # --- source port: prometheus v0.300.0 -> v0.311.3 API break --------------
-      # The prometheus bump below is a real API break across coroot's prom/ pkg.
-      # We port the affected call sites in-tree (small, mechanical) rather than
-      # forking upstream; each edit maps 1:1 to an upstream API change:
-      #   * promql parser funcs became methods on a parser.Parser interface
-      #     (ParseExpr / ParseMetricSelector / ParseMetricSelectors are no longer
-      #     package-level). Construct one with parser.NewParser(parser.Options{})
-      #     and call the method. (parser.Inspect / VectorSelector / ValueType,
-      #     etc. are still package-level and untouched.)
-      #   * storage.NewMergeSeriesSet gained a `limit int` arg (0 = unlimited,
-      #     matching coroot's prior no-limit behaviour).
-      #   * tsdb/chunks.Sample gained ST() int64 (sample start/created ts); our
-      #     ClickHouse float samples have none, so ST() returns 0 (== unset, the
-      #     same value prometheus' own sample uses when no start ts is present).
-      #   * labels.Labels went struct-by-default; the slice representation coroot
-      #     relies on (make/append/index over labels.Label) is still supported
-      #     upstream behind the `slicelabels` build tag, which we pass to go build
-      #     below. This is a supported upstream build mode, not a gate weakening:
-      #     it changes only the in-memory label layout, never which CVEs are fixed.
-      sed -i 's/parser\.ParseMetricSelectors(/parser.NewParser(parser.Options{}).ParseMetricSelectors(/g' prom/clickhouse.go
-      sed -i 's/parser\.ParseMetricSelector(/parser.NewParser(parser.Options{}).ParseMetricSelector(/g' config/utils.go
-      sed -i -e 's/parser\.ParseMetricSelector(/parser.NewParser(parser.Options{}).ParseMetricSelector(/g' \
-             -e 's/parser\.ParseExpr(/parser.NewParser(parser.Options{}).ParseExpr(/g' prom/http.go
-      sed -i 's/parser\.ParseExpr(/parser.NewParser(parser.Options{}).ParseExpr(/g' api/forms/forms.go
-      sed -i 's/storage\.NewMergeSeriesSet(sets, storage\.ChainedSeriesMerge)/storage.NewMergeSeriesSet(sets, 0, storage.ChainedSeriesMerge)/' prom/clickhouse.go
-      # Only add the ST() shim if upstream does not define it. coroot 1.26.0 added
-      # its own `func (s sample) ST() int64` (clickhouse_querier.go:205), so an
-      # unconditional append now declares the method twice and the build fails with
-      # "method sample.ST already declared". Skipping here is correct rather than a
-      # silent no-op: either branch leaves exactly one ST() on the type.
-      if grep -q ') ST() int64' prom/clickhouse_querier.go; then
-        echo "note: upstream already defines sample.ST(), skipping the shim"
-      else
-        printf '\nfunc (s sample) ST() int64 { return 0 }\n' >> prom/clickhouse_querier.go
-      fi
+      # --- upstream now ships the port this recipe used to apply ---------------
+      # coroot used to call the package-level promql parser funcs and the 2-arg
+      # storage.NewMergeSeriesSet, so this recipe patched those call sites for
+      # prometheus v0.311.3 and appended an ST() shim. Upstream carries all three
+      # itself as of 1.26.4 (the last version shipped here), which turned every
+      # one of those seds into a silent no-op. Assert the ported form instead of
+      # re-applying it: if a future tag reverts, the build stops on the assert
+      # rather than later, inside the compiler, on a confusing type error.
+      grep -q 'parser\.NewParser(parser\.Options{})' prom/http.go
+      grep -q 'parser\.NewParser(parser\.Options{})' config/utils.go
+      grep -q 'parser\.NewParser(parser\.Options{})' api/forms/forms.go
+      grep -q 'storage\.NewMergeSeriesSet(sets, 0, storage\.ChainedSeriesMerge)' prom/clickhouse.go
+      grep -q ') ST() int64' prom/clickhouse_querier.go
       # --- CVE bumps (all verified to compile against the ported source) --------
       # These clear the fixable advisories the comprehensive Trivy gate flags on
       # the pinned dep graph:
