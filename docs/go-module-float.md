@@ -70,6 +70,51 @@ A version bump plus a stale float pin is a silent CVE regression — see (2). Re
 the new tarball's `go.mod`, compare each floor against what upstream now
 requires, and drop or raise floors that upstream has overtaken.
 
+## 4. A floor is a version comparison, and a backport is not
+
+`below_floor` asks "is the installed version higher than the floor". That is the
+wrong question whenever upstream backports a fix across several release lines.
+
+harbor-trivy-adapter floored `containerd/v2` at `v2.2.8` and still shipped
+CVE-2026-53495. The graph resolved **v2.3.3**, which clears a v2.2.8 floor. That
+CVE is fixed per line, in 2.0.12, 2.2.8 **and** 2.3.5, so v2.3.3 sits above the
+floor and below its own line's fix. The float assertion agreed with the floor and
+passed, because it was asked the same wrong question (2026-09-17).
+
+Set the floor to the fix on the **highest line the graph can reach**, not the
+lowest fix the advisory lists. And grep the sibling recipes first: eight other
+FLOOR entries in this catalog already said `v2.3.5`.
+
+## 5. A floor below what the graph already resolves is a no-op
+
+telegraf's grpc fix shipped as 1.82.2 and 1.83.2, but rclone requires a master
+pseudo-version (`v1.84.0-dev…`), so both released fixes sit *below* what is
+already in the build list. Flooring to either reads correctly and changes
+nothing. The floor had to be the pseudo-version on that branch, which is the
+third version Trivy names (2026-09-17).
+
+Check the resolved version before choosing a floor, not just the advisory.
+
+## 6. Quoting: an entry outside the closing quote is not in FLOOR
+
+```sh
+FLOOR="golang.org/x/net@v0.58.0 … grpc@v1.83.2" software.sslmate.com/src/go-pkcs12@v0.7.2
+```
+
+telegraf carried that for 17 days. The shell assigned FLOOR **without** the last
+entry and then tried to run the module path as a command: exit 127, one line of
+output, every build failing, and GHSA-mpwr-8vm7-h73f never floored even though
+the comment above it said it was. `bash -n` does not catch this; the line is
+valid shell (2026-09-17).
+
+Assert the list is whole before using it, rather than trusting the quoting:
+
+```sh
+for m in golang.org/x/net google.golang.org/grpc software.sslmate.com/src/go-pkcs12; do
+  case " $FLOOR " in *" $m@"*) ;; *) echo "FLOOR is missing $m"; exit 1 ;; esac
+done
+```
+
 ## The snippet
 
 Copy this verbatim into the `runs:` block that builds the app. Start the block
