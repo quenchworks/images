@@ -352,3 +352,34 @@ assertion is silently inverted. `bash -n` passes: it is valid shell and wrong sh
 
 Fix these ONE AT A TIME, by hand, where a failure actually points at one, and re-run the
 test afterwards to confirm the assertion still passes for the right reason.
+
+## 7. The toolchain line, not just the `go` line
+
+`GOTOOLCHAIN=local` in these recipes means the installed Wolfi toolchain is the
+only one that will ever run. That makes two separate things in go.mod matter,
+and only one of them is obvious.
+
+The `go` line is the language version floor. A pin below it fails loudly:
+
+    go: go.mod requires go >= 1.27.1 (running go 1.26.8; GOTOOLCHAIN=local)
+
+The `toolchain` line is what upstream builds with, and `GOTOOLCHAIN=local`
+ignores it. That is usually fine. It stops being fine when a dependency guards
+code with a build tag, because a build tag excluded by an older toolchain fails
+as an undefined symbol in YOUR code, with nothing naming a version at all:
+
+    internal/handlers/handler_register_webauthn.go:101:28:
+      undefined: webauthncose.AlgMLDSA44
+
+authelia 4.39.22 reads `go 1.26.0` / `toolchain go1.27.1`. Its go-webauthn bump
+to v0.18.0 put ML-DSA behind `//go:build go1.27`, so under go-1.26 those
+constants do not exist and the caller does not compile. The `go` line said
+1.26.0 and was satisfied. Nothing in the error mentions a Go version.
+
+The check that would have caught it, run before dispatch rather than after:
+
+    curl -fsSL "https://raw.githubusercontent.com/$REPO/v$VER/go.mod" \
+      | awk '/^go |^toolchain /'
+
+Take the HIGHER of the two as the toolchain to pin. The `go` line alone is a
+floor on the language, not on what the dependency tree can compile.
