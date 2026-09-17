@@ -83,6 +83,21 @@ pipeline:
       export RUSTFLAGS='--cfg tokio_unstable'
       export LINKERD2_PROXY_VERSION="__VER__"
       export LINKERD2_PROXY_VENDOR="QuenchWorks"
+      # 0-CVE float. With the build finally compiling, the gate found one MEDIUM:
+      # opentelemetry_sdk 0.31.0, CVE-2026-48504 (unbounded memory allocation in
+      # W3C baggage parsing), fixed in 0.32.1.
+      #
+      # Named with its exact source version because a bare `-p <crate>` is
+      # ambiguous the moment a tree carries two majors, and cargo refuses rather
+      # than guessing; the sibling recipe hit exactly that with rand. Asserted in
+      # both directions afterwards, since arriving alongside the vulnerable copy
+      # is not the same as replacing it.
+      cargo update -p opentelemetry_sdk@0.31.0 --precise 0.32.1
+      cargo tree -i opentelemetry_sdk@0.32.1 >/dev/null 2>&1 \
+        || { echo "opentelemetry_sdk did not move to 0.32.1"; exit 1; }
+      if cargo tree -i opentelemetry_sdk@0.31.0 >/dev/null 2>&1; then
+        echo "opentelemetry_sdk 0.31.0 is still in the tree after the float"; exit 1
+      fi
       cargo auditable build --release --locked -p linkerd2-proxy
 
       install -Dm755 target/release/linkerd2-proxy \
