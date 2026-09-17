@@ -1,6 +1,7 @@
 #!/usr/bin/env -S uv run --quiet
 # /// script
 # requires-python = ">=3.11"
+# dependencies = ["pyyaml>=6"]
 # ///
 """Validate every apps/*/vex.openvex.json against the house rules.
 
@@ -153,8 +154,68 @@ def check_workflow_wiring(app: str) -> list[str]:
     return errs
 
 
+def check_stale(app: str, path: pathlib.Path) -> list[str]:
+    """Report statements whose CVE no longer appears in the published image.
+
+    docs/vex-policy.md: "prune entries whose CVE no longer appears in a scan of
+    the current image", because a stale statement can suppress a future finding
+    that is real. 16 of jenkins-inbound-agent's 25 statements were stale when
+    this was first checked by hand on 2026-09-17, so the drift is fast enough to
+    be worth a command.
+
+    Scans WITHOUT --vex, every severity, no --ignore-unfixed, so a CVE that is
+    merely filtered out is never mistaken for one that is gone. Reports why it
+    could not run rather than returning clean: a staleness check that silently
+    passes is worse than none, which is how the first version of this shipped.
+    """
+    import subprocess
+
+    try:
+        import yaml
+    except ImportError:
+        return ["stale check skipped: pyyaml not available"]
+
+    lock = ROOT / "catalog.lock.yaml"
+    if not lock.is_file():
+        return ["stale check skipped: no catalog.lock.yaml"]
+    data = yaml.safe_load(lock.read_text())
+    entry = (data.get("apps") or data).get(app)
+    if not entry:
+        return [f"stale check skipped: {app} absent from catalog.lock.yaml"]
+    versions = [v for v in (entry.get("versions") or []) if v.get("digest")]
+    if not versions:
+        return [f"stale check skipped: {app} has no published digest"]
+    # EVERY published version, not the newest. A VEX covers the image, and an app
+    # ships several lines at once: picking one would call a statement stale that
+    # is live in another and invite pruning a real suppression. "Newest by
+    # publish date" is doubly wrong here, since a patch to an older line can
+    # publish after a newer line (kgateway 2.3.7 postdates 2.4.3).
+    found: set[str] = set()
+    scanned = []
+    for v in versions:
+        ref = f"{entry['image']}@{v['digest']}"
+        try:
+            out = subprocess.run(
+                ["trivy", "image", "--quiet", "--format", "json", "--scanners", "vuln",
+                 "--detection-priority", "comprehensive",
+                 "--severity", "CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN", ref],
+                capture_output=True, text=True, timeout=900, check=True).stdout
+            report = json.loads(out)
+        except Exception as e:  # noqa: BLE001 - report, never swallow
+            return [f"stale check FAILED on {v['version']}: {str(e)[:110]}"]
+        found |= {x.get("VulnerabilityID")
+                  for r in (report.get("Results") or [])
+                  for x in (r.get("Vulnerabilities") or [])}
+        scanned.append(str(v["version"]))
+
+    claimed = [st.get("vulnerability", {}).get("name")
+               for st in (json.loads(path.read_text()).get("statements") or [])]
+    return [f"stale, in none of {', '.join(scanned)}: {c}"
+            for c in claimed if c and c not in found]
+
+
 def main() -> int:
-    only = sys.argv[1:]
+    only = [a for a in sys.argv[1:] if not a.startswith('-')]
     files = sorted((ROOT / "apps").glob("*/vex.openvex.json"))
     if only:
         files = [f for f in files if f.parent.name in only]
@@ -167,10 +228,17 @@ def main() -> int:
         print("no VEX files found; nothing to check")
         return 0
 
+    # Staleness needs a real scan, so it is opt-in rather than part of the
+    # default well-formedness check.
+    want_stale = "--stale" in sys.argv
+    only = [a for a in only if not a.startswith("-")]
+
     bad = 0
     for f in files:
         app = f.parent.name
         errs = check_file(f) + check_workflow_wiring(app)
+        if want_stale:
+            errs += check_stale(app, f)
         if errs:
             bad += 1
             print(f"!! {app}")
