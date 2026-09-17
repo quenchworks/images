@@ -40,10 +40,49 @@ pipeline:
       export CGO_ENABLED=0
       export GOTOOLCHAIN=auto
       export GOFLAGS=-mod=mod
+      # 0-CVE float. Run 35219866920, the first build this recipe ever reached the
+      # gate with, flagged 6 modules. FLOOR is a FLOOR, not a pin: only modules
+      # BELOW their floor are floated, so a module the graph already carries higher
+      # is left alone and a bare `go get mod@ver` cannot walk one backwards.
+      FLOOR="golang.org/x/crypto@v0.56.0 golang.org/x/text@v0.39.0 google.golang.org/grpc@v1.83.2 github.com/containerd/containerd@v1.7.35 oras.land/oras-go/v2@v2.6.2"
+      # An entry that falls outside the quotes is run as a command and silently
+      # drops out of the list, which is how a float becomes inert. Assert the count.
+      n=0
+      for e in $FLOOR; do
+        case "$e" in *@v*) n=$((n + 1)) ;; *) echo "FLOOR entry carries no @version: $e"; exit 1 ;; esac
+      done
+      [ "$n" = 5 ] || { echo "FLOOR parsed as $n entries, expected 5 -- check the quoting"; exit 1; }
+      below_floor() {
+        awk -v floor="$1" -v tag="$2" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is
+      # the EFFECTIVE version and a replace cannot hide behind the require line.
+      # -e tolerates a module this version does not require.
+      mods="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      need="$(go list -m -e $mods | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' \
+              | below_floor "$FLOOR" go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
       go build -trimpath \
         -tags prod \
         -ldflags "-s -w" \
         -o "${{targets.destdir}}/usr/bin/controller" ./controller/cmd
+      # A float that does not reach the BINARY is an inert pin. Materialise the
+      # linked module list into a file and assert it is non-empty first: a check
+      # that answers "clean" because it could not see is worse than no check.
+      go version -m "${{targets.destdir}}/usr/bin/controller" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' > linked-modules.txt
+      [ -s linked-modules.txt ] || { echo "go version -m listed no modules -- cannot verify"; exit 1; }
+      bad="$(below_floor "$FLOOR" controller < linked-modules.txt)"
+      [ -z "$bad" ] || { echo "0-CVE float did not reach the binary:"; echo "$bad"; exit 1; }
       # Same trick istiod uses, for the same reason: read controller/cmd/destination
       # main.go before assuming this, don't guess. Its k8s client construction
       # (pkgK8s.NewAPI / k8s.InitializeAPI) only PARSES the kubeconfig -- no dial
