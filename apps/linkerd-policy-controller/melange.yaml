@@ -81,6 +81,20 @@ pipeline:
       # package, invoked via `cargo auditable ...` once it's on PATH) that embeds
       # the resolved Cargo.lock dependency graph into the binary's ELF metadata --
       # see the header for why that matters to the CVE gate.
+      # 0-CVE float, the Rust equivalent of the Go FLOOR blocks elsewhere. Run
+      # 35219859746, the first build this recipe ever reached the gate with, failed
+      # on exactly one LOW: rand 0.9.2, GHSA-cq8v-f236-94qc (unsound with a custom
+      # logger using rand::rng()), fixed in 0.9.3. The gate is CHML, so one LOW
+      # fails it just as a CRITICAL would.
+      #
+      # --precise, not a range, and asserted afterwards: `cargo update -p` can
+      # silently no-op when the lockfile pins a version the manifest's requirement
+      # cannot move past, which would leave an inert float that reads correct.
+      cargo update -p rand --precise 0.9.3
+      cargo tree -p rand@0.9.3 --depth 0 >/dev/null 2>&1 \
+        || { echo "rand did not move to 0.9.3; the manifest requirement probably forbids it"; exit 1; }
+      # --locked still holds: the lockfile was updated on disk above, so the build
+      # itself changes nothing and a drifting dependency graph still fails loudly.
       cargo auditable build --release --locked -p linkerd-policy-controller
 
       install -Dm755 target/release/linkerd-policy-controller \
