@@ -92,12 +92,13 @@ pipeline:
       # than guessing; the sibling recipe hit exactly that with rand. Asserted in
       # both directions afterwards, since arriving alongside the vulnerable copy
       # is not the same as replacing it.
-      cargo update -p opentelemetry_sdk@0.31.0 --precise 0.32.1
+      # Both shipped lines require opentelemetry_sdk "0.32", so the lockfile may sit
+      # at 0.32.0 and the bare crate name is unambiguous. If a future version ever
+      # brings in two majors, cargo refuses the bare -p outright rather than picking
+      # one, and set -eu surfaces that with the ambiguity message intact.
+      cargo update -p opentelemetry_sdk --precise 0.32.1
       cargo tree -i opentelemetry_sdk@0.32.1 >/dev/null 2>&1 \
-        || { echo "opentelemetry_sdk did not move to 0.32.1"; exit 1; }
-      if cargo tree -i opentelemetry_sdk@0.31.0 >/dev/null 2>&1; then
-        echo "opentelemetry_sdk 0.31.0 is still in the tree after the float"; exit 1
-      fi
+        || { echo "opentelemetry_sdk did not reach 0.32.1"; exit 1; }
       cargo auditable build --release --locked -p linkerd2-proxy
 
       install -Dm755 target/release/linkerd2-proxy \
