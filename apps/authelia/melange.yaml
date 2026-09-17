@@ -36,7 +36,14 @@ environment:
       - busybox
       - ca-certificates-bundle
       - glibc-dev        # cgo headers
-      - go-1.26          # newer than upstream's go 1.26.3 toolchain: clears stdlib CVEs
+      # go-1.27, not go-1.26, and go.mod's `go` line does not say why. 4.39.22's
+      # go.mod reads `go 1.26.0` with `toolchain go1.27.1`, and GOTOOLCHAIN is
+      # local here so the toolchain line is ignored. go-webauthn v0.18.0 guards
+      # its ML-DSA files with `//go:build go1.27`, so on 1.26 those constants
+      # silently vanish and authelia's own handler_register_webauthn.go fails to
+      # compile on webauthncose.AlgMLDSA44/65/87. Read the `toolchain` line, not
+      # just the `go` line, when a dependency uses build tags.
+      - go-1.27
       - nodejs-24        # web portal build (package.json engines: node >=22.22.0 at 4.39.22)
       - pnpm-11          # web portal package manager (package.json engines: pnpm 11)
 
