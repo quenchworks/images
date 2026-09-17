@@ -26,9 +26,12 @@ environment:
       - build-base
       - busybox
       - ca-certificates-bundle
-      # go.mod requires go >= 1.26.4; pin the matching toolchain rather than the
-      # bare `go` meta (which can lag a major behind).
-      - go-1.26
+      # go.mod requires go >= 1.27.1 as of 1.152.0; pin the matching toolchain
+      # rather than the bare `go` meta (which can lag a major behind). Re-read
+      # go.mod's `go` line on every version bump: GOTOOLCHAIN is local here, so
+      # a toolchain below what go.mod demands fails the build outright rather
+      # than quietly downloading a newer one.
+      - go-1.27
 
 pipeline:
   # git-checkout, not fetch: building from the pinned git tag avoids the
