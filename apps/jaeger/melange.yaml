@@ -41,7 +41,10 @@ environment:
       - bash
       - curl
       - ca-certificates-bundle
-      - go-1.26
+      # go.mod requires go >= 1.27.0 as of 2.21.0. GOTOOLCHAIN is local, so a
+      # pin below go.mod's floor fails the build outright; re-read that line
+      # on every version bump.
+      - go-1.27
 
 pipeline:
   - uses: fetch
