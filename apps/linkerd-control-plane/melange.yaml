@@ -44,7 +44,13 @@ pipeline:
       # gate with, flagged 6 modules. FLOOR is a FLOOR, not a pin: only modules
       # BELOW their floor are floated, so a module the graph already carries higher
       # is left alone and a bare `go get mod@ver` cannot walk one backwards.
-      FLOOR="golang.org/x/crypto@v0.56.0 golang.org/x/text@v0.39.0 google.golang.org/grpc@v1.83.2 github.com/containerd/containerd@v1.7.35 oras.land/oras-go/v2@v2.6.2"
+      # x/text is v0.41.0, NOT the v0.39.0 the advisory names as its fix. A floor set
+      # has to be internally coherent: x/crypto@v0.56.0 and grpc@v1.83.2 both require
+      # x/text@v0.41.0, and go refuses the combination outright
+      # ("golang.org/x/crypto@v0.56.0 requires golang.org/x/text@v0.41.0, not
+      # golang.org/x/text@v0.39.0"). Take the highest version any member demands,
+      # not the lowest that closes the CVE.
+      FLOOR="golang.org/x/crypto@v0.56.0 golang.org/x/text@v0.41.0 google.golang.org/grpc@v1.83.2 github.com/containerd/containerd@v1.7.35 oras.land/oras-go/v2@v2.6.2"
       # An entry that falls outside the quotes is run as a command and silently
       # drops out of the list, which is how a float becomes inert. Assert the count.
       n=0

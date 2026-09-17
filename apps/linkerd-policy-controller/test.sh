@@ -30,8 +30,15 @@ trap cleanup EXIT
 # proxy.opaquePorts default from charts/linkerd-control-plane/values.yaml, not a
 # number invented here.
 echo "starting $IMAGE"
+# --admission-controller-disabled too, or the next required argument is
+# --server-tls-key: runtime/src/args.rs:128 reads
+#   let server = if admission_controller_disabled { None } else { Some(server) }
+# so disabling the admission controller is what drops the TLS server and its key
+# and cert requirements. The boot test has no certificates to offer; the chart
+# runs the admission controller with real ones.
 docker run -d --name "$NAME" -p 127.0.0.1:9990:9990 -p 127.0.0.1:8090:8090 "$IMAGE" \
-  --default-opaque-ports=25,587,3306,4444,5432,6379,9300,11211 >/dev/null
+  --default-opaque-ports=25,587,3306,4444,5432,6379,9300,11211 \
+  --admission-controller-disabled >/dev/null
 
 echo "waiting for the admin server (:9990) to come up"
 up=""
