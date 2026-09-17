@@ -40,38 +40,38 @@ docker run -d --name "$NAME" -p 127.0.0.1:9990:9990 -p 127.0.0.1:8090:8090 "$IMA
   --default-opaque-ports=25,587,3306,4444,5432,6379,9300,11211 \
   --admission-controller-disabled >/dev/null
 
-echo "waiting for the admin server (:9990) to come up"
-up=""
-for i in $(seq 1 30); do
-  code="$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:9990/ready 2>/dev/null || true)"
-  if [ -n "$code" ] && [ "$code" != "000" ]; then
-    up=1; break
-  fi
-  if ! docker inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null | grep -q true; then
-    echo "container exited before the admin server came up"; docker logs "$NAME"; exit 1
-  fi
-  sleep 1
-done
-[ -n "$up" ] || { echo "admin server (:9990) never became reachable"; docker logs "$NAME"; exit 1; }
+# WHAT THIS TEST CAN AND CANNOT PROVE, as of edge-26.8.4.
+#
+# It used to drive the admin server on :9990. That is not reachable without a
+# real cluster. Even with the admission controller disabled, the runtime's
+# leader-election lease is fetched before the admin server serves, retried
+# against the API server, and the process exits when it never answers:
+#   linkerd_policy_controller_runtime::lease: Failed to fetch deployment,
+#   retrying in 1s... ConnectError(... 127.0.0.1:6443 ... Connection refused)
+# No flag combination avoids it; the lease is not optional.
+#
+# So this is a BOOT test: it proves the binary runs, is linked, parses its
+# arguments, reaches its OWN runtime code, and then fails for the ONE documented
+# reason rather than a link error, a missing library, or a panic. Functional
+# proof lives in the chart's kind install gate, which has a real API server.
+sleep 8
+logs="$(docker logs "$NAME" 2>&1)"
 
-echo "checking /ready is reachable (a non-200 is expected: no real cluster to sync against)"
-curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:9990/ready
+echo "checking the binary reached its own runtime"
+echo "$logs" | grep -q 'linkerd_policy_controller_runtime' \
+  || { echo "never reached the policy-controller runtime:"; echo "$logs"; exit 1; }
 
-echo "checking /metrics is a live Prometheus exporter"
-metrics="$(curl -fsS http://127.0.0.1:9990/metrics)"
-echo "$metrics" | grep -q '^# HELP ' \
-  || { echo "no Prometheus exposition format in /metrics"; echo "$metrics" | head -20; exit 1; }
+echo "checking it failed for the expected reason, not something else"
+echo "$logs" | grep -q 'Connection refused' \
+  || { echo "did not fail the documented way; read the log before trusting this image:"; echo "$logs"; exit 1; }
 
-echo "checking the gRPC port (:8090) is at least accepting TCP connections"
-if command -v nc >/dev/null 2>&1; then
-  nc -z -w2 127.0.0.1 8090 || { echo "gRPC port :8090 refused connection"; docker logs "$NAME"; exit 1; }
-else
-  # /dev/tcp probe: bash builtin, no extra tooling required
-  timeout 2 bash -c '</dev/tcp/127.0.0.1/8090' || { echo "gRPC port :8090 refused connection"; docker logs "$NAME"; exit 1; }
+echo "checking nothing panicked"
+if echo "$logs" | grep -qE "panic|SIGSEGV|no such file or directory|cannot execute|error while loading shared"; then
+  echo "the binary did not start cleanly:"; echo "$logs"; exit 1
 fi
 
 # must run as the nonroot linkerd-policy-controller user (uid 1001)
 user="$(docker inspect "$IMAGE" --format '{{.Config.User}}')"
 [ "$user" = "1001" ] || { echo "expected user 1001, got '$user'"; exit 1; }
 
-echo "smoke test passed (admin server live, /metrics has real Prometheus output, gRPC port open, nonroot user: $user)"
+echo "boot test passed (binary runs, reached its own runtime, failed only on the unreachable API server, nonroot user: $user)"
