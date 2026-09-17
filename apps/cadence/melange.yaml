@@ -81,8 +81,36 @@ pipeline:
       BUMPS="golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0 golang.org/x/crypto@v0.56.0 github.com/sirupsen/logrus@v1.9.3 go.opentelemetry.io/otel@v1.44.0 go.opentelemetry.io/otel/sdk@v1.44.0 go.opentelemetry.io/otel/trace@v1.44.0 go.opentelemetry.io/otel/metric@v1.44.0 google.golang.org/grpc@v1.83.2 golang.org/x/oauth2@v0.36.0 github.com/apache/thrift@v0.24.0"
       go mod edit -replace github.com/apache/thrift=github.com/apache/thrift@v0.24.0
       go mod edit -replace github.com/apache/thrift=github.com/apache/thrift@v0.24.0 common/archiver/gcloud/go.mod
-      go get $BUMPS && go mod tidy
-      ( cd cmd/server && go get $BUMPS && go mod tidy )
+      go get $BUMPS
+
+      # --- yarpc: tolerate a duplicate grpc-accept-encoding header ----------
+      # grpc 1.83.2 (taken above for GHSA-hrxh-6v49-42gf) sets grpc-accept-encoding
+      # itself, and yarpc's grpc transport sets it too. yarpc rejects any header with
+      # more than one value, so every Poll fails with
+      #   header has more than one value: grpc-accept-encoding:[gzip gzip]
+      # the internal worker calls that non-retriable and shuts down, the Cassandra
+      # session closes, and ensureDomainExists then fatals on "session has been
+      # closed". That fatal is the symptom people find first; this is the cause.
+      #
+      # Upstream fix is yarpc-go PR 2549, still OPEN as of 2026-09-17, so there is
+      # no release to floor to. Carry the same change: take the first value for this
+      # one header, leave every other duplicated header erroring exactly as before.
+      YARPC_VER="$(go list -m -f '{{.Version}}' go.uber.org/yarpc)"
+      echo "patching yarpc ${YARPC_VER}"
+      go mod download go.uber.org/yarpc
+      cp -r "$(go env GOMODCACHE)/go.uber.org/yarpc@${YARPC_VER}" /home/build/yarpc-patched
+      chmod -R u+w /home/build/yarpc-patched
+      H=/home/build/yarpc-patched/transport/grpc/headers.go
+      sed -i 's|return nil, yarpcerrors.InvalidArgumentErrorf("header has more than one value: %s:%v", header, values)|if header == "grpc-accept-encoding" { value = values[0] } else { return nil, yarpcerrors.InvalidArgumentErrorf("header has more than one value: %s:%v", header, values) }|' "$H"
+      sed -i 's|return headers, yarpcerrors.InvalidArgumentErrorf("header has more than one value: %s:%v", header, values)|if header == "grpc-accept-encoding" { value = values[0] } else { return headers, yarpcerrors.InvalidArgumentErrorf("header has more than one value: %s:%v", header, values) }|' "$H"
+      # Both sites must have changed, and no bare error may survive, or the build
+      # would ship the crash again behind a green gate.
+      [ "$(grep -c 'grpc-accept-encoding' "$H")" = 2 ] || { echo "yarpc patch did not apply to both sites"; exit 1; }
+      grep -q 'header has more than one value' "$H" || { echo "yarpc patch removed the error path entirely"; exit 1; }
+      go mod edit -replace go.uber.org/yarpc=/home/build/yarpc-patched
+      go mod edit -replace go.uber.org/yarpc=/home/build/yarpc-patched common/archiver/gcloud/go.mod
+      go mod tidy
+      ( cd cmd/server && go get $BUMPS &&         go mod edit -replace go.uber.org/yarpc=/home/build/yarpc-patched && go mod tidy )
 
       # cadence-server: separate module under cmd/server (main.go at its root)
       ( cd cmd/server && \
