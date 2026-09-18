@@ -188,8 +188,30 @@ pipeline:
       done
       [ "$n" = 17 ] || { echo "FLOOR parsed as $n entries, expected 17 -- check the quoting"; exit 1; }
       # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
+      #
+      # The numeric triple alone cannot order two pseudo-versions that share it.
+      # telegraf 1.40.0 requires grpc v1.85.0-dev while the floor is
+      # v1.85.0-dev.0.20260825072537-93e31b48545e: both split to (1,85,0), so the
+      # comparison tied, nothing floated, the binary assertion saw nothing wrong,
+      # and the image shipped CVE-2026-84445 (HIGH). So compare the prerelease
+      # suffix once the triple ties, the way Go does: a release outranks any
+      # prerelease, and otherwise dot-separated identifiers compare left to right
+      # with a prefix ranking lower.
       below_floor() {
         awk -v floor="$1" -v tag="$2" '
+          function pre(v,  p) { p = index(v, "-"); return p ? substr(v, p + 1) : "" }
+          function precmp(a, b,  na, nb, x, y, i) {
+            if (a == b) return 0
+            if (a == "") return 1
+            if (b == "") return -1
+            na = split(a, x, "."); nb = split(b, y, ".")
+            for (i = 1; i <= na && i <= nb; i++) {
+              if (x[i] == y[i]) continue
+              if (x[i] + 0 != 0 && y[i] + 0 != 0) return (x[i] + 0 < y[i] + 0) ? -1 : 1
+              return (x[i] < y[i]) ? -1 : 1
+            }
+            return (na < nb) ? -1 : 1
+          }
           BEGIN { n = split(floor, f, " ")
                   for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
           ($1 in want) {
@@ -198,6 +220,7 @@ pipeline:
               if ((g[i] + 0) > (w[i] + 0)) next
               if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
             }
+            if (precmp(pre($2), pre(want[$1])) < 0) print $1 "@" want[$1] " (" tag " has " $2 ")"
           }'
       }
       # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is

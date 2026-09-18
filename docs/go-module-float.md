@@ -383,3 +383,48 @@ The check that would have caught it, run before dispatch rather than after:
 
 Take the HIGHER of the two as the toolchain to pin. The `go` line alone is a
 floor on the language, not on what the dependency tree can compile.
+
+## 8. It can TIE — two pseudo-versions sharing a numeric triple
+
+`below_floor` compares the first three numeric components and stops. That is
+enough for release versions, and blind for pseudo-versions:
+
+    telegraf 1.40.0 requires  google.golang.org/grpc v1.85.0-dev
+    the FLOOR reads           google.golang.org/grpc v1.85.0-dev.0.20260825072537-93e31b48545e
+
+Both split to (1, 85, 0). The loop finds no component greater and none smaller,
+falls off the end, and prints nothing. So the float did not fire AND the
+shipped-binary assertion, which calls the same function, did not fail. The
+image scanned as 1 HIGH (CVE-2026-84445) while every check reported clean.
+
+This is the failure mode from `mem:inert-pin-failure-class` in a new disguise:
+the floor is correct, the comparison is what is broken.
+
+Once the triple ties, compare the prerelease suffix the way Go does: a release
+outranks any prerelease, and otherwise dot-separated identifiers compare left to
+right with a prefix ranking lower.
+
+    function pre(v,  p) { p = index(v, "-"); return p ? substr(v, p + 1) : "" }
+    function precmp(a, b,  na, nb, x, y, i) {
+      if (a == b) return 0
+      if (a == "") return 1
+      if (b == "") return -1
+      na = split(a, x, "."); nb = split(b, y, ".")
+      for (i = 1; i <= na && i <= nb; i++) {
+        if (x[i] == y[i]) continue
+        if (x[i] + 0 != 0 && y[i] + 0 != 0) return (x[i] + 0 < y[i] + 0) ? -1 : 1
+        return (x[i] < y[i]) ? -1 : 1
+      }
+      return (na < nb) ? -1 : 1
+    }
+
+then, after the three-component loop:
+
+    if (precmp(pre($2), pre(want[$1])) < 0) print $1 "@" want[$1] " (" tag " has " $2 ")"
+
+Only a floor whose version carries a `-` can tie, so that is the set to sweep:
+
+    grep -ho 'FLOOR="[^"]*"' apps/*/melange.yaml | tr ' ' '\n' | grep '@v.*-'
+
+On 2026-09-18 that was two apps, telegraf and seaweedfs, both on the same grpc
+floor and both shipping the CVE.
