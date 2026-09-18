@@ -86,10 +86,21 @@ pipeline:
       export GO111MODULE=on
       # 0-CVE gate: float the flagged Go modules to their fixed releases before
       # building (x/net CVE-2026-46600, x/text CVE-2026-56852), then tidy.
-      go get golang.org/x/net@v0.58.0 golang.org/x/sys@v0.47.0 google.golang.org/grpc@v1.83.2 golang.org/x/crypto@v0.56.0 golang.org/x/text@v0.41.0 github.com/go-git/go-git/v5@v5.19.2 && go mod tidy
+      # otel 1.45.0 clears CVE-2026-81870 (LOW, exporter config logging can leak
+      # endpoint URLs), which lands on otel/sdk 1.44.0. Only sdk carries it, but
+      # the otel modules release as a set, so all four move together.
+      # ponytail: this is a bare `go get` list, not the house FLOOR pattern, so
+      # each entry becomes a DOWNGRADE once upstream requires more than it names
+      # (docs/go-module-float.md section 2). Convert to FLOOR when one of these
+      # inverts; the whole list shares that ceiling, not just the otel entries.
+      go get golang.org/x/net@v0.58.0 golang.org/x/sys@v0.47.0 google.golang.org/grpc@v1.83.2 golang.org/x/crypto@v0.56.0 golang.org/x/text@v0.41.0 github.com/go-git/go-git/v5@v5.19.2 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0 && go mod tidy
       # Match upstream Makefile LDFLAGS so `argo version` reports the real release.
       # No git metadata in the tarball; stamp version + clean tree + tag.
-      VERPKG="github.com/argoproj/argo-workflows/v3"
+      # The module path carries the major: v3 is .../v3, v4 is .../v4. Derive it
+      # from the version, or the 4.x lines stamp ldflags onto a package that is
+      # not in the build and `argo version` reports "untagged".
+      VER="${{package.version}}"
+      VERPKG="github.com/argoproj/argo-workflows/v${VER%%.*}"
       BUILD_DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
       LDFLAGS="-s -w \
         -X ${VERPKG}.version=v${{package.version}} \
