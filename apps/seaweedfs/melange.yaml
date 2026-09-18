@@ -71,8 +71,29 @@ pipeline:
       go mod edit -replace github.com/apache/thrift=github.com/apache/thrift@v0.24.0
       FLOOR="golang.org/x/image@v0.45.0 google.golang.org/grpc@v1.85.0-dev.0.20260825072537-93e31b48545e golang.org/x/oauth2@v0.36.0 go.opentelemetry.io/otel@v1.44.0 go.opentelemetry.io/otel/trace@v1.44.0 go.opentelemetry.io/otel/metric@v1.44.0 go.opentelemetry.io/otel/sdk@v1.44.0 golang.org/x/crypto@v0.56.0"
       MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      # The numeric triple alone cannot order two pseudo-versions that share it.
+      # seaweedfs requires grpc v1.85.0-dev while the floor is
+      # v1.85.0-dev.0.20260825072537-93e31b48545e: both split to (1,85,0), so the
+      # comparison tied, nothing floated, the binary assertion saw nothing wrong,
+      # and the image shipped CVE-2026-84445 (HIGH). So compare the prerelease
+      # suffix once the triple ties, the way Go does: a release outranks any
+      # prerelease, and otherwise dot-separated identifiers compare left to right
+      # with a prefix ranking lower.
       below_floor() {
         awk -v floor="$FLOOR" -v tag="$1" '
+          function pre(v,  p) { p = index(v, "-"); return p ? substr(v, p + 1) : "" }
+          function precmp(a, b,  na, nb, x, y, i) {
+            if (a == b) return 0
+            if (a == "") return 1
+            if (b == "") return -1
+            na = split(a, x, "."); nb = split(b, y, ".")
+            for (i = 1; i <= na && i <= nb; i++) {
+              if (x[i] == y[i]) continue
+              if (x[i] + 0 != 0 && y[i] + 0 != 0) return (x[i] + 0 < y[i] + 0) ? -1 : 1
+              return (x[i] < y[i]) ? -1 : 1
+            }
+            return (na < nb) ? -1 : 1
+          }
           BEGIN { n = split(floor, f, " ")
                   for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
           ($1 in want) {
@@ -81,6 +102,7 @@ pipeline:
               if ((g[i] + 0) > (w[i] + 0)) next
               if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
             }
+            if (precmp(pre($2), pre(want[$1])) < 0) print $1 "@" want[$1] " (" tag " has " $2 ")"
           }'
       }
       # -e is required: plain `go list -m M` FAILS on a module this app does not
