@@ -101,9 +101,12 @@ def report_lines(app, candidates, depth, keep=None, clean=None):
         print(f"  {lk}: have={c:>12s}  latest={(w or '?'):>12s}  {'UPDATE' if upd else 'ok'}")
     ours_top = max((vkey(".".join(re.findall(r'\d+', c)[:depth])) for c in cur), default=(0,))
     newer = sorted((k for k in wmap if vkey(k) > ours_top), key=vkey, reverse=True)
-    if newer:
-        print(f"  NEW LINE available: {newer[0]} ({wmap[newer[0]]})")
-    print(f"  => {'UPDATE -> ' + str(behind) if behind else ('NEW LINE ' + newer[0] if newer else 'ok')}")
+    # EVERY new line, not just the newest. sealed-secrets sat behind both 0.39
+    # and 0.40 while this printed only 0.40, so the app read as one line behind
+    # when it was two and the older line looked like a deliberate skip.
+    for k in newer:
+        print(f"  NEW LINE available: {k} ({wmap[k]})")
+    print(f"  => {'UPDATE -> ' + str(behind) if behind else ('NEW LINE ' + ' '.join(newer) if newer else 'ok')}")
     return behind
 
 def wolfi(pkg):
@@ -170,8 +173,9 @@ def report_wolfi_lines(app, prefix, depth, line_only=False):
     ours_top = max((vkey(".".join(re.findall(r'\d+', c)[:depth])) for c in cur), default=(0,))
     newer = sorted((k for k in wmap if vkey(k) > ours_top), key=vkey, reverse=True)
     if newer:
-        print(f"  NEW LINE available: {prefix}{newer[0]} ({wmap[newer[0]]})")
-    print(f"  => {'UPDATE -> ' + str(behind) if behind else ('NEW LINE ' + newer[0] if newer else 'ok')}")
+        for k in newer:
+            print(f"  NEW LINE available: {prefix}{k} ({wmap[k]})")
+    print(f"  => {'UPDATE -> ' + str(behind) if behind else ('NEW LINE ' + ' '.join(newer) if newer else 'ok')}")
     return behind
 
 def wolfi_majors(prefix, n=4):
