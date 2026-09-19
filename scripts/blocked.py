@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
 """Report and clear BLOCKED=1 apps once the thing that blocked them is fixed.
 
-Most of the current register is waiting on one apk: zlib 1.3.3-r0, for
-CVE-2026-85091. The moment Wolfi ships it, ~14 recipes need nothing but
-BLOCKED=0 and a rebuild, so this does that sweep instead of doing it by hand.
+Most of the current register is waiting on one apk: zlib, for CVE-2026-85091.
+The moment Wolfi ships the fix, ~14 recipes need nothing but BLOCKED=0 and a
+rebuild, so this does that sweep instead of doing it by hand.
+
+--min was 1.3.3-r0 for months and never fired, because that number came from
+the advisory as it read when the block went in. Wolfi shipped the fix as
+1.3.2.1_rc20260601-r0 and the advisory was amended to name that instead, so
+the watched condition could never become true while the block silently
+cleared. A recorded fixed version is a snapshot of an advisory, not a
+constant: re-read it before trusting a "still walled" verdict.
 
 Usage:
   blocked.py                     # list blocked apps + whether the wall lifted
@@ -61,7 +68,7 @@ def blocked_apps(root):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--pkg", default="zlib")
-    ap.add_argument("--min", default="1.3.3-r0", help="version that lifts the block")
+    ap.add_argument("--min", default="1.3.2.1_rc20260601-r0", help="version that lifts the block")
     ap.add_argument("--dispatch", action="store_true")
     args = ap.parse_args()
 
