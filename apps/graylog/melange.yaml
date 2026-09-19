@@ -63,7 +63,7 @@ pipeline:
       #     XXHash implementations can crash the JVM). Sole artifact in the at.yawk.lz4
       #     group -- no sibling modules to keep aligned -- and only graylog.jar bundles
       #     it (all three storage plugin jars are clean).
-      #   * com.rabbitmq:amqp-client 5.29.0 -> 5.33.1 (6 CVEs, 3 of them HIGH) -- added
+      #   * com.rabbitmq:amqp-client 5.29.0 -> 5.34.0 (7 CVEs, 4 of them HIGH) -- added
       #     for 7.1.8. graylog.jar only; the storage plugins do not bundle it.
       #   * httpclient5 5.5.1 -> 5.6.4 and httpcore5 + httpcore5-h2 5.3.4 -> 5.4.3
       #     (CVE-2026-64607, CVE-2026-54399, CVE-2026-54428) in the opensearch3 storage
@@ -141,8 +141,14 @@ pipeline:
       #     has its own version.properties (project.version=<graylog ver>) at the same path,
       #     which the entrypoint's `version` subcommand reports -- overlaying amqp's copy
       #     would clobber it.
-      getj "$MC/com/rabbitmq/amqp-client/5.33.1/amqp-client-5.33.1.jar" amqp-client-5.33.1.jar 27aec6803b9426da152de219e31783d52d89f486dd635c5a426cf6d321c58542
-      ( cd "$ST/amqp" && unzip -qo "$DL/amqp-client-5.33.1.jar" 'com/rabbitmq/*' 'META-INF/maven/com.rabbitmq/*' 'rabbitmq-amqp-client.properties' )
+      #     2026-09-19: 5.33.1 itself is now flagged for CVE-2026-75516 (HIGH, frame-level
+      #     OOM: an oversized declared frame length is allocated before it is validated),
+      #     fixed in 5.34.0. Entry sets compared jar-to-jar before bumping: 5.34.0 is
+      #     file-set-IDENTICAL to 5.33.1 (596 entries each), and the only entry the
+      #     bundled 5.29.0 has that 5.34.0 lacks is still SocketFrameHandler$1.class,
+      #     which apply() already deletes -- so the overlay needs no new prune.
+      getj "$MC/com/rabbitmq/amqp-client/5.34.0/amqp-client-5.34.0.jar" amqp-client-5.34.0.jar 407bab4db77453b42b052554934095873db0f1c9b8018aebb97f19eb9f5575fa
+      ( cd "$ST/amqp" && unzip -qo "$DL/amqp-client-5.34.0.jar" 'com/rabbitmq/*' 'META-INF/maven/com.rabbitmq/*' 'rabbitmq-amqp-client.properties' )
 
       # --- httpcomponents 5.x in plugin/graylog-storage-opensearch3 (3 CVEs) --------------
       #   httpclient5  5.5.1 -> 5.6.4  (CVE-2026-64607 MEDIUM, connection leak on a
