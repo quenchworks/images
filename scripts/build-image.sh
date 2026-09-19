@@ -179,9 +179,20 @@ echo "✅ 0 fixable CVEs ($SCAN_ARCH)"
 # that test -- or a genuinely unbootable image -- could only ever surface in CI,
 # after a public window was already open. istiod and envoy-gateway both failed
 # there while passing this gate cleanly. Run the same test.sh here, the same way CI
-# invokes it (from the app dir, with the version as the second argument), so a local
-# gate means "0-CVE AND boots". Only for the arch matching the host: running a
-# foreign-arch image under QEMU is slow and its timeouts are not representative.
+# invokes it (from the app dir), so a local gate means "0-CVE AND boots". Only for
+# the arch matching the host: running a foreign-arch image under QEMU is slow and
+# its timeouts are not representative.
+#
+# The second argument is NOT always the version. 204 of the 229 build workflows pass
+# `${{ matrix.ver }}`, but 25 pass something else the test actually needs: a language
+# major (`${major}`, `${m%%.*}`), a fixed interpreter line ("3.13", "8.4", "21"), or
+# nothing at all. Passing the app version to those produces a boot FAILURE that is
+# purely local, e.g. uv's test asserting `python3 --version` matches "Python 0.12.5"
+# when 0.12.5 is uv's own version and the interpreter is 3.13.15. An app whose CI
+# invocation differs defines boot_arg2() in build.conf, taking the version and
+# echoing what CI passes; undefined means the version, right for the other 204.
+# It is a function, not a variable, because build.conf is sourced BEFORE VERSION
+# is known, so a variable could only ever hold a constant.
 if [ "${BOOT:-1}" = "1" ] && [ -x ./test.sh ]; then
   host_arch="$(uname -m)"
   if [ "$SCAN_ARCH" = "$host_arch" ]; then
@@ -203,7 +214,9 @@ if [ "${BOOT:-1}" = "1" ] && [ -x ./test.sh ]; then
     # matters locally; it is harmless there.
     BOOT_TMP="$HOME/.cache/quenchworks-boot-tmp"
     mkdir -p "$BOOT_TMP"
-    TMPDIR="$BOOT_TMP" ./test.sh "$APP-boot:local" "$VERSION" || {
+    boot_arg="$VERSION"
+    if declare -F boot_arg2 >/dev/null; then boot_arg="$(boot_arg2 "$VERSION")"; fi
+    TMPDIR="$BOOT_TMP" ./test.sh "$APP-boot:local" "$boot_arg" || {
       echo "❌ boot test FAILED for $APP:$VERSION ($SCAN_ARCH) -- 0-CVE but does not run."
       exit 1
     }
