@@ -39,6 +39,7 @@ environment:
       - busybox
       - ca-certificates-bundle
       - curl                # build-only: fetch same-major patched jars for the 0-CVE gate
+      - zip                 # build-only: replace the BC jars nested in the bouncy-castle-bc bundle
 
 pipeline:
   - uses: fetch
@@ -105,9 +106,15 @@ pipeline:
       # log4j-api 2.25.4 -> 2.25.5 (same 2.25 line, no behaviour change). Standalone jar,
       # so a straight swap; the 2.26 line is a bigger jump than this fix needs.
       swap org/apache/logging/log4j log4j-api 2.25.4 2.25.5
-      # async-http-client 2.15.0 -> 2.16.0 (CVE entered the DB 2026-08-26 evening, after
-      # this image's gate run; MEDIUM, same 2.x line). Jar verified: scans 0, sha pinned.
-      swap org/asynchttpclient async-http-client 2.15.0 2.16.0 ddc11cdd96d5e58c4f8647834e68f228e9f03f5f976d0e603effd5de5b1c131a
+      # async-http-client 2.15.0 -> 2.16.1. The first hop (to 2.16.0) cleared a MEDIUM
+      # that entered the DB 2026-08-26; 2.16.0 itself is now flagged for CVE-2026-85721
+      # (HIGH, plus CVE-2026-85717/85720), fixed in 2.16.1 on the same 2.x line. The
+      # advisory also names 3.0.12, a major hop this fix does not need.
+      # netty-utils moves WITH it: it was left at 2.15.0 when ahc went to 2.16.0, which
+      # put two builds of one library on the classpath. It carries no findings of its
+      # own -- this is coherence, not remediation.
+      swap org/asynchttpclient async-http-client 2.15.0 2.16.1 9e76dd36d4ef6e13e81e2478f4e18723cabda0fe2e3b7ad6a4f41990969a7c90
+      swap org/asynchttpclient async-http-client-netty-utils 2.15.0 2.16.1 5dc30eb034ec1daea2578e3ecf861ee3212f8693170f7da53cc3503a9ff44971
       # jackson core trio: 2.18.8 -> 2.18.9 (clears CVE-2026-54515 on the standalone databind)
       swap com/fasterxml/jackson/core jackson-databind  2.18.8 2.18.9
       swap com/fasterxml/jackson/core jackson-core       2.18.8 2.18.9
@@ -183,6 +190,47 @@ pipeline:
       # the line reports as dead, and if it ships neither version the build fails instead
       # of dropping a jar beside an unknown one.
       swap org/apache/thrift libthrift 0.23.0 0.24.0 b72e321ff144e3e5211964764bd45794b96fdf250085f153c44416b35df89a07
+      # Bouncy Castle 1.84 -> 1.85 (CVE-2026-8763 CRITICAL, Name Constraints bypass via a
+      # trailing dot; CVE-2026-13506 HIGH, DoS via lazy ASN.1 sequence parsing). BC ships
+      # prov/pkix/util as one build, so all three move together even though only bcprov is
+      # flagged. Two SEPARATE copies of BC ship in this dist and BOTH are scanned:
+      #   (a) the loose lib/org.bouncycastle-*-1.84.jar trio  -> ordinary swap().
+      #   (b) org.apache.pulsar-bouncy-castle-bc-<ver>-pkg.jar, which is NOT shaded: it is
+      #       a launcher bundle carrying the three BC jars VERBATIM under lib/. Its
+      #       MANIFEST pins them by filename (Dependency-Jars: bcpkix-jdk18on-1.84.jar/...),
+      #       so the nested entries are replaced IN PLACE keeping the 1.84 names.
+      # BC jars carry no META-INF/maven pom.properties, so Trivy resolves them by the
+      # jar's sha1 against Maven Central rather than by filename -- verified locally: the
+      # rebuilt bundle reports bcprov/bcpkix/bcutil at 1.85 with zero findings.
+      swap org/bouncycastle bcprov-jdk18on 1.84 1.85 20af26bf6060bb8005cc2389916812c1e0e998dc48d2ced7131b89461b54cff7
+      swap org/bouncycastle bcpkix-jdk18on 1.84 1.85 c9f82b2d4e99c4bbdfccf684e52cc06ea06a0b567bfd0d08f9c5a3f417055996
+      swap org/bouncycastle bcutil-jdk18on 1.84 1.85 590f55ed5d68529239898a4a5c4f730b6e37f45d1cfa3fbe51f8485abe32c42d
+      bcpkg="$dest/lib/org.apache.pulsar-bouncy-castle-bc-${{package.version}}-pkg.jar"
+      [ -f "$bcpkg" ] || { echo "FATAL: BC bundle missing: $bcpkg -- dist moved, re-audit"; exit 1; }
+      bcstage="$(mktemp -d)"
+      mkdir -p "$bcstage/lib"
+      for m in bcprov bcpkix bcutil; do
+        curl -fsSL "$MC/org/bouncycastle/${m}-jdk18on/1.85/${m}-jdk18on-1.85.jar" \
+          -o "$bcstage/lib/${m}-jdk18on-1.84.jar"
+      done
+      ( cd "$bcstage" && printf '%s\n' \
+          "20af26bf6060bb8005cc2389916812c1e0e998dc48d2ced7131b89461b54cff7  lib/bcprov-jdk18on-1.84.jar" \
+          "c9f82b2d4e99c4bbdfccf684e52cc06ea06a0b567bfd0d08f9c5a3f417055996  lib/bcpkix-jdk18on-1.84.jar" \
+          "590f55ed5d68529239898a4a5c4f730b6e37f45d1cfa3fbe51f8485abe32c42d  lib/bcutil-jdk18on-1.84.jar" \
+        | sha256sum -c - )
+      # `zip <archive> <path>` REPLACES an existing entry at that path and leaves every
+      # other entry byte-identical, so the launcher classes and manifest are untouched.
+      ( cd "$bcstage" && zip -q "$bcpkg" lib/bcprov-jdk18on-1.84.jar lib/bcpkix-jdk18on-1.84.jar lib/bcutil-jdk18on-1.84.jar )
+      rm -rf "$bcstage"
+      # Assert the bundle really carries the new content (a zip that silently appended a
+      # second entry, or did nothing, would leave the vulnerable classes first on the path).
+      for m in bcprov bcpkix bcutil; do
+        n="$(unzip -l "$bcpkg" | grep -c "lib/${m}-jdk18on-1.84.jar$")"
+        [ "$n" = "1" ] || { echo "FATAL: $m appears $n times in the BC bundle"; exit 1; }
+      done
+      unzip -p "$bcpkg" lib/bcprov-jdk18on-1.84.jar | sha256sum \
+        | grep -q '^20af26bf6060bb8005cc2389916812c1e0e998dc48d2ced7131b89461b54cff7' \
+        || { echo "FATAL: nested bcprov is not the 1.85 content"; exit 1; }
       # Drop the shaded functions-runtime uber-jar (unused in --no-functions-worker standalone).
       rm -f "$dest/instances/java-instance.jar"
       chmod -R a+rX "$dest"
