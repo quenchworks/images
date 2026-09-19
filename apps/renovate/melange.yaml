@@ -109,6 +109,36 @@ pipeline:
       '
       rm -rf .be-stage
 
+      # --- adm-zip CVE-2026-77301 (HIGH): 0.6.0 -> 0.6.1. Uncontrolled memory allocation
+      # from the DECLARED entry size in the zip header, so a small crafted archive can make
+      # the reader allocate arbitrarily. Renovate reads zip archives when extracting
+      # tool/datasource artifacts, so the parser is reachable.
+      # Same constraint as brace-expansion above: a global install has no project
+      # package.json, so npm `overrides` do not apply -- the fixed copy is staged and
+      # written over every copy in the installed tree. adm-zip has NO dependencies and
+      # 0.6.1 keeps the same `main` and the same `engines` (>=14.0), so this is a
+      # drop-in swap with no interop shim.
+      mkdir -p .az-stage
+      echo '{"name":"quench-az-stage","private":true}' > .az-stage/package.json
+      ( cd .az-stage && npm install --no-audit --no-fund --no-package-lock adm-zip@0.6.1 )
+      find "${destdir}/usr/lib/node_modules" -type d -name adm-zip -print0 > "${PWD}/.az-copies"
+      AZ_STAGE="${PWD}/.az-stage/node_modules/adm-zip" NM_ROOT="${destdir}/usr/lib/node_modules" \
+      AZ_COPIES="${PWD}/.az-copies" node -e '
+        const fs=require("fs"), path=require("path");
+        const stage=process.env.AZ_STAGE, root=process.env.NM_ROOT;
+        const ver=d=>JSON.parse(fs.readFileSync(path.join(d,"package.json"),"utf8")).version;
+        const copies=fs.readFileSync(process.env.AZ_COPIES,"utf8").split("\0").filter(Boolean);
+        if(!copies.length) throw new Error("no adm-zip copy under "+root);
+        let rep=0;
+        for(const d of copies){
+          if(ver(d)!=="0.6.1"){ fs.rmSync(d,{recursive:true}); fs.cpSync(stage,d,{recursive:true}); rep++; }
+          if(ver(d)!=="0.6.1") throw new Error("adm-zip still "+ver(d)+" at "+d);
+          if(typeof require(d)!=="function") throw new Error("adm-zip is not constructible at "+d);
+        }
+        console.log("adm-zip: "+copies.length+" copies, "+rep+" replaced");
+      '
+      rm -rf .az-stage
+
       # Sanity: the launcher symlink must exist (build fails loudly otherwise).
       test -L "${destdir}/usr/bin/renovate"
       test -f "${destdir}/usr/lib/node_modules/renovate/dist/renovate.js"
