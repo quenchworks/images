@@ -193,6 +193,13 @@ pipeline:
       #        django       <5.2.15 -> 5.2.15  (patch within the 5.2 line authentik targets)
       #        h2           <4.3.0  -> 4.3.0
       #        djangorestframework 3.17.1 -> 3.17.2  CVE-2026-73228/73229
+      #        anyio        4.13.0 -> 4.14.2  CVE-2026-63374 (CRITICAL: TLSStream
+      #                                       encodes host names with IDNA 2003, so a
+      #                                       lookalike name can pass cert validation)
+      #                                       + CVE-2026-64847. anyio is a TRANSITIVE
+      #                                       dep (starlette/httpx/dramatiq), pulled in
+      #                                       only via uv.lock, so nothing in pyproject
+      #                                       names it -- the override is the only lever.
       #      The two python-3.14 / python-3.14-base rows (CVE-2026-15308, fixed in
       #      3.14.6-r4) need NO edit: apko.yaml lists `python-3.14` UNPINNED, so a
       #      plain rebuild resolves Wolfi's newest (r4 is published on both arches).
@@ -217,13 +224,14 @@ pipeline:
           '  "h2==4.4.1",\n'
           '  "sqlparse==0.6.0",\n'
           '  "djangorestframework==3.17.2",\n'
+          '  "anyio==4.14.2",\n'
           ']\n'
       )
       t, n = re.subn(r'(?m)^\[tool\.uv\]\s*$', overrides, t, count=1)
       assert n == 1, "did not find a [tool.uv] table to extend with override-dependencies"
       p.write_text(t)
       PYFIX
-      grep -n "no-binary-package\|override-dependencies\|cryptography==\|pyjwt==\|aiohttp==\|idna==\|msgpack==\|urllib3==\|httplib2==\|django==\|h2==\|djangorestframework==" pyproject.toml || true
+      grep -n "no-binary-package\|override-dependencies\|cryptography==\|pyjwt==\|aiohttp==\|idna==\|msgpack==\|urllib3==\|httplib2==\|django==\|h2==\|djangorestframework==\|anyio==" pyproject.toml || true
       # Clearing the pin makes uv re-resolve, so we don't pass --locked.
       uv venv --python "$UV_PYTHON" "$VENV_PATH"
       # --no-editable: authentik is a uv WORKSPACE with local path members under
