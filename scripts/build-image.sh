@@ -189,10 +189,12 @@ echo "✅ 0 fixable CVEs ($SCAN_ARCH)"
 # nothing at all. Passing the app version to those produces a boot FAILURE that is
 # purely local, e.g. uv's test asserting `python3 --version` matches "Python 0.12.5"
 # when 0.12.5 is uv's own version and the interpreter is 3.13.15. An app whose CI
-# invocation differs defines boot_arg2() in build.conf, taking the version and
-# echoing what CI passes; undefined means the version, right for the other 204.
-# It is a function, not a variable, because build.conf is sourced BEFORE VERSION
-# is known, so a variable could only ever hold a constant.
+# invocation differs defines boot_args() in build.conf, taking the version and
+# echoing the WHOLE extra-argument list; undefined means the version, right for
+# the other 204. It echoes a list rather than one value because gradle passes two
+# ("${major}" "21") and jenkins-inbound-agent passes none, so the expansion below
+# is deliberately unquoted. It is a function, not a variable, because build.conf
+# is sourced BEFORE VERSION is known, so a variable could only hold a constant.
 if [ "${BOOT:-1}" = "1" ] && [ -x ./test.sh ]; then
   host_arch="$(uname -m)"
   if [ "$SCAN_ARCH" = "$host_arch" ]; then
@@ -214,9 +216,10 @@ if [ "${BOOT:-1}" = "1" ] && [ -x ./test.sh ]; then
     # matters locally; it is harmless there.
     BOOT_TMP="$HOME/.cache/quenchworks-boot-tmp"
     mkdir -p "$BOOT_TMP"
-    boot_arg="$VERSION"
-    if declare -F boot_arg2 >/dev/null; then boot_arg="$(boot_arg2 "$VERSION")"; fi
-    TMPDIR="$BOOT_TMP" ./test.sh "$APP-boot:local" "$boot_arg" || {
+    boot_extra="$VERSION"
+    if declare -F boot_args >/dev/null; then boot_extra="$(boot_args "$VERSION")"; fi
+    # shellcheck disable=SC2086
+    TMPDIR="$BOOT_TMP" ./test.sh "$APP-boot:local" $boot_extra || {
       echo "❌ boot test FAILED for $APP:$VERSION ($SCAN_ARCH) -- 0-CVE but does not run."
       exit 1
     }
