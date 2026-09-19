@@ -121,6 +121,20 @@ pipeline:
       swap "$NET/netty-transport-native-unix-common/4.1.137.Final/netty-transport-native-unix-common-4.1.137.Final.jar" io.netty.netty-transport-native-unix-common-4.1.136.Final.jar 8056e7637f9948f953314894cf995ab664711b66c73c4cd5b593ae84f0b1048c
       swap "$NET/netty-transport-native-epoll/4.1.137.Final/netty-transport-native-epoll-4.1.137.Final-linux-x86_64.jar" io.netty.netty-transport-native-epoll-4.1.136.Final-linux-x86_64.jar 185db6053e0e9573d36fa4eb6567b26139afaa4daa7bf5a068e661568304542b
       swap "$NET/netty-transport-native-epoll/4.1.137.Final/netty-transport-native-epoll-4.1.137.Final-linux-aarch_64.jar" io.netty.netty-transport-native-epoll-4.1.136.Final-linux-aarch_64.jar 82fb63a2dc90c0bddb81e04065a1c06fb4c5be722ad5d64b46491daf8b6f9a01
+      # (3) Bouncy Castle 1.84 -> 1.85 IN LOCKSTEP (prov + pkix + util). CVE-2026-8763
+      #     (CRITICAL) and CVE-2026-13506 (HIGH, DoS via lazy ASN.1 sequence parsing)
+      #     are both fixed in 1.85; only bcprov carries findings, but BC ships prov/
+      #     pkix/util as one build and pkix/util link against prov internals, so a lone
+      #     bcprov 1.85 beside 1.84 siblings mixes two builds of one library.
+      #     BC jars carry NO META-INF/maven pom.properties, so Trivy identifies them by
+      #     the jar's sha1 against Maven Central, NOT by the filename -- verified locally:
+      #     the 1.85 content under the kept 1.84 filename reports
+      #     `org.bouncycastle:bcprov-jdk18on 1.85` with zero findings. The keep-the-name
+      #     rule is still required by the Quarkus app-model, which pins the filename.
+      BC="https://repo1.maven.org/maven2/org/bouncycastle"
+      swap "$BC/bcprov-jdk18on/1.85/bcprov-jdk18on-1.85.jar" org.bouncycastle.bcprov-jdk18on-1.84.jar 20af26bf6060bb8005cc2389916812c1e0e998dc48d2ced7131b89461b54cff7
+      swap "$BC/bcpkix-jdk18on/1.85/bcpkix-jdk18on-1.85.jar" org.bouncycastle.bcpkix-jdk18on-1.84.jar c9f82b2d4e99c4bbdfccf684e52cc06ea06a0b567bfd0d08f9c5a3f417055996
+      swap "$BC/bcutil-jdk18on/1.85/bcutil-jdk18on-1.85.jar" org.bouncycastle.bcutil-jdk18on-1.84.jar 590f55ed5d68529239898a4a5c4f730b6e37f45d1cfa3fbe51f8485abe32c42d
       cd ../../..
   - runs: |
       # Run the augmentation (`kc.sh build`) at IMAGE BUILD time so runtime is optimized
