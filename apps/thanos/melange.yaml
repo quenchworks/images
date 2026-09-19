@@ -425,6 +425,12 @@ pipeline:
       # at v1.36.0 -- carrying CVE-2026-45404 (MEDIUM), fixed in 1.45.0. Floating the
       # umbrella module does nothing for it; the bridge has to be named explicitly.
       go get go.opentelemetry.io/otel/bridge/opentracing@v1.45.0
+      # The same lesson one module over: prometheus pulls otel core up, but the otlp
+      # EXPORTERS are their own modules and stayed at v1.44.0, carrying CVE-2026-81870
+      # (LOW, gate-blocking). Float the otlptrace family; MVS lifts otel core with it.
+      go get go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 \
+        go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0 \
+        go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0
 
       # --- vendor + patch promql-engine (its latest commit still targets the old
       # prometheus promql API). Copy the fetched module out of the read-only cache,
