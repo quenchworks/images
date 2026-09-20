@@ -1,0 +1,102 @@
+# Builds the Bifrost AI gateway from source onto Wolfi. Two stages, mirroring
+# upstream's own Dockerfile: the React UI is built with Node and embedded into
+# the Go binary, then the gateway is built with CGO on for gorm's sqlite driver.
+# Output is a signed APK in Quenchworks' own repo, no upstream distro binaries.
+package:
+  name: quench-bifrost
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Bifrost AI gateway, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      # gcc and glibc-dev are for CGO: gorm's sqlite driver is
+      # github.com/mattn/go-sqlite3, which compiles bundled C.
+      - gcc
+      - glibc-dev
+      - go-1.27
+      - nodejs-22
+      - npm
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/maximhq/bifrost/archive/refs/tags/transports/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      export GOTOOLCHAIN=local
+      # Stage 1: the UI. `npm ci` honours package-lock.json exactly, so the
+      # dependency set is the one upstream released rather than whatever resolves
+      # today. build-enterprise is vite build + typecheck; the copy into the Go
+      # tree is done here rather than by npm's `build` script so the path is
+      # visible in this recipe.
+      ( cd ui && npm ci && npm run build-enterprise )
+      rm -rf transports/bifrost-http/ui
+      cp -r ui/out transports/bifrost-http/ui
+      # The Go binary embeds that directory. If the copy silently produced
+      # nothing, the gateway builds fine and serves a blank console, which only a
+      # boot test would catch. Fail here instead.
+      [ -f transports/bifrost-http/ui/index.html ] \
+        || { echo "UI build produced no index.html to embed"; exit 1; }
+      # Stage 2: the gateway. GOWORK=off keeps the monorepo's go.work from
+      # pulling sibling modules into the build.
+      cd transports
+      export CGO_ENABLED=1
+      export GOWORK=off
+      # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
+      # FLOOR is a FLOOR, not a pin: a bare `go get mod@vX` is a NO-OP when a
+      # replace overrides it and a DOWNGRADE once upstream needs more than vX,
+      # which re-introduces the CVE it was added to clear.
+      #   golang.org/x/crypto  CVE-2026-56855, CVE-2026-78662 (both MEDIUM)
+      #   go.opentelemetry.io/otel/sdk  CVE-2026-81870 (LOW), on the 2.0 and 2.1
+      #                                 lines; 2.2.1 already ships the core at
+      #                                 1.45.0, so it is a no-op there.
+      #   google.golang.org/grpc  CVE-2026-84303/-84304/-84445, on the 2.0 line
+      #                           only. The floor is 1.83.2, the highest any of
+      #                           the three advisories names, not the 1.83.1 that
+      #                           two of them would accept.
+      # x/crypto v0.56.0 is reachable because transports/go.mod is on go 1.27 and
+      # that module declares `go 1.26.0`; an older Go line could not take it.
+      #
+      # All seven otel modules move together even though only sdk was flagged:
+      # every line carries the same seven, and floating one sibling while leaving
+      # otlpmetricgrpc behind is the half-float that keeps coming back. There is
+      # no otel/log here, so the 0.x log series stays out of it.
+      FLOOR="golang.org/x/crypto@v0.56.0 google.golang.org/grpc@v1.83.2 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/sdk/metric@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp@v1.45.0"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # $NF is the EFFECTIVE version, so a replace cannot hide behind the require.
+      need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; go mod tidy; fi
+      go build -trimpath -ldflags "-w -s -X main.Version=v${{package.version}}" \
+        -o "${{targets.destdir}}/usr/bin/bifrost" ./bifrost-http
+      [ -x "${{targets.destdir}}/usr/bin/bifrost" ] || { echo "no bifrost binary"; exit 1; }
+      # The float is only real if it reached the BINARY; the => line catches a
+      # replace-shadowed float. Fail rather than ship it.
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/bifrost" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor bifrost)"
+      [ -z "$bad" ] || { echo "0-CVE float did not reach the binary:"; echo "$bad"; exit 1; }

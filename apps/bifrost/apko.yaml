@@ -1,0 +1,53 @@
+# Assembles the Bifrost runtime image. Minimal, nonroot (uid 1001), multi-arch,
+# SBOM by apko. The gateway is a single binary at /usr/bin/bifrost with the web
+# console embedded in it.
+#
+# Upstream ships a shell docker-entrypoint.sh whose only job is creating APP_DIR
+# and fixing its ownership. This image has no shell, and does not need one: /data
+# is created here owned by 1001, and the binary is exec'd directly with the flags
+# that script would have passed through. Binding 0.0.0.0 is required because the
+# binary defaults to localhost, which is unreachable from outside the container.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-bifrost@local
+
+accounts:
+  groups:
+    - groupname: bifrost
+      gid: 1001
+  users:
+    - username: bifrost
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  # sqlite lives here, so it must be writable by the run-as user even when the
+  # rest of the rootfs is read-only. A deployment mounts a volume over it.
+  - path: /data
+    type: directory
+    permissions: 0o755
+    uid: 1001
+    gid: 1001
+
+entrypoint:
+  command: /usr/bin/bifrost -host 0.0.0.0 -port 8080 -app-dir /data
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-bifrost"
+  org.opencontainers.image.licenses: "Apache-2.0"
