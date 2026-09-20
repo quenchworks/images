@@ -199,7 +199,8 @@ pipeline:
       MAJ="${V%%.*}"; REST="${V#*.}"; MIN="${REST%%.*}"; PAT="${REST#*.}"
       VERPKG="github.com/harness/gitness/version"
       # Mirror upstream's release ldflags (version.{major,minor,patch}+GitCommit) so
-      # `gitness --version` reports the real release. No .git in the tarball, so
+      # the running server reports the real release at /api/v1/system/version (there is
+      # NO --version flag). No .git in the tarball, so
       # GitCommit is the release tag.
       go build -trimpath \
         -ldflags "-s -w -X ${VERPKG}.major=${MAJ} -X ${VERPKG}.minor=${MIN} -X ${VERPKG}.patch=${PAT} -X ${VERPKG}.GitCommit=v${V}" \
