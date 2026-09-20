@@ -57,7 +57,10 @@ pipeline:
         *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
       esac
 
-      url="https://github.com/emqx/emqx/releases/download/${VER}/emqx-enterprise-${VER}-el9-${earch}.tar.gz"
+      # EMQX stopped attaching release assets to GitHub after 6.2.2 (that tag has 93,
+      # 6.2.3 / 6.3.0 / 6.3.1 have none). packages.emqx.io is where their own
+      # www.emqx.com download link 302-redirects to, so it is the canonical host now.
+      url="https://packages.emqx.io/emqx-ee/${VER}/emqx-enterprise-${VER}-el9-${earch}.tar.gz"
       curl -fsSL -o emqx.tar.gz "$url"
       echo "${sha}  emqx.tar.gz" | sha256sum -c -
 
