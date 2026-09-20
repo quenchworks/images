@@ -135,10 +135,17 @@ apko build "$APKO" "$GHCR:scan" image.tar --arch "$SCAN_ARCH" > apko.build.log 2
 # this run is building. Silent version drift here means the gate result belongs to a
 # different image than the one being reported.
 if [ -f melange.yaml ] && [ -n "${VERSION:-}" ]; then
-  inst="$(grep -oE "installing quench-[a-z0-9._-]+ \(${VERSION}-r[0-9]+\)" apko.build.log | head -1 || true)"
+  # The expected name and version come from the RENDERED melange file, not from
+  # $VERSION. Most recipes stamp the package with the app version, but some build a
+  # helper carrying its own (apps/python and apps/poetry build quench-pip-vendor-fix
+  # 2.0.0), and comparing that against $VERSION refused a correct build. Reading the
+  # recipe also makes the check stricter: it pins the NAME as well.
+  want_name="$(awk '/^package:/{p=1;next} p&&/^  name:/{print $2;exit}' "$MEL")"
+  want_ver="$(awk '/^package:/{p=1;next} p&&/^  version:/{print $2;exit}' "$MEL")"
+  inst="$(grep -oE "installing ${want_name} \(${want_ver}-r[0-9]+\)" apko.build.log | head -1 || true)"
   any="$(grep -oE 'installing quench-[a-z0-9._-]+ \([^)]+\)' apko.build.log | head -1 || true)"
   if [ -n "$any" ] && [ -z "$inst" ]; then
-    echo "❌ apko installed '$any' but this run targets version $VERSION."
+    echo "❌ apko installed '$any' but this run expects ${want_name} ${want_ver}."
     echo "   The gate would scan the wrong image. Refusing."
     exit 1
   fi
