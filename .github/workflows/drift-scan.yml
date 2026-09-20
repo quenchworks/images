@@ -1,0 +1,102 @@
+name: drift-scan
+
+# The 0-CVE gate proves an image was clean the day it was BUILT. Nothing
+# re-checks it afterwards, so a new advisory lands on a shipped image with no
+# signal at all. On 2026-09-20 that had happened to 34 images at once, and it
+# was found only because someone went looking. This is the check that finds it.
+#
+# Weekly, not nightly: the images are rebuilt often enough that a daily run
+# would mostly re-report the same week-old drift, and each run is ~230 image
+# pulls.
+
+on:
+  schedule:
+    - cron: "0 5 * * 0"   # Sundays 05:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+  packages: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - uses: aquasecurity/setup-trivy@master
+
+      # continue-on-error: a shard exits 1 when it FINDS something, which is the
+      # normal outcome here, not a workflow failure. The report job decides.
+      - name: Scan this shard
+        continue-on-error: true
+        run: |
+          uv run --with pyyaml scripts/drift-scan.py \
+            --shard ${{ matrix.shard }} --of 12 --json "drift-${{ matrix.shard }}.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: drift-${{ matrix.shard }}
+          path: drift-${{ matrix.shard }}.json
+          if-no-files-found: error
+
+  report:
+    needs: scan
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: drift-*
+          merge-multiple: true
+
+      - name: Open, update or close the tracking issue
+        run: |
+          set -euo pipefail
+          TITLE="Published images have drifted onto new CVEs"
+
+          jq -s '{dirty: (map(.dirty) | add), failed: (map(.failed) | add)}' drift-*.json > all.json
+          N="$(jq '.dirty | length' all.json)"
+          F="$(jq '.failed | length' all.json)"
+          echo "dirty=${N} scan-failed=${F}"
+
+          EXISTING="$(gh issue list --repo "${GITHUB_REPOSITORY}" --state open \
+            --search "in:title \"${TITLE}\"" --json number,title \
+            --jq "[.[] | select(.title == \"${TITLE}\")][0].number // empty")"
+
+          # A scan that FAILED is not a clean image, so it never closes the issue.
+          if [ "${N}" -eq 0 ] && [ "${F}" -eq 0 ]; then
+            if [ -n "${EXISTING}" ]; then
+              gh issue close "${EXISTING}" --repo "${GITHUB_REPOSITORY}" \
+                --comment "Every published image scans clean as of $(date -u +%F). Closing automatically."
+            fi
+            exit 0
+          fi
+
+          {
+            echo "Scanned the newest published version of every app in \`catalog.lock.yaml\`."
+            echo "These were clean when built and have since drifted onto fixable CVEs."
+            echo
+            jq -r '.dirty[] | "### \(.app) \(.version)\n\n" + ([.findings[] | "- \(.pkg) \(.installed) -> \(.fixed) (\(.id), \(.severity))"] | unique | join("\n")) + "\n"' all.json
+            if [ "${F}" -gt 0 ]; then
+              echo "### Scans that did not complete"
+              echo
+              echo "Not evidence of a clean image; re-run these."
+              jq -r '.failed[] | "- \(.)"' all.json
+            fi
+            echo
+            echo "_Updated by drift-scan on $(date -u +%F)._"
+          } > body.md
+
+          if [ -n "${EXISTING}" ]; then
+            gh issue edit "${EXISTING}" --repo "${GITHUB_REPOSITORY}" --body-file body.md
+          else
+            gh issue create --repo "${GITHUB_REPOSITORY}" --title "${TITLE}" --body-file body.md
+          fi
