@@ -13,9 +13,19 @@ It scans EVERY published version in the lock, not just the newest.
 It used to cover the newest only, on the argument that older tags cost runner
 time for images most people never pull. A 12-tag sample of the older ones on
 2026-09-20 came back 2 dirty, and one was grafana 13.0.2 with 52 findings
-including CRITICAL. Blocked apps are the worst case: grafana never rebuilds, so
-every tag it has ever published rots in place with nothing watching. An old tag
-is still something a user can pull and the catalog still claims is 0-CVE.
+including CRITICAL. An old tag is still something a user can pull and the
+catalog still claims is 0-CVE.
+
+To be exact about what widening this bought, because the first version of this
+note overstated it: the website's nightly (website/scripts/scan-images.mjs) had
+already scanned every version AND every chart-pinned digest, so those tags were
+not unwatched. What was missing is that THIS check, the one that opens the
+tracking issue in the images repo, disagreed with it. Two scanners over the same
+images have to ask the same question or the issue quietly under-reports. Same
+shape as the VEX gap fixed the same day.
+
+Blocked apps are where it bites hardest. grafana never rebuilds, so all six of
+its tags keep drifting: 17, 43, 49, 52, 78 and 81 findings, newest to oldest.
 
 Exit 1 when any image has findings, so a scheduled run fails visibly.
 """
