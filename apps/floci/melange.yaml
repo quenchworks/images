@@ -113,6 +113,14 @@ pipeline:
              '                <groupId>org.postgresql</groupId>\n'
              '                <artifactId>postgresql</artifactId>\n'
              '                <version>42.7.12</version>\n'
+             '            </dependency>\n'
+             '            <dependency>\n'
+             '                <!-- QuenchWorks CVE-2024-57699 pin (HIGH): json-smart stack exhaustion.\n'
+             '                     Transitive only (nothing declares it in floci\'s pom), so a managed\n'
+             '                     entry is enough and creates no duplicate. -->\n'
+             '                <groupId>net.minidev</groupId>\n'
+             '                <artifactId>json-smart</artifactId>\n'
+             '                <version>2.5.2</version>\n'
              '            </dependency>')
       # 3) The DM pin above loses to a DIRECT dependency that carries its own
       #    explicit <version> -- and floci declares httpclient5 5.5.1 directly
@@ -134,6 +142,32 @@ pipeline:
           if v != '5.6.3']
       if not k or stuck:
           raise SystemExit(f"httpclient5 direct-dep pin FAILED (rewrote {k}, left {stuck})")
+      # 4) floci 2.1.0 added its OWN managed httpcore5 / httpcore5-h2 entries at
+      #    5.3.6, which made the managed pin below inert in a way that still
+      #    reads correct: two entries for one GAV in one pom is not first-wins,
+      #    Maven warns "must be unique" and takes the LAST one, so upstream's
+      #    5.3.6 beat our prepended 5.4.3 and the image shipped CVE-2026-54399
+      #    and CVE-2026-54428. Rewrite every existing entry to 5.4.3 as well, so
+      #    whichever one Maven picks is the fixed version.
+      #
+      #    Upstream holds 5.3.6 on purpose: httpcore5 5.4 enables TCP keep-alive
+      #    in SocketConfig, httpclient5 sets that extended option by reflection
+      #    on docker-java's UnixSocket, and that is unregistered in a NATIVE
+      #    image, so every Docker call fails. This recipe builds the Quarkus
+      #    FAST-JAR, not a native image, where reflection needs no registration.
+      #    Evidence it holds: floci-full 2.0.1 is published and passing with
+      #    5.4.3, which it got because its pom declared no httpcore5 at all.
+      for core_art in ('httpcore5', 'httpcore5-h2'):
+          src = re.sub(
+              r'(<groupId>org\.apache\.httpcomponents\.core5</groupId>' + GAP +
+              r'<artifactId>' + core_art + r'</artifactId>' + GAP + r'<version>)[^<]*(</version>)',
+              r'\g<1>5.4.3\g<2>', src, flags=re.S)
+          left = [v for v in re.findall(
+              r'<groupId>org\.apache\.httpcomponents\.core5</groupId>' + GAP +
+              r'<artifactId>' + core_art + r'</artifactId>' + GAP + r'<version>([^<]*)</version>',
+              src, flags=re.S) if v != '5.4.3']
+          if left:
+              raise SystemExit(f"{core_art} pin FAILED, left {left}")
       m = re.search(r'<dependencyManagement>\s*<dependencies>', src)
       if m:
           src = src[:m.end()] + pin + src[m.end():]
@@ -149,6 +183,8 @@ pipeline:
       grep -q '4.1.137.Final' pom.xml || { echo "netty version pin FAILED to apply"; exit 1; }
       grep -q '<version>42.7.12</version>' pom.xml || { echo "postgresql pin FAILED to apply"; exit 1; }
       grep -q '<artifactId>lz4-java</artifactId>' pom.xml || { echo "lz4-java pin FAILED to apply"; exit 1; }
+      grep -q '<version>2.5.2</version>' pom.xml || { echo "json-smart pin FAILED to apply"; exit 1; }
+      ! grep -q '<version>5.3.6</version>' pom.xml || { echo "httpcore5 5.3.6 survived the pin"; exit 1; }
       # -----------------------------------------------------------------------
       # Build the Quarkus fast-jar. Skip tests (they need Docker + network); the
       # released bytecode is identical to upstream's `mvn clean package`.
