@@ -118,13 +118,19 @@ pipeline:
       #    explicit <version> -- and floci declares httpclient5 5.5.1 directly
       #    (it is what docker-java-transport-httpclient5 wants). CVE-2026-64607
       #    has no 5.5.x fix, so rewrite the direct element's version too.
+      # floci 2.1.0 put an XML COMMENT between <artifactId> and <version> (it
+      # explains why upstream holds 5.5.x), and \s* cannot span a comment, so the
+      # rewrite matched nothing and the guard below aborted the build. GAP allows
+      # comments as well as whitespace between the two elements.
+      GAP = r'(?:\s|<!--.*?-->)*'
       src, k = re.subn(
-          r'(<groupId>org\.apache\.httpcomponents\.client5</groupId>\s*'
-          r'<artifactId>httpclient5</artifactId>\s*<version>)[^<]*(</version>)',
-          r'\g<1>5.6.3\g<2>', src)
+          r'(<groupId>org\.apache\.httpcomponents\.client5</groupId>' + GAP +
+          r'<artifactId>httpclient5</artifactId>' + GAP + r'<version>)[^<]*(</version>)',
+          r'\g<1>5.6.3\g<2>', src, flags=re.S)
       stuck = [v for v in re.findall(
-          r'<groupId>org\.apache\.httpcomponents\.client5</groupId>\s*'
-          r'<artifactId>httpclient5</artifactId>\s*<version>([^<]*)</version>', src)
+          r'<groupId>org\.apache\.httpcomponents\.client5</groupId>' + GAP +
+          r'<artifactId>httpclient5</artifactId>' + GAP + r'<version>([^<]*)</version>',
+          src, flags=re.S)
           if v != '5.6.3']
       if not k or stuck:
           raise SystemExit(f"httpclient5 direct-dep pin FAILED (rewrote {k}, left {stuck})")
