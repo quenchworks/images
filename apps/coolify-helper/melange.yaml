@@ -36,7 +36,9 @@
 #
 #   * BUILT FROM SOURCE here (Go/Rust toolchains in Wolfi), instead of curled blobs --
 #     these five have NO Wolfi package that ever clears their CVEs (see build.conf):
-#       pack     0.38.2   (Go)   -- buildpacks/pack, `go build`, house x/* + docker/cli
+#       pack     0.40.9   (Go)   -- buildpacks/pack, `go build`, house x/* + docker/cli
+#                                   NEWER than the 0.38.2 upstream bundles: 0.40.9 is the
+#                                   lifecycle v0.21.19 line that drops docker/docker
 #                                   float (docker/docker CVE-2026-33997 stays -- see below)
 #       railpack 0.23.0   (Go)   -- railwayapp/railpack, `go build ./cmd/cli`, house float
 #       nixpacks 1.41.0   (Rust) -- railwayapp/nixpacks, `cargo build --release`
@@ -134,7 +136,7 @@ environment:
       - pkgconf
 
 pipeline:
-  # ---- pack (Go) -- buildpacks/pack v0.38.2 ----
+  # ---- pack (Go) -- buildpacks/pack v${{vars.pack-version}} ----
   - uses: git-checkout
     with:
       repository: https://github.com/buildpacks/pack
