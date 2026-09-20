@@ -39,7 +39,10 @@ pipeline:
       # CVE-2026-2303 (MEDIUM) in go.mongodb.org/mongo-driver <v1.17.7.
       # CVE-2026-46600 (UNKNOWN) in golang.org/x/net <v0.56.0 (dnsmessage panic).
       # CVE-2026-56852 (UNKNOWN) in golang.org/x/text <v0.39.0 (infinite loop).
-      go get go.mongodb.org/mongo-driver@v1.17.7
+      # otel CVE-2026-81870 / CVE-2026-81871: the published image drifted onto these
+      # after release. Every module listed is one this app's own go.mod carries; a
+      # floor naming a module absent from the graph is rejected by some recipes.
+      go get go.mongodb.org/mongo-driver@v1.17.7 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/sdk/metric@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0
       go get golang.org/x/net@v0.58.0 golang.org/x/crypto@v0.56.0 golang.org/x/text@v0.41.0
       # grpc GHSA-hrxh-6v49-42gf -> 1.82.1 (+ coherent otel 1.43.0 + oauth2 0.36.0 cascade).
       go get google.golang.org/grpc@v1.83.2 golang.org/x/oauth2@v0.36.0 \
