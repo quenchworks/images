@@ -8,10 +8,14 @@ it afterwards, so a new advisory lands on a shipped image with no signal at all:
 on 2026-09-20 that had happened to 34 images, found only because someone thought
 to look. This is the check that would have found them.
 
-It scans the NEWEST published version of each app, which is what people pull.
-Older tags drift too; scanning every one costs several hours of runner time for
-tags most users never pull, so this deliberately covers the newest only. Widen
-it when a stale-tag finding actually bites.
+It scans EVERY published version in the lock, not just the newest.
+
+It used to cover the newest only, on the argument that older tags cost runner
+time for images most people never pull. A 12-tag sample of the older ones on
+2026-09-20 came back 2 dirty, and one was grafana 13.0.2 with 52 findings
+including CRITICAL. Blocked apps are the worst case: grafana never rebuilds, so
+every tag it has ever published rots in place with nothing watching. An old tag
+is still something a user can pull and the catalog still claims is 0-CVE.
 
 Exit 1 when any image has findings, so a scheduled run fails visibly.
 """
@@ -30,14 +34,17 @@ TRIVY = ["trivy", "image", "--ignore-unfixed", "--severity", "CRITICAL,HIGH,MEDI
          "--scanners", "vuln", "--detection-priority", "comprehensive", "--quiet", "-f", "json"]
 
 
-def newest(lock) -> list[tuple[str, str, str]]:
+def all_versions(lock) -> list[tuple[str, str, str]]:
+    """Every published version of every app, newest first within each app.
+
+    Newest first matters for sharding: a shard that stalls has still covered the
+    tags most people pull before it ran out of time.
+    """
     out = []
     for name, app in sorted(lock["apps"].items()):
-        vs = app.get("versions") or []
-        if not vs:
-            continue
-        v = max(vs, key=lambda x: x["published"])
-        out.append((name, v["version"], app["image"]))
+        vs = sorted(app.get("versions") or [], key=lambda x: x["published"], reverse=True)
+        for v in vs:
+            out.append((name, v["version"], app["image"]))
     return out
 
 
@@ -81,7 +88,7 @@ def main() -> int:
     args = ap.parse_args()
 
     lock = yaml.safe_load((ROOT / "catalog.lock.yaml").read_text())
-    targets = newest(lock)
+    targets = all_versions(lock)
     if args.only:
         want = set(args.only)
         targets = [t for t in targets if t[0] in want]
@@ -93,14 +100,15 @@ def main() -> int:
         ref = "%s:%s" % (image, ver)
         found = scan(name, ref)
         if found is None:
-            failed.append(name)
-            print("%-28s SCAN FAILED" % name, flush=True)
+            # app AND version: one app can now fail on one tag and pass on another.
+            failed.append("%s %s" % (name, ver))
+            print("%-28s %-14s SCAN FAILED" % (name, ver), flush=True)
         elif found:
             dirty.append({"app": name, "version": ver, "findings": found})
             worst = ",".join(sorted({f["severity"] or "?" for f in found}))
-            print("%-28s %d finding(s) [%s]" % (name, len(found), worst), flush=True)
+            print("%-28s %-14s %d finding(s) [%s]" % (name, ver, len(found), worst), flush=True)
         else:
-            print("%-28s clean" % name, flush=True)
+            print("%-28s %-14s clean" % (name, ver), flush=True)
 
     print("\nscanned %d | dirty %d | scan-failed %d" % (len(targets), len(dirty), len(failed)))
     if args.json:

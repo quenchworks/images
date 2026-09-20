@@ -33,6 +33,11 @@ jobs:
 
       # continue-on-error: a shard exits 1 when it FINDS something, which is the
       # normal outcome here, not a workflow failure. The report job decides.
+      #
+      # 12 shards over every published version is ~31 scans each, up from ~19
+      # when this covered newest-only. At roughly 45s a scan that is ~23 min per
+      # shard against a 6h job timeout. Raise the shard count if one starts
+      # running long, not before.
       - name: Scan this shard
         continue-on-error: true
         run: |
@@ -81,7 +86,7 @@ jobs:
           fi
 
           {
-            echo "Scanned the newest published version of every app in \`catalog.lock.yaml\`."
+            echo "Scanned every published version in \`catalog.lock.yaml\`."
             echo "These were clean when built and have since drifted onto fixable CVEs."
             echo
             jq -r '.dirty[] | "### \(.app) \(.version)\n\n" + ([.findings[] | "- \(.pkg) \(.installed) -> \(.fixed) (\(.id), \(.severity))"] | unique | join("\n")) + "\n"' all.json
