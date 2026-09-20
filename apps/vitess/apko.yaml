@@ -1,0 +1,40 @@
+# Assembles the Vitess runtime image. Minimal, nonroot (uid 1001), multi-arch,
+# SBOM by apko. Bundles the core Vitess command set on PATH (/usr/bin): vtgate,
+# vttablet, vtctld, vtctldclient, vtorc, mysqlctl, mysqlctld, vtbackup. The
+# default entrypoint is vtgate; a deployment overrides the command to pick the
+# component it runs, which is how upstream's own vitess/lite image is used.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-vitess@local
+
+accounts:
+  groups:
+    - groupname: vitess
+      gid: 1001
+  users:
+    - username: vitess
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/vtgate
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-vitess"
+  org.opencontainers.image.licenses: "Apache-2.0"

@@ -1,0 +1,126 @@
+# Builds Vitess from the release tarball onto Wolfi. Static Go binaries (CGO off).
+# One package ships the core command set a Vitess deployment needs: vtgate,
+# vttablet, vtctld, vtctldclient, vtorc, mysqlctl, mysqlctld and vtbackup.
+# Output is a signed APK in Quenchworks' own repo, no upstream distro binaries.
+#
+# GOTOOLCHAIN=local pins the build to the Wolfi go package build.conf selected for
+# this line (hermetic, no network toolchain download). build.conf explains why the
+# three release lines cannot share one Go.
+package:
+  name: quench-vitess
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Vitess, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - __GOPKG__
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/vitessio/vitess/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOTOOLCHAIN=local
+      # The tarball carries no git metadata, and Vitess bakes its version into a
+      # generated constant rather than an ldflag. Assert the constant matches the
+      # version we claim to be building, so a mismatched tarball fails here rather
+      # than shipping an image whose tag lies about its contents.
+      grep -q "versionName = \"${{package.version}}\"" go/vt/servenv/version.go \
+        || { echo "go/vt/servenv/version.go does not declare ${{package.version}}"; exit 1; }
+      # Align the go directive to the Wolfi toolchain's patch so GOTOOLCHAIN=local
+      # does not try to fetch a newer one. 23.0.6 asks for go 1.25.13 while Wolfi
+      # ships 1.25.12; the difference is a patch release, so the source is
+      # compatible and only the directive's version check is in the way. Guarded on
+      # major.minor so this can never move the build to a different Go line.
+      installed="$(go env GOVERSION | sed 's/^go//')"
+      want="$(awk '/^go /{ print $2; exit }' go.mod)"
+      if [ "${want%.*}" = "${installed%.*}" ] && [ "$want" != "$installed" ]; then
+        echo "lowering go directive ${want} -> ${installed} (same line, patch only)"
+        sed -i -E "s/^go ${want}$/go ${installed}/" go.mod
+      fi
+      # The toolchain must be at or above the directive. ABOVE is normal here and
+      # is the point: build.conf puts 23.0.6 on go-1.26 rather than the go-1.25 its
+      # directive names, because the 0-CVE floor needs x/crypto v0.56.0 and that
+      # module declares `go 1.26.0`. Only BELOW is a broken GOPKG mapping.
+      have="$(awk '/^go /{ print $2; exit }' go.mod)"
+      awk -v a="$installed" -v b="$have" 'BEGIN {
+        na = split(a, x, "."); nb = split(b, y, ".")
+        for (i = 1; i <= 3; i++) {
+          if ((x[i] + 0) > (y[i] + 0)) exit 0
+          if ((x[i] + 0) < (y[i] + 0)) exit 1
+        }
+        exit 0 }' \
+        || { echo "toolchain ${installed} is BELOW go.mod's ${have}; GOPKG is wrong for this version"; exit 1; }
+      # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
+      # FLOOR is a FLOOR, not a pin. A bare `go get mod@vX` fails silently in two
+      # directions: it is a NO-OP when an upstream `replace` overrides it, and it
+      # becomes a DOWNGRADE once upstream requires more than vX, re-introducing
+      # the CVE it was added to clear. So float only what is below the floor.
+      #
+      # The three release lines carry DIFFERENT otel sets (24 has the otlptrace
+      # exporters, 23 and 22 do not), so this is the union. `go list -m -e` prints
+      # nothing usable for a module absent from the graph and the awk filter drops
+      # it, which is what lets one floor serve all three.
+      #
+      # otel/log is deliberately NOT here. 23.0.6 pins it at v0.14.0, and v0.21.0
+      # deletes keyvalue.go from that module, so floating it breaks an app's own
+      # source rather than its dependencies. Add it only if a scan names it, and
+      # measure the build when doing so.
+      FLOOR="golang.org/x/crypto@v0.56.0 golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0 golang.org/x/sys@v0.47.0 golang.org/x/mod@v0.40.0 google.golang.org/grpc@v1.83.2 github.com/DataDog/dd-trace-go/v2@v2.8.1 github.com/cilium/ebpf@v0.22.0 github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream@v1.7.8 github.com/aws/aws-sdk-go-v2/service/s3@v1.97.3 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/sdk/metric@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is
+      # the EFFECTIVE version and a replace cannot hide behind the require line.
+      need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      # `go mod tidy` after the float is not optional here: raising
+      # dd-trace-go/v2 pulls in transitive requirements the original go.sum
+      # never recorded, and the build fails with a wall of "missing go.sum
+      # entry" rather than a version complaint. Safe with respect to the go
+      # directive because the toolchain is already at or above it, checked above.
+      if [ -n "$need" ]; then go get $need; go mod tidy; fi
+      # -s -w strips the symbol table and DWARF: 8 binaries at ~90MB become ~500MB
+      # instead of ~700MB, and nothing here reads its own symbols.
+      for b in vtgate vttablet vtctld vtctldclient vtorc mysqlctl mysqlctld vtbackup; do
+        echo "building go/cmd/$b ..."
+        go build -trimpath -ldflags "-s -w" \
+          -o "${{targets.destdir}}/usr/bin/$b" "./go/cmd/$b"
+        # The float is only real if it reached the BINARY. Every dep/=> line must
+        # be at or above its floor; the => line is what catches a replace-shadowed
+        # float. Fail the build rather than ship it.
+        bad="$(go version -m "${{targets.destdir}}/usr/bin/$b" \
+          | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor "$b")"
+        [ -z "$bad" ] || { echo "0-CVE float did not reach the binary:"; echo "$bad"; exit 1; }
+      done
+      # Every binary must actually be there and be executable. A `go build` that
+      # writes nothing still exits 0 when the package list is empty.
+      for b in vtgate vttablet vtctld vtctldclient vtorc mysqlctl mysqlctld vtbackup; do
+        [ -x "${{targets.destdir}}/usr/bin/$b" ] || { echo "missing binary: $b"; exit 1; }
+      done
