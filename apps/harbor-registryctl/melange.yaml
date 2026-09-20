@@ -60,6 +60,9 @@ pipeline:
       # bump the two laggards to v1.43.0 (the fixed version) to clear the gate.
       go get go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0
       go get go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0
+      # otel/sdk was NOT in this list and carries CVE-2026-81870 at 1.44.0.
+      # sdk moves with the exporters, never after them.
+      go get go.opentelemetry.io/otel/sdk@v1.45.0
       # Comprehensive 0-CVE gate: three FIXABLE transitive deps flagged for the
       # registryctl binary (all minor/patch, API-compatible, same major -- not a
       # fork/force). Plain `go get` (NO `go mod tidy`) so we don't walk the

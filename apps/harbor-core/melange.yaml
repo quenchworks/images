@@ -320,6 +320,9 @@ pipeline:
       # bump the two laggards to v1.43.0 (the fixed version) to clear the gate.
       go get go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0
       go get go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0
+      # otel/sdk was NOT in this list and the published image carried it at 1.44.0
+      # with CVE-2026-81870. sdk moves with the exporters, never after them.
+      go get go.opentelemetry.io/otel/sdk@v1.45.0
       # Three FIXABLE gobinary CVEs in harbor_core's Go module graph; clear them
       # with dep bumps (all leaf/patch/minor bumps -- plain `go get`, NO
       # `go mod tidy`, to avoid a full-module tidy walking generated dirs):
