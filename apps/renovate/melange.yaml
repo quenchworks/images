@@ -139,6 +139,36 @@ pipeline:
       '
       rm -rf .az-stage
 
+      # --- qs CVE-2026-82417 + CVE-2026-82562 (both MEDIUM): 6.15.3 -> 6.16.0. Two DoS
+      # paths in query-string parsing, one improper validation and one array-limit
+      # bypass. Renovate parses query strings from platform API URLs, so the parser is
+      # reachable. Arrived with the 44.103 dependency tree; 44.30.4 scanned clean.
+      # Staged the same way as adm-zip and brace-expansion above, for the same reason:
+      # a global install has no project package.json, so npm `overrides` are ignored.
+      # qs 6.16.0 is a minor within the same 6.x API and keeps the same entry point.
+      mkdir -p .qs-stage
+      echo '{"name":"quench-qs-stage","private":true}' > .qs-stage/package.json
+      ( cd .qs-stage && npm install --no-audit --no-fund --no-package-lock qs@6.16.0 )
+      find "${destdir}/usr/lib/node_modules" -type d -name qs -print0 > "${PWD}/.qs-copies"
+      QS_STAGE="${PWD}/.qs-stage/node_modules/qs" NM_ROOT="${destdir}/usr/lib/node_modules" \
+      QS_COPIES="${PWD}/.qs-copies" node -e '
+        const fs=require("fs"), path=require("path");
+        const stage=process.env.QS_STAGE, root=process.env.NM_ROOT;
+        const ver=d=>JSON.parse(fs.readFileSync(path.join(d,"package.json"),"utf8")).version;
+        const copies=fs.readFileSync(process.env.QS_COPIES,"utf8").split("\0").filter(Boolean);
+        if(!copies.length) throw new Error("no qs copy under "+root);
+        let rep=0;
+        for(const d of copies){
+          if(ver(d)!=="6.16.0"){ fs.rmSync(d,{recursive:true}); fs.cpSync(stage,d,{recursive:true}); rep++; }
+          if(ver(d)!=="6.16.0") throw new Error("qs still "+ver(d)+" at "+d);
+          const q=require(d);
+          if(typeof q.parse!=="function"||typeof q.stringify!=="function") throw new Error("qs lost parse/stringify at "+d);
+          if(q.parse("a[0]=1&a[1]=2").a[1]!=="2") throw new Error("qs parse round-trip failed at "+d);
+        }
+        console.log("qs: "+copies.length+" copies, "+rep+" replaced");
+      '
+      rm -rf .qs-stage
+
       # Sanity: the launcher symlink must exist (build fails loudly otherwise).
       test -L "${destdir}/usr/bin/renovate"
       test -f "${destdir}/usr/lib/node_modules/renovate/dist/renovate.js"
