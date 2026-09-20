@@ -41,14 +41,23 @@ def newest(lock) -> list[tuple[str, str, str]]:
     return out
 
 
-def scan(ref: str) -> list[dict] | None:
+def scan(app: str, ref: str) -> list[dict] | None:
     """Findings for one image, or None if the scan itself failed.
 
     None matters: a Trivy failure is not a clean image. Running these in
     parallel produced exactly that confusion, so they run one at a time.
+
+    The build gate passes apps/<app>/vex.openvex.json to Trivy (build-image.sh),
+    so an app whose clearance is documented there ships green. Scanning without
+    it re-reports those same cleared advisories as drift, which is how grafana,
+    jenkins-inbound-agent and kgateway landed on the first run's list. Apply the
+    identical VEX here so the two scanners agree; anything not in the VEX file
+    is still a finding.
     """
+    vex = ROOT / "apps" / app / "vex.openvex.json"
+    extra = ["--vex", str(vex)] if vex.is_file() else []
     try:
-        p = subprocess.run(TRIVY + [ref], capture_output=True, text=True, timeout=600)
+        p = subprocess.run(TRIVY + extra + [ref], capture_output=True, text=True, timeout=600)
         if p.returncode not in (0, 1) or not p.stdout.strip():
             return None
         d = json.loads(p.stdout)
@@ -82,7 +91,7 @@ def main() -> int:
     dirty, failed = [], []
     for name, ver, image in targets:
         ref = "%s:%s" % (image, ver)
-        found = scan(ref)
+        found = scan(name, ref)
         if found is None:
             failed.append(name)
             print("%-28s SCAN FAILED" % name, flush=True)
