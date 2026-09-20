@@ -219,14 +219,26 @@ pipeline:
       getj "$MC/io/opentelemetry/opentelemetry-api/1.62.0/opentelemetry-api-1.62.0.jar" opentelemetry-api-1.62.0.jar d58143928c049233653e6bf1282ff8a767ebdd5e6a82b3f336158c30e40b431d
       find "$dest/modules" -name 'opentelemetry-api-1.47.0.jar' -exec sh -c 'cp "$1" "$(dirname "$2")/opentelemetry-api-1.62.0.jar"; rm -f "$2"' _ "$DL/opentelemetry-api-1.62.0.jar" {} \;
 
-      # --- (e) reactor-netty 1.0.45 -> 1.2.8 in x-pack-inference ONLY (it bundles the newer
-      #     reactor-core 3.7.5 that 1.2.8 requires; core+http bumped as a pair)
-      getj "$MC/io/projectreactor/netty/reactor-netty-core/1.2.8/reactor-netty-core-1.2.8.jar" reactor-netty-core-1.2.8.jar 108e2bd0db4f23da1d4ee8ec149e40bdef717b652c63540f2705843f66c99f66
-      getj "$MC/io/projectreactor/netty/reactor-netty-http/1.2.8/reactor-netty-http-1.2.8.jar" reactor-netty-http-1.2.8.jar 2e3306ef24ca39077971bafd2f21c1e890f8703f01e8d1741013642413530692
+      # --- (e) reactor-netty CVE-2025-22227 (fixed in 1.2.5). Up to ES 9.5.2 this block
+      #     swapped the bundled 1.0.45 for 1.2.8. ES 9.5.4 bundles 1.2.18 itself, which is
+      #     already past the fix, so the swap is DROPPED: the `rm -f` for 1.0.45 matched
+      #     nothing while the 1.2.8 copy still landed, leaving two jars of the same JPMS
+      #     module in x-pack-inference and killing boot with
+      #     "Two versions of module reactor.netty.http found".
+      #
+      #     Assert instead of trusting it. If a later ES bundles a reactor-netty older than
+      #     the 1.2.5 fix, this must fail loudly rather than ship the CVE back.
       infd="$dest/modules/x-pack-inference"
-      rm -f "$infd"/reactor-netty-core-1.0.45.jar "$infd"/reactor-netty-http-1.0.45.jar
-      cp "$DL/reactor-netty-core-1.2.8.jar" "$infd/reactor-netty-core-1.2.8.jar"
-      cp "$DL/reactor-netty-http-1.2.8.jar" "$infd/reactor-netty-http-1.2.8.jar"
+      for comp in core http; do
+        f=$(ls "$infd"/reactor-netty-$comp-*.jar 2>/dev/null | head -1)
+        test -n "$f" || { echo "reactor-netty-$comp missing from x-pack-inference"; exit 1; }
+        n=$(basename "$f"); v=${n#reactor-netty-$comp-}; v=${v%.jar}
+        test "$(printf '%s\n1.2.5\n' "$v" | sort -V | head -1)" = "1.2.5" || {
+          echo "reactor-netty-$comp is $v, older than the 1.2.5 fix for CVE-2025-22227"; exit 1; }
+        echo "reactor-netty-$comp $v ok (>= 1.2.5)"
+      done
+      test "$(ls "$infd"/reactor-netty-http-*.jar | wc -l)" = 1 || {
+        echo "more than one reactor-netty-http jar in x-pack-inference"; exit 1; }
 
       # --- (f) SURGERY on Elastic's OWN core x-content uber-jar (un-droppable). It embeds
       #     jackson-core 2.18.8 as an EXPLODED, UN-RELOCATED impl dir under IMPL-JARS/, read
