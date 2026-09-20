@@ -176,6 +176,18 @@ pipeline:
       make -C documentdb/pg_documentdb_core USE_PGXS=1 with_llvm=no install DESTDIR="${{targets.destdir}}"
       make -C documentdb/pg_documentdb USE_PGXS=1 USE_DOCUMENTDB_CORE=1 with_llvm=no -j"$(nproc)"
       make -C documentdb/pg_documentdb USE_PGXS=1 USE_DOCUMENTDB_CORE=1 with_llvm=no install DESTDIR="${{targets.destdir}}"
+      # DocumentDB's OWN extended RUM, which is not postgrespro/rum built in step 3.
+      # 0.117 loads it by default (DocumentDBRumLibraryLoadOption: 2) and Postgres
+      # dies at startup without it:
+      #   FATAL: could not access file "$libdir/pg_documentdb_extended_rum_core"
+      # The directory is present at 0.114-0, 0.116-0 and 0.117-0 alike, so this is
+      # built for every version rather than conditionally; the older ones simply did
+      # not load it.
+      make -C documentdb/pg_documentdb_extended_rum/core USE_PGXS=1 with_llvm=no -j"$(nproc)"
+      make -C documentdb/pg_documentdb_extended_rum/core USE_PGXS=1 with_llvm=no install DESTDIR="${{targets.destdir}}"
+      # The install is only real if the .so landed where Postgres looks for it.
+      find "${{targets.destdir}}" -name 'pg_documentdb_extended_rum_core*.so' | grep -q . \
+        || { echo "pg_documentdb_extended_rum_core.so was not installed"; exit 1; }
 
   # 5. The Rust gateway (pg_documentdb_gw). cargo build --release produces the
   #    documentdb_gateway binary, which speaks the MongoDB wire protocol and proxies
