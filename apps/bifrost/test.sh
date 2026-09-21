@@ -25,18 +25,24 @@ done
 # The console is embedded in the binary with go:embed. Serving HTTP 200 on / is
 # what proves the UI stage actually produced something; a gateway built with an
 # empty ui/ directory still starts and still answers the API.
-body="$(curl -s http://127.0.0.1:18080/ 2>/dev/null | head -c 2000)"
-echo "$body" | grep -qi "<div id=\"root\"\|bifrost" \
-  || { echo "/ did not return the embedded console markup"; exit 1; }
+#
+# Written to a file rather than piped into `head`: under `set -o pipefail`, head
+# closing the pipe early makes curl exit 23 and takes the whole script with it.
+# That is what failed CI on 2.1.1 while passing locally, because whether head
+# closes first depends on the response size and timing.
+body="$(mktemp)"
+curl -s -o "$body" http://127.0.0.1:18080/ || true
+grep -qi '<div id="root"\|bifrost' "$body" \
+  || { echo "/ did not return the embedded console markup"; head -c 400 "$body"; exit 1; }
 
 # The ldflag stamp must have reached the binary, so the image tag cannot disagree
-# with what it actually runs.
-ver="$(docker run --rm --entrypoint /usr/bin/bifrost "$IMAGE" -version 2>&1 | head -3 || true)"
-echo "$ver" | grep -q "${VERSION}" || {
-  # -version may not exist on every line; fall back to the API the server exposes.
-  ver="$(curl -s http://127.0.0.1:18080/api/version 2>/dev/null || true)"
-  echo "$ver" | grep -q "${VERSION}" \
-    || { echo "version ${VERSION} not reported (got: $ver)"; exit 1; }
-}
+# with what it actually runs. The binary has no -version flag (its flags are
+# -port, -host, -app-dir, -log-level, -log-style) and no version endpoint; it
+# prints main.Version in a banner on stdout at startup, so the running
+# container's logs are where it is readable.
+logs="$(mktemp)"
+docker logs "$name" >"$logs" 2>&1 || true
+grep -q "${VERSION}" "$logs" \
+  || { echo "version ${VERSION} not found in the startup banner"; tail -25 "$logs"; exit 1; }
 
 echo "smoke test passed (nonroot user: $user, console served HTTP 200, version ${VERSION})"
