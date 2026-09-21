@@ -1,0 +1,50 @@
+# Assembles the OpenCost runtime image. Minimal, nonroot (uid 1001), multi-arch,
+# SBOM by apko. One binary at /usr/bin/opencost serving the cost-model API on
+# 9003, with the cloud pricing JSONs at /var/configs where the binary looks for
+# them by default.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-opencost@local
+
+accounts:
+  groups:
+    - groupname: opencost
+      gid: 1001
+  users:
+    - username: opencost
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  # The config manager watches this directory and rewrites a provider's pricing
+  # file when the API is used to change it, so uid 1001 owns it. A deployment on
+  # a read-only rootfs mounts a volume here.
+  - path: /var/configs
+    type: directory
+    permissions: 0o755
+    uid: 1001
+    gid: 1001
+    recursive: true
+
+entrypoint:
+  command: /usr/bin/opencost
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-opencost"
+  org.opencontainers.image.licenses: "Apache-2.0"

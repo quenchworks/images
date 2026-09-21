@@ -1,0 +1,101 @@
+# Builds OpenCost from the release tarball onto Wolfi. Static Go binary (CGO
+# off) plus the cloud pricing JSONs the cost model reads at runtime. Output is a
+# signed APK in Quenchworks' own repo, no upstream distro binaries.
+package:
+  name: quench-opencost
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened OpenCost, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - go-1.26
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/opencost/opencost/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOTOOLCHAIN=local
+      # Upstream stamps the version from a git tag, which a tarball does not
+      # carry, so it is passed explicitly. GitCommit is left empty rather than
+      # invented: a wrong revision in `opencost --version` is worse than none.
+      # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
+      # FLOOR is a FLOOR, not a pin: a bare `go get mod@vX` is a NO-OP when a
+      # replace overrides it and a DOWNGRADE once upstream needs more than vX.
+      #   github.com/golang-jwt/jwt/v4  CVE-2025-30204 (HIGH), CVE-2024-51744
+      #                                 (LOW). 1.121.3 ships v4.5.0; the 1.120
+      #                                 and 1.119 lines already ship v4.5.2, so
+      #                                 this entry is a no-op for them.
+      #   go.opentelemetry.io/otel/sdk  CVE-2026-81870
+      #   golang.org/x/{crypto,net,text}, google.golang.org/grpc  the canonical
+      #                                 set, flagged on the 1.120 and 1.119
+      #                                 lines only; 1.121.3 already ships past
+      #                                 all four. x/crypto v0.56.0 declares
+      #                                 `go 1.26.0`, which is reachable because
+      #                                 every line here builds on go-1.26.
+      #   github.com/modelcontextprotocol/go-sdk  four advisories on the 1.119
+      #                                 line, fixed across 1.3.1, 1.4.0 and
+      #                                 1.4.1; the floor is 1.4.1, the highest
+      #                                 any of them names, not the lowest that
+      #                                 closes each one.
+      #   aws-sdk-go-v2 eventstream AND service/s3  both carry
+      #                                 GHSA-xmrv-pmrh-hhx2 on the 1.119 line. Flooring
+      #                                 eventstream alone left s3 behind and the gate
+      #                                 simply named the sibling next.
+      # All five otel modules move together even though only sdk was flagged;
+      # every line carries the same five, and none carries the 0.x log series.
+      FLOOR="github.com/modelcontextprotocol/go-sdk@v1.4.1 github.com/aws/aws-sdk-go-v2/service/s3@v1.97.3 github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream@v1.7.8 golang.org/x/crypto@v0.56.0 golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0 golang.org/x/sys@v0.47.0 google.golang.org/grpc@v1.83.2 github.com/golang-jwt/jwt/v4@v4.5.2 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/sdk/metric@v1.45.0"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # $NF is the EFFECTIVE version, so a replace cannot hide behind the require.
+      need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; go mod tidy; fi
+      V=github.com/opencost/opencost/core/pkg/version
+      go build -trimpath -ldflags "-s -w -X ${V}.Version=${{package.version}}" \
+        -o "${{targets.destdir}}/usr/bin/opencost" ./cmd/costmodel
+      [ -x "${{targets.destdir}}/usr/bin/opencost" ] || { echo "no opencost binary"; exit 1; }
+      # The float is only real if it reached the BINARY; the => line catches a
+      # replace-shadowed float. Fail rather than ship it.
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/opencost" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor opencost)"
+      [ -z "$bad" ] || { echo "0-CVE float did not reach the binary:"; echo "$bad"; exit 1; }
+      # The cost model resolves each provider's pricing file as
+      # path.Join(CONFIG_PATH, name), and CONFIG_PATH defaults to /var/configs
+      # (core/pkg/env). Installing them there is what lets the image run with no
+      # environment set; see build.conf for why this differs from upstream's
+      # /models layout.
+      install -d "${{targets.destdir}}/var/configs"
+      install -m 0644 configs/*.json "${{targets.destdir}}/var/configs/"
+      # default.json is the fallback provider and the one a cluster with no cloud
+      # integration uses, so its absence is a silent mispricing rather than a crash.
+      [ -f "${{targets.destdir}}/var/configs/default.json" ] \
+        || { echo "configs/default.json was not installed"; exit 1; }
+      install -D -m 0644 THIRD_PARTY_LICENSES.txt \
+        "${{targets.destdir}}/usr/share/doc/opencost/THIRD_PARTY_LICENSES.txt"
