@@ -57,8 +57,12 @@ environment:
       - busybox
       - ca-certificates-bundle
       - git
-      # Atlantis go.mod needs go >= 1.25.x, OpenTofu >= 1.26.x; use go-1.26 for both.
-      - go-1.26
+      # Atlantis 0.48.0 raised its go directive to 1.27.1 and refuses to build on
+      # go-1.26 under GOTOOLCHAIN=local ("go.mod requires go >= 1.27.1 (running
+      # go 1.26.8)"). Wolfi's go-1.27 is 1.27.1-r0, which meets it exactly.
+      # OpenTofu is built in this same environment and asks for >= 1.26.x, and a
+      # toolchain above a directive is fine, so one package still covers both.
+      - go-1.27
 
 pipeline:
   # 1) Atlantis from the git tag source tarball. Pinned to the tag; sha256-verified.
