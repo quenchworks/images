@@ -1,0 +1,61 @@
+# Apache Spark from Wolfi's per-line spark-<X.Y>-scala-2.13 apks (built from source
+# by Wolfi, vulnerable Maven deps bumped). No melange step. The -compat apk adds the
+# /opt/spark, /opt/entrypoint.sh and /opt/decom.sh links upstream's image uses.
+# __PKG__ / __PKG_COMPAT__ are rendered per version by build.conf.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - openjdk-21-jre
+    - __PKG__
+    - __PKG_COMPAT__
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+      homedir: /home/nonroot
+  run-as: 1001
+
+entrypoint:
+  command: /opt/entrypoint.sh
+
+environment:
+  SPARK_HOME: /opt/spark
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  PATH: /opt/spark/bin:/opt/spark/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  HOME: /home/nonroot
+  LANG: C.UTF-8
+
+work-dir: /opt/spark/work-dir
+
+paths:
+  - path: /usr/lib/spark/work-dir
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /home/nonroot
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-spark"
+  org.opencontainers.image.licenses: "Apache-2.0"
