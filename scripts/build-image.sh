@@ -98,6 +98,18 @@ if [ -f melange.yaml ]; then
   # run builds can be installed.
   rm -rf ./packages
   MELANGE_READY=1        # the per-arch loop below builds each arch just before it scans
+
+  # Sibling apks: apko can install ANOTHER app's package from ./packages (the PHP apps
+  # install quench-nginx@local). CI builds that sibling into ./packages first; without
+  # the same step here the gate stopped at `nothing provides "quench-nginx"`. Build each
+  # sibling at its newest version, as the CI workflows do.
+  SIBLINGS=""
+  for p in $(grep -vE '^\s*#' "$APKO" | grep -oE 'quench-[a-z0-9-]+@local' | sed 's/@local$//' | sort -u); do
+    grep -qE "^\s*(- )?name: $p\s*$" "$MEL" && continue
+    d="$(grep -lE "^  name: $p\s*$" "$ROOT"/apps/*/melange.yaml | head -1)"
+    [ -n "$d" ] || { echo "❌ $p@local is built by no apps/*/melange.yaml"; exit 1; }
+    SIBLINGS="$SIBLINGS $(basename "$(dirname "$d")")"
+  done
 fi
 
 # --- 0-CVE gate: assemble and scan EVERY arch in $ARCHES -------------------
@@ -118,6 +130,22 @@ for SCAN_ARCH in $SCAN_ARCHES; do
 # `nothing provides "quench-mimir"` for amd64. Per-arch keeps peak memory to one build
 # and makes a missing package impossible to miss.
 if [ "${MELANGE_READY:-0}" = 1 ]; then
+  for s in $SIBLINGS; do
+    echo "📦 melange build sibling $s ($SCAN_ARCH) ..."
+    # Render beside the sibling's recipe (CI does the same) under a name no other
+    # gate writes, so a concurrent gate of the sibling itself is not clobbered.
+    sm="$ROOT/apps/$s/melange.sibling-$APP.yaml"
+    ( cd "$ROOT/apps/$s"
+      if [ -f build.conf ]; then
+        source build.conf
+        sed -e "$(render "${VERSIONS[${#VERSIONS[@]}-1]}")" melange.yaml > "$sm"
+      else
+        cp melange.yaml "$sm"
+      fi )
+    melange build "$sm" --arch "$SCAN_ARCH" --signing-key melange.rsa --out-dir ./packages \
+      || { rm -f "$sm"; echo "❌ sibling $s failed to build for $SCAN_ARCH"; exit 1; }
+    rm -f "$sm"
+  done
   echo "📦 melange build ($SCAN_ARCH) ..."
   melange build "$MEL" --arch "$SCAN_ARCH" --signing-key melange.rsa --out-dir ./packages
   # melange has exited 0 while producing nothing for an arch; refuse to scan a stale or
