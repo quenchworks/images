@@ -1,0 +1,39 @@
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-metallb-speaker@local
+
+accounts:
+  groups:
+    - groupname: metallb
+      gid: 1001
+  users:
+    - username: metallb
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# The speaker needs NET_RAW for L2 (ARP/NDP) announcements. A non-root process does not
+# get an added Kubernetes capability, so the chart runs this container as uid 0 with only
+# NET_RAW added (upstream runs it as root too). The image default stays nonroot.
+
+entrypoint:
+  command: /usr/bin/speaker
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-metallb-speaker"
+  org.opencontainers.image.licenses: "Apache-2.0"
