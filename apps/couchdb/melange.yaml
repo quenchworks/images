@@ -32,6 +32,7 @@ environment:
     repositories:
       - https://packages.wolfi.dev/os
     packages:
+      - curl        # build-only: fetches the dist (CDN first, archive fallback)
       - build-base
       - busybox
       - ca-certificates-bundle
@@ -45,11 +46,19 @@ environment:
       - python3            # configure runs a couple of python helpers (not the docs build)
 
 pipeline:
-  - uses: fetch
-    with:
-      uri: https://archive.apache.org/dist/couchdb/source/${{package.version}}/apache-couchdb-${{package.version}}.tar.gz
-      expected-sha256: __SHA256__
-      strip-components: 1
+  # Apache's CDN (dlcdn) serves only CURRENT releases and is fast; archive.apache.org keeps
+  # every release permanently but crawled at ~100 KB/s here. Try the CDN, fall back to the
+  # archive (older matrix versions always come from there), same checksum either way.
+  - runs: |
+      rel="${{package.version}}/apache-couchdb-${{package.version}}.tar.gz"
+      f="${rel##*/}"
+      for base in https://dlcdn.apache.org/couchdb/source https://archive.apache.org/dist/couchdb/source; do
+        curl -fsSL -o "$f" "$base/$rel" && break
+        rm -f "$f"
+      done
+      echo "__SHA256__  $f" | sha256sum -c -
+      tar -xzf "$f" --strip-components=1
+      rm -f "$f"
 
   - name: Configure (QuickJS engine, no SpiderMonkey/Fauxton/docs)
     runs: |

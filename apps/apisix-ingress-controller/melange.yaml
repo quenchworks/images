@@ -41,19 +41,26 @@ environment:
     repositories:
       - https://packages.wolfi.dev/os
     packages:
+      - curl        # build-only: fetches the dist (CDN first, archive fallback)
       - build-base
       - busybox
       - ca-certificates-bundle
       - go-1.26
 
 pipeline:
-  - uses: fetch
-    with:
-      # ASF source release. archive.apache.org is permanent; downloads.apache.org
-      # only serves the current release and 404s once this one is superseded.
-      uri: https://archive.apache.org/dist/apisix/ingress-controller/${{package.version}}/apache-apisix-ingress-controller-${{package.version}}-src.tgz
-      expected-sha256: __SHA256__
-      strip-components: 1
+  # Apache's CDN (dlcdn) serves only CURRENT releases and is fast; archive.apache.org keeps
+  # every release permanently but crawled at ~100 KB/s here. Try the CDN, fall back to the
+  # archive (older matrix versions always come from there), same checksum either way.
+  - runs: |
+      rel="${{package.version}}/apache-apisix-ingress-controller-${{package.version}}-src.tgz"
+      f="${rel##*/}"
+      for base in https://dlcdn.apache.org/apisix/ingress-controller https://archive.apache.org/dist/apisix/ingress-controller; do
+        curl -fsSL -o "$f" "$base/$rel" && break
+        rm -f "$f"
+      done
+      echo "__SHA256__  $f" | sha256sum -c -
+      tar -xzf "$f" --strip-components=1
+      rm -f "$f"
   - runs: |
       export CGO_ENABLED=0
       export GOFLAGS=-mod=mod

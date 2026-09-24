@@ -27,17 +27,24 @@ environment:
     repositories:
       - https://packages.wolfi.dev/os
     packages:
+      - curl        # build-only: fetches the dist (CDN first, archive fallback)
       - busybox
       - ca-certificates-bundle
 
 pipeline:
-  - uses: fetch
-    with:
-      # archive.apache.org is the permanent mirror (downloads.apache.org only keeps the
-      # current release, which would break the daily rebuild once 10.0.x/11 lands).
-      uri: https://archive.apache.org/dist/solr/solr/${{package.version}}/solr-${{package.version}}.tgz
-      expected-sha512: "__SHA512__"
-      strip-components: 1
+  # Apache's CDN (dlcdn) serves only CURRENT releases and is fast; archive.apache.org keeps
+  # every release permanently but crawled at ~100 KB/s here. Try the CDN, fall back to the
+  # archive (older matrix versions always come from there), same checksum either way.
+  - runs: |
+      rel="${{package.version}}/solr-${{package.version}}.tgz"
+      f="${rel##*/}"
+      for base in https://dlcdn.apache.org/solr/solr https://archive.apache.org/dist/solr/solr; do
+        curl -fsSL -o "$f" "$base/$rel" && break
+        rm -f "$f"
+      done
+      echo "__SHA512__  $f" | sha512sum -c -
+      tar -xzf "$f" --strip-components=1
+      rm -f "$f"
   - runs: |
       # install the distribution under /opt/solr. Ship the runtime pieces: bin (the
       # bash launcher + post/postlogs tools), server (Jetty + solr-webapp + default
@@ -66,7 +73,7 @@ pipeline:
       swap() { # reldir newfile sha256 url oldfile
         local rd="$1" nf="$2" sha="$3" url="$4" old="$5"
         rm -f "$dest/$rd/$old"
-        wget -q -O "$dest/$rd/$nf" "$url"
+        curl -fsSL -o "$dest/$rd/$nf" "$url"
         echo "$sha  $dest/$rd/$nf" | sha256sum -c - >/dev/null
       }
       swap modules/analysis-extras/lib opennlp-tools-2.5.9.jar bc2d28082607b211fdf3185c1496ea8e130fa1fe1bead85622d38487920017e2 "https://repo1.maven.org/maven2/org/apache/opennlp/opennlp-tools/2.5.9/opennlp-tools-2.5.9.jar" opennlp-tools-2.5.6.jar
