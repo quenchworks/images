@@ -42,11 +42,18 @@ environment:
       - zip                 # build-only: replace the BC jars nested in the bouncy-castle-bc bundle
 
 pipeline:
-  - uses: fetch
-    with:
-      uri: https://archive.apache.org/dist/pulsar/pulsar-${{package.version}}/apache-pulsar-${{package.version}}-bin.tar.gz
-      expected-sha512: "__SHA512__"
-      strip-components: 1
+  # Apache's CDN (dlcdn) serves only CURRENT releases and is fast; archive.apache.org keeps
+  # every release but crawled at ~100 KB/s here. Try the CDN, fall back to the archive,
+  # and verify the same checksum either way.
+  - runs: |
+      f=apache-pulsar-${{package.version}}-bin.tar.gz
+      for base in https://dlcdn.apache.org/pulsar https://archive.apache.org/dist/pulsar; do
+        curl -fsSL -o "$f" "$base/pulsar-${{package.version}}/$f" && break
+        rm -f "$f"
+      done
+      echo "__SHA512__  $f" | sha512sum -c -
+      tar -xzf "$f" --strip-components=1
+      rm -f "$f"
   - runs: |
       # Install the distribution under /opt/pulsar. Ship the runtime pieces: bin (the
       # bash launchers: pulsar, pulsar-admin, pulsar-client, etc.), conf (the seed
@@ -106,6 +113,9 @@ pipeline:
       # log4j-api 2.25.4 -> 2.25.5 (same 2.25 line, no behaviour change). Standalone jar,
       # so a straight swap; the 2.26 line is a bigger jump than this fix needs.
       swap org/apache/logging/log4j log4j-api 2.25.4 2.25.5
+      # jline bundle 4.2.1 -> 4.3.1 (CVE-2026-77420/77421/77422 in its reader and builtins,
+      # fixed on the same 4.x line). It is the one jline jar the dist ships.
+      swap org/jline jline 4.2.1 4.3.1 c75761d4625467083c208563718fc37551af2a3468271a0758726b1f7f728d75
       # async-http-client 2.15.0 -> 2.16.1. The first hop (to 2.16.0) cleared a MEDIUM
       # that entered the DB 2026-08-26; 2.16.0 itself is now flagged for CVE-2026-85721
       # (HIGH, plus CVE-2026-85717/85720), fixed in 2.16.1 on the same 2.x line. The

@@ -23,14 +23,22 @@ environment:
       - https://packages.wolfi.dev/os
     packages:
       - busybox
+      - curl        # build-only: fetches the dist (CDN first, archive fallback)
       - ca-certificates-bundle
 
 pipeline:
-  - uses: fetch
-    with:
-      uri: https://archive.apache.org/dist/kafka/${{package.version}}/kafka_2.13-${{package.version}}.tgz
-      expected-sha256: "__SHA256__"
-      strip-components: 1
+  # Apache's CDN (dlcdn) serves only CURRENT releases and is fast; archive.apache.org keeps
+  # every release but crawled at ~100 KB/s here. Try the CDN, fall back to the archive,
+  # and verify the same checksum either way.
+  - runs: |
+      f=kafka_2.13-${{package.version}}.tgz
+      for base in https://dlcdn.apache.org/kafka https://archive.apache.org/dist/kafka; do
+        curl -fsSL -o "$f" "$base/${{package.version}}/$f" && break
+        rm -f "$f"
+      done
+      echo "__SHA256__  $f" | sha256sum -c -
+      tar -xzf "$f" --strip-components=1
+      rm -f "$f"
   - runs: |
       # install the distribution under /opt/kafka, dropping the Windows launchers
       dest="${{targets.destdir}}/opt/kafka"
@@ -69,7 +77,7 @@ pipeline:
       swap() { # newfile sha256 url oldglob
         local nf="$1" sha="$2" url="$3" oldglob="$4"
         rm -f "$dest"/libs/$oldglob
-        wget -q -O "$dest/libs/$nf" "$url"
+        curl -fsSL -o "$dest/libs/$nf" "$url"
         echo "$sha  $dest/libs/$nf" | sha256sum -c - >/dev/null
       }
       swap jackson-core-2.21.5.jar b64b5874162b503a0e58a8f7758266e8dd9f91bf49e3a59ae0b5f47589a231b7 "$M/com/fasterxml/jackson/core/jackson-core/2.21.5/jackson-core-2.21.5.jar" 'jackson-core-2.21.2.jar'
@@ -82,7 +90,9 @@ pipeline:
       swap jackson-module-blackbird-2.21.5.jar 6e1aac3aed140a3defec385083bba339d52eebb3f940582f03f64ad43ef3c433 "$M/com/fasterxml/jackson/module/jackson-module-blackbird/2.21.5/jackson-module-blackbird-2.21.5.jar" 'jackson-module-blackbird-2.21.2.jar'
       swap jackson-module-jakarta-xmlbind-annotations-2.21.5.jar 5cb2cc2bf59faccf412ed6cba8588724b23c6145e5bda8d5ebee26db6d4dd12a "$M/com/fasterxml/jackson/module/jackson-module-jakarta-xmlbind-annotations/2.21.5/jackson-module-jakarta-xmlbind-annotations-2.21.5.jar" 'jackson-module-jakarta-xmlbind-annotations-2.21.2.jar'
       swap lz4-java-1.11.1.jar e5e31b195fcc7e9c5da4b191af3b0082ee616c13f61cbd79409ffa65e4dd5c47 "$M/at/yawk/lz4/lz4-java/1.11.1/lz4-java-1.11.1.jar" 'lz4-java-1.10.2.jar'
-      swap jline-4.2.1.jar bdbe3b7b276ee609c28f11f704be11fdebe7375eb1a7d10a489086225cdbc535 "$M/org/jline/jline/4.2.1/jline-4.2.1.jar" 'jline-3.30.4.jar'
+      # jline 4.2.1 (the first target) is itself flagged since 2026-09: CVE-2026-77420/77421/
+      # 77422 in the bundled reader/builtins, fixed in 4.3.1 on the 4.x line.
+      swap jline-4.3.1.jar c75761d4625467083c208563718fc37551af2a3468271a0758726b1f7f728d75 "$M/org/jline/jline/4.3.1/jline-4.3.1.jar" 'jline-3.30.4.jar'
       swap jetty-security-12.0.36.jar e6fb70974291312c58ac84d8bf28c909d1800d1b3104020e7cd4db77391f9fb2 "$M/org/eclipse/jetty/jetty-security/12.0.36/jetty-security-12.0.36.jar" 'jetty-security-12.0.34.jar'
       swap jetty-server-12.0.36.jar f0eb8d1e71d67d0f937c45752546cf479ba55ad3135cf600d3bf723f52cd53fe "$M/org/eclipse/jetty/jetty-server/12.0.36/jetty-server-12.0.36.jar" 'jetty-server-12.0.34.jar'
       swap jetty-util-12.0.36.jar e16c145dd761168133d1505b6f7cf05343f5e3e3ff03333757c8a6312896ab48 "$M/org/eclipse/jetty/jetty-util/12.0.36/jetty-util-12.0.36.jar" 'jetty-util-12.0.34.jar'

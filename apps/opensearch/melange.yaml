@@ -170,6 +170,22 @@ pipeline:
       swapjar 'netty-codec-http-4.2.*.Final.jar' netty-codec-http-4.2.17.Final.jar "$nch"
       swapjar 'log4j-api-2.25.4.jar'       log4j-api-2.25.5.jar       "$l4j"
       rm -f "$hch2" "$hcre" "$nch" "$l4j"   # $hc/$hcore are reused by block (2d)
+
+      # opensearch-ml bundles jline 3.21.0 (CVE-2026-77420/77421/77422, fix 3.30.15 on the 3.x
+      # line). The five jline jars move together, and jansi 2.4.0 -> 2.4.3 because
+      # jline-terminal-jansi 3.30.15 declares it. All Java 8 bytecode.
+      for pair in \
+        "org/jline jline-builtins 3.30.15 e67700beba6fbe9b2babb365aa3d32d8ee8ab79326aae01aee7288fddc66ae3e" \
+        "org/jline jline-reader 3.30.15 f72f2ce167765b18a7604370963c1413b5bec923a97576b745fbce40a7034fbf" \
+        "org/jline jline-style 3.30.15 302a8779c9f175ea618e573bb38e8d240c3c5ccdfe639aeccec69e0b5ef0690c" \
+        "org/jline jline-terminal 3.30.15 eed027d1f63a870c8d0522c067959382ad7d3ccddfd8c7041488432189e0e284" \
+        "org/jline jline-terminal-jansi 3.30.15 de0a419b6b5aaa6029c0546c7bf79e4ab326f0b9d749283687294b8506dcf545" \
+        "org/fusesource/jansi jansi 2.4.3 ec168cf31c4c3849348dfff7a04e90170615f7784f1255ee6747b98a854c04c5"; do
+        set -- $pair; g=$1; a=$2; v=$3; sha=$4
+        t=$(mktemp); curl -fsSL -o "$t" "$MC/$g/$a/$v/$a-$v.jar"; echo "$sha  $t" | sha256sum -c -
+        case "$a" in jansi) old='jansi-2.4.0.jar' ;; *) old="$a-3.21.0.jar" ;; esac
+        swapjar "$old" "$a-$v.jar" "$t"; rm -f "$t"
+      done
       # Nothing may be left behind at an old version, or the classloader sees both.
       for stale in 'httpclient5-5.6.1.jar' 'httpcore5-5.4.jar' 'httpcore5-h2-5.4.jar' \
                    'httpcore5-reactive-5.4.jar' 'log4j-api-2.25.4.jar'; do
