@@ -75,7 +75,10 @@ pipeline:
       # EMPTY on Ruby >= 4.0: Wolfi's ruby-4.0 apk ships NO
       # specifications/default/json-*.gemspec and instead `depend = ruby4.0-json`
       # (already the fixed line), so there is nothing to strip there.
-      DJV="$(grep -oE 'specifications/default/json-[0-9.]+\.gemspec' /tmp/all.txt \
+      # melange's shell runs with pipefail, so a grep that matches nothing (the 4.0 case)
+      # fails this assignment and set -e ends the build before the `if` below; that is
+      # what reverted the first 4.0 attempt. `|| true` lets an empty match through.
+      DJV="$( { grep -oE 'specifications/default/json-[0-9.]+\.gemspec' /tmp/all.txt || true; } \
              | sed -E 's#.*/json-([0-9.]+)\.gemspec#\1#' | head -n1)"
 
       if [ -n "$DJV" ]; then
