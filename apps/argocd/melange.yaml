@@ -42,7 +42,7 @@
 # Wolfi: that apk is rebuilt continuously (5.8.1-r10) and scans clean.
 #
 # ---------------------------------------------------------------------------
-# go.mod declares go 1.26.0 (3.4) / 1.25.5 (3.2, 3.3); we build with go-1.26
+# go.mod declares go 1.26.3 (3.5) / 1.26.0 (3.4) / 1.25.5 (3.3); we build with go-1.26
 # (1.26.5, newest, clears stdlib advisories) and GOTOOLCHAIN=local so the
 # directive does not trigger a toolchain download. GOFLAGS=-mod=mod lets the
 # module graph resolve the floated deps for the 0-CVE gate.
@@ -110,7 +110,8 @@ environment:
       # UI toolchain (upstream Dockerfile argocd-ui stage uses node 23 + yarn
       # classic; nodejs-24 is the closest Wolfi major). Build-only.
       - nodejs-24
-      - yarn
+      - yarn                # 3.3 / 3.4 UI (yarn.lock)
+      - pnpm                # 3.5+ UI (pnpm-lock.yaml, packageManager pnpm@10.x)
 
 pipeline:
   - uses: fetch
@@ -118,14 +119,24 @@ pipeline:
       uri: https://github.com/argoproj/argo-cd/archive/refs/tags/v${{package.version}}.tar.gz
       expected-sha256: __SHA256__
 
-  - name: Build the React web console from source (yarn + webpack)
+  - name: Build the React web console from source (yarn or pnpm + webpack)
     runs: |
       set -eu
-      # Writable HOME/cache for yarn inside the sandbox.
+      # Writable HOME/cache for yarn/pnpm inside the sandbox.
       export HOME="$(mktemp -d)"
       export YARN_CACHE_FOLDER="$(mktemp -d)"
       cd ui
-      yarn install --network-timeout 200000
+      # 3.5 moved the UI from yarn to pnpm. Follow whichever lockfile the tag ships.
+      if [ -f pnpm-lock.yaml ]; then
+        # Wolfi's pnpm is the same 10.x major as the packageManager pin; stop pnpm
+        # fetching the exact pinned version from the network instead.
+        export npm_config_manage_package_manager_versions=false
+        pnpm install --frozen-lockfile
+        pm=pnpm
+      else
+        yarn install --network-timeout 200000
+        pm=yarn
+      fi
       # Mirrors the Dockerfile argocd-ui stage. HOST_ARCH only feeds a
       # process.env define used to link the right CLI download; take it from the
       # toolchain so each native arch stamps itself.
@@ -134,8 +145,8 @@ pipeline:
       NODE_ENV=production \
       NODE_ONLINE_ENV=online \
       NODE_OPTIONS=--max_old_space_size=4096 \
-        yarn build
-      # `yarn build` starts by deleting everything under dist except `gitkeep`,
+        "$pm" build
+      # The build script starts by deleting everything under dist except `gitkeep`,
       # so these assertions distinguish "webpack ran" from "the placeholder tree
       # is still all there is" -- which is precisely the silent failure mode a
       # bare `go build` would have shipped.
