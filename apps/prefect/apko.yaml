@@ -1,0 +1,55 @@
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-prefect@local
+
+accounts:
+  groups:
+    - groupname: prefect
+      gid: 1001
+  users:
+    - username: prefect
+      uid: 1001
+      gid: 1001
+      homedir: /var/lib/prefect
+  run-as: 1001
+
+# PREFECT_HOME holds the UI copy and, without a database URL, the SQLite database.
+# The chart mounts a volume here under a read-only root.
+paths:
+  - path: /var/lib/prefect
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  HOME: /var/lib/prefect
+  PREFECT_HOME: /var/lib/prefect
+  PATH: /opt/prefect/venv/bin:/usr/bin:/bin
+  PYTHONUNBUFFERED: "1"
+  # no usage analytics from the server
+  PREFECT_SERVER_ANALYTICS_ENABLED: "false"
+
+entrypoint:
+  command: /opt/prefect/venv/bin/prefect
+
+cmd: server start --host 0.0.0.0 --port 4200
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-prefect"
+  org.opencontainers.image.licenses: "Apache-2.0"
