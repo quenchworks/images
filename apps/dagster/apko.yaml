@@ -1,0 +1,54 @@
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-dagster@local
+
+accounts:
+  groups:
+    - groupname: dagster
+      gid: 1001
+  users:
+    - username: dagster
+      uid: 1001
+      gid: 1001
+      homedir: /var/lib/dagster
+  run-as: 1001
+
+# DAGSTER_HOME must exist; the chart mounts a volume here under a read-only root.
+paths:
+  - path: /var/lib/dagster
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  HOME: /var/lib/dagster
+  DAGSTER_HOME: /var/lib/dagster
+  PATH: /opt/dagster/venv/bin:/usr/bin:/bin
+  PYTHONUNBUFFERED: "1"
+  # no telemetry from the webserver or daemon
+  DAGSTER_DISABLE_TELEMETRY: "true"
+
+entrypoint:
+  command: /opt/dagster/venv/bin/dagster-webserver
+
+cmd: -h 0.0.0.0 -p 3000 --empty-workspace
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-dagster"
+  org.opencontainers.image.licenses: "Apache-2.0"

@@ -1,0 +1,55 @@
+# Packages Dagster into a self-contained venv at /opt/dagster/venv.
+package:
+  name: quench-dagster
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Dagster data orchestrator, packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - python-3.13            # the venv references the system interpreter
+      - ca-certificates-bundle
+      - glibc
+      - libstdc++
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - python-3.13
+      - py3.13-pip
+      - build-base             # fallback for any transitive dep without a wheel
+
+pipeline:
+  - runs: |
+      set -eu
+      VER="${{package.version}}"
+      dest="${{targets.destdir}}"
+      VENV=/opt/dagster/venv
+      python3.13 -m venv "$VENV"
+      "$VENV/bin/pip" install --no-cache-dir --upgrade pip
+      # dagster-postgres follows its own 0.x numbering; pinning dagster makes pip pick the
+      # matching release.
+      "$VENV/bin/pip" install --no-cache-dir \
+        "dagster==${VER}" "dagster-webserver==${VER}" "dagster-graphql==${VER}" dagster-postgres
+      "$VENV/bin/python" -c "import importlib.metadata as m, sys; v = m.version('dagster'); assert v == sys.argv[1], v; print('dagster', v, 'dagster-postgres', m.version('dagster-postgres'))" "${VER}"
+      "$VENV/bin/pip" uninstall -y pip
+      install -d "${dest}/opt/dagster"
+      cp -a "$VENV" "${dest}/opt/dagster/venv"
+      install -d "${dest}/usr/bin"
+      for b in dagster dagster-webserver dagster-daemon; do
+        ln -sf "/opt/dagster/venv/bin/$b" "${dest}/usr/bin/$b"
+      done
+      chmod -R a+rX "${dest}/opt/dagster"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /opt/dagster/venv/bin/dagster-webserver
