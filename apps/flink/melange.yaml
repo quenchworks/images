@@ -1,0 +1,125 @@
+# Packages the Apache Flink binary distribution under /opt/flink on a Wolfi JRE.
+package:
+  name: quench-flink
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Apache Flink, packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-21-jre
+      - bash       # Flink's launch scripts and the entrypoint are bash
+      - busybox
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - curl
+
+pipeline:
+  # Apache's CDN (dlcdn) serves only current releases and is fast; archive.apache.org
+  # keeps every release but is slow here. CDN first, archive fallback, same sha512.
+  - runs: |
+      f=flink-${{package.version}}-bin-scala_2.12.tgz
+      for base in https://dlcdn.apache.org/flink https://archive.apache.org/dist/flink; do
+        curl -fsSL -o "$f" "$base/flink-${{package.version}}/$f" && break
+        rm -f "$f"
+      done
+      echo "__SHA512__  $f" | sha512sum -c -
+      tar -xzf "$f" --strip-components=1
+      rm -f "$f"
+
+  - runs: |
+      set -eu
+      dest="${{targets.destdir}}/opt/flink"
+      install -d "$dest"
+      cp -r bin conf lib plugins licenses LICENSE NOTICE "$dest/"
+      rm -f "$dest"/bin/*.cmd
+
+      # log4j2 2.25.3 -> 2.25.5 (CVE-2026-34477/34478/34479/34480/34481, CVE-2026-49844).
+      # The five jars are one binding and move together. Each swap asserts the old jar is
+      # there, so a dist that moves log4j fails loudly instead of gaining a second copy.
+      M=https://repo1.maven.org/maven2/org/apache/logging/log4j
+      swap() { # <artifact> <sha256 of 2.25.5>
+        old="$dest/lib/$1-2.25.3.jar"; new="$dest/lib/$1-2.25.5.jar"
+        test -f "$old" || { echo "FATAL: $1-2.25.3.jar not shipped; re-audit this swap"; ls "$dest/lib"; exit 1; }
+        curl -fsSL -o "$new" "$M/$1/2.25.5/$1-2.25.5.jar"
+        echo "$2  $new" | sha256sum -c -
+        rm -f "$old"
+      }
+      swap log4j-1.2-api              4dd812dc5a6343f542a9e0046b1ec78ecf10bdd5a8c15745101cdd8b9aa24974
+      swap log4j-api                  64777f73ea0b3104c04eb82befbdccc30a425a19e83ad06cb2f93aa303511863
+      swap log4j-core                 050c4f85deb48b055e9c041ac39043fbb79ce477841a11a1eb2969c86c6a0072
+      swap log4j-layout-template-json 27c37313e20c16bf0178e38d9d1a5c7320e34c03aa35bc2c66a589ea14abf545
+      swap log4j-slf4j-impl           3d25b926bc6025c47ec010459749c12aa66b9d5537ba1922d67d89a098a66607
+      n="$(ls "$dest"/lib/log4j-*.jar | grep -vc -- '-2.25.5.jar' || true)"
+      [ "$n" = 0 ] || { echo "FATAL: a log4j jar is still on another version"; ls "$dest"/lib/log4j-*; exit 1; }
+      chmod -R a+rX "$dest"
+
+      # Container entrypoint. Mirrors apache/flink-docker's: config lives in a writable
+      # copy (FLINK_CONF_DIR; the root filesystem is read-only), container binds and
+      # FLINK_PROPERTIES go through Flink's own config-parser-utils.sh, which edits the
+      # YAML properly, then jobmanager / taskmanager run in the foreground.
+      install -d "${{targets.destdir}}/usr/bin"
+      cat > "${{targets.destdir}}/usr/bin/docker-entrypoint.sh" <<'EOS'
+      #!/bin/bash
+      set -euo pipefail
+      FLINK_HOME=/opt/flink
+      export FLINK_CONF_DIR="${FLINK_CONF_DIR:-/tmp/flink-conf}"
+      export FLINK_LOG_DIR="${FLINK_LOG_DIR:-/tmp/flink-log}"
+      mkdir -p "$FLINK_CONF_DIR" "$FLINK_LOG_DIR"
+      [ -f "$FLINK_CONF_DIR/config.yaml" ] || cp -r "$FLINK_HOME/conf/." "$FLINK_CONF_DIR/"
+
+      rpc="${JOB_MANAGER_RPC_ADDRESS:-$(hostname)}"
+      opts=(
+        "-Djobmanager.rpc.address=$rpc"
+        "-Djobmanager.bind-host=0.0.0.0"
+        "-Dtaskmanager.bind-host=0.0.0.0"
+        "-Drest.address=$rpc"
+        "-Drest.bind-address=0.0.0.0"
+        "-Dblob.server.port=6124"
+        "-Dquery.server.port=6125"
+      )
+      [ -z "${TASK_MANAGER_NUMBER_OF_TASK_SLOTS:-}" ] || opts+=("-Dtaskmanager.numberOfTaskSlots=$TASK_MANAGER_NUMBER_OF_TASK_SLOTS")
+      if [ -n "${FLINK_PROPERTIES:-}" ]; then
+        while IFS= read -r line; do
+          line="${line#"${line%%[![:space:]]*}"}"
+          [ -z "$line" ] && continue
+          key="${line%%:*}"; value="${line#*:}"
+          key="${key%"${key##*[![:space:]]}"}"; value="${value#"${value%%[![:space:]]*}"}"
+          opts+=("-D$key=$value")
+        done <<< "$FLINK_PROPERTIES"
+      fi
+      "$FLINK_HOME/bin/config-parser-utils.sh" "$FLINK_CONF_DIR" "$FLINK_HOME/bin" "$FLINK_HOME/lib" "${opts[@]}" >/dev/null
+
+      cmd="${1:-help}"; [ $# -gt 0 ] && shift
+      case "$cmd" in
+        jobmanager)     exec "$FLINK_HOME/bin/jobmanager.sh" start-foreground "$@" ;;
+        taskmanager)    exec "$FLINK_HOME/bin/taskmanager.sh" start-foreground "$@" ;;
+        standalone-job) exec "$FLINK_HOME/bin/standalone-job.sh" start-foreground "$@" ;;
+        history-server) exec "$FLINK_HOME/bin/historyserver.sh" start-foreground "$@" ;;
+        help) echo "usage: (jobmanager|taskmanager|standalone-job|history-server) [args]"; exit 0 ;;
+        *)              exec "$cmd" "$@" ;;
+      esac
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/docker-entrypoint.sh"
+
+test:
+  environment:
+    contents:
+      packages:
+        - openjdk-21-jre
+        - bash
+        - busybox
+  pipeline:
+    - runs: |
+        bash -n /usr/bin/docker-entrypoint.sh
+        ls /opt/flink/lib/flink-dist-*.jar
+        test -f /opt/flink/conf/config.yaml
