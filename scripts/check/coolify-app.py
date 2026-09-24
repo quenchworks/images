@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-# coolify-app: coolify itself; upstream versions.json -> coolify.v4.version.
-from _lib import json_get, report
-d = json_get("https://raw.githubusercontent.com/coollabsio/coolify/main/versions.json")
-report("coolify-app", [d["coolify"]["v4"]["version"]])
+# coolify-app: coolify itself; GitHub releases, stable v4 tags only. main's
+# versions.json names the NEXT version before it is tagged (it said 4.4 while
+# v4.3.23 was the newest release), and the recipe checks out a release commit.
+import re
+from _lib import github, report
+report("coolify-app", [t for t in github("coollabsio/coolify") if re.fullmatch(r"4\.\d+\.\d+", t)], n=1)
