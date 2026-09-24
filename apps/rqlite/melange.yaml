@@ -45,7 +45,21 @@ pipeline:
       # 0-CVE float: golang.org/x/text (CVE-2026-56852 infinite loop) to its fixed
       # minor, resolved within the module graph via GOFLAGS=-mod=mod (not a fork/force).
       go get golang.org/x/text@v0.41.0 golang.org/x/net@v0.58.0 golang.org/x/crypto@v0.56.0 golang.org/x/sys@v0.47.0 google.golang.org/grpc@v1.83.2
+      # A CEILING, not a floor, and the only one in this recipe. go-metrics
+      # DELETED its compat package in v0.7.0, while hashicorp/serf/coordinate
+      # (reached through rqlite-disco-clients -> consul/api) still imports it.
+      # Nothing in 10.3.6's graph pins go-metrics, so `go mod tidy` searched for
+      # a module providing that import, took @latest, and failed with
+      #   go-metrics@latest found (v0.7.0), but does not contain package
+      #   github.com/hashicorp/go-metrics/compat
+      # v0.6.1 is the newest release that still ships compat, checked by listing
+      # the module zips, and go-metrics carries no advisory that would force a
+      # higher version. Revisit when serf stops importing compat.
+      go get github.com/hashicorp/go-metrics@v0.6.1
       go mod tidy
+      # The ceiling only holds if tidy did not raise it again.
+      have="$(go list -m github.com/hashicorp/go-metrics | awk '{ print $NF }')"
+      [ "$have" = "v0.6.1" ] || { echo "go-metrics is $have, expected v0.6.1 (compat was removed in v0.7.0)"; exit 1; }
       LDFLAGS='-s -w -X github.com/rqlite/rqlite/v10/cmd.Version=${{package.version}} -extldflags "-static"'
       # rqlited: the distributed database server.
       go build -trimpath -ldflags "$LDFLAGS" \
