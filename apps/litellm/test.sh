@@ -18,9 +18,19 @@ for _ in $(seq 1 90); do
 done
 [ "$ok" = 1 ] || { echo "proxy never answered /health/liveliness"; docker logs "$NAME" 2>&1 | tail -40; exit 1; }
 
-# the OpenAI-compatible surface is mounted (no models configured, so an empty list)
+# no master key is set here, so the API is open and lists no models
 curl -fsS http://127.0.0.1:14000/v1/models >/dev/null \
   || { echo "/v1/models did not answer"; docker logs "$NAME" 2>&1 | tail -20; exit 1; }
+
+# with a master key, a request without it must be rejected with 401, not a 500 (the
+# auth error path imports prisma, which a first build was missing)
+docker rm -f "$NAME" >/dev/null 2>&1
+docker run -d --name "$NAME" -e LITELLM_MASTER_KEY=sk-smoke -p 127.0.0.1:14000:4000 "$IMAGE" >/dev/null
+for _ in $(seq 1 90); do curl -fsS http://127.0.0.1:14000/health/liveliness >/dev/null 2>&1 && break; sleep 1; done
+code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:14000/v1/models)"
+[ "$code" = 401 ] || { echo "expected 401 without the key, got $code"; docker logs "$NAME" 2>&1 | tail -30; exit 1; }
+curl -fsS -H "Authorization: Bearer sk-smoke" http://127.0.0.1:14000/v1/models >/dev/null \
+  || { echo "/v1/models with the key did not answer"; exit 1; }
 
 docker exec "$NAME" /opt/litellm/venv/bin/python -c \
   "import importlib.metadata as m; v=m.version('litellm'); print('litellm', v); assert v=='${VERSION}', v"
