@@ -196,6 +196,15 @@ jobs:
           output-file: sbom.spdx.json
           upload-artifact: false
 
+      # The venv's per-file records push the SPDX SBOM past actions/attest-sbom's 16 MB
+      # limit (the first publish failed on exactly that). Packages-only is still a valid
+      # SPDX document and is what the attestation needs.
+      - name: Trim SBOM under the 16 MB attest ceiling
+        run: |
+          jq 'del(.files) | del(.relationships)' sbom.spdx.json > sbom.trimmed.json
+          mv sbom.trimmed.json sbom.spdx.json
+          ls -l sbom.spdx.json
+
       - name: Attest the SBOM (keyless, pushed to GHCR)
         uses: actions/attest-sbom@v4
         with:
