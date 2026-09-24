@@ -5254,7 +5254,7 @@ apps:
     category: Observability
     summary: Kubernetes cost monitoring and allocation (CNCF). Serves the cost-model API on 9003 as a
       single static Go binary on a hardened nonroot Wolfi base, with the cloud pricing configs installed
-      where the binary resolves them by default. Image only, no chart.
+      where the binary resolves them by default.
     source: https://github.com/opencost/opencost
     upstream: https://opencost.io
     license: Apache-2.0
@@ -5278,4 +5278,45 @@ apps:
       digest: sha256:420c082184a37a51f0b477aafbfc37d9f4d7426146d0ef94dbce348556f518a9
       published: '2026-09-21T08:27:36Z'
       size: 39.6 MB
+      layers: 1
+  metallb-controller:
+    image: ghcr.io/quenchworks/images/metallb-controller
+    category: Coordination & mesh
+    summary: MetalLB controller, the cluster-wide half of the bare-metal LoadBalancer. Assigns Service
+      IPs from IPAddressPool CRDs and serves the CRD validation webhook. Built from source as a single
+      static Go binary on a hardened nonroot Wolfi base; pairs with metallb-speaker in the metallb chart.
+    source: https://github.com/metallb/metallb
+    upstream: https://metallb.io
+    license: Apache-2.0
+    tier: standard
+    status: built
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 0.16.0
+      digest: sha256:34f661a11ddbbac2600b3212bac0b38081fce0dc52b1292b8269b2b621eed3e1
+      published: '2026-09-24T16:01:40Z'
+      size: 19.2 MB
+      layers: 1
+  metallb-speaker:
+    image: ghcr.io/quenchworks/images/metallb-speaker
+    category: Coordination & mesh
+    summary: MetalLB speaker, the per-node half of the bare-metal LoadBalancer. Announces assigned Service
+      IPs over L2 (ARP/NDP) or BGP using the native implementation (FRR mode is not included). Built from
+      source as a single static Go binary on a hardened Wolfi base; the chart runs it with NET_RAW for
+      L2. Image only, no chart of its own; it ships in the metallb chart.
+    source: https://github.com/metallb/metallb
+    upstream: https://metallb.io
+    license: Apache-2.0
+    tier: standard
+    status: built
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 0.16.0
+      digest: sha256:91f8a85a5ccda0eac24e235ceff6cb64d546968c25321766f09d0cd850dbcaa0
+      published: '2026-09-24T16:01:23Z'
+      size: 20.2 MB
       layers: 1
