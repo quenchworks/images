@@ -96,6 +96,10 @@ pipeline:
       drops=("tar@<7.5.11:", "undici@<6.24.0:")
       add=[
         "  babel-traverse: 'npm:@babel/traverse@7.23.2'",  # CVE-2023-45133 rename fix
+        "  'mppx@<0.8.2': 0.8.2",                # CVE-2026-63627/63628, new in Ghost 6.65.0's
+                                                 # tree at 0.6.20. Floored at the fixed 0.8.2
+                                                 # rather than npm latest (0.11.0), keeping the
+                                                 # override the smallest move that clears both.
         "  'body-parser@<1.20.6': 1.20.6",       # CVE-2026-12590 (only the express-4 1.x copy;
                                                  # the express-5 2.3.0 copy is already clean)
         "  'brace-expansion@<5.0.9': 5.0.9",     # CVE-2026-14257, then CVE-2026-69152 which
