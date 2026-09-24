@@ -30,8 +30,65 @@ environment:
       - busybox
       - curl
       - ca-certificates-bundle
+      - go-1.26          # the Go backend is built from source (go.mod: go 1.26.6)
 
 pipeline:
+  # Build bin/grafana FROM SOURCE. The official tarball's binary compiles in modules this
+  # catalog cannot patch in a prebuilt file (thrift, the otel exporters, openfga,
+  # x/mod). Everything else in that tarball, the frontend build under public/, conf/ and
+  # the plugins, is version-matched to the same tag and installed by the next step, so
+  # no Node build is needed. Build settings mirror upstream's binary as read from
+  # `go version -m`: CGO_ENABLED=0, -trimpath, version and commit via -X main.*.
+  # wire_gen.go is committed at the tag, so no code generation step.
+  # Measured 2026-09-24 on 13.1.6 against upstream's frontend: /api/health reports
+  # 13.1.6, 19 datasource types including prometheus, loki and tempo, the login UI
+  # loads, and a prometheus datasource's /health reaches its in-binary backend.
+  - runs: |
+      set -eu
+      VER="${{package.version}}"
+      curl -fsSL -o grafana-src.tar.gz "https://github.com/grafana/grafana/archive/refs/tags/v${VER}.tar.gz"
+      echo "__SRC_SHA__  grafana-src.tar.gz" | sha256sum -c -
+      mkdir grafana-src && tar -xzf grafana-src.tar.gz -C grafana-src --strip-components=1
+      cd grafana-src
+      # go.mod replaces 31 of go.work's 34 local modules itself, so module mode builds
+      # without the workspace, and -mod=mod lets go get move the floated modules.
+      export GOWORK=off GOFLAGS=-mod=mod GOTOOLCHAIN=local CGO_ENABLED=0
+      O=go.opentelemetry.io
+      # The otel set is one coherent release train (core 1.45.0, log 0.21.0, and the
+      # contrib modules built against exactly that pair); moving only the flagged
+      # exporters leaves the rest of the log family on the old API and fails to compile.
+      go get github.com/apache/thrift@v0.24.0 github.com/openfga/openfga@v1.18.1 \
+             golang.org/x/mod@v0.40.0 \
+             $O/otel@v1.45.0 $O/otel/trace@v1.45.0 $O/otel/metric@v1.45.0 \
+             $O/otel/sdk@v1.45.0 $O/otel/sdk/metric@v1.45.0 \
+             $O/otel/exporters/otlp/otlptrace@v1.45.0 \
+             $O/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0 \
+             $O/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0 \
+             $O/otel/exporters/otlp/otlpmetric/otlpmetricgrpc@v1.45.0 \
+             $O/otel/exporters/otlp/otlpmetric/otlpmetrichttp@v1.45.0 \
+             $O/otel/exporters/stdout/stdoutmetric@v1.45.0 \
+             $O/otel/exporters/stdout/stdouttrace@v1.45.0 \
+             $O/otel/exporters/prometheus@v0.67.0 \
+             $O/otel/log@v0.21.0 $O/otel/sdk/log@v0.21.0 \
+             $O/otel/exporters/otlp/otlplog/otlploggrpc@v0.21.0 \
+             $O/otel/exporters/otlp/otlplog/otlploghttp@v0.21.0 \
+             $O/otel/exporters/stdout/stdoutlog@v0.21.0 \
+             $O/contrib/bridges/otelzap@v0.20.0 $O/contrib/bridges/prometheus@v0.70.0 \
+             $O/contrib/exporters/autoexport@v0.70.0 $O/contrib/otelconf@v0.25.0
+      go build -trimpath \
+        -ldflags "-w -X main.version=${VER} -X main.commit=__COMMIT__ -X main.buildBranch=HEAD" \
+        -o ../grafana-built ./pkg/cmd/grafana
+      cd ..
+      ./grafana-built --version | grep -q "version ${VER}"
+      # the gate reads these from the binary; assert the floats actually landed
+      go version -m grafana-built | tr -s '\t' ' ' > mods.txt   # fields are tab-separated
+      for want in "github.com/apache/thrift v0.24.0" "github.com/openfga/openfga v1.18.1" \
+                  "go.opentelemetry.io/otel/sdk v1.45.0" \
+                  "go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.21.0"; do
+        grep -qF "$want" mods.txt || { echo "float missing from binary: $want"; exit 1; }
+      done
+      rm -rf grafana-src grafana-src.tar.gz mods.txt
+
   # Grafana publishes separate amd64/arm64 OSS tarballs, so fetch the one matching the
   # build arch by uname -m (x86_64->amd64, aarch64->arm64) with the arch-matching sha256
   # (dl.grafana.com publishes a .tar.gz.sha256 companion). Using the wrong arch yields a
@@ -53,6 +110,8 @@ pipeline:
       tar -xzf grafana.tar.gz
 
       SRC="grafana-${VER}"
+      # swap in the binary built from source by the previous step
+      install -m 0755 grafana-built "${SRC}/bin/grafana"
       HOME_DIR="${{targets.destdir}}/usr/share/grafana"
       install -d "$HOME_DIR"
 
