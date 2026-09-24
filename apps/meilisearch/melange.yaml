@@ -1,7 +1,8 @@
 # Builds Meilisearch (fast, typo-tolerant full-text search engine) FROM SOURCE on
 # Wolfi with melange. Meilisearch is a Rust project (Cargo workspace); upstream pins
-# rust 1.91.1 in its rust-toolchain.toml, so we build with Wolfi's rust-1.91 toolchain
-# to match. Built from source (not an upstream binary) so the Trivy scan attributes
+# rust in its rust-toolchain.toml (1.91.1 on 1.53, 1.98.1 on 1.54), so we build with
+# the matching Wolfi rust-1.NN toolchain, keyed per version in build.conf.
+# Built from source (not an upstream binary) so the Trivy scan attributes
 # the vendored crates correctly and we can `cargo update` to clear any fixable CVE.
 #
 # Build deps mirror upstream's Dockerfile, which only needs build-base + openssl-dev
@@ -70,7 +71,7 @@ environment:
       - pkgconf
       - openssl-dev             # system OpenSSL (NOT vendored) for the TLS stack
       - perl                    # openssl-sys build scripts probe with perl
-      - rust-1.91               # Wolfi rust toolchain (matches upstream rust-toolchain.toml 1.91.1)
+      - __RUST__               # Wolfi rust toolchain matching upstream rust-toolchain.toml (build.conf RUST)
 
 pipeline:
   - uses: git-checkout
