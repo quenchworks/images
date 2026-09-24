@@ -1,0 +1,80 @@
+# Packages the LiteLLM proxy into a self-contained venv at /opt/litellm/venv.
+package:
+  name: quench-litellm
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened LiteLLM proxy (MIT build, no enterprise package), packaged on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - python-3.13            # the venv references the system interpreter
+      - ca-certificates-bundle # TLS to the LLM provider APIs
+      - glibc
+      - libstdc++              # tokenizers / polars wheels link it
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - python-3.13
+      - py3.13-pip
+      - build-base             # fallback for any transitive dep without a wheel
+
+pipeline:
+  - runs: |
+      set -eu
+      VER="${{package.version}}"
+      dest="${{targets.destdir}}"
+      VENV=/opt/litellm/venv
+      python3.13 -m venv "$VENV"
+      "$VENV/bin/pip" install --no-cache-dir --upgrade pip
+      "$VENV/bin/pip" install --no-cache-dir "litellm==${VER}"
+
+      # The "proxy" extra minus litellm-enterprise (proprietary), from litellm's own
+      # metadata so the list tracks each release. Markers other than the extra are kept.
+      "$VENV/bin/python" - > proxy-reqs.txt <<'PY'
+      import importlib.metadata as m
+      from pip._vendor.packaging.requirements import Requirement
+      for raw in m.requires("litellm") or []:
+          r = Requirement(raw)
+          if r.marker is None or not r.marker.evaluate({"extra": "proxy"}):
+              continue
+          if r.marker.evaluate({"extra": ""}):
+              continue                      # not proxy-specific; already installed
+          if r.name.lower() in ("litellm-enterprise",):
+              continue                      # proprietary; see build.conf
+          marker = str(r.marker)
+          keep = [p.strip() for p in marker.split(" and ") if "extra ==" not in p]
+          print(f"{r.name}{r.specifier}" + (f"; {' and '.join(keep)}" if keep else ""))
+      PY
+      echo "proxy requirements (litellm-enterprise excluded):"; cat proxy-reqs.txt
+      grep -qi '^litellm-proxy-extras' proxy-reqs.txt
+      "$VENV/bin/pip" install --no-cache-dir -r proxy-reqs.txt
+      rm -f proxy-reqs.txt
+
+      # license guard: the proprietary package must not be in the image
+      if "$VENV/bin/pip" show litellm-enterprise >/dev/null 2>&1; then
+        echo "litellm-enterprise got installed; the image must stay MIT"; exit 1
+      fi
+      "$VENV/bin/python" -c "import litellm.proxy.proxy_server as s; assert s.enterprise_proxy_config is None; print('proxy imports without enterprise')"
+      "$VENV/bin/python" -c "import importlib.metadata as m, sys; v = m.version('litellm'); assert v == sys.argv[1], v" "${VER}"
+
+      # pip is not needed at runtime and vendors its own copies of flagged libraries
+      "$VENV/bin/pip" uninstall -y pip
+      install -d "${dest}/opt/litellm"
+      cp -a "$VENV" "${dest}/opt/litellm/venv"
+      install -d "${dest}/usr/bin"
+      ln -sf /opt/litellm/venv/bin/litellm "${dest}/usr/bin/litellm"
+      chmod -R a+rX "${dest}/opt/litellm"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /opt/litellm/venv/bin/litellm

@@ -1,0 +1,43 @@
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-litellm@local
+
+accounts:
+  groups:
+    - groupname: litellm
+      gid: 1001
+  users:
+    - username: litellm
+      uid: 1001
+      gid: 1001
+      homedir: /home/litellm
+  run-as: 1001
+
+environment:
+  HOME: /home/litellm
+  PATH: /opt/litellm/venv/bin:/usr/bin:/bin
+  PYTHONUNBUFFERED: "1"
+  # no telemetry from the proxy
+  LITELLM_TELEMETRY: "False"
+
+entrypoint:
+  command: /opt/litellm/venv/bin/litellm --host 0.0.0.0 --port 4000
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-litellm"
+  org.opencontainers.image.licenses: "MIT"
