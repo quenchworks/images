@@ -48,7 +48,7 @@ accounts:
 # interpreter (the same way a `FROM` consumer's wrapper does), which also lets
 # Docker append the user's pnpm args after the script path.
 entrypoint:
-  command: /usr/bin/node /usr/lib/node_modules/pnpm/bin/pnpm.cjs
+  command: __ENTRY__   # 11.x: node + bin/pnpm.cjs; 12.x: the native /usr/bin/pnpm (build.conf entry())
 
 # HOME under a writable mount; pnpm's store/cache and npm's cache are pointed at
 # /tmp so a single `--tmpfs /tmp` keeps everything happy on a read-only rootfs.

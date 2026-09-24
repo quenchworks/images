@@ -1,9 +1,11 @@
-# pnpm from-source: pnpm ships on npm as a SELF-CONTAINED, prebuilt bundle
+# pnpm from-source: pnpm 11 ships on npm as a SELF-CONTAINED, prebuilt bundle
 # (bin/pnpm.cjs + a bundled dist/), so there is nothing to compile -- we just
 # fetch the exact npm release tarball (sha256-pinned) and lay it down under
 # /usr/lib/node_modules/pnpm on the Wolfi nodejs-22 runtime. This lets us pin
 # EXACT upstream pnpm versions that Wolfi's own apk lags behind. __VER__ and
 # __SHA256__ are rendered in from apps/pnpm/build.conf.
+# pnpm 12 is a native Rust binary instead (@pnpm/exe.<os>-<arch> on npm); the first
+# step below installs it and the JS-bundle step skips itself. Each step guards on the major.
 package:
   name: quench-pnpm
   version: __VER__
@@ -34,8 +36,26 @@ pipeline:
       uri: https://registry.npmjs.org/pnpm/-/pnpm-${{package.version}}.tgz
       expected-sha256: __SHA256__
       strip-components: 0
+  # pnpm 12+: the npm package fetched above is only a locator; pnpm itself is a native
+  # (Rust) binary published per platform as @pnpm/exe.<os>-<arch>. Install that binary,
+  # sha256-pinned per arch, and skip the JS bundle steps below, which do not apply.
   - runs: |
       set -eu
+      v="${{package.version}}"; [ "${v%%.*}" -ge 12 ] || exit 0
+      case "$(uname -m)" in
+        x86_64)  exe=linux-x64;   sha=__EXE_SHA_AMD__ ;;
+        aarch64) exe=linux-arm64; sha=__EXE_SHA_ARM__ ;;
+        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+      esac
+      curl -fsSL -o exe.tgz "https://registry.npmjs.org/@pnpm/exe.${exe}/-/exe.${exe}-${{package.version}}.tgz"
+      echo "${sha}  exe.tgz" | sha256sum -c -
+      rm -rf exe && mkdir exe && tar -xzf exe.tgz -C exe
+      install -D -m 0755 exe/package/pnpm "${{targets.destdir}}/usr/bin/pnpm"
+      install -D -m 0644 exe/package/LICENSE "${{targets.destdir}}/usr/share/licenses/pnpm/LICENSE"
+      install -D -m 0644 exe/package/THIRD-PARTY-NOTICES.md "${{targets.destdir}}/usr/share/licenses/pnpm/THIRD-PARTY-NOTICES.md"
+  - runs: |
+      set -eu
+      v="${{package.version}}"; [ "${v%%.*}" -lt 12 ] || exit 0   # 11.x JS bundle only
       dest="${{targets.destdir}}/usr/lib/node_modules/pnpm"
       install -d "$dest"
       cp -a package/. "$dest/"
