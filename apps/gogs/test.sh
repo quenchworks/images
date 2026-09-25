@@ -10,6 +10,8 @@ WANT="${2:-}"
 NAME="gogs-smoke-$$"
 WORK="$(mktemp -d "$PWD/.smoketest.XXXXXX")"
 trap 'docker rm -f "$NAME" >/dev/null 2>&1 || true; rm -rf "$WORK"' EXIT
+# a failed curl otherwise exits with only its status code
+trap 'echo "failed at line $LINENO"; docker logs "$NAME" 2>&1 | tail -40' ERR
 
 user="$(docker inspect "$IMAGE" --format '{{.Config.User}}')"
 [ "$user" = "1001" ] || { echo "expected user 1001, got '$user'"; exit 1; }
