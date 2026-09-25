@@ -44,11 +44,20 @@ users: [{name: none, user: {token: none}}]
 contexts: [{name: none, context: {cluster: none, user: none}}]
 current-context: none
 KC
+# the controller loads its EventBus settings before anything else (the chart's ConfigMap)
+mkdir -p "$WORK/etc"
+cat > "$WORK/etc/controller-config.yaml" <<'CFG'
+eventBus:
+  nats:
+    versions: []
+  jetstream:
+    versions: []
+CFG
 chmod -R a+rX "$WORK"
 lint="$(docker run --rm --read-only -v "$WORK:/w:ro" "$IMAGE" lint /w/es.yaml /w/sensor.yaml 2>&1 || true)"
 echo "$lint" | grep -qiE 'error|invalid' && { echo "lint rejected valid resources:"; echo "$lint"; exit 1; }
 
-docker run -d --name "$NAME" --read-only --tmpfs /tmp -v "$WORK/kubeconfig:/etc/kubeconfig:ro" \
+docker run -d --name "$NAME" --read-only --tmpfs /tmp -v "$WORK/kubeconfig:/etc/kubeconfig:ro" -v "$WORK/etc:/etc/argo-events:ro" \
   -e KUBECONFIG=/etc/kubeconfig "$IMAGE" controller >/dev/null
 sleep 10
 out="$(docker logs "$NAME" 2>&1)"
