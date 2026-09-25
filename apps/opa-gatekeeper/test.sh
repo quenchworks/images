@@ -2,8 +2,8 @@
 # Smoke test for a built opa-gatekeeper image. Usage: test.sh <image-ref> [version]
 # On a read-only root, with webhook certificates in /certs (generated here) and a
 # kubeconfig for an API server that does not answer, the manager must report its stamped
-# version, load its certificates, start the manager and its health server, and stay up
-# retrying the API server without a panic. The chart gate enforces a real policy in kind.
+# version, load its certificates, set up its controllers, webhooks and audit, and stop on
+# the unreachable API server without a panic. The chart gate enforces a real policy in kind.
 set -euo pipefail
 IMAGE="${1:?usage: test.sh <image-ref> [version]}"
 WANT="${2:-}"
@@ -29,9 +29,13 @@ docker run -d --name "$NAME" --read-only --tmpfs /tmp -v "$WORK/certs:/certs:ro"
   -e KUBECONFIG=/etc/kubeconfig -e POD_NAMESPACE=gatekeeper-system "$IMAGE" --disable-cert-rotation >/dev/null
 sleep 15
 out="$(docker logs "$NAME" 2>&1)"
-echo "$out" | grep -q '"starting manager"' || { echo "manager never started:"; echo "$out" | tail -15; exit 1; }
-[ -z "$WANT" ] || echo "$out" | grep -q "gatekeeper/v$WANT" || { echo "version v$WANT not stamped:"; echo "$out" | grep -m1 'user agent'; exit 1; }
-if echo "$out" | grep -q 'unable to create client cert watcher'; then echo "certificates not loaded:"; echo "$out" | grep 'cert watcher'; exit 1; fi
-[ "$(docker inspect "$NAME" --format '{{.State.Running}}')" = true ] || { echo "manager exited:"; echo "$out" | tail -15; exit 1; }
-if echo "$out" | grep -qE 'panic:|read-only file system'; then echo "manager crashed or wrote to the root:"; echo "$out" | tail -15; exit 1; fi
-echo "smoke test passed (opa-gatekeeper ${WANT:-?}, uid $user, certs loaded, manager up)"
+# here-strings, not echo | grep -q: the log is long, grep -q exits at the first match, echo
+# takes SIGPIPE and pipefail turns a match into a failure
+grep -q '"starting manager"' <<<"$out" || { echo "manager never started:"; grep '"logger":"setup"' <<<"$out" | tail -10; exit 1; }
+[ -z "$WANT" ] || grep -q "gatekeeper/v$WANT" <<<"$out" || { echo "version v$WANT not stamped:"; grep -m1 'user agent' <<<"$out"; exit 1; }
+if grep -q 'unable to create client cert watcher' <<<"$out"; then echo "certificates not loaded"; exit 1; fi
+# it builds its controllers, webhooks and audit, then stops on the unreachable API server
+grep -q '"setting up webhooks"' <<<"$out" && grep -q '"setting up audit"' <<<"$out" || { echo "setup incomplete:"; grep '"logger":"setup"' <<<"$out" | tail -10; exit 1; }
+grep -q '127.0.0.1:1' <<<"$out" || { echo "never dialed the configured API server"; exit 1; }
+if grep -qE 'panic:|read-only file system' <<<"$out"; then echo "manager crashed or wrote to the root"; exit 1; fi
+echo "smoke test passed (opa-gatekeeper ${WANT:-?}, uid $user, certs loaded, full setup, dialed the API server)"
