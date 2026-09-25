@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Smoke test for a built argo-events image. Usage: test.sh <image-ref> [version]
 # On a read-only root: the lint subcommand validates a real EventSource and Sensor, the
-# bundled argo CLI reports its version, and the controller, given a kubeconfig for an API
-# server that does not answer, logs its stamped version and dials that server without a
-# panic; the binary carries the stamped version. The chart gate runs a webhook
+# bundled argo CLI reports its version, and the controller (its config file, image env and
+# a kubeconfig for an API server that does not answer) starts its manager with the
+# stamped version and keeps retrying without a panic. The chart gate runs a webhook
 # EventSource and a Sensor in kind.
 set -euo pipefail
 IMAGE="${1:?usage: test.sh <image-ref> [version]}"
@@ -71,12 +71,10 @@ docker run -d --name "$NAME" --read-only --tmpfs /tmp -v "$WORK/kubeconfig:/etc/
   -e KUBECONFIG=/etc/kubeconfig -e ARGO_EVENTS_IMAGE="$IMAGE" "$IMAGE" controller --leader-election=false >/dev/null
 sleep 10
 out="$(docker logs "$NAME" 2>&1)"
-echo "$out" | grep -q '127.0.0.1:1' || { echo "controller never dialed the configured API server:"; echo "$out" | tail -15; exit 1; }
-if echo "$out" | grep -qE 'panic:|read-only file system'; then echo "controller crashed or wrote to the root:"; echo "$out" | tail -15; exit 1; fi
-# the controller logs its version only once it reaches the API server, so read the
-# stamp from the binary itself
-if [ -n "$WANT" ]; then
-  cid="$(docker create "$IMAGE")"; docker cp "$cid:/usr/bin/argo-events" "$WORK/argo-events" >/dev/null; docker rm "$cid" >/dev/null
-  grep -aq "v$WANT" "$WORK/argo-events" || { echo "version v$WANT not stamped into the binary"; exit 1; }
-fi
-echo "smoke test passed (argo-events ${WANT:-?}, uid $user, lint, argo CLI, controller dials the API server)"
+echo "$out" | grep -q '"Starting controller manager"' || { echo "controller manager never started:"; echo "$out" | tail -15; exit 1; }
+[ -z "$WANT" ] || echo "$out" | grep '"Starting controller manager"' | grep -q "\"version\":\"v$WANT" \
+  || { echo "version v$WANT not reported:"; echo "$out" | grep 'Starting controller'; exit 1; }
+# with the API server unreachable it keeps retrying rather than exiting
+[ "$(docker inspect "$NAME" --format '{{.State.Running}}')" = true ] || { echo "controller exited:"; echo "$out" | tail -15; exit 1; }
+if echo "$out" | grep -qE 'panic:|read-only file system|"level":"fatal"'; then echo "controller crashed or wrote to the root:"; echo "$out" | tail -15; exit 1; fi
+echo "smoke test passed (argo-events ${WANT:-?}, uid $user, lint, argo CLI, controller manager up)"
