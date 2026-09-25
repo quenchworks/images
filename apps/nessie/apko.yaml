@@ -1,0 +1,53 @@
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-nessie@local
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+      homedir: /home/nonroot
+  run-as: 1001
+
+environment:
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  HOME: /home/nonroot
+  LANG: C.UTF-8
+
+paths:
+  - path: /home/nonroot
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+work-dir: /home/nonroot
+
+# API on 19120, health and metrics on 9000 (/q/health). The version store defaults to
+# IN_MEMORY; NESSIE_VERSION_STORE_TYPE and its settings select a persistent one.
+# openjdk-21-jre has no /usr/bin/java symlink, so the path is the JDK's own.
+entrypoint:
+  command: /usr/lib/jvm/java-21-openjdk/bin/java -jar /usr/lib/nessie/nessie-quarkus-runner.jar
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-nessie"
+  org.opencontainers.image.licenses: "Apache-2.0"

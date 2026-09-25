@@ -1,0 +1,38 @@
+# Packages Project Nessie onto Wolfi from its official Quarkus uber-jar.
+package:
+  name: quench-nessie
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Project Nessie, the lakehouse table catalog, on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-21-jre       # the release is built with Java 21
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/projectnessie/nessie/releases/download/nessie-${{package.version}}/nessie-quarkus-${{package.version}}-runner.jar
+      expected-sha256: __SHA256__
+      extract: false
+  - runs: |
+      set -eu
+      install -Dm644 nessie-quarkus-${{package.version}}-runner.jar \
+        "${{targets.destdir}}/usr/lib/nessie/nessie-quarkus-runner.jar"
+
+test:
+  pipeline:
+    - runs: |
+        test -f /usr/lib/nessie/nessie-quarkus-runner.jar
