@@ -12,7 +12,9 @@ trap 'docker rm -f "$NAME" >/dev/null 2>&1 || true' EXIT
 user="$(docker inspect "$IMAGE" --format '{{.Config.User}}')"
 [ "$user" = "1001" ] || { echo "expected user 1001, got '$user'"; exit 1; }
 
-docker run -d --name "$NAME" --read-only --tmpfs /tmp \
+# exec on /tmp: the RocksDB JNI loader unpacks its .so there (docker mounts --tmpfs noexec;
+# a Kubernetes emptyDir is exec)
+docker run -d --name "$NAME" --read-only --tmpfs /tmp:exec \
   -e NESSIE_VERSION_STORE_TYPE=ROCKSDB -e NESSIE_VERSION_STORE_PERSIST_ROCKS_DATABASE_PATH=/tmp/rocksdb \
   -p 127.0.0.1:19120:19120 -p 127.0.0.1:19000:9000 "$IMAGE" >/dev/null
 ok=0
@@ -20,7 +22,7 @@ for _ in $(seq 1 90); do
   curl -fsS http://127.0.0.1:19000/q/health/ready 2>/dev/null | grep -q '"status": *"UP"' && { ok=1; break; }
   sleep 1
 done
-[ "$ok" = 1 ] || { echo "nessie never became ready"; docker logs "$NAME" 2>&1 | tail -40; exit 1; }
+[ "$ok" = 1 ] || { echo "nessie never became ready"; docker logs "$NAME" 2>&1 | grep -E "ERROR|Caused by" | head -20; docker logs "$NAME" 2>&1 | tail -20; exit 1; }
 
 API=http://127.0.0.1:19120/api/v2
 cfg="$(curl -fsS "$API/config")"
