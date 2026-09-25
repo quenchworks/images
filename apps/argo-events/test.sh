@@ -3,7 +3,8 @@
 # On a read-only root: the lint subcommand validates a real EventSource and Sensor, the
 # bundled argo CLI reports its version, and the controller, given a kubeconfig for an API
 # server that does not answer, logs its stamped version and dials that server without a
-# panic. The chart gate runs a webhook EventSource and a Sensor in kind.
+# panic; the binary carries the stamped version. The chart gate runs a webhook
+# EventSource and a Sensor in kind.
 set -euo pipefail
 IMAGE="${1:?usage: test.sh <image-ref> [version]}"
 WANT="${2:-}"
@@ -67,10 +68,15 @@ lint="$(docker run --rm --read-only -v "$WORK:/w:ro" "$IMAGE" lint /w/es.yaml /w
 echo "$lint" | grep -qiE 'error|invalid' && { echo "lint rejected valid resources:"; echo "$lint"; exit 1; }
 
 docker run -d --name "$NAME" --read-only --tmpfs /tmp -v "$WORK/kubeconfig:/etc/kubeconfig:ro" -v "$WORK/etc:/etc/argo-events:ro" \
-  -e KUBECONFIG=/etc/kubeconfig "$IMAGE" controller >/dev/null
+  -e KUBECONFIG=/etc/kubeconfig -e ARGO_EVENTS_IMAGE="$IMAGE" "$IMAGE" controller >/dev/null
 sleep 10
 out="$(docker logs "$NAME" 2>&1)"
 echo "$out" | grep -q '127.0.0.1:1' || { echo "controller never dialed the configured API server:"; echo "$out" | tail -15; exit 1; }
-[ -z "$WANT" ] || echo "$out" | grep -q "v$WANT" || { echo "version v$WANT not in the startup log:"; echo "$out" | head -5; exit 1; }
 if echo "$out" | grep -qE 'panic:|read-only file system'; then echo "controller crashed or wrote to the root:"; echo "$out" | tail -15; exit 1; fi
+# the controller logs its version only once it reaches the API server, so read the
+# stamp from the binary itself
+if [ -n "$WANT" ]; then
+  cid="$(docker create "$IMAGE")"; docker cp "$cid:/usr/bin/argo-events" "$WORK/argo-events" >/dev/null; docker rm "$cid" >/dev/null
+  grep -aq "v$WANT" "$WORK/argo-events" || { echo "version v$WANT not stamped into the binary"; exit 1; }
+fi
 echo "smoke test passed (argo-events ${WANT:-?}, uid $user, lint, argo CLI, controller dials the API server)"
