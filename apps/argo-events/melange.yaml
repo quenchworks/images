@@ -1,0 +1,83 @@
+# Builds Argo Events and the argo CLI from their tag tarballs onto Wolfi.
+package:
+  name: quench-argo-events
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Argo Events, built from source on Wolfi, with the argo CLI"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - tzdata               # calendar EventSources run in the configured timezone
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - curl
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/argoproj/argo-events/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - name: Build argo-events
+    runs: |
+      set -eu
+      export CGO_ENABLED=0 GOFLAGS=-mod=mod GO111MODULE=on GOTOOLCHAIN=local
+      # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
+      # FLOOR is a FLOOR, not a pin: only modules below it are floated, and the shipped
+      # binary is asserted to carry nothing below it. Measured 2026-09-25 on 1.9.11:
+      # go-git 5.19.1, amqp091-go 1.11.0, x/crypto 0.54.0, x/mod 0.38.0, grpc 1.82.0.
+      FLOOR="github.com/go-git/go-git/v5@v5.19.2 github.com/rabbitmq/amqp091-go@v1.13.0 golang.org/x/crypto@v0.56.0 golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0 golang.org/x/sys@v0.47.0 golang.org/x/mod@v0.40.0 google.golang.org/grpc@v1.83.2"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      go list -m -e $MODS
+      need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
+      go mod tidy
+      P=github.com/argoproj/argo-events
+      go build -trimpath -ldflags "-s -w -X $P.version=v${{package.version}} -X $P.gitTag=v${{package.version}} -X $P.gitTreeState=clean" \
+        -o "${{targets.destdir}}/usr/bin/argo-events" ./cmd
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/argo-events" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor argo-events)"
+      [ -z "$bad" ] || { echo "❌ 0-CVE float did not reach argo-events:"; echo "$bad"; exit 1; }
+  - name: Build the argo CLI (argoWorkflow trigger)
+    runs: |
+      set -eu
+      export CGO_ENABLED=0 GOFLAGS=-mod=mod GO111MODULE=on GOTOOLCHAIN=local
+      V=__ARGO_VER__
+      curl -fsSL -o aw.tar.gz "https://github.com/argoproj/argo-workflows/archive/refs/tags/v$V.tar.gz"
+      echo "__ARGO_SHA256__  aw.tar.gz" | sha256sum -c -
+      mkdir aw && tar -xzf aw.tar.gz -C aw --strip-components=1 && cd aw
+      # the CLI embeds ui/dist for its server subcommand, which a sensor never runs
+      mkdir -p ui/dist/app && touch ui/dist/app/index.html
+      # the same coherent set as apps/argo-workflows
+      go get golang.org/x/net@v0.58.0 golang.org/x/sys@v0.47.0 google.golang.org/grpc@v1.83.2 golang.org/x/crypto@v0.56.0 golang.org/x/text@v0.41.0 github.com/go-git/go-git/v5@v5.19.2 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0
+      go mod tidy
+      go build -trimpath -ldflags "-s -w -X github.com/argoproj/argo-workflows/v3.version=v$V -X github.com/argoproj/argo-workflows/v3.gitTag=v$V -X github.com/argoproj/argo-workflows/v3.gitTreeState=clean" \
+        -o "${{targets.destdir}}/usr/bin/argo" ./cmd/argo
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/bin/argo-events
+        argo version --short | grep -F "v__ARGO_VER__"
