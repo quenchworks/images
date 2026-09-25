@@ -1,0 +1,59 @@
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-uptime-kuma@local
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+      homedir: /app/data
+  run-as: 1001
+
+# DATA_DIR holds the SQLite database, uploads and screenshots; the chart mounts a
+# volume here.
+paths:
+  - path: /app/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  NODE_ENV: production
+  DATA_DIR: /app/data/
+  HOME: /app/data
+  UPTIME_KUMA_PORT: "3001"
+  UPTIME_KUMA_HOST: 0.0.0.0
+  # skip the first-run database choice; set UPTIME_KUMA_DB_TYPE=mariadb (and the
+  # UPTIME_KUMA_DB_* settings) for an external MariaDB
+  UPTIME_KUMA_DB_TYPE: sqlite
+
+work-dir: /usr/lib/uptime-kuma
+
+entrypoint:
+  command: /usr/bin/node
+
+cmd: server/server.js
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-uptime-kuma"
+  org.opencontainers.image.licenses: "MIT"

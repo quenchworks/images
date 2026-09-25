@@ -1,0 +1,87 @@
+# Packages Uptime Kuma onto Wolfi: the server from the tagged source, its npm production
+# dependencies (with the 0-CVE pins below), and the release's prebuilt UI (dist/).
+package:
+  name: quench-uptime-kuma
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Uptime Kuma uptime monitor and status pages, on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - nodejs-24
+      - ca-certificates-bundle
+      - iputils              # ping monitors shell out to the system ping
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base           # make + g++ if @louislam/sqlite3 has no prebuilt for this arch
+      - busybox
+      - ca-certificates-bundle
+      - nodejs-24
+      - npm                  # native modules probe their prebuilt through npm first
+      - node-gyp
+      - python-3.13          # node-gyp
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/louislam/uptime-kuma/archive/refs/tags/${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - uses: fetch
+    with:
+      uri: https://github.com/louislam/uptime-kuma/releases/download/${{package.version}}/dist.tar.gz
+      expected-sha256: __DIST_SHA256__
+      extract: false
+  - runs: |
+      set -eu
+      export PYTHON="$(command -v python3.13)" npm_config_python="$(command -v python3.13)"
+      # 0-CVE pins (measured 2026-09-25 against 2.5.5). npm rejects an override that
+      # conflicts with a direct dependency, so direct deps are pinned in dependencies
+      # and referenced from overrides as "$name"; transitive ones pin in overrides.
+      node -e '
+        const fs = require("fs");
+        const p = JSON.parse(fs.readFileSync("package.json"));
+        const pins = {
+          "@grpc/grpc-js": "1.14.4", "@tootallnate/once": "2.0.1", "axios": "0.33.0",
+          "glob": "10.5.0", "liquidjs": "10.27.2", "lodash": "4.18.0", "minimatch": "9.0.7",
+          "mysql2": "3.23.1", "nodemailer": "9.1.1", "protobufjs": "7.6.5", "qs": "6.16.0",
+          "tar": "7.5.21", "ws": "8.21.0",
+        };
+        p.overrides = p.overrides || {};
+        for (const [k, v] of Object.entries(pins)) {
+          if (p.dependencies[k]) { p.dependencies[k] = v; p.overrides[k] = "$" + k; }
+          else p.overrides[k] = v;
+        }
+        fs.writeFileSync("package.json", JSON.stringify(p, null, 2));
+      '
+      npm install --omit dev --no-audit --no-fund
+      # every pin must be what actually got installed
+      node -e '
+        const lock = JSON.parse(require("fs").readFileSync("package-lock.json")).packages;
+        const want = { nodemailer: "9.1.1", tar: "7.5.21", protobufjs: "7.6.5", ws: "8.21.0", axios: "0.33.0" };
+        for (const [k, v] of Object.entries(want)) {
+          const got = lock["node_modules/" + k] && lock["node_modules/" + k].version;
+          if (got !== v) { console.error(k, "is", got, "not", v); process.exit(1); }
+        }
+        console.log("pins installed");
+      '
+      rm -rf dist && tar xzf dist.tar.gz
+      test -f dist/index.html
+      app="${{targets.destdir}}/usr/lib/uptime-kuma"
+      install -d "$app"
+      # the runtime tree only: no tests, docs or recipe files
+      cp -a server db src dist extra config node_modules package.json package-lock.json "$app/"
+      find "$app/node_modules" -type d \( -name test -o -name tests -o -name __tests__ \) -prune -exec rm -rf {} + || true
+
+test:
+  pipeline:
+    - runs: |
+        cd /usr/lib/uptime-kuma
+        node -e 'require("@louislam/sqlite3"); require("nodemailer"); console.log("modules load")'
