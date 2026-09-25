@@ -1,0 +1,148 @@
+# Packages Zipkin onto Wolfi from the official zipkin-server exec jar on Maven Central,
+# exploded so the vulnerable libraries in BOOT-INF/lib can be replaced one jar at a time.
+package:
+  name: quench-zipkin
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Zipkin distributed tracing server, on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-21-jre
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - curl
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://repo1.maven.org/maven2/io/zipkin/zipkin-server/${{package.version}}/zipkin-server-${{package.version}}-exec.jar
+      expected-sha256: __SHA256__
+      extract: false
+  - runs: |
+      set -eu
+      dest="${{targets.destdir}}/usr/lib/zipkin"
+      install -d "$dest"
+      unzip -q zipkin-server-${{package.version}}-exec.jar -d "$dest"
+      lib="$dest/BOOT-INF/lib"
+      M=https://repo1.maven.org/maven2
+      # swap <shipped jar> <maven path of the fixed jar> <its sha256, from a download>
+      # Each swap asserts the old jar is shipped, so a release that moves a library fails
+      # loudly instead of gaining a second copy. classpath.idx and layers.idx are
+      # rewritten to the new names: the launcher builds the classpath from them.
+      swap() {
+        test -f "$lib/$1" || { echo "FATAL: $1 not shipped; re-audit the swaps"; exit 1; }
+        new="$(basename "$2")"
+        curl -fsSL -o "$lib/$new" "$M/$2"
+        echo "$3  $lib/$new" | sha256sum -c -
+        rm -f "$lib/$1"
+        sed -i "s|BOOT-INF/lib/$1\"|BOOT-INF/lib/$new\"|" "$dest/BOOT-INF/classpath.idx" "$dest/BOOT-INF/layers.idx"
+      }
+      # drop <shipped jar>: removed with its index lines
+      drop() {
+        test -f "$lib/$1" || { echo "FATAL: $1 not shipped; re-audit the drops"; exit 1; }
+        rm -f "$lib/$1"
+        sed -i "\|BOOT-INF/lib/$1\"|d" "$dest/BOOT-INF/classpath.idx" "$dest/BOOT-INF/layers.idx"
+      }
+      # One version per family (the highest any finding demands, measured 2026-09-25 with
+      # trivy against the 3.6.1 exec jar): netty 4.2.17.Final, jackson 2.21.5, spring
+      # 6.2.19, spring-boot 3.5.15, micrometer 1.16.6, opentelemetry 1.62.0, log4j 2.25.5,
+      # bouncycastle 1.85, amqp-client 5.34.0, mariadb-java-client 3.5.9, lz4-java 1.11.1,
+      # activemq-client 5.19.4.
+      swap activemq-client-5.19.2.jar org/apache/activemq/activemq-client/5.19.4/activemq-client-5.19.4.jar 3b093acbe8381446629a17c6b993b6c998b96c34dbbec19c6b544ea7d43008db
+      swap amqp-client-5.29.0.jar com/rabbitmq/amqp-client/5.34.0/amqp-client-5.34.0.jar 407bab4db77453b42b052554934095873db0f1c9b8018aebb97f19eb9f5575fa
+      swap bcpkix-jdk18on-1.81.jar org/bouncycastle/bcpkix-jdk18on/1.85/bcpkix-jdk18on-1.85.jar c9f82b2d4e99c4bbdfccf684e52cc06ea06a0b567bfd0d08f9c5a3f417055996
+      swap bcprov-jdk18on-1.81.jar org/bouncycastle/bcprov-jdk18on/1.85/bcprov-jdk18on-1.85.jar 20af26bf6060bb8005cc2389916812c1e0e998dc48d2ced7131b89461b54cff7
+      swap bcutil-jdk18on-1.81.jar org/bouncycastle/bcutil-jdk18on/1.85/bcutil-jdk18on-1.85.jar 590f55ed5d68529239898a4a5c4f730b6e37f45d1cfa3fbe51f8485abe32c42d
+      swap jackson-core-2.21.2.jar com/fasterxml/jackson/core/jackson-core/2.21.5/jackson-core-2.21.5.jar b64b5874162b503a0e58a8f7758266e8dd9f91bf49e3a59ae0b5f47589a231b7
+      swap jackson-databind-2.21.2.jar com/fasterxml/jackson/core/jackson-databind/2.21.5/jackson-databind-2.21.5.jar 507418c0fafd38b2b2cfb704521630da613a8e4cc8381195a6f418017883e2c0
+      swap jackson-datatype-jdk8-2.21.2.jar com/fasterxml/jackson/datatype/jackson-datatype-jdk8/2.21.5/jackson-datatype-jdk8-2.21.5.jar c8b1a0d14ffb3f8f8a1f182856c8803a3ee1d7c1aeb68dfee08f22d934ce108f
+      swap jackson-datatype-jsr310-2.21.2.jar com/fasterxml/jackson/datatype/jackson-datatype-jsr310/2.21.5/jackson-datatype-jsr310-2.21.5.jar e941f9718d16a649614cb06711de06da34722afff9cee0b7725fc5318638304c
+      swap log4j-api-2.25.3.jar org/apache/logging/log4j/log4j-api/2.25.5/log4j-api-2.25.5.jar 64777f73ea0b3104c04eb82befbdccc30a425a19e83ad06cb2f93aa303511863
+      swap log4j-core-2.25.3.jar org/apache/logging/log4j/log4j-core/2.25.5/log4j-core-2.25.5.jar 050c4f85deb48b055e9c041ac39043fbb79ce477841a11a1eb2969c86c6a0072
+      swap log4j-slf4j2-impl-2.25.3.jar org/apache/logging/log4j/log4j-slf4j2-impl/2.25.5/log4j-slf4j2-impl-2.25.5.jar 8cab16dd6fc4c8f14c1c473022cb217512f2bbb2d59a70f8ec90a268d64d8831
+      swap lz4-java-1.10.1.jar at/yawk/lz4/lz4-java/1.11.1/lz4-java-1.11.1.jar e5e31b195fcc7e9c5da4b191af3b0082ee616c13f61cbd79409ffa65e4dd5c47
+      swap mariadb-java-client-3.5.7.jar org/mariadb/jdbc/mariadb-java-client/3.5.9/mariadb-java-client-3.5.9.jar 11e3bb5bbf8ef0e806ae4d6c5d5033fedf7262cc777f0190bde8a2f3c8e6bd8d
+      swap micrometer-commons-1.16.4.jar io/micrometer/micrometer-commons/1.16.6/micrometer-commons-1.16.6.jar 45aff76226830db257f4bc39a5bcff83d633e572fee9dc4e45cfa12af9a0a49a
+      swap micrometer-core-1.16.4.jar io/micrometer/micrometer-core/1.16.6/micrometer-core-1.16.6.jar 1957ef2deaffbc1fb98cebfd0f5b3109ecf19c994d7e5378598c20747ba8d68b
+      swap micrometer-observation-1.16.4.jar io/micrometer/micrometer-observation/1.16.6/micrometer-observation-1.16.6.jar 4c0826d5e7c8522a8e111470b4e77f77b0a10f520eb5502ddd143fdbcedb2340
+      swap micrometer-registry-prometheus-1.16.4.jar io/micrometer/micrometer-registry-prometheus/1.16.6/micrometer-registry-prometheus-1.16.6.jar 0e9c7a32dffea3745f2ebff41a4cfeddc5269ca0fd6d98d6e3bafc7b5e35375d
+      swap micrometer-registry-prometheus-simpleclient-1.16.4.jar io/micrometer/micrometer-registry-prometheus-simpleclient/1.16.6/micrometer-registry-prometheus-simpleclient-1.16.6.jar 5f665369724caa8ffbb3f83a492b02d1de17a1420758e4a55debcb6ee2bd5e2a
+      swap netty-buffer-4.2.12.Final.jar io/netty/netty-buffer/4.2.17.Final/netty-buffer-4.2.17.Final.jar 0d249178ec0204b35a6ad3e5ac8a6c2ecb3eb496c6cdae40b8eca4fa3cb6a0c7
+      swap netty-codec-4.2.12.Final.jar io/netty/netty-codec/4.2.17.Final/netty-codec-4.2.17.Final.jar ac76f972446a2f72818441f746d0e73c58519a4687bf680d2b687d7dc5e28e2e
+      swap netty-codec-base-4.2.12.Final.jar io/netty/netty-codec-base/4.2.17.Final/netty-codec-base-4.2.17.Final.jar 3b92bc3b7d231fa6f4889b2b9281cae6b634428b8121fb1b9b5fccba1543d352
+      swap netty-codec-compression-4.2.12.Final.jar io/netty/netty-codec-compression/4.2.17.Final/netty-codec-compression-4.2.17.Final.jar 425b287a1f36986a5c8edd76379a49decdf99d284f3454f3fa607a073bfb2c18
+      swap netty-codec-dns-4.2.12.Final.jar io/netty/netty-codec-dns/4.2.17.Final/netty-codec-dns-4.2.17.Final.jar 394f4649a824683735f28b299d0a48caff059ae30e654e2abf8b3f392af4d374
+      swap netty-codec-haproxy-4.2.12.Final.jar io/netty/netty-codec-haproxy/4.2.17.Final/netty-codec-haproxy-4.2.17.Final.jar 6650894f9c429fc29ad7876092a25cc973e8435d13fa70c0e48aab1ca73a6d37
+      swap netty-codec-http-4.2.12.Final.jar io/netty/netty-codec-http/4.2.17.Final/netty-codec-http-4.2.17.Final.jar a5bde91ac82ab90579df6559c0bd7ea6ae37460e3f18116ab4122194283b3669
+      swap netty-codec-http2-4.2.12.Final.jar io/netty/netty-codec-http2/4.2.17.Final/netty-codec-http2-4.2.17.Final.jar 450af97424cf58d2d72ad4d476d9e290f2fdf69fa181c289a6e6dd176bb86a7b
+      swap netty-codec-marshalling-4.2.12.Final.jar io/netty/netty-codec-marshalling/4.2.17.Final/netty-codec-marshalling-4.2.17.Final.jar ee5ffed638da6b7e2b4567559bd5f78b18f635cdaa4f3b6d23aa27ccf6cb57c2
+      swap netty-codec-protobuf-4.2.12.Final.jar io/netty/netty-codec-protobuf/4.2.17.Final/netty-codec-protobuf-4.2.17.Final.jar 44b2fcc4bc1d6c01edafe6ae6c8a7de7c3c5bad59697a93b6b879a45a78a5387
+      swap netty-codec-socks-4.2.12.Final.jar io/netty/netty-codec-socks/4.2.17.Final/netty-codec-socks-4.2.17.Final.jar 6b5760cc512cee1f7515e25010892471f3995045f84cd6c1d1b6e6cee534733c
+      swap netty-common-4.2.12.Final.jar io/netty/netty-common/4.2.17.Final/netty-common-4.2.17.Final.jar 502aae2a6680e9bca3558a3fa098f06dc4d87340b8b714e925a6d690871c092a
+      swap netty-handler-4.2.12.Final.jar io/netty/netty-handler/4.2.17.Final/netty-handler-4.2.17.Final.jar 4df11c7520b556c5e2c84b939182699d48fcbb09e97a6bb5e1c0b6835227d126
+      swap netty-handler-proxy-4.2.12.Final.jar io/netty/netty-handler-proxy/4.2.17.Final/netty-handler-proxy-4.2.17.Final.jar 94089bea6ba6f3248725f2bf233aa2bc70ac1547c21b9bdfc7548f710a845aa0
+      swap netty-resolver-4.2.12.Final.jar io/netty/netty-resolver/4.2.17.Final/netty-resolver-4.2.17.Final.jar 7a4b599b9c0c29a505d3b7311f142df883fb27d0f67495a7cbaf533b0e456623
+      swap netty-resolver-dns-4.2.12.Final.jar io/netty/netty-resolver-dns/4.2.17.Final/netty-resolver-dns-4.2.17.Final.jar d332481c22136a68c2ee9e45e86212174932587d93a5dd4d201e196828bf9f91
+      swap netty-resolver-dns-classes-macos-4.2.12.Final.jar io/netty/netty-resolver-dns-classes-macos/4.2.17.Final/netty-resolver-dns-classes-macos-4.2.17.Final.jar e5708301fe173ce03d31f1a76ac0682d0a7b955451c968314a13e661855b33c5
+      swap netty-resolver-dns-native-macos-4.2.12.Final-osx-aarch_64.jar io/netty/netty-resolver-dns-native-macos/4.2.17.Final/netty-resolver-dns-native-macos-4.2.17.Final-osx-aarch_64.jar 1179077827c40b9b6860cadb9a96362aac28081c84d31d9d754644e1afeeae68
+      swap netty-resolver-dns-native-macos-4.2.12.Final-osx-x86_64.jar io/netty/netty-resolver-dns-native-macos/4.2.17.Final/netty-resolver-dns-native-macos-4.2.17.Final-osx-x86_64.jar 69ba9124d88cde3c5d96237aabd7cadcdf416200e52f2933c275863d5ee8831e
+      swap netty-transport-4.2.12.Final.jar io/netty/netty-transport/4.2.17.Final/netty-transport-4.2.17.Final.jar d2409ce3a735cbab4188d0ea5d82abed823a6a07a8389f49af4a9e1243a562bc
+      swap netty-transport-classes-epoll-4.2.12.Final.jar io/netty/netty-transport-classes-epoll/4.2.17.Final/netty-transport-classes-epoll-4.2.17.Final.jar 4e21d8a2e3429d9de967a716d58119f57585786bd2f7213bf5b27770425269de
+      swap netty-transport-classes-kqueue-4.2.12.Final.jar io/netty/netty-transport-classes-kqueue/4.2.17.Final/netty-transport-classes-kqueue-4.2.17.Final.jar f0b2dd4757a22345b0b28e2856dc7ee44e5dea256cc520ddc27e4dce4ea9efb3
+      swap netty-transport-native-epoll-4.2.12.Final-linux-aarch_64.jar io/netty/netty-transport-native-epoll/4.2.17.Final/netty-transport-native-epoll-4.2.17.Final-linux-aarch_64.jar def0629c9e99f0d896e810d94252e5eb0227e3dd660a5ec8b7b4bbf3a8b25d41
+      swap netty-transport-native-epoll-4.2.12.Final-linux-x86_64.jar io/netty/netty-transport-native-epoll/4.2.17.Final/netty-transport-native-epoll-4.2.17.Final-linux-x86_64.jar c295b1d7f46e3c7375c93fa4c8abcc3944398c5e4eb53e31587cbbf0bf559d4f
+      swap netty-transport-native-kqueue-4.2.12.Final-osx-aarch_64.jar io/netty/netty-transport-native-kqueue/4.2.17.Final/netty-transport-native-kqueue-4.2.17.Final-osx-aarch_64.jar b76ed41a8cb2d074a1a5596d0d8fe0fcdf96389b198b42e0d361ba9dc2466a24
+      swap netty-transport-native-kqueue-4.2.12.Final-osx-x86_64.jar io/netty/netty-transport-native-kqueue/4.2.17.Final/netty-transport-native-kqueue-4.2.17.Final-osx-x86_64.jar de98c8c8aecb90160921abc52ee64acaac64947e359daa7121b895fc3d3b15ab
+      swap netty-transport-native-unix-common-4.2.12.Final-linux-aarch_64.jar io/netty/netty-transport-native-unix-common/4.2.17.Final/netty-transport-native-unix-common-4.2.17.Final-linux-aarch_64.jar aa6124208a677edcfeee1fd9db0bfd07599e21c703c15a29bf9ee92c59a047eb
+      swap netty-transport-native-unix-common-4.2.12.Final-linux-x86_64.jar io/netty/netty-transport-native-unix-common/4.2.17.Final/netty-transport-native-unix-common-4.2.17.Final-linux-x86_64.jar dd2f5c104428e6698f60da543ecc953f463bb50693234c0a1d1612f8b04633ae
+      swap netty-transport-native-unix-common-4.2.12.Final-osx-aarch_64.jar io/netty/netty-transport-native-unix-common/4.2.17.Final/netty-transport-native-unix-common-4.2.17.Final-osx-aarch_64.jar 4ce539ad4f6a3589cb5917229be258921fc0f2bbbcd29bd0c19426e410755b91
+      swap netty-transport-native-unix-common-4.2.12.Final-osx-x86_64.jar io/netty/netty-transport-native-unix-common/4.2.17.Final/netty-transport-native-unix-common-4.2.17.Final-osx-x86_64.jar be93f2338a38d06156509aca3b5c2ba5c8f6cb5504a0b773f742a4a400a32da0
+      swap netty-transport-native-unix-common-4.2.12.Final.jar io/netty/netty-transport-native-unix-common/4.2.17.Final/netty-transport-native-unix-common-4.2.17.Final.jar e01aa467b9104de54a57c08c290f70b22e53ec97cf5583c87c112170ef5832cc
+      swap opentelemetry-api-1.56.0.jar io/opentelemetry/opentelemetry-api/1.62.0/opentelemetry-api-1.62.0.jar d58143928c049233653e6bf1282ff8a767ebdd5e6a82b3f336158c30e40b431d
+      swap opentelemetry-api-incubator-1.56.0-alpha.jar io/opentelemetry/opentelemetry-api-incubator/1.62.0-alpha/opentelemetry-api-incubator-1.62.0-alpha.jar 6b8dbe21aea973896555c65e94de694ff73f788bdf47c712f8b2267a57b5d0d8
+      swap opentelemetry-common-1.56.0.jar io/opentelemetry/opentelemetry-common/1.62.0/opentelemetry-common-1.62.0.jar d6310bebde67d65c1519696728d8604005315ed08ab14071956fc0826fd71815
+      swap opentelemetry-context-1.56.0.jar io/opentelemetry/opentelemetry-context/1.62.0/opentelemetry-context-1.62.0.jar 8ec86c3609222b9b6307bf40154c1f1c288d1f18ada0155409e7797adbdbe517
+      swap spring-aop-6.2.17.jar org/springframework/spring-aop/6.2.19/spring-aop-6.2.19.jar a11b93539d80b02caf76171db2da96df39abebbfef49a2fadd6dda0779f2e20b
+      swap spring-beans-6.2.17.jar org/springframework/spring-beans/6.2.19/spring-beans-6.2.19.jar 846dc8f30a639a36eb551ee99a30469be4d11bd285ca9daf164d98321571b404
+      swap spring-boot-3.5.12.jar org/springframework/boot/spring-boot/3.5.15/spring-boot-3.5.15.jar 1d3ea175f61f492d95cbca457d6cc9cf1b696b550422c1b424d50dfa58f7da15
+      swap spring-boot-actuator-3.5.12.jar org/springframework/boot/spring-boot-actuator/3.5.15/spring-boot-actuator-3.5.15.jar 615016c0c6275e0c8a598857acf06ac3d7f26d680cfd5f215467e82093c4e86b
+      swap spring-boot-actuator-autoconfigure-3.5.12.jar org/springframework/boot/spring-boot-actuator-autoconfigure/3.5.15/spring-boot-actuator-autoconfigure-3.5.15.jar 02e1960a02ccdf22c16d19aebe1ccd2ec68a151b1f388bf0b3fb2705e6e2b62d
+      swap spring-boot-autoconfigure-3.5.12.jar org/springframework/boot/spring-boot-autoconfigure/3.5.15/spring-boot-autoconfigure-3.5.15.jar 180af16bbaa61ae70b3d8c533fe36264b1305d4a6916965ed86d0f4e47b73b3b
+      swap spring-boot-jarmode-tools-3.5.12.jar org/springframework/boot/spring-boot-jarmode-tools/3.5.15/spring-boot-jarmode-tools-3.5.15.jar 0ef100c6915f599606de3d46ae898e7d46594a47db311071a488ee50b2f58a55
+      swap spring-boot-loader-classic-3.5.12.jar org/springframework/boot/spring-boot-loader-classic/3.5.15/spring-boot-loader-classic-3.5.15.jar 96f7909024bf066156b2b12ddea046dc267d818dab5d7c699b3a75a0979f7e27
+      swap spring-context-6.2.17.jar org/springframework/spring-context/6.2.19/spring-context-6.2.19.jar ead4b645f94a7f665f00093eaafde634e97b34524294de653b51e43e0b3fc4a4
+      swap spring-core-6.2.17.jar org/springframework/spring-core/6.2.19/spring-core-6.2.19.jar 52146689e71a911c92bac26677d73c692512a739893a57710cc233591756bff6
+      swap spring-expression-6.2.17.jar org/springframework/spring-expression/6.2.19/spring-expression-6.2.19.jar d710a44417d890353895b341a722d7d08199e2b7da52f0a11c0e92571e1d6e19
+      swap spring-jcl-6.2.17.jar org/springframework/spring-jcl/6.2.19/spring-jcl-6.2.19.jar 9994478bcea1423b8892d4eb0db942c94da0090167c3c684050c1eaef04491d0
+      # Two legacy collectors are removed. Pulsar's client nests Bouncy Castle 1.78.1/1.81
+      # inside bouncy-castle-bc-4.1.3-pkg.jar, and Pulsar's newest bundle (4.2.4) still
+      # nests 1.84, below the 1.85 fix. Scribe needs libthrift 0.18.1 (fixed in 0.24.0)
+      # through armeria-thrift0.18, which is compiled against 0.18. HTTP, gRPC, Kafka,
+      # RabbitMQ and ActiveMQ collection and every storage backend stay.
+      for j in zipkin-collector-pulsar-3.6.1.jar pulsar-client-4.1.3.jar pulsar-client-admin-api-4.1.3.jar \
+               pulsar-client-api-4.1.3.jar bouncy-castle-bc-4.1.3-pkg.jar \
+               zipkin-collector-scribe-3.6.1.jar armeria-thrift0.18-1.38.0.jar libthrift-0.18.1.jar; do
+        drop "$j"
+      done
+      # every classpath entry is a shipped jar, and every shipped jar is on the classpath
+      idx="$(sed -n 's|.*BOOT-INF/lib/\([^"]*\)".*|\1|p' "$dest/BOOT-INF/classpath.idx" | sort)"
+      have="$(ls "$lib" | sort)"
+      [ "$idx" = "$have" ] || { echo "FATAL: classpath.idx and BOOT-INF/lib disagree"; echo "index: $idx"; echo "lib: $have"; exit 1; }
+      chmod -R a+rX "$dest"
+
+test:
+  pipeline:
+    - runs: |
+        test -f /usr/lib/zipkin/BOOT-INF/classpath.idx
+        test -f /usr/lib/zipkin/org/springframework/boot/loader/launch/JarLauncher.class
