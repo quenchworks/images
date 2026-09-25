@@ -71,7 +71,7 @@ pipeline:
         })("node_modules");
         if (bad.length) { console.error("0-CVE raise did not reach:\n" + bad.join("\n")); process.exit(1); }
       '
-      rm -rf dist/test dist/test-setup.js dist/test-setup.js.map
+      # dist/test stays: production modules import its fixtures (fake stores)
       dest="${{targets.destdir}}/opt/unleash"
       install -d "$dest"
       cp -a package.json dist frontend node_modules "$dest/"
