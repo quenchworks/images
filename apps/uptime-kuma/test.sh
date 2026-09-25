@@ -34,7 +34,10 @@ curl -fsS http://127.0.0.1:13001/api/entry-page | grep -q '"type":"entryPage"' |
 curl -fsSL http://127.0.0.1:13001/ | grep -qi '<div id="app"' || { echo "UI not served"; exit 1; }
 code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:13001/metrics)"
 [ "$code" = 401 ] || { echo "/metrics returned $code, expected 401"; exit 1; }
-docker logs "$NAME" 2>&1 | grep -qi 'database type: sqlite' || { echo "not on sqlite"; docker logs "$NAME" 2>&1 | tail -30; exit 1; }
+# SQLite was created in the volume (read from a second container on the same volume)
+docker run --rm -v "$VOL:/app/data:ro" --entrypoint /usr/bin/node "$IMAGE" -e \
+  'const s = require("fs").statSync("/app/data/kuma.db"); console.log("kuma.db", s.size, "bytes"); process.exit(s.size > 0 ? 0 : 1)' \
+  || { echo "no SQLite database in the data volume"; exit 1; }
 if docker logs "$NAME" 2>&1 | grep -E 'ERROR|Error:' | grep -v 'db-config.json is not found'; then
   echo "server logged errors"; exit 1
 fi
