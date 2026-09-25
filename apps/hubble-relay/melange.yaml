@@ -1,0 +1,73 @@
+# Builds Hubble Relay from the cilium/cilium source tarball onto Wolfi. The repo is
+# vendored (upstream builds with -mod=vendor), so the 0-CVE float re-vendors after
+# `go get`. The version is stamped with -X like upstream's Makefile.defs.
+package:
+  name: quench-hubble-relay
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Hubble Relay (Cilium), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/cilium/cilium/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GO111MODULE=on
+      export GOTOOLCHAIN=local
+      # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
+      # FLOOR is a FLOOR, not a pin: only modules below it are floated, and the
+      # shipped binary is asserted to carry nothing below it. One coherent set for all
+      # lines (the highest any line demands). Measured 2026-09-25: 1.20.2 needs grpc;
+      # 1.19.8 grpc + mongo-driver; 1.18.14 also cilium/ebpf, cel-go and gopacket.
+      # The only replace (sigs.k8s.io/controller-tools) is outside this set.
+      FLOOR="google.golang.org/grpc@v1.83.2 go.mongodb.org/mongo-driver@v1.17.7 github.com/cilium/ebpf@v0.22.0 github.com/google/cel-go@v0.29.0 github.com/gopacket/gopacket@v1.6.1"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      GOFLAGS=-mod=mod go list -m -e $MODS
+      need="$(GOFLAGS=-mod=mod go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then
+        GOFLAGS=-mod=mod go get $need
+        go mod vendor
+      fi
+      go build -mod=vendor -trimpath -tags osusergo \
+        -ldflags "-s -w -X 'github.com/cilium/cilium/pkg/version.ciliumVersion=${{package.version}}'" \
+        -o "${{targets.destdir}}/usr/bin/hubble-relay" ./hubble-relay
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/hubble-relay" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor hubble-relay)"
+      [ -z "$bad" ] || { echo "❌ 0-CVE float did not reach hubble-relay:"; echo "$bad"; exit 1; }
+
+test:
+  pipeline:
+    - runs: |
+        hubble-relay version | grep -F "${{package.version}}"

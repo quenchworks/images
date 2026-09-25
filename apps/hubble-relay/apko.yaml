@@ -1,0 +1,43 @@
+# Hubble Relay runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# The default command serves the Observer API on :4245 and gRPC health on :4222 and dials
+# the Cilium agents' peer service; the chart sets the peer address and the TLS flags.
+# Health reports SERVING only once at least one Hubble peer is connected.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-hubble-relay@local
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  # upstream's image sets this: the gops agent writes its config dir here
+  GOPS_CONFIG_DIR: /tmp
+
+entrypoint:
+  command: /usr/bin/hubble-relay serve
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-hubble-relay"
+  org.opencontainers.image.licenses: "Apache-2.0"
