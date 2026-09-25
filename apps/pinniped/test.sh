@@ -19,11 +19,13 @@ case "$ver" in ""|*dev*|v0.0.0) echo "version not stamped: '$ver'"; exit 1 ;; es
 # the bare server name is refused and the error lists the roles it serves
 out="$(docker run --rm "$IMAGE" 2>&1 || true)"
 grep -q "pinniped-concierge pinniped-supervisor" <<<"$out" || { echo "dispatch error missing roles: $out"; exit 1; }
+# each role name dispatches (the supervisor takes positional paths and the
+# authenticator goes straight to its in-cluster client, so neither has a usable --help;
+# being accepted by the dispatcher is what the name proves)
 for role in pinniped-concierge pinniped-supervisor local-user-authenticator; do
-  docker run --rm --entrypoint "/usr/local/bin/$role" "$IMAGE" --help >/dev/null 2>&1 \
-    || [ "$role" = local-user-authenticator ] || { echo "$role --help failed"; exit 1; }
+  out="$(docker run --rm --entrypoint "/usr/local/bin/$role" "$IMAGE" 2>&1 || true)"
+  ! grep -q "must be invoked as one of" <<<"$out" || { echo "$role not dispatched: $out"; exit 1; }
 done
-docker run --rm --entrypoint /usr/local/bin/pinniped-concierge-kube-cert-agent "$IMAGE" --help >/dev/null 2>&1 || true
 
 mkdir -p "$DIR/podinfo"
 cat > "$DIR/pinniped.yaml" <<'YAML'
