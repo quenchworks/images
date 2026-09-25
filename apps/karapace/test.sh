@@ -35,9 +35,16 @@ done
 
 H='Content-Type: application/vnd.schemaregistry.v1+json'
 avro='{"schema":"{\"type\":\"record\",\"name\":\"Order\",\"fields\":[{\"name\":\"id\",\"type\":\"string\"}]}"}'
-curl -fsS -X POST -H "$H" -d "$avro" "$R/subjects/orders-value/versions" | grep -q '"id"' || { echo "avro register failed"; exit 1; }
+# the registry answers reads before it has elected itself primary and read _schemas;
+# writes return 500 until then, so the first registration retries
+ok=0
+for _ in $(seq 1 60); do
+  curl -fsS -X POST -H "$H" -d "$avro" "$R/subjects/orders-value/versions" 2>/dev/null | grep -q '"id"' && { ok=1; break; }
+  sleep 1
+done
+[ "$ok" = 1 ] || { echo "avro register failed"; curl -sS -X POST -H "$H" -d "$avro" "$R/subjects/orders-value/versions" || true; docker logs "$REG" 2>&1 | tail -40; exit 1; }
 proto='{"schemaType":"PROTOBUF","schema":"syntax = \"proto3\"; package q; message Order { string id = 1; int64 cents = 2; }"}'
-curl -fsS -X POST -H "$H" -d "$proto" "$R/subjects/orders-proto-value/versions" | grep -q '"id"' || { echo "protobuf register failed"; exit 1; }
+curl -fsS -X POST -H "$H" -d "$proto" "$R/subjects/orders-proto-value/versions" | grep -q '"id"' || { echo "protobuf register failed"; docker logs "$REG" 2>&1 | tail -40; exit 1; }
 bad='{"schemaType":"PROTOBUF","schema":"syntax = \"proto3\"; package q; message Order { int32 id = 1; }"}'
 curl -fsS -X POST -H "$H" -d "$bad" "$R/compatibility/subjects/orders-proto-value/versions/latest" | tee /tmp/compat.$$ | grep -q '"is_compatible":false' \
   || { echo "incompatible protobuf change not rejected: $(cat /tmp/compat.$$)"; rm -f /tmp/compat.$$; exit 1; }
