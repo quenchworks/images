@@ -1,0 +1,48 @@
+# Assembles the SPIRE runtime image (server and agent in one image). Minimal, nonroot,
+# multi-arch, SBOM by apko. The default command runs spire-server with the baked demo
+# config: server API on :8081, health on :8080 (/live, /ready), state under /data/spire.
+# Run the agent with --entrypoint /usr/bin/spire-agent and `run -config ...`.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-spire@local
+
+accounts:
+  groups:
+    - groupname: spire
+      gid: 1001
+  users:
+    - username: spire
+      uid: 1001
+      gid: 1001
+      homedir: /data/spire
+  run-as: 1001
+
+paths:
+  - path: /data/spire
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /usr/bin/spire-server
+cmd: run -config /etc/spire/server/server.conf
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-spire"
+  org.opencontainers.image.licenses: "Apache-2.0"
