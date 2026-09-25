@@ -45,7 +45,7 @@ environment:
       # just the `go` line, when a dependency uses build tags.
       - go-1.27
       - nodejs-24        # web portal build (package.json engines: node >=22.22.0 at 4.39.22)
-      - pnpm-11          # web portal package manager (package.json engines: pnpm 11)
+      - curl             # fetches the pnpm 12 standalone binary below (Wolfi has no pnpm-12)
 
 pipeline:
   - uses: fetch
@@ -62,6 +62,18 @@ pipeline:
       sed -i '/"prepare": "lefthook install",/d' web/package.json
       # Give pnpm a writable HOME (store + config) inside the build workspace.
       export HOME="$(pwd)"
+      # web/package.json requires engines.pnpm 12 (from 4.39.28); Wolfi packages only
+      # pnpm-11. Use pnpm's own standalone binary, sha256-pinned per arch, as apps/pnpm does.
+      case "$(uname -m)" in
+        x86_64)  exe=linux-x64;   sha=2b29fe2fd91687bd6995c356c73d7e84ead5fce630a38ca3d2319c2ce7a9fc45 ;;
+        aarch64) exe=linux-arm64; sha=9ba3723129f8d1a508972f8b4e46bb2e98973833861b9febcce28475193972bf ;;
+        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+      esac
+      curl -fsSL -o pnpm-exe.tgz "https://registry.npmjs.org/@pnpm/exe.${exe}/-/exe.${exe}-12.7.0.tgz"
+      echo "${sha}  pnpm-exe.tgz" | sha256sum -c -
+      mkdir -p .pnpm-bin && tar -xzf pnpm-exe.tgz -C .pnpm-bin --strip-components=1 package/pnpm
+      export PATH="$(pwd)/.pnpm-bin:$PATH"
+      pnpm --version
       export CI=true
       cd web
       pnpm install --frozen-lockfile
