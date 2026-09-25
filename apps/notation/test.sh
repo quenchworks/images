@@ -16,7 +16,7 @@ user="$(docker inspect "$IMAGE" --format '{{.Config.User}}')"
 
 ver="$(docker run --rm "$IMAGE" version 2>&1)"
 echo "$ver"
-[ -z "$WANT" ] || echo "$ver" | grep -q "Version: *${WANT}" || { echo "expected version $WANT"; exit 1; }
+[ -z "$WANT" ] || echo "$ver" | grep -q "Version: *v${WANT}" || { echo "expected version $WANT"; exit 1; }
 
 docker network create "$NET" >/dev/null
 docker run -d --name "$REG" --network "$NET" --tmpfs /var/lib/registry:uid=1001,gid=1001 \
