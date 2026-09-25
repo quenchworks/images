@@ -63,7 +63,8 @@ ip_a="$(docker inspect -f "{{(index .NetworkSettings.Networks \"$NET\").IPAddres
 addr="/ip4/$ip_a/udp/4001/quic-v1/p2p/$peer_a"
 api 15002 "swarm/connect?arg=$addr" >/dev/null \
   || { echo "node B could not dial A over QUIC ($addr)"; docker logs "$TAG-b" | tail -20; exit 1; }
-grep -q "quic-v1/p2p/$peer_a" <<<"$(api 15002 swarm/peers)" \
+# swarm/peers is JSON with Addr just before Peer: {"Addr":"/ip4/../udp/4001/quic-v1","Peer":"12D.."}
+grep -q "/udp/4001/quic-v1\",\"Peer\":\"$peer_a\"" <<<"$(api 15002 swarm/peers)" \
   || { echo "B is connected to A, but not over QUIC"; exit 1; }
 got="$(curl -fsS -m 60 -X POST "http://127.0.0.1:15002/api/v0/cat?arg=$cid")"
 [ "$got" = "$payload" ] || { echo "node B fetched '$got' for $cid"; exit 1; }
