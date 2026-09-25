@@ -1,0 +1,60 @@
+# Gogs runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Everything Gogs writes lives under /data (the work dir: database, repositories, logs,
+# custom/). The run user is named `git`, uid 1001: Gogs refuses to start unless its
+# RUN_USER setting matches the real user, and git@host is the clone URL people expect.
+# With no config it serves the install page on :3000; the chart passes --config with
+# INSTALL_LOCK and its own secret key.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-gogs@local
+
+accounts:
+  groups:
+    - groupname: git
+      gid: 1001
+  users:
+    - username: git
+      uid: 1001
+      gid: 1001
+      homedir: /data
+  run-as: 1001
+
+environment:
+  GOGS_WORK_DIR: /data
+  GOGS_CUSTOM: /data/custom
+  HOME: /data
+  USER: git
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+work-dir: /data
+
+# `web` is the default command, so `docker run IMAGE web --config ...` and admin
+# subcommands both work
+entrypoint:
+  command: /usr/bin/gogs
+cmd: web
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-gogs"
+  org.opencontainers.image.licenses: "MIT"
