@@ -1,0 +1,76 @@
+# Assembles WireMock from Maven Central: wiremock-jetty12 and its dependency tree as
+# separate jars under /usr/lib/wiremock/lib, with vulnerable families pinned by
+# dependencyManagement. Maven's checksums verify every download.
+package:
+  name: quench-wiremock
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened WireMock, the HTTP mock server, on Jetty 12 and Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-21-jre        # Jetty 12 needs Java 17+
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - maven-3.9
+      - openjdk-21
+
+pipeline:
+  - runs: |
+      set -eu
+      export JAVA_HOME=/usr/lib/jvm/java-21-openjdk
+      # One version per family, the highest any finding demands (measured 2026-09-25 on
+      # the 3.13.2 tree): Jetty 12.0.39 (the 12.0 line WireMock builds against), Jackson
+      # 2.21.7, handlebars 4.5.5, commons-lang3 3.20.0, httpclient5 5.6.4, httpcore5 5.4.4.
+      # handlebars-helpers stays at 4.3.1: 4.4+ dropped NumberHelper, which WireMock 3
+      # loads at startup; the advisories are in handlebars core, not the helpers.
+      cat > pom.xml <<'POM'
+      <project xmlns="http://maven.apache.org/POM/4.0.0">
+        <modelVersion>4.0.0</modelVersion>
+        <groupId>io.quenchworks</groupId><artifactId>wiremock-dist</artifactId><version>1</version>
+        <dependencyManagement>
+          <dependencies>
+            <dependency><groupId>org.eclipse.jetty</groupId><artifactId>jetty-bom</artifactId><version>12.0.39</version><type>pom</type><scope>import</scope></dependency>
+            <dependency><groupId>org.eclipse.jetty.ee10</groupId><artifactId>jetty-ee10-bom</artifactId><version>12.0.39</version><type>pom</type><scope>import</scope></dependency>
+            <dependency><groupId>com.fasterxml.jackson</groupId><artifactId>jackson-bom</artifactId><version>2.21.7</version><type>pom</type><scope>import</scope></dependency>
+            <dependency><groupId>com.github.jknack</groupId><artifactId>handlebars</artifactId><version>4.5.5</version></dependency>
+            <dependency><groupId>com.github.jknack</groupId><artifactId>handlebars-helpers</artifactId><version>4.3.1</version></dependency>
+            <dependency><groupId>org.apache.commons</groupId><artifactId>commons-lang3</artifactId><version>3.20.0</version></dependency>
+            <dependency><groupId>org.apache.httpcomponents.client5</groupId><artifactId>httpclient5</artifactId><version>5.6.4</version></dependency>
+            <dependency><groupId>org.apache.httpcomponents.core5</groupId><artifactId>httpcore5</artifactId><version>5.4.4</version></dependency>
+            <dependency><groupId>org.apache.httpcomponents.core5</groupId><artifactId>httpcore5-h2</artifactId><version>5.4.4</version></dependency>
+          </dependencies>
+        </dependencyManagement>
+        <dependencies>
+          <dependency><groupId>org.wiremock</groupId><artifactId>wiremock-jetty12</artifactId><version>${{package.version}}</version></dependency>
+        </dependencies>
+      </project>
+      POM
+      lib="${{targets.destdir}}/usr/lib/wiremock/lib"
+      mvn -B -q -Dmaven.repo.local="$(mktemp -d)" --strict-checksums \
+        dependency:copy-dependencies -DoutputDirectory="$lib"
+      # the pins are only real if the tree carries them, once each
+      for want in wiremock-${{package.version}} wiremock-jetty12-${{package.version}} jetty-server-12.0.39 \
+          jackson-databind-2.21.7 handlebars-4.5.5 commons-lang3-3.20.0 httpclient5-5.6.4 httpcore5-5.4.4; do
+        test -f "$lib/$want.jar" || { echo "FATAL: $want.jar not in the tree"; ls "$lib"; exit 1; }
+      done
+      for fam in jetty-server jackson-databind handlebars commons-lang3 httpclient5 httpcore5; do
+        n="$(ls "$lib" | grep -cE "^$fam-[0-9]")"
+        [ "$n" = 1 ] || { echo "FATAL: $n copies of $fam"; ls "$lib" | grep "^$fam-"; exit 1; }
+      done
+      chmod -R a+rX "${{targets.destdir}}/usr/lib/wiremock"
+
+test:
+  pipeline:
+    - runs: |
+        test -f /usr/lib/wiremock/lib/wiremock-${{package.version}}.jar

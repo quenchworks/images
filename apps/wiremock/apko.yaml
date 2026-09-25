@@ -1,0 +1,66 @@
+# WireMock runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# HTTP on 8080 (the admin API under /__admin). Stubs load from /home/wiremock/mappings and
+# response bodies from /home/wiremock/__files, as upstream's image lays them out; stubs
+# posted to the admin API live in memory. Pass --https-port 8443 for TLS.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-wiremock@local
+
+accounts:
+  groups:
+    - groupname: wiremock
+      gid: 1001
+  users:
+    - username: wiremock
+      uid: 1001
+      gid: 1001
+      homedir: /home/wiremock
+  run-as: 1001
+
+environment:
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  HOME: /home/wiremock
+  LANG: C.UTF-8
+
+paths:
+  - path: /home/wiremock
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /home/wiremock/mappings
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /home/wiremock/__files
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+work-dir: /home/wiremock
+
+# The jars on the classpath (no start script). openjdk-21-jre has no /usr/bin/java
+# symlink, so the path is the JDK's own. Arguments after the image name are WireMock's.
+entrypoint:
+  command: /usr/lib/jvm/java-21-openjdk/bin/java -cp /usr/lib/wiremock/lib/* wiremock.Run --port 8080 --root-dir /home/wiremock --disable-banner
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-wiremock"
+  org.opencontainers.image.licenses: "Apache-2.0"
