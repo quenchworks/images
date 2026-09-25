@@ -1,0 +1,53 @@
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-flyway@local
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+      homedir: /home/nonroot
+  run-as: 1001
+
+environment:
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  HOME: /home/nonroot
+  LANG: C.UTF-8
+
+paths:
+  - path: /home/nonroot
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+# Migrations are usually mounted at /flyway/sql (-locations=filesystem:/flyway/sql).
+work-dir: /home/nonroot
+
+# What upstream's bash launcher runs, without the shell: the same classpath directories
+# and flags. openjdk-21-jre has no /usr/bin/java symlink, so the path is the JDK's own.
+entrypoint:
+  command: /usr/lib/jvm/java-21-openjdk/bin/java --enable-native-access=ALL-UNNAMED -cp /usr/lib/flyway/lib/*:/usr/lib/flyway/lib/aad/*:/usr/lib/flyway/lib/plugins/*:/usr/lib/flyway/lib/oracle_wallet/*:/usr/lib/flyway/lib/flyway/*:/usr/lib/flyway/lib/netty/*:/usr/lib/flyway/lib/opentelemetry/*:/usr/lib/flyway/drivers/*:/usr/lib/flyway/drivers/aws/*:/usr/lib/flyway/drivers/cassandra/*:/usr/lib/flyway/drivers/couchbase/*:/usr/lib/flyway/drivers/mongo/* org.flywaydb.commandline.Main
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-flyway"
+  org.opencontainers.image.licenses: "Apache-2.0"
