@@ -1,0 +1,85 @@
+# Packages Unleash onto Wolfi from the unleash-server npm tarball: the compiled server
+# (dist/) and the built admin UI (frontend/build) are in it, so only the production
+# dependencies are installed.
+package:
+  name: quench-unleash
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Unleash, the feature-flag server, from the official npm distribution on Wolfi"
+  copyright:
+    - license: AGPL-3.0-or-later
+  dependencies:
+    runtime:
+      - nodejs-24              # engines: node >=22
+      - ca-certificates-bundle # TLS to PostgreSQL, SMTP, OIDC and webhooks
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - nodejs-24
+      - npm
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://registry.npmjs.org/unleash-server/-/unleash-server-${{package.version}}.tgz
+      expected-sha256: __SHA256__
+      strip-components: 1
+  - runs: |
+      set -eu
+      export HOME="$(mktemp -d)"
+      # Raise the vulnerable dependencies before install. router@1.3.8 pins path-to-regexp
+      # 0.1.7 (fixed in 0.1.13, same 0.1 API); ip-address is a direct dependency that 8.0.3
+      # pins at 10.2.0 (fixed in 10.3.1, what 8.1 and 8.2 already ship). A raise only
+      # ever goes up: a line that already carries a newer ip-address keeps it.
+      node -e '
+        const fs = require("fs"), p = JSON.parse(fs.readFileSync("package.json"));
+        p.overrides = Object.assign(p.overrides || {}, { router: { "path-to-regexp": "0.1.13" } });
+        const cur = (p.dependencies || {})["ip-address"];
+        const v = s => s.replace(/^[^0-9]*/, "").split(".").map(Number);
+        const lt = (a, b) => { a = v(a); b = v(b); for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] < b[i]; return false; };
+        if (cur && lt(cur, "10.3.1")) p.dependencies["ip-address"] = "10.3.1";
+        fs.writeFileSync("package.json", JSON.stringify(p, null, 2));
+      '
+      # --ignore-scripts: the only install scripts are ssh2/cpu-features (optional native
+      # speedups with JS fallbacks) and @scarf/scarf usage telemetry.
+      npm install --omit=dev --no-audit --no-fund --ignore-scripts
+      # the raises are only real if the installed tree carries them: every copy of each
+      # package on that line must be at or above its floor
+      node -e '
+        const fs = require("fs"), path = require("path");
+        const v = s => s.split(".").map(Number);
+        const lt = (a, b) => { a = v(a); b = v(b); for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] < b[i]; return false; };
+        const floor = [["path-to-regexp", "0.1.", "0.1.13"], ["ip-address", "10.", "10.3.1"]];
+        const bad = [];
+        (function walk(d) {
+          for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+            const f = path.join(d, e.name);
+            if (e.isDirectory()) walk(f);
+            else if (e.name === "package.json") {
+              let p; try { p = JSON.parse(fs.readFileSync(f)); } catch { continue; }
+              for (const [name, line, want] of floor)
+                if (p.name === name && String(p.version).startsWith(line) && lt(p.version, want)) bad.push(f + " " + p.version);
+            }
+          }
+        })("node_modules");
+        if (bad.length) { console.error("0-CVE raise did not reach:\n" + bad.join("\n")); process.exit(1); }
+      '
+      rm -rf dist/test dist/test-setup.js dist/test-setup.js.map
+      dest="${{targets.destdir}}/opt/unleash"
+      install -d "$dest"
+      cp -a package.json dist frontend node_modules "$dest/"
+      chmod -R a+rX "$dest"
+
+test:
+  pipeline:
+    - runs: |
+        grep -q '"version": "${{package.version}}"' /opt/unleash/package.json
+        test -f /opt/unleash/dist/server.js
+        test -f /opt/unleash/frontend/build/index.html

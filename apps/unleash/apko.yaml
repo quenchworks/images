@@ -1,0 +1,49 @@
+# Unleash runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Serves the admin UI and the APIs on :4242 (/health). It needs PostgreSQL: set
+# DATABASE_URL (or DATABASE_HOST, DATABASE_NAME, DATABASE_USERNAME, DATABASE_PASSWORD).
+# The first start migrates the schema and creates the admin from
+# UNLEASH_DEFAULT_ADMIN_USERNAME / UNLEASH_DEFAULT_ADMIN_PASSWORD.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - nodejs-24
+    - quench-unleash@local
+
+accounts:
+  groups:
+    - groupname: node
+      gid: 1001
+  users:
+    - username: node
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  NODE_ENV: production
+  HOME: /tmp
+  TZ: UTC                 # upstream's start script sets it
+  SCARF_ANALYTICS: "false"
+
+work-dir: /opt/unleash
+
+entrypoint:
+  command: /usr/bin/node /opt/unleash/dist/server.js
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-unleash"
+  org.opencontainers.image.licenses: "AGPL-3.0-or-later"
