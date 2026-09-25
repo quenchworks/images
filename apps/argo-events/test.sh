@@ -68,7 +68,7 @@ lint="$(docker run --rm --read-only -v "$WORK:/w:ro" "$IMAGE" lint /w/es.yaml /w
 echo "$lint" | grep -qiE 'error|invalid' && { echo "lint rejected valid resources:"; echo "$lint"; exit 1; }
 
 docker run -d --name "$NAME" --read-only --tmpfs /tmp -v "$WORK/kubeconfig:/etc/kubeconfig:ro" -v "$WORK/etc:/etc/argo-events:ro" \
-  -e KUBECONFIG=/etc/kubeconfig -e ARGO_EVENTS_IMAGE="$IMAGE" "$IMAGE" controller >/dev/null
+  -e KUBECONFIG=/etc/kubeconfig -e ARGO_EVENTS_IMAGE="$IMAGE" "$IMAGE" controller --leader-election=false >/dev/null
 sleep 10
 out="$(docker logs "$NAME" 2>&1)"
 echo "$out" | grep -q '127.0.0.1:1' || { echo "controller never dialed the configured API server:"; echo "$out" | tail -15; exit 1; }
