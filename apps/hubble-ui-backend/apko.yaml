@@ -1,0 +1,42 @@
+# Hubble UI backend runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Listens on EVENTS_SERVER_PORT (8090) for the frontend and dials Hubble Relay at
+# FLOWS_API_ADDR (default localhost:50051; the chart points it at the relay Service).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-hubble-ui-backend@local
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  EVENTS_SERVER_PORT: "8090"
+  GOPS_CONFIG_DIR: /tmp
+
+entrypoint:
+  command: /usr/bin/hubble-ui-backend
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-hubble-ui-backend"
+  org.opencontainers.image.licenses: "Apache-2.0"
