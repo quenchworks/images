@@ -37,8 +37,9 @@ work-dir: /usr/lib/zipkin
 
 # Spring Boot's launcher over the exploded jar: it builds the classpath from
 # BOOT-INF/classpath.idx, which the build rewrote to the swapped jar names.
+# openjdk-21-jre has no /usr/bin/java symlink, so the path is the JDK's own.
 entrypoint:
-  command: /usr/bin/java -cp /usr/lib/zipkin org.springframework.boot.loader.launch.JarLauncher
+  command: /usr/lib/jvm/java-21-openjdk/bin/java -cp /usr/lib/zipkin org.springframework.boot.loader.launch.JarLauncher
 
 archs:
   - x86_64
