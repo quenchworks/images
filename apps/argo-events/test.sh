@@ -48,10 +48,13 @@ KC
 mkdir -p "$WORK/etc"
 cat > "$WORK/etc/controller-config.yaml" <<'CFG'
 eventBus:
+  # the controller validates that both lists are non-empty; nothing here is pulled
   nats:
-    versions: []
+    versions:
+      - version: latest
+        natsStreamingImage: nats-streaming:latest
+        metricsExporterImage: natsio/prometheus-nats-exporter:latest
   jetstream:
-    # at least one version must exist; nothing here is pulled in this test
     versions:
       - version: latest
         natsImage: nats:latest
