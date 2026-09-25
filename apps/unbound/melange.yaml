@@ -1,0 +1,86 @@
+# Builds Unbound from the NLnet Labs release tarball onto Wolfi, with the same feature
+# set as Wolfi's package (libevent, expat, dnscrypt), plus a nonroot container config
+# and a static root trust anchor taken from unbound-anchor's built-in DS records.
+package:
+  name: quench-unbound
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Unbound validating recursive DNS resolver, built from source on Wolfi"
+  copyright:
+    - license: BSD-3-Clause
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - expat-dev
+      - libevent-dev
+      - libsodium-dev
+      - openssl-dev
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://nlnetlabs.nl/downloads/unbound/unbound-${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      ./configure --prefix=/usr --sbindir=/usr/bin --sysconfdir=/etc \
+        --with-libevent --with-expat --with-ssl --enable-dnscrypt \
+        --disable-static --with-pidfile=/tmp/unbound.pid
+      make -j"$(nproc)"
+      make install DESTDIR="${{targets.destdir}}"
+      rm -rf "${{targets.destdir}}/usr/include" "${{targets.destdir}}/usr/share/man" \
+        "${{targets.destdir}}/usr/lib/pkgconfig"
+      find "${{targets.destdir}}" -name '*.la' -delete
+      # Root trust anchor: the DS records unbound-anchor has compiled in at this version.
+      # Fail the build if the source stops carrying them in this form.
+      grep -oE '^"\. IN DS [0-9]+ [0-9]+ [0-9]+ [0-9A-F]+' smallapp/unbound-anchor.c \
+        | sed 's/^"//' > root.key
+      [ "$(wc -l < root.key)" -ge 1 ] || { echo "no built-in DS records found"; exit 1; }
+      cat root.key
+      install -d "${{targets.destdir}}/etc/unbound"
+      install -m 0644 root.key "${{targets.destdir}}/etc/unbound/root.key"
+      cat > "${{targets.destdir}}/etc/unbound/unbound.conf" <<'CONF'
+      # Quenchworks Unbound: nonroot, foreground, validating recursive resolver.
+      server:
+        interface: 0.0.0.0
+        port: 5053
+        do-ip6: no
+        # answer private networks only; an open resolver is an amplification risk
+        access-control: 0.0.0.0/0 refuse
+        access-control: 127.0.0.0/8 allow
+        access-control: 10.0.0.0/8 allow
+        access-control: 172.16.0.0/12 allow
+        access-control: 192.168.0.0/16 allow
+        username: ""
+        chroot: ""
+        directory: "/etc/unbound"
+        pidfile: ""
+        do-daemonize: no
+        use-syslog: no
+        logfile: ""
+        verbosity: 1
+        hide-identity: yes
+        hide-version: yes
+        trust-anchor-file: "/etc/unbound/root.key"
+        include-toplevel: "/etc/unbound/conf.d/*.conf"
+      remote-control:
+        control-enable: no
+      CONF
+      install -d "${{targets.destdir}}/etc/unbound/conf.d"
+
+test:
+  pipeline:
+    - runs: |
+        unbound -V | head -1
+        unbound-checkconf /etc/unbound/unbound.conf
