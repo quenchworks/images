@@ -1,0 +1,56 @@
+# Packages Eclipse Jetty (the official jetty-home distribution) onto Wolfi. The package
+# carries JETTY_HOME at /opt/jetty and a ready JETTY_BASE at /var/lib/jetty with the
+# server, http, ext and resources modules plus the __EE__ web app deployer (which pulls
+# in each line's own deploy modules; 12.1 has no generic `deploy` module), so
+# the image starts Jetty with a plain `java -jar start.jar` and no shell. Drop WARs or
+# context XML into /var/lib/jetty/webapps. Output is a signed APK in Quenchworks' own
+# repo. No upstream distro binaries.
+package:
+  name: quench-jetty
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Eclipse Jetty, packaged on Wolfi"
+  copyright:
+    - license: EPL-2.0 OR Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-21-jre     # Jetty 12 needs Java 17+; the JRE is scanned CVE surface
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - openjdk-21-jre
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://repo1.maven.org/maven2/org/eclipse/jetty/jetty-home/${{package.version}}/jetty-home-${{package.version}}.tar.gz
+      expected-sha256: "__SHA256__"
+      strip-components: 1
+  - runs: |
+      set -eu
+      home="${{targets.destdir}}/opt/jetty"
+      base="${{targets.destdir}}/var/lib/jetty"
+      install -d "$home" "$base"
+      cp -r bin etc lib modules start.jar LICENSE* NOTICE* VERSION.txt "$home/" 2>/dev/null || cp -r . "$home/"
+      chmod -R a+rX "$home"
+      # Build the base against the unpacked home. --add-modules only writes start.d
+      # ini files; none of these modules downloads anything.
+      cd "$base"
+      /usr/lib/jvm/java-21-openjdk/bin/java -jar "$home/start.jar" jetty.home="$home" jetty.base="$base" \
+        --add-modules=server,http,ext,resources,__EE__-deploy,__EE__-webapp --approve-all-licenses
+      install -d "$base/webapps" "$base/lib/ext" "$base/resources"
+      test -f "$base/start.d/http.ini"
+      test -f "$base/start.d/__EE__-deploy.ini"
+
+test:
+  pipeline:
+    - runs: |
+        test -f /opt/jetty/start.jar
+        test -f /var/lib/jetty/start.d/http.ini

@@ -1,0 +1,54 @@
+# Assembles the Eclipse Jetty runtime image on a Wolfi JRE. Nonroot, multi-arch, SBOM by
+# apko. HTTP on :8080, JETTY_BASE /var/lib/jetty (webapps/ for WARs). Pass JVM flags
+# through JDK_JAVA_OPTIONS and Jetty properties as arguments, e.g. jetty.http.port=9090.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - openjdk-21-jre
+    - quench-jetty@local
+
+accounts:
+  groups:
+    - groupname: jetty
+      gid: 1001
+  users:
+    - username: jetty
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  - path: /var/lib/jetty/webapps
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  JETTY_HOME: /opt/jetty
+  JETTY_BASE: /var/lib/jetty
+  PATH: /usr/lib/jvm/java-21-openjdk/bin:/usr/bin
+
+work-dir: /var/lib/jetty
+
+entrypoint:
+  command: /usr/lib/jvm/java-21-openjdk/bin/java -Djava.io.tmpdir=/tmp -jar /opt/jetty/start.jar jetty.home=/opt/jetty jetty.base=/var/lib/jetty
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-jetty"
+  org.opencontainers.image.licenses: "EPL-2.0 OR Apache-2.0"

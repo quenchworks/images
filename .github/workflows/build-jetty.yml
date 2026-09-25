@@ -1,6 +1,6 @@
-name: build-kubo
+name: build-jetty
 
-# From-source build (Kubo, the reference IPFS node; static Go binary, no CGO).
+# JVM binary-dist build (Eclipse Jetty jetty-home on a Wolfi openjdk-21-jre).
 # build.conf is the SINGLE SOURCE OF TRUTH: prep emits the latest 3 stable
 # versions (full X.Y.Z, as-is). The build matrix fans them x both NATIVE arches
 # (amd64 + arm64, no QEMU). Recipes render via build.conf render() (__VER__ +
@@ -15,8 +15,8 @@ permissions:
   attestations: write
 
 env:
-  APP: kubo
-  GHCR_IMAGE: ghcr.io/quenchworks/images/kubo
+  APP: jetty
+  GHCR_IMAGE: ghcr.io/quenchworks/images/jetty
 
 jobs:
   prep:
@@ -51,7 +51,7 @@ jobs:
     runs-on: ${{ matrix.arch.runner }}
     defaults:
       run:
-        working-directory: apps/kubo
+        working-directory: apps/jetty
     steps:
       - uses: actions/checkout@v5
 
@@ -99,7 +99,7 @@ jobs:
         env:
           TRIVY_DETECTION_PRIORITY: comprehensive
         with:
-          input: apps/kubo/image.tar
+          input: apps/jetty/image.tar
           format: table
           exit-code: "1"
           ignore-unfixed: true
@@ -131,8 +131,8 @@ jobs:
             echo "image.tar: $(ls -l image.tar 2>&1)"
             exit 1
           fi
-          docker tag "$img" kubo-boot:local
-          bash test.sh kubo-boot:local "${{ matrix.ver }}"
+          docker tag "$img" jetty-boot:local
+          bash test.sh jetty-boot:local "${{ matrix.ver }}"
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -205,6 +205,6 @@ jobs:
         run: |
           gh api repos/quenchworks/charts/dispatches \
             -f event_type=image-published \
-            -F client_payload[app]=kubo \
+            -F client_payload[app]=jetty \
             -F client_payload[repository]="${GHCR_IMAGE}" \
             -F client_payload[digest]="${{ steps.merge.outputs.digest }}"
