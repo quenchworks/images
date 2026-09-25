@@ -1,0 +1,70 @@
+# Builds the Argo Rollouts controller from the release tag tarball onto Wolfi. The
+# version is stamped with -X like upstream's Makefile.
+package:
+  name: quench-argo-rollouts
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Argo Rollouts controller, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/argoproj/argo-rollouts/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      export CGO_ENABLED=0 GOFLAGS=-mod=mod GO111MODULE=on GOTOOLCHAIN=local
+      # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
+      # FLOOR is a FLOOR, not a pin: only modules below it are floated, and the shipped
+      # binary is asserted to carry nothing below it. One coherent set for both lines:
+      # the otel family moves as one train, the golang.org/x set together.
+      FLOOR="go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/sdk/metric@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0 google.golang.org/grpc@v1.83.2 golang.org/x/crypto@v0.56.0 golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0 golang.org/x/sys@v0.47.0 github.com/expr-lang/expr@v1.17.7 github.com/slack-go/slack@v0.23.1 k8s.io/kubernetes@v1.34.2"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # k8s.io/kubernetes 1.34.x must travel with its staging modules, which go.mod pins
+      # by replace: 1.9.1 replaces them at v0.34.1, so they move to v0.34.2 with it.
+      if go list -m -e k8s.io/kubernetes | grep -q ' v1\.34\.[01]$'; then
+        sed -i -E 's#(=> k8s\.io/[a-z0-9-]+ )v0\.34\.[01]$#\1v0.34.2#' go.mod
+      fi
+      go list -m -e $MODS
+      need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
+      go mod tidy
+      P=github.com/argoproj/argo-rollouts
+      go build -trimpath -ldflags "-s -w -X $P/utils/version.version=v${{package.version}} -X $P/utils/version.gitTreeState=clean" \
+        -o "${{targets.destdir}}/usr/bin/rollouts-controller" ./cmd/rollouts-controller
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/rollouts-controller" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor rollouts-controller)"
+      [ -z "$bad" ] || { echo "❌ 0-CVE float did not reach rollouts-controller:"; echo "$bad"; exit 1; }
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/bin/rollouts-controller
