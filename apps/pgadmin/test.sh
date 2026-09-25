@@ -47,7 +47,8 @@ H=(-b "$C" -c "$C" -H "X-pgA-CSRFToken: $tok" -H 'Content-Type: application/json
 out="$(curl -fsS "${H[@]}" -d "{\"name\":\"smoke\",\"host\":\"$PG\",\"port\":5432,\"db\":\"postgres\",\"username\":\"postgres\",\"password\":\"$PW\",\"sslmode\":\"prefer\",\"connect_now\":true}" \
   "$B/browser/server/obj/1/")"
 echo "$out" | grep -q '"connected": *true' || { echo "server not connected: $(echo "$out" | head -c 400)"; exit 1; }
-sid="$(echo "$out" | sed -n 's/.*"_id": *\([0-9]*\).*/\1/p' | head -1)"
+sid="$(echo "$out" | sed -n 's/^{"node":{"_id": *"\{0,1\}\([0-9][0-9]*\).*/\1/p')"
+[ -n "$sid" ] || { echo "no server id in: $(echo "$out" | head -c 200)"; exit 1; }
 dbs="$(curl -sS "${H[@]}" "$B/browser/database/nodes/1/$sid/")"
 echo "$dbs" | grep -q '"label": *"postgres"' || { echo "databases not listed (server id '$sid'): $(echo "$dbs" | head -c 400)"; echo "create: $(echo "$out" | head -c 300)"; exit 1; }
 if docker logs "$NAME" 2>&1 | grep -E 'Traceback|CRITICAL|ERROR'; then echo "pgadmin logged errors"; exit 1; fi
