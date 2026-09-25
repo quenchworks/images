@@ -11,8 +11,12 @@ ver="$(docker run --rm "$IMAGE" --version 2>&1 | head -1)"
 echo "$ver"
 [ -z "$WANT" ] || echo "$ver" | grep -q "Version: ${WANT}" || { echo "expected version $WANT"; exit 1; }
 
-out="$(docker run --rm --read-only --tmpfs /tmp --entrypoint /bin/sh "$IMAGE" -c '
-  mkdir -p /tmp/scan /tmp/fs/etc && echo "aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY" > /tmp/fs/etc/creds
+# a random AWS-shaped key pair made here: Trivy's allow rules skip AWS's documented
+# EXAMPLE keys, so a fixed sample would pass unnoticed
+KEYID="$(python3 -c 'import secrets; print("AKIA" + "".join(secrets.choice("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567") for _ in range(16)))')"
+SECRET="$(python3 -c 'import secrets, string; print("".join(secrets.choice(string.ascii_letters + string.digits + "/+") for _ in range(40)))')"
+out="$(docker run --rm --read-only --tmpfs /tmp -e KEYID="$KEYID" -e SECRET="$SECRET" --entrypoint /bin/sh "$IMAGE" -c '
+  mkdir -p /tmp/scan /tmp/fs/etc && printf "aws_access_key_id = %s\naws_secret_access_key = %s\n" "$KEYID" "$SECRET" > /tmp/fs/etc/creds
   trivy fs --scanners secret --format json --output /tmp/scan/result.json /tmp/fs 2>/tmp/scan/result.json.log
   rc=$?; if [ $rc -eq 1 ]; then cat /tmp/scan/result.json.log; else bzip2 -c /tmp/scan/result.json | base64; fi; exit $rc
 ')"
