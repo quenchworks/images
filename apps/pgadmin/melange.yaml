@@ -1,0 +1,119 @@
+# Packages pgAdmin 4 into a venv at /opt/pgadmin/venv from the official wheel. The native
+# dependencies come from Wolfi (system site-packages) so their C libraries are Wolfi's.
+package:
+  name: quench-pgadmin
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened pgAdmin 4, the PostgreSQL web UI, on Wolfi"
+  copyright:
+    - license: PostgreSQL
+  dependencies:
+    runtime:
+      - python-3.13
+      - py3.13-cryptography
+      - py3.13-pillow
+      - py3.13-bcrypt
+      - py3.13-psycopg          # pure psycopg on Wolfi's libpq, not psycopg-binary
+      - py3.13-pynacl
+      - libpq-18
+      - postgresql-18-client    # pg_dump, pg_restore, psql for backup and restore
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - python-3.13
+      - py3.13-pip
+      - py3.13-cryptography
+      - py3.13-pillow
+      - py3.13-bcrypt
+      - py3.13-psycopg
+      - py3.13-pynacl
+      - libpq-18
+      - build-base             # fallback for any dependency without a wheel
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://files.pythonhosted.org/packages/py3/p/pgadmin4/pgadmin4-${{package.version}}-py3-none-any.whl
+      expected-sha256: __SHA256__
+      extract: false
+  - runs: |
+      set -eu
+      VER="${{package.version}}"
+      dest="${{targets.destdir}}"
+      VENV=/opt/pgadmin/venv
+      python3.13 -m venv --system-site-packages "$VENV"
+      PIP="$VENV/bin/pip"
+      "$PIP" install --no-cache-dir --upgrade pip
+      "$PIP" install --no-cache-dir --no-deps "pgadmin4-${VER}-py3-none-any.whl"
+      # pgAdmin's own requirements, minus the extras, with psycopg[binary]==X.Y.Z
+      # rewritten to plain psycopg: Wolfi's py3.13-psycopg (on libpq-18) satisfies it.
+      # The Wolfi cryptography, Pillow, bcrypt and PyNaCl already satisfy their pins, so
+      # pip leaves them in the system site-packages.
+      "$VENV/bin/python" - > requirements.txt <<'PY'
+      import importlib.metadata as m, re
+      for r in m.requires("pgadmin4"):
+          if "extra ==" in r:
+              continue
+          name = re.split(r"[\s\[<>=!~;]", r, 1)[0].lower()
+          if name == "psycopg":
+              marker = r.split(";", 1)[1] if ";" in r else ""
+              r = "psycopg>=3.3" + (";" + marker if marker else "")
+          print(r)
+      PY
+      cat requirements.txt
+      "$PIP" install --no-cache-dir -r requirements.txt gunicorn
+      # what the scan cannot see must not be there
+      site="$VENV/lib/python3.13/site-packages"
+      if ls -d "$site"/*.libs 2>/dev/null | grep -q .; then echo "❌ bundled native libs:"; ls -d "$site"/*.libs; exit 1; fi
+      for p in psycopg_binary cryptography PIL bcrypt nacl; do
+        test ! -e "$site/$p" || { echo "❌ $p installed into the venv instead of from Wolfi"; exit 1; }
+      done
+      "$VENV/bin/python" -c "
+      import cryptography, PIL, bcrypt, nacl, psycopg
+      for mod in (cryptography, PIL, bcrypt, nacl, psycopg):
+          assert mod.__file__.startswith('/usr/lib/python3.13/site-packages/'), mod.__file__
+      assert psycopg.pq.__impl__ in ('c', 'python'), psycopg.pq.__impl__
+      print('native deps from Wolfi; psycopg', psycopg.__version__, psycopg.pq.__impl__, 'libpq', psycopg.pq.version())
+      "
+      "$VENV/bin/python" -c "import importlib.metadata as m, sys; v = m.version('pgadmin4'); assert v == sys.argv[1], v" "$VER"
+      # the packager's config hook (config.py imports config_distro)
+      cat > "$site/pgadmin4/config_distro.py" <<'CFG'
+      # QuenchWorks packaging of pgAdmin 4: config.py imports this as the distribution hook.
+      import ast
+      import logging
+      import os
+
+      SERVER_MODE = True
+      DATA_DIR = os.environ.get('PGADMIN_DATA_DIR', '/var/lib/pgadmin')
+      LOG_FILE = '/dev/null'
+      CONSOLE_LOG_LEVEL = logging.WARNING
+      UPGRADE_CHECK_ENABLED = False
+      DEFAULT_BINARY_PATHS = {'pg': '/usr/bin', 'ppas': '', 'gpdb': ''}
+
+      # PGADMIN_CONFIG_<KEY>=<value> sets any config.py key. Values are Python literals
+      # (True, 30, 'text', ['a']); a value that does not parse is taken as a string.
+      for _k, _v in os.environ.items():
+          if _k.startswith('PGADMIN_CONFIG_'):
+              try:
+                  globals()[_k[len('PGADMIN_CONFIG_'):]] = ast.literal_eval(_v)
+              except (ValueError, SyntaxError):
+                  globals()[_k[len('PGADMIN_CONFIG_'):]] = _v
+      CFG
+      "$PIP" uninstall -y pip
+      install -d "${dest}/opt/pgadmin"
+      cp -a "$VENV" "${dest}/opt/pgadmin/venv"
+      chmod -R a+rX "${dest}/opt/pgadmin"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /opt/pgadmin/venv/bin/gunicorn
+        test -f /opt/pgadmin/venv/lib/python3.13/site-packages/pgadmin4/config_distro.py

@@ -1,0 +1,56 @@
+# pgAdmin 4 runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# gunicorn serves the UI on :5050 (/misc/ping for health). State (the SQLite config DB,
+# sessions, uploaded files) lives in /var/lib/pgadmin. The first start creates the admin
+# from PGADMIN_SETUP_EMAIL and PGADMIN_SETUP_PASSWORD; PGADMIN_CONFIG_<KEY> sets any
+# config.py key.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-pgadmin@local
+
+accounts:
+  groups:
+    - groupname: pgadmin
+      gid: 1001
+  users:
+    - username: pgadmin
+      uid: 1001
+      gid: 1001
+      homedir: /var/lib/pgadmin
+  run-as: 1001
+
+environment:
+  HOME: /var/lib/pgadmin
+  PATH: /opt/pgadmin/venv/bin:/usr/bin:/bin
+  PYTHONDONTWRITEBYTECODE: "1"
+
+paths:
+  - path: /var/lib/pgadmin
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+work-dir: /opt/pgadmin/venv/lib/python3.13/site-packages/pgadmin4
+
+# one worker with threads, as upstream runs it: pgAdmin keeps per-process session state
+entrypoint:
+  command: /opt/pgadmin/venv/bin/gunicorn --bind [::]:5050 --workers 1 --threads 25 --timeout 86400 --access-logfile - --chdir /opt/pgadmin/venv/lib/python3.13/site-packages/pgadmin4 pgAdmin4:app
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-pgadmin"
+  org.opencontainers.image.licenses: "PostgreSQL"
