@@ -1,0 +1,62 @@
+# Assembles the Gotenberg runtime image (Chromium variant). Nonroot, multi-arch, SBOM by
+# apko. tini is PID 1 so the Chromium processes Gotenberg starts and stops get reaped.
+# The API listens on :3000 (/health, /version, /forms/chromium/..., /forms/pdfengines/...).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-gotenberg@local
+
+accounts:
+  groups:
+    - groupname: gotenberg
+      gid: 1001
+  users:
+    - username: gotenberg
+      uid: 1001
+      gid: 1001
+      homedir: /home/gotenberg
+  run-as: 1001
+
+paths:
+  - path: /home/gotenberg
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+work-dir: /home/gotenberg
+
+environment:
+  LANG: C.UTF-8
+  LC_ALL: C.UTF-8
+  CHROMIUM_BIN_PATH: /usr/bin/chromium
+  CHROMIUM_HYPHEN_DATA_DIR_PATH: /opt/gotenberg/chromium-hyphen-data
+  QPDF_BIN_PATH: /usr/bin/qpdf
+  EXIFTOOL_BIN_PATH: /usr/bin/exiftool
+  PDFCPU_BIN_PATH: /usr/bin/pdfcpu
+  PDFTK_BIN_PATH: /usr/bin/pdftk
+  PDFENGINES_CONVERT_ENGINES: ""
+  OTEL_TRACES_EXPORTER: none
+  OTEL_METRICS_EXPORTER: none
+  OTEL_LOGS_EXPORTER: none
+
+entrypoint:
+  command: /usr/bin/tini -- /usr/bin/gotenberg
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-gotenberg"
+  org.opencontainers.image.licenses: "MIT"
