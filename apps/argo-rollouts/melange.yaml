@@ -58,7 +58,7 @@ pipeline:
       if [ -n "$need" ]; then go get $need; fi
       go mod tidy
       P=github.com/argoproj/argo-rollouts
-      go build -trimpath -ldflags "-s -w -X $P/utils/version.version=v${{package.version}} -X $P/utils/version.gitTreeState=clean" \
+      go build -trimpath -ldflags "-s -w -X $P/utils/version.version=${{package.version}} -X $P/utils/version.gitTag=v${{package.version}} -X $P/utils/version.gitTreeState=clean" \
         -o "${{targets.destdir}}/usr/bin/rollouts-controller" ./cmd/rollouts-controller
       bad="$(go version -m "${{targets.destdir}}/usr/bin/rollouts-controller" \
         | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor rollouts-controller)"
