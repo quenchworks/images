@@ -416,6 +416,45 @@ apps:
       published: '2026-09-25T13:47:02Z'
       size: 31.4 MB
       layers: 1
+  hubble-ui:
+    image: ghcr.io/quenchworks/images/hubble-ui
+    category: Coordination & mesh
+    summary: Hubble UI, Cilium's web UI for the service map and live network flows. The React frontend
+      built from source and served by a Wolfi nginx that proxies the API to hubble-ui-backend in the same
+      pod.
+    source: https://github.com/cilium/hubble-ui
+    upstream: https://cilium.io
+    license: Apache-2.0
+    tier: standard
+    status: built
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 0.13.6
+      digest: sha256:7848c34ad688b75bd6d86a9535c9a2ca2e41f289921bcebef8921ac20f853e27
+      published: '2026-09-25T16:30:37Z'
+      size: 11.9 MB
+      layers: 1
+  hubble-ui-backend:
+    image: ghcr.io/quenchworks/images/hubble-ui-backend
+    category: Coordination & mesh
+    summary: The Hubble UI backend, the Go service that reads flows and the service map from Hubble Relay
+      and streams them to the Hubble UI. Built from source. Image only, the hubble-ui chart runs it.
+    source: https://github.com/cilium/hubble-ui
+    upstream: https://cilium.io
+    license: Apache-2.0
+    tier: standard
+    status: built
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 0.13.6
+      digest: sha256:873c92b4782357e5f35b5af160c87c1bbf5a17737b2f7b4a176678ce51d97e60
+      published: '2026-09-25T16:38:40Z'
+      size: 21.4 MB
+      layers: 1
   hubble-relay:
     image: ghcr.io/quenchworks/images/hubble-relay
     category: Coordination & mesh
