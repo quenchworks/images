@@ -1,0 +1,54 @@
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-akhq@local
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+      homedir: /home/nonroot
+  run-as: 1001
+
+environment:
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  HOME: /home/nonroot
+  LANG: C.UTF-8
+  # the config file the chart mounts over; the image ships a default
+  MICRONAUT_CONFIG_FILES: /etc/akhq/application.yml
+
+paths:
+  - path: /home/nonroot
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+work-dir: /usr/lib/akhq
+
+# The app's own jars on the classpath (the swaps renamed some, so no start script).
+# openjdk-21-jre has no /usr/bin/java symlink, so the path is the JDK's own.
+entrypoint:
+  command: /usr/lib/jvm/java-21-openjdk/bin/java -cp /usr/lib/akhq/lib/* org.akhq.App
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-akhq"
+  org.opencontainers.image.licenses: "Apache-2.0"

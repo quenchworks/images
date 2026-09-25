@@ -1,0 +1,152 @@
+# Packages AKHQ onto Wolfi from its release distribution tarball (lib/ of separate jars),
+# with the vulnerable libraries replaced one jar at a time.
+package:
+  name: quench-akhq
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened AKHQ, the Kafka web UI, on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-21-jre
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - curl
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/tchiotludo/akhq/releases/download/${{package.version}}/akhq-${{package.version}}.tar
+      expected-sha256: __SHA256__
+      extract: false
+  - runs: |
+      set -eu
+      tar xf akhq-${{package.version}}.tar
+      dest="${{targets.destdir}}/usr/lib/akhq"
+      install -d "$dest"
+      # lib/ only: the Gradle start script lists every jar by name, and the swaps rename
+      # them, so the image runs `java -cp lib/*` instead
+      cp -a akhq-${{package.version}}/lib "$dest/lib"
+      lib="$dest/lib"
+      M=https://repo1.maven.org/maven2
+      # swap <shipped jar> <maven path of the fixed jar> <its sha256, from a download>
+      # Each swap asserts the old jar is shipped, so a release that moves a library fails
+      # loudly instead of gaining a second copy.
+      swap() {
+        test -f "$lib/$1" || { echo "FATAL: $1 not shipped; re-audit the swaps"; exit 1; }
+        new="$(basename "$2")"
+        curl -fsSL -o "$lib/$new" "$M/$2"
+        echo "$3  $lib/$new" | sha256sum -c -
+        rm -f "$lib/$1"
+      }
+      # One version per family (the highest any finding demands, measured 2026-09-25 with
+      # trivy against the 0.28.0 distribution: 58 findings): netty 4.2.17.Final, jackson
+      # 2.21.5 and 3.1.5, jetty 12.1.10 (the ee10 12.0.x servlet jars are not flagged and
+      # stay), jline 3.30.15, log4j-api 2.25.5, logback 1.5.34, micrometer 1.16.6, bc-fips
+      # 2.1.3, httpclient5 5.6.3, httpcore5 5.4.3.
+      # Wire moves 5.x to 6.3.0 as one family (5.x has no fix). Its one user is
+      # Confluent's kafka-protobuf-provider; a ProtobufSchema parse gave the same result
+      # on 6.3.0 as on the shipped 5.x.
+      swap bc-fips-2.1.2.jar org/bouncycastle/bc-fips/2.1.3/bc-fips-2.1.3.jar f55fc476ede820d5c03fe87e6ced5bb0095e1dc30b387445846a3ff0274f8c0e
+      swap httpclient5-5.6.1.jar org/apache/httpcomponents/client5/httpclient5/5.6.3/httpclient5-5.6.3.jar 80712ff129210d7c73d9fcc1195cbee5c3c34744965c7a05ea107b3648922f18
+      swap httpcore5-5.4.jar org/apache/httpcomponents/core5/httpcore5/5.4.3/httpcore5-5.4.3.jar 18bfbbabb478dfb67f31aeaf428c387f3c3df654582e1309f708ee1f3086830a
+      swap httpcore5-h2-5.4.jar org/apache/httpcomponents/core5/httpcore5-h2/5.4.3/httpcore5-h2-5.4.3.jar c7db7026b8e2dea39132b04a6069f6671e2858309b20a146ec5c7dd6ed73a0b6
+      swap jackson-core-2.21.4.jar com/fasterxml/jackson/core/jackson-core/2.21.5/jackson-core-2.21.5.jar b64b5874162b503a0e58a8f7758266e8dd9f91bf49e3a59ae0b5f47589a231b7
+      swap jackson-core-3.1.3.jar tools/jackson/core/jackson-core/3.1.5/jackson-core-3.1.5.jar 9431b7fa2673bbb618c11d865fe15e13222fd182a214ff998cb7e56afd8f35d2
+      swap jackson-databind-2.21.4.jar com/fasterxml/jackson/core/jackson-databind/2.21.5/jackson-databind-2.21.5.jar 507418c0fafd38b2b2cfb704521630da613a8e4cc8381195a6f418017883e2c0
+      swap jackson-databind-3.1.3.jar tools/jackson/core/jackson-databind/3.1.5/jackson-databind-3.1.5.jar 3a2338d996fd3056791df8d335fa9ba8a62a706ed4245ecf81b3e583df37d08a
+      swap jackson-dataformat-cbor-2.21.4.jar com/fasterxml/jackson/dataformat/jackson-dataformat-cbor/2.21.5/jackson-dataformat-cbor-2.21.5.jar 5b0fa5aa7398650a832f9c37fabce5e978892d66544d17ff50fa3151fb463987
+      swap jackson-dataformat-csv-2.21.4.jar com/fasterxml/jackson/dataformat/jackson-dataformat-csv/2.21.5/jackson-dataformat-csv-2.21.5.jar b278bd22805093e1b3e31c9ad7fa2773d3ac9e250da8cb566bd914334cc51a96
+      swap jackson-dataformat-properties-2.21.4.jar com/fasterxml/jackson/dataformat/jackson-dataformat-properties/2.21.5/jackson-dataformat-properties-2.21.5.jar 310fedc5276473dbeb743f2f794d8ab5b76f4bf9d895779f7ea5a4dc28076628
+      swap jackson-dataformat-yaml-2.21.4.jar com/fasterxml/jackson/dataformat/jackson-dataformat-yaml/2.21.5/jackson-dataformat-yaml-2.21.5.jar c26143ac5503fd545bd5e9063f45a2499be89971559875e47cc868ef9359d10b
+      swap jackson-datatype-guava-2.21.4.jar com/fasterxml/jackson/datatype/jackson-datatype-guava/2.21.5/jackson-datatype-guava-2.21.5.jar c0150ba94d9570e2c4b78d32fffdce11d0186e993ec8de4366636c505a5807d9
+      swap jackson-datatype-jdk8-2.21.4.jar com/fasterxml/jackson/datatype/jackson-datatype-jdk8/2.21.5/jackson-datatype-jdk8-2.21.5.jar c8b1a0d14ffb3f8f8a1f182856c8803a3ee1d7c1aeb68dfee08f22d934ce108f
+      swap jackson-datatype-joda-2.21.4.jar com/fasterxml/jackson/datatype/jackson-datatype-joda/2.21.5/jackson-datatype-joda-2.21.5.jar eedb77287e65d9cb9c30bc935aa0f56192edeb665adeb86d2f400813517c67a5
+      swap jackson-datatype-jsr310-2.21.4.jar com/fasterxml/jackson/datatype/jackson-datatype-jsr310/2.21.5/jackson-datatype-jsr310-2.21.5.jar e941f9718d16a649614cb06711de06da34722afff9cee0b7725fc5318638304c
+      swap jackson-jakarta-rs-base-2.21.4.jar com/fasterxml/jackson/jakarta/rs/jackson-jakarta-rs-base/2.21.5/jackson-jakarta-rs-base-2.21.5.jar 07f11f2e46153b3e8d27bf6ff8f874b31bf781bf46bef69434355623a67cac5d
+      swap jackson-jakarta-rs-json-provider-2.21.4.jar com/fasterxml/jackson/jakarta/rs/jackson-jakarta-rs-json-provider/2.21.5/jackson-jakarta-rs-json-provider-2.21.5.jar c176333dd1edb820698fd3376e6f376919e3b6a208b37d112ce32192e9e787d6
+      swap jackson-module-blackbird-2.21.4.jar com/fasterxml/jackson/module/jackson-module-blackbird/2.21.5/jackson-module-blackbird-2.21.5.jar 6e1aac3aed140a3defec385083bba339d52eebb3f940582f03f64ad43ef3c433
+      swap jackson-module-jakarta-xmlbind-annotations-2.21.4.jar com/fasterxml/jackson/module/jackson-module-jakarta-xmlbind-annotations/2.21.5/jackson-module-jakarta-xmlbind-annotations-2.21.5.jar 5cb2cc2bf59faccf412ed6cba8588724b23c6145e5bda8d5ebee26db6d4dd12a
+      swap jackson-module-parameter-names-2.21.4.jar com/fasterxml/jackson/module/jackson-module-parameter-names/2.21.5/jackson-module-parameter-names-2.21.5.jar 87da1f76d23865f87df740658e96e906fd429e5df3a8f949551955d6dbb5129c
+      swap jackson-module-scala_2.13-2.21.4.jar com/fasterxml/jackson/module/jackson-module-scala_2.13/2.21.5/jackson-module-scala_2.13-2.21.5.jar 4c38c877fe252c9304623351180979e74528013e92e5a519641df37953a88287
+      swap jetty-alpn-client-12.1.8.jar org/eclipse/jetty/jetty-alpn-client/12.1.10/jetty-alpn-client-12.1.10.jar 4eed96763ac18fe310ad162d3266cf64ec718d86f5ac87b19a91f3f62a2c4520
+      swap jetty-client-12.1.8.jar org/eclipse/jetty/jetty-client/12.1.10/jetty-client-12.1.10.jar 6e72623ef6ef1ed39a77934452e9d0340d7977882f3d8e9184ed8a2176330c68
+      swap jetty-compression-common-12.1.8.jar org/eclipse/jetty/compression/jetty-compression-common/12.1.10/jetty-compression-common-12.1.10.jar 7c02e58d5589549a5e9b19a903134a0e868fdb9ee38459b2c4495a6a3b342ba0
+      swap jetty-compression-gzip-12.1.8.jar org/eclipse/jetty/compression/jetty-compression-gzip/12.1.10/jetty-compression-gzip-12.1.10.jar 8c112b9ebb3413626026ba6782afde5e22575eb6fb071c98ae3541cb8d2dc79e
+      swap jetty-http-12.1.8.jar org/eclipse/jetty/jetty-http/12.1.10/jetty-http-12.1.10.jar 090f276739fd9bf8c30511007caec669ea3804b1df1061c37f44467474bee71d
+      swap jetty-io-12.1.8.jar org/eclipse/jetty/jetty-io/12.1.10/jetty-io-12.1.10.jar 448fc0f8f6f5f7251fc46de8e3aae7da14bd7c571a8043dac3dc381d08228fa0
+      swap jetty-security-12.1.8.jar org/eclipse/jetty/jetty-security/12.1.10/jetty-security-12.1.10.jar 2f34b7895cec4e3547a1b52e12e7e92b3f3a110bf3c17637f8743ca3f4e42f0c
+      swap jetty-server-12.1.8.jar org/eclipse/jetty/jetty-server/12.1.10/jetty-server-12.1.10.jar 4b0108e87abada7027123deca17186249413232dad0a2bd58a4e70a987b5354a
+      swap jetty-session-12.1.8.jar org/eclipse/jetty/jetty-session/12.1.10/jetty-session-12.1.10.jar 164649123d15a3f2be5c196e82aa652dff05c75362db71b0f4ab6bb35165020a
+      swap jetty-util-12.1.8.jar org/eclipse/jetty/jetty-util/12.1.10/jetty-util-12.1.10.jar c52b4ff62cdacca8a399c611231129e6bd1074db7e3892e78cd106725cdd0ef1
+      swap jline-builtins-3.30.9.jar org/jline/jline-builtins/3.30.15/jline-builtins-3.30.15.jar e67700beba6fbe9b2babb365aa3d32d8ee8ab79326aae01aee7288fddc66ae3e
+      swap jline-console-3.30.9.jar org/jline/jline-console/3.30.15/jline-console-3.30.15.jar e40af6f6baaf0fb7979ec7ecac2e3737db5fcdb50a658ede0a66022f2e2d3df5
+      swap jline-native-3.30.9.jar org/jline/jline-native/3.30.15/jline-native-3.30.15.jar 076f95383993e5241d63704aef06a7d6a1e5233e762cf2b1130b663cfd9f39e4
+      swap jline-reader-3.30.9.jar org/jline/jline-reader/3.30.15/jline-reader-3.30.15.jar f72f2ce167765b18a7604370963c1413b5bec923a97576b745fbce40a7034fbf
+      swap jline-style-3.30.9.jar org/jline/jline-style/3.30.15/jline-style-3.30.15.jar 302a8779c9f175ea618e573bb38e8d240c3c5ccdfe639aeccec69e0b5ef0690c
+      swap jline-terminal-3.30.9.jar org/jline/jline-terminal/3.30.15/jline-terminal-3.30.15.jar eed027d1f63a870c8d0522c067959382ad7d3ccddfd8c7041488432189e0e284
+      swap jline-terminal-jansi-3.30.9.jar org/jline/jline-terminal-jansi/3.30.15/jline-terminal-jansi-3.30.15.jar de0a419b6b5aaa6029c0546c7bf79e4ab326f0b9d749283687294b8506dcf545
+      swap jline-terminal-jna-3.30.9.jar org/jline/jline-terminal-jna/3.30.15/jline-terminal-jna-3.30.15.jar b42c35cdf02fe93f6d993f3e5d5ff15c3d5a1d9206edd5f2d34517e5bdf1d645
+      swap jline-terminal-jni-3.30.9.jar org/jline/jline-terminal-jni/3.30.15/jline-terminal-jni-3.30.15.jar 78fb22e6dda00624995e02f343be59a879bf8a63edabb4eccd81476335914ec9
+      swap log4j-api-2.25.4.jar org/apache/logging/log4j/log4j-api/2.25.5/log4j-api-2.25.5.jar 64777f73ea0b3104c04eb82befbdccc30a425a19e83ad06cb2f93aa303511863
+      swap logback-classic-1.5.32.jar ch/qos/logback/logback-classic/1.5.34/logback-classic-1.5.34.jar b65e05076a5c1aadb659b4fe4bc5fee31cb26cd70390292eb03e4a7a24cff10f
+      swap logback-core-1.5.32.jar ch/qos/logback/logback-core/1.5.34/logback-core-1.5.34.jar 42eda264c0c650c2bec59e66151a88b708a8663dc1b49d788202d53e78b8caae
+      swap micrometer-commons-1.16.5.jar io/micrometer/micrometer-commons/1.16.6/micrometer-commons-1.16.6.jar 45aff76226830db257f4bc39a5bcff83d633e572fee9dc4e45cfa12af9a0a49a
+      swap micrometer-core-1.16.5.jar io/micrometer/micrometer-core/1.16.6/micrometer-core-1.16.6.jar 1957ef2deaffbc1fb98cebfd0f5b3109ecf19c994d7e5378598c20747ba8d68b
+      swap micrometer-observation-1.16.5.jar io/micrometer/micrometer-observation/1.16.6/micrometer-observation-1.16.6.jar 4c0826d5e7c8522a8e111470b4e77f77b0a10f520eb5502ddd143fdbcedb2340
+      swap micrometer-registry-prometheus-1.16.5.jar io/micrometer/micrometer-registry-prometheus/1.16.6/micrometer-registry-prometheus-1.16.6.jar 0e9c7a32dffea3745f2ebff41a4cfeddc5269ca0fd6d98d6e3bafc7b5e35375d
+      swap netty-buffer-4.2.13.Final.jar io/netty/netty-buffer/4.2.17.Final/netty-buffer-4.2.17.Final.jar 0d249178ec0204b35a6ad3e5ac8a6c2ecb3eb496c6cdae40b8eca4fa3cb6a0c7
+      swap netty-codec-4.2.13.Final.jar io/netty/netty-codec/4.2.17.Final/netty-codec-4.2.17.Final.jar ac76f972446a2f72818441f746d0e73c58519a4687bf680d2b687d7dc5e28e2e
+      swap netty-codec-base-4.2.13.Final.jar io/netty/netty-codec-base/4.2.17.Final/netty-codec-base-4.2.17.Final.jar 3b92bc3b7d231fa6f4889b2b9281cae6b634428b8121fb1b9b5fccba1543d352
+      swap netty-codec-compression-4.2.13.Final.jar io/netty/netty-codec-compression/4.2.17.Final/netty-codec-compression-4.2.17.Final.jar 425b287a1f36986a5c8edd76379a49decdf99d284f3454f3fa607a073bfb2c18
+      swap netty-codec-dns-4.2.13.Final.jar io/netty/netty-codec-dns/4.2.17.Final/netty-codec-dns-4.2.17.Final.jar 394f4649a824683735f28b299d0a48caff059ae30e654e2abf8b3f392af4d374
+      swap netty-codec-http-4.2.13.Final.jar io/netty/netty-codec-http/4.2.17.Final/netty-codec-http-4.2.17.Final.jar a5bde91ac82ab90579df6559c0bd7ea6ae37460e3f18116ab4122194283b3669
+      swap netty-codec-http2-4.2.13.Final.jar io/netty/netty-codec-http2/4.2.17.Final/netty-codec-http2-4.2.17.Final.jar 450af97424cf58d2d72ad4d476d9e290f2fdf69fa181c289a6e6dd176bb86a7b
+      swap netty-codec-marshalling-4.2.13.Final.jar io/netty/netty-codec-marshalling/4.2.17.Final/netty-codec-marshalling-4.2.17.Final.jar ee5ffed638da6b7e2b4567559bd5f78b18f635cdaa4f3b6d23aa27ccf6cb57c2
+      swap netty-codec-protobuf-4.2.13.Final.jar io/netty/netty-codec-protobuf/4.2.17.Final/netty-codec-protobuf-4.2.17.Final.jar 44b2fcc4bc1d6c01edafe6ae6c8a7de7c3c5bad59697a93b6b879a45a78a5387
+      swap netty-codec-socks-4.2.13.Final.jar io/netty/netty-codec-socks/4.2.17.Final/netty-codec-socks-4.2.17.Final.jar 6b5760cc512cee1f7515e25010892471f3995045f84cd6c1d1b6e6cee534733c
+      swap netty-common-4.2.13.Final.jar io/netty/netty-common/4.2.17.Final/netty-common-4.2.17.Final.jar 502aae2a6680e9bca3558a3fa098f06dc4d87340b8b714e925a6d690871c092a
+      swap netty-handler-4.2.13.Final.jar io/netty/netty-handler/4.2.17.Final/netty-handler-4.2.17.Final.jar 4df11c7520b556c5e2c84b939182699d48fcbb09e97a6bb5e1c0b6835227d126
+      swap netty-handler-proxy-4.2.13.Final.jar io/netty/netty-handler-proxy/4.2.17.Final/netty-handler-proxy-4.2.17.Final.jar 94089bea6ba6f3248725f2bf233aa2bc70ac1547c21b9bdfc7548f710a845aa0
+      swap netty-resolver-4.2.13.Final.jar io/netty/netty-resolver/4.2.17.Final/netty-resolver-4.2.17.Final.jar 7a4b599b9c0c29a505d3b7311f142df883fb27d0f67495a7cbaf533b0e456623
+      swap netty-resolver-dns-4.2.13.Final.jar io/netty/netty-resolver-dns/4.2.17.Final/netty-resolver-dns-4.2.17.Final.jar d332481c22136a68c2ee9e45e86212174932587d93a5dd4d201e196828bf9f91
+      swap netty-transport-4.2.13.Final.jar io/netty/netty-transport/4.2.17.Final/netty-transport-4.2.17.Final.jar d2409ce3a735cbab4188d0ea5d82abed823a6a07a8389f49af4a9e1243a562bc
+      swap netty-transport-classes-epoll-4.2.13.Final.jar io/netty/netty-transport-classes-epoll/4.2.17.Final/netty-transport-classes-epoll-4.2.17.Final.jar 4e21d8a2e3429d9de967a716d58119f57585786bd2f7213bf5b27770425269de
+      swap netty-transport-classes-kqueue-4.2.13.Final.jar io/netty/netty-transport-classes-kqueue/4.2.17.Final/netty-transport-classes-kqueue-4.2.17.Final.jar f0b2dd4757a22345b0b28e2856dc7ee44e5dea256cc520ddc27e4dce4ea9efb3
+      swap netty-transport-native-kqueue-4.2.13.Final-osx-aarch_64.jar io/netty/netty-transport-native-kqueue/4.2.17.Final/netty-transport-native-kqueue-4.2.17.Final-osx-aarch_64.jar b76ed41a8cb2d074a1a5596d0d8fe0fcdf96389b198b42e0d361ba9dc2466a24
+      swap netty-transport-native-unix-common-4.2.13.Final.jar io/netty/netty-transport-native-unix-common/4.2.17.Final/netty-transport-native-unix-common-4.2.17.Final.jar e01aa467b9104de54a57c08c290f70b22e53ec97cf5583c87c112170ef5832cc
+      swap wire-compiler-5.2.0.jar com/squareup/wire/wire-compiler/6.3.0/wire-compiler-6.3.0.jar 69ae4fdb5439b3c1514af9f0ac2a9f54813e40525b0c334510b03ede29c0856b
+      swap wire-java-generator-5.2.0.jar com/squareup/wire/wire-java-generator/6.3.0/wire-java-generator-6.3.0.jar 6a64f25c9f3868da67074e99641407e2a4e888a9415b6234bef559aab5c9c82d
+      swap wire-kotlin-generator-5.2.0.jar com/squareup/wire/wire-kotlin-generator/6.3.0/wire-kotlin-generator-6.3.0.jar fabd4e694a8090e71eaf56e551e4f362a981b0be53895d23aaed2d955571441b
+      swap wire-runtime-jvm-5.5.0.jar com/squareup/wire/wire-runtime-jvm/6.3.0/wire-runtime-jvm-6.3.0.jar 015fe322956d43efeed350ece606e3c2eb6f7448e1b982eca64dcc4ff9b4a5d0
+      swap wire-schema-jvm-5.5.0.jar com/squareup/wire/wire-schema-jvm/6.3.0/wire-schema-jvm-6.3.0.jar b6177b19b2d6479f57802bb2b33c621f7272d8d210e398be083a9ef4a9d5858f
+      swap wire-swift-generator-5.2.0.jar com/squareup/wire/wire-swift-generator/6.3.0/wire-swift-generator-6.3.0.jar ec8c373f537518b56ffb143b13f2417150ed4d29459fdd653a6b8ca4b61c1529
+      chmod -R a+rX "$dest"
+      # a default config: UI on 8080, health on 28081; the chart or a mount replaces it
+      install -d "${{targets.destdir}}/etc/akhq"
+      cat > "${{targets.destdir}}/etc/akhq/application.yml" <<'CONF'
+      micronaut:
+        server:
+          port: 8080
+      endpoints:
+        all:
+          port: 28081
+      akhq:
+        connections: {}
+      CONF
+
+test:
+  pipeline:
+    - runs: |
+        test -f /usr/lib/akhq/lib/akhq-${{package.version}}.jar
+        test -f /etc/akhq/application.yml
