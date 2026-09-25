@@ -1,0 +1,109 @@
+# Builds Kubo, the reference IPFS implementation, from source onto Wolfi. Static Go
+# binary, no CGO, with upstream's preloaded plugins. The package also carries a small
+# first-boot entrypoint: Kubo binds its RPC API and gateway to 127.0.0.1 unless the
+# repo config says otherwise, and no flag or env var overrides that, so the entrypoint
+# creates the repo on first boot and points both listeners at 0.0.0.0. Output is a
+# signed APK in Quenchworks' own repo. No upstream distro binaries.
+package:
+  name: quench-kubo
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Kubo (IPFS), built from source on Wolfi"
+  copyright:
+    - license: MIT OR Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - busybox   # /bin/sh for the first-boot entrypoint
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/ipfs/kubo/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOFLAGS="-mod=mod -buildvcs=false"
+      export GO111MODULE=on
+      export GOTOOLCHAIN=local
+      # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
+      # FLOOR is a FLOOR, not a pin. A bare `go get mod@vX` fails silently in two
+      # directions: it is a NO-OP when an upstream `replace` overrides it, and it
+      # becomes a DOWNGRADE once upstream requires more than vX -- re-introducing
+      # the CVE it was added to clear. So float only what is below the floor, then
+      # assert the SHIPPED BINARY carries nothing below it.
+      # libp2p transports: 0.41/0.42 ship quic-go 0.59.0 and webtransport-go 0.10.0.
+      # webtransport-go 0.11.1 (the fix) requires quic-go 0.60.0, so that is the quic
+      # floor, not the 0.59.1 that closes quic's own CVE. go-libp2p 0.48 compiles
+      # against both; the boot test proves a QUIC dial and a bitswap fetch.
+      # kubo 0.43.1 replaces go-libp2p with a fork; the check reads the EFFECTIVE
+      # version ($NF of `go list -m`), so a replace cannot hide a module below floor.
+      FLOOR="golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0 golang.org/x/crypto@v0.56.0 golang.org/x/sys@v0.47.0 golang.org/x/mod@v0.40.0 golang.org/x/oauth2@v0.36.0 google.golang.org/grpc@v1.83.2 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0 github.com/quic-go/quic-go@v0.60.0 github.com/quic-go/webtransport-go@v0.11.1 github.com/pion/dtls/v3@v3.1.4 github.com/pion/stun/v3@v3.1.5"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is
+      # the EFFECTIVE version and a replace cannot hide behind the require line.
+      go list -m -e $MODS
+      need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
+      # 0.41/0.42 pin cockroachdb/swiss at a Dec-2025 pseudo-version whose runtime
+      # linkname shims do not compile on Wolfi's Go 1.26.6 (undefined: fastrand64,
+      # hashFn). Move it to the swiss 0.43.1 itself requires; the API pebble v2 uses is
+      # unchanged. A pseudo-version is not semver, so the floor above cannot see it.
+      SWISS=github.com/cockroachdb/swiss
+      if [ "$(go list -m -f '{{.Version}}' $SWISS 2>/dev/null)" = v0.0.0-20251224182025-b0f6560f979b ]; then
+        go get $SWISS@v0.0.0-20260820225851-333444432258
+      fi
+      go mod tidy
+      go build -trimpath \
+        -ldflags "-s -w -X github.com/ipfs/kubo.taggedRelease=v${{package.version}} -X github.com/ipfs/kubo.buildOrigin=quenchworks" \
+        -o "${{targets.destdir}}/usr/bin/ipfs" ./cmd/ipfs
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/ipfs" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor ipfs)"
+      [ -z "$bad" ] || { echo "❌ 0-CVE float did not reach ipfs:"; echo "$bad"; exit 1; }
+  # First-boot entrypoint. IPFS_PROFILE picks the init profiles (default "server",
+  # which stops Kubo dialing private ranges from inside a cluster). IPFS_SWARM_KEY_FILE
+  # installs a private-network key on init.
+  - runs: |
+      install -d "${{targets.destdir}}/usr/local/bin"
+      cat > "${{targets.destdir}}/usr/local/bin/kubo-entrypoint" <<'SCRIPT'
+      #!/bin/sh
+      set -eu
+      repo="${IPFS_PATH:-/data/ipfs}"
+      export IPFS_PATH="$repo"
+      if [ ! -e "$repo/config" ]; then
+        ipfs init --profile="${IPFS_PROFILE:-server}"
+        ipfs config Addresses.API /ip4/0.0.0.0/tcp/5001
+        ipfs config Addresses.Gateway /ip4/0.0.0.0/tcp/8080
+        if [ -n "${IPFS_SWARM_KEY_FILE:-}" ]; then
+          install -m 0400 "$IPFS_SWARM_KEY_FILE" "$repo/swarm.key"
+        fi
+      fi
+      exec ipfs "$@"
+      SCRIPT
+      chmod 0755 "${{targets.destdir}}/usr/local/bin/kubo-entrypoint"

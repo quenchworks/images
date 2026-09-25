@@ -1,0 +1,51 @@
+# Assembles the Kubo (IPFS) runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# The entrypoint creates the repo under /data/ipfs on first boot, then runs the
+# daemon: RPC API on :5001, HTTP gateway on :8080, libp2p swarm on :4001 (TCP+UDP).
+# Mount a volume at /data/ipfs to keep the repo and the node identity.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-kubo@local
+
+accounts:
+  groups:
+    - groupname: ipfs
+      gid: 1001
+  users:
+    - username: ipfs
+      uid: 1001
+      gid: 1001
+      homedir: /data/ipfs
+  run-as: 1001
+
+paths:
+  - path: /data/ipfs
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  IPFS_PATH: /data/ipfs
+
+entrypoint:
+  command: /usr/local/bin/kubo-entrypoint
+cmd: daemon --migrate=true
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-kubo"
+  org.opencontainers.image.licenses: "MIT OR Apache-2.0"
