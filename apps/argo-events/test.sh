@@ -51,7 +51,13 @@ eventBus:
   nats:
     versions: []
   jetstream:
-    versions: []
+    # at least one version must exist; nothing here is pulled in this test
+    versions:
+      - version: latest
+        natsImage: nats:latest
+        metricsExporterImage: natsio/prometheus-nats-exporter:latest
+        configReloaderImage: natsio/nats-server-config-reloader:latest
+        startCommand: /nats-server
 CFG
 chmod -R a+rX "$WORK"
 lint="$(docker run --rm --read-only -v "$WORK:/w:ro" "$IMAGE" lint /w/es.yaml /w/sensor.yaml 2>&1 || true)"
