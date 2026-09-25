@@ -1,0 +1,53 @@
+# Terralist runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Serves the registry, API and UI on :5758. Terralist refuses to start without an OAuth
+# provider and its signing secrets; the chart sets them. State (SQLite and the local
+# artifact store) goes under /data unless the chart points it at S3, GCS or Azure.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-terralist@local
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+      homedir: /data
+  run-as: 1001
+
+environment:
+  HOME: /data
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+work-dir: /data
+
+entrypoint:
+  command: /usr/bin/terralist
+cmd: server
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-terralist"
+  org.opencontainers.image.licenses: "MPL-2.0"
