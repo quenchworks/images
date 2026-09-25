@@ -33,11 +33,12 @@ B=http://127.0.0.1:14242
 ok=0
 for _ in $(seq 1 120); do curl -fsS "$B/health" 2>/dev/null | grep -q '"health":"GOOD"' && { ok=1; break; }; sleep 1; done
 [ "$ok" = 1 ] || { echo "unleash never reported healthy"; docker logs "$NAME" 2>&1 | tail -40; exit 1; }
-[ -z "$WANT" ] || curl -fsS "$B/api/admin/ui-config" 2>/dev/null | grep -q "\"version\":\"$WANT\"" \
-  || docker logs "$NAME" 2>&1 | grep -qF "$WANT" || { echo "version $WANT not reported"; exit 1; }
 
 J=(-H 'Content-Type: application/json')
 curl -fsS -c "$WORK/c" "${J[@]}" -d "{\"username\":\"admin\",\"password\":\"$ADMIN_PW\"}" "$B/auth/simple/login" >/dev/null
+# the admin UI config (a signed-in route) reports the running version
+[ -z "$WANT" ] || curl -fsS -b "$WORK/c" "$B/api/admin/ui-config" | grep -q "\"version\":\"$WANT\"" \
+  || { echo "version $WANT not reported"; curl -sS -b "$WORK/c" "$B/api/admin/ui-config" | head -c 300; exit 1; }
 curl -fsS -b "$WORK/c" "${J[@]}" -d '{"name":"quench-smoke","type":"release"}' \
   "$B/api/admin/projects/default/features" >/dev/null
 curl -fsS -b "$WORK/c" "$B/api/admin/projects/default/features/quench-smoke" | grep -q '"name":"quench-smoke"' \
