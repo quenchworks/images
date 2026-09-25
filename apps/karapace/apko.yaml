@@ -1,0 +1,59 @@
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-karapace@local
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+      homedir: /home/nonroot
+  run-as: 1001
+
+paths:
+  - path: /home/nonroot
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  HOME: /home/nonroot
+  PATH: /opt/karapace/venv/bin:/usr/bin:/bin
+  PYTHONUNBUFFERED: "1"
+  # Karapace reads its settings from KARAPACE_* variables (nested ones with __). The
+  # defaults run the schema registry on all interfaces at 8081; telemetry is off
+  # unless KARAPACE_TELEMETRY__* is set.
+  KARAPACE_HOST: 0.0.0.0
+  KARAPACE_PORT: "8081"
+  KARAPACE_KARAPACE_REGISTRY: "true"
+
+work-dir: /home/nonroot
+
+# The schema registry by default, as upstream's image runs it. The REST proxy runs from
+# the same image with `python -m karapace.kafka_rest_apis`, KARAPACE_KARAPACE_REST=true
+# and KARAPACE_KARAPACE_REGISTRY=false.
+entrypoint:
+  command: /opt/karapace/venv/bin/python -m karapace
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-karapace"
+  org.opencontainers.image.licenses: "Apache-2.0"
