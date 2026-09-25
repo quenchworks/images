@@ -77,6 +77,21 @@ pipeline:
         make -C "contrib/$ext" -j"$(nproc)"
         make -C "contrib/$ext" DESTDIR="${{targets.destdir}}" install
       done
+  # pgvector (vector similarity search), compiled against THIS server: PGXS needs
+  # pg_config and the server headers, so the tree is also installed into the build
+  # sandbox root. OPTFLAGS="" drops pgvector's default -march=native, which would tie the
+  # .so to the build runner's CPU and crash (SIGILL) on older hosts.
+  - runs: |
+      set -eu
+      make install >/dev/null
+      V=__PGVECTOR_VER__
+      wget -q -O pgvector.tar.gz "https://github.com/pgvector/pgvector/archive/refs/tags/v$V.tar.gz"
+      echo "__PGVECTOR_SHA256__  pgvector.tar.gz" | sha256sum -c -
+      mkdir pgvector && tar -xzf pgvector.tar.gz -C pgvector --strip-components=1
+      make -C pgvector OPTFLAGS="" PG_CONFIG=/usr/bin/pg_config -j"$(nproc)"
+      make -C pgvector OPTFLAGS="" PG_CONFIG=/usr/bin/pg_config DESTDIR="${{targets.destdir}}" install
+      test -f "${{targets.destdir}}$(pg_config --pkglibdir)/vector.so"
+      test -f "${{targets.destdir}}$(pg_config --sharedir)/extension/vector.control"
   # Bake the bootstrap entrypoint into the package (self-contained, no external file).
   # First boot runs initdb with a scram superuser password; subsequent boots just start.
   - runs: |

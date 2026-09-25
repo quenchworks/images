@@ -36,6 +36,13 @@ out="$(docker exec -e PGPASSWORD="$PW" "$NAME" \
   || { echo "DDL/DML failed"; docker logs "$NAME"; exit 1; }
 grep -q hello <<<"$out" || { echo "DDL/DML failed"; docker logs "$NAME"; exit 1; }
 
+echo "checking the pgvector extension"
+out="$(docker exec -e PGPASSWORD="$PW" "$NAME" \
+  psql -h /var/run/postgresql -U postgres -d qwapp -v ON_ERROR_STOP=1 -qtAc \
+  "create extension vector; create table items (id int, e vector(3)); insert into items values (1,'[1,2,3]'),(2,'[9,9,9]'); create index on items using hnsw (e vector_l2_ops); select id from items order by e <-> '[1,2,4]' limit 1;")" \
+  || { echo "pgvector failed"; docker logs "$NAME" | tail -20; exit 1; }
+[ "$(tail -1 <<<"$out")" = "1" ] || { echo "pgvector nearest neighbour wrong: $out"; exit 1; }
+
 # must run as the nonroot postgres user (uid 1001). The image has busybox but we
 # check the configured user rather than relying on runtime state.
 user="$(docker inspect "$IMAGE" --format '{{.Config.User}}')"
@@ -44,4 +51,4 @@ user="$(docker inspect "$IMAGE" --format '{{.Config.User}}')"
 echo "server version:"
 docker exec "$NAME" postgres --version
 
-echo "smoke test passed (nonroot user: $user)"
+echo "smoke test passed (nonroot user: $user, pgvector nearest-neighbour query)"
