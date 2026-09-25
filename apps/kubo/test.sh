@@ -36,6 +36,16 @@ start b 15002 18081
 wait_api 15001 a
 wait_api 15002 b
 
+# local-discovery also turns mDNS on, and an mDNS-found TCP connection would satisfy
+# the QUIC dial below without exercising QUIC. Config is read at boot, so turn mDNS off
+# and restart both; the restart also proves the repo is reused (same PeerID).
+peer_a="$(api 15001 id | field ID)"
+for n in 15001 15002; do api "$n" "config?arg=Discovery.MDNS.Enabled&arg=false&bool=true" >/dev/null; done
+docker restart "$TAG-a" "$TAG-b" >/dev/null
+wait_api 15001 a
+wait_api 15002 b
+[ "$(api 15001 id | field ID)" = "$peer_a" ] || { echo "restart re-initialized the repo"; exit 1; }
+
 ver="$(api 15001 version | field Version)"
 echo "reported version: $ver"
 case "$ver" in ""|*dev*) echo "version not stamped: '$ver'"; exit 1 ;; esac
@@ -49,7 +59,6 @@ got="$(curl -fsS "http://127.0.0.1:18080/ipfs/$cid")"
 [ "$got" = "$payload" ] || { echo "gateway A returned '$got' for $cid"; exit 1; }
 echo "  node A: $cid served by its own gateway"
 
-peer_a="$(api 15001 id | field ID)"
 ip_a="$(docker inspect -f "{{(index .NetworkSettings.Networks \"$NET\").IPAddress}}" "$TAG-a")"
 addr="/ip4/$ip_a/udp/4001/quic-v1/p2p/$peer_a"
 api 15002 "swarm/connect?arg=$addr" >/dev/null \
@@ -62,10 +71,5 @@ echo "  node B: dialed A over QUIC and fetched $cid by bitswap"
 
 user="$(docker inspect "$IMAGE" --format '{{.Config.User}}')"
 [ "$user" = "1001" ] || { echo "expected user 1001, got '$user'"; exit 1; }
-
-# a restart must reuse the repo (same PeerID), not re-init it
-docker restart "$TAG-a" >/dev/null
-wait_api 15001 a
-[ "$(api 15001 id | field ID)" = "$peer_a" ] || { echo "restart re-initialized the repo"; exit 1; }
 
 echo "smoke test passed (version $ver, nonroot user: $user, QUIC + bitswap between two nodes, peer kept across restart)"
