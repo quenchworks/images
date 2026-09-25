@@ -1,0 +1,39 @@
+# Assembles the Pinniped runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# The entrypoint is the multi-call server; the chart runs it by role name
+# (pinniped-concierge or pinniped-supervisor) with a config file and a downward API
+# volume. The CLI is /usr/local/bin/pinniped.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-pinniped@local
+
+accounts:
+  groups:
+    - groupname: pinniped
+      gid: 1001
+  users:
+    - username: pinniped
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/local/bin/pinniped-server
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-pinniped"
+  org.opencontainers.image.licenses: "Apache-2.0"
