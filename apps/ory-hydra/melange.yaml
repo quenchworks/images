@@ -1,0 +1,85 @@
+# Builds Ory Hydra from source onto Wolfi, the way upstream's Linux release does: cgo
+# with the sqlite, hsm and json1 tags, version, commit and date stamped via -X.
+package:
+  name: quench-ory-hydra
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Ory Hydra OAuth 2.0 and OpenID Connect provider, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - glibc
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/ory/hydra/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      export CGO_ENABLED=1
+      export GOFLAGS=-mod=mod
+      export GO111MODULE=on
+      export GOTOOLCHAIN=local
+      # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
+      # Measured at 26.2.0 (Wolfi's r9 build of the same tag): x/crypto, x/net, x/text,
+      # x/mod, grpc, the otel exporters (otlptrace, zipkin), go-jose/v3 (3.0.5) and
+      # pgx/v5 (5.9.2: 5.9.0 closes the CRITICAL, 5.9.2 the LOW) are below their fixed
+      # versions. otel floats as ONE train (core + exporters 1.45.0, contrib 0.70.0,
+      # contrib propagators 1.45.0): floating core alone leaves the exporters behind,
+      # and a mixed train fails at boot on a semconv schema-URL conflict.
+      # hydra's go.mod replaces github.com/ory/x with ./oryx (in-tree) and the client
+      # with ./internal/httpclient; neither shadows a floated module.
+      # oryx/dbal/testhelpers.go is test-only code in a non-test file: its dockertest
+      # import links docker/docker's API types (CVE-2026-33997, fixed only in moby
+      # 29.3.1, which the +incompatible module cannot reach) into the server binary.
+      # Its one caller is hydra's internal/testhelpers, which only tests import.
+      rm oryx/dbal/testhelpers.go
+      FLOOR="golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0 golang.org/x/crypto@v0.56.0 golang.org/x/sys@v0.47.0 golang.org/x/mod@v0.40.0 golang.org/x/oauth2@v0.36.0 google.golang.org/grpc@v1.83.2 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0 go.opentelemetry.io/otel/exporters/zipkin@v1.45.0 go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp@v0.70.0 go.opentelemetry.io/contrib/instrumentation/net/http/httptrace/otelhttptrace@v0.70.0 go.opentelemetry.io/contrib/propagators/b3@v1.45.0 go.opentelemetry.io/contrib/propagators/jaeger@v1.45.0 github.com/go-jose/go-jose/v3@v3.0.5 github.com/jackc/pgx/v5@v5.9.2"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is
+      # the EFFECTIVE version and a replace cannot hide behind the require line.
+      go list -m -e $MODS
+      need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
+      go mod tidy
+      go build -trimpath -tags sqlite,hsm,json1 \
+        -ldflags "-s -w -X github.com/ory/hydra/v2/driver/config.Version=v${{package.version}} -X github.com/ory/hydra/v2/driver/config.Commit=__COMMIT__ -X github.com/ory/hydra/v2/driver/config.Date=1970-01-01T00:00:00Z" \
+        -o "${{targets.destdir}}/usr/bin/hydra" .
+      # The float is only real if it reached the BINARY. Every `dep`/`=>` line of
+      # `go version -m` must be at or above its floor -- the `=>` line is what
+      # catches a replace-shadowed float. Fail the build rather than ship it.
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/hydra" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor hydra)"
+      [ -z "$bad" ] || { echo "❌ 0-CVE float did not reach hydra:"; echo "$bad"; exit 1; }
+      if go version -m "${{targets.destdir}}/usr/bin/hydra" | grep -q 'github.com/docker/docker'; then
+        echo "❌ docker/docker is linked into hydra again"; exit 1
+      fi
