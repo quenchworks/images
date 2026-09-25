@@ -1,0 +1,77 @@
+# Builds the OpenTelemetry Operator manager from the release tag tarball onto Wolfi. Like
+# upstream's Makefile, -X stamps its version and the default component versions it reads
+# from versions.txt (it builds default image references from them).
+package:
+  name: quench-opentelemetry-operator
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened OpenTelemetry Operator, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/open-telemetry/opentelemetry-operator/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      export CGO_ENABLED=0 GOFLAGS=-mod=mod GO111MODULE=on GOTOOLCHAIN=local
+      # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
+      # FLOOR is a FLOOR, not a pin: only modules below it are floated, and the shipped
+      # binary is asserted to carry nothing below it. Measured 2026-09-25: grpc 1.83.0 on
+      # 0.157 and 0.158; the golang.org/x set is a no-op floor today, kept so a tag cannot
+      # slip below it.
+      FLOOR="google.golang.org/grpc@v1.83.2 golang.org/x/crypto@v0.56.0 golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0 golang.org/x/sys@v0.47.0"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      go list -m -e $MODS
+      need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
+      go mod tidy
+      # the default component versions, as upstream's Makefile passes them
+      V=github.com/open-telemetry/opentelemetry-operator/internal/version
+      val() { awk -F= -v k="$1" '$1 == k { print $2 }' versions.txt; }
+      LD="-s -w -X $V.version=${{package.version}} -X $V.otelCol=$(val opentelemetry-collector)"
+      LD="$LD -X $V.targetAllocator=$(val targetallocator) -X $V.operatorOpAMPBridge=$(val operator-opamp-bridge)"
+      for pair in autoInstrumentationJava:autoinstrumentation-java autoInstrumentationNodeJS:autoinstrumentation-nodejs \
+          autoInstrumentationPython:autoinstrumentation-python autoInstrumentationDotNet:autoinstrumentation-dotnet \
+          autoInstrumentationGo:autoinstrumentation-go autoInstrumentationApacheHttpd:autoinstrumentation-apache-httpd \
+          autoInstrumentationNginx:autoinstrumentation-nginx; do
+        LD="$LD -X $V.${pair%%:*}=$(val "${pair#*:}")"
+      done
+      test -n "$(val opentelemetry-collector)" || { echo "FATAL: versions.txt has no collector version"; exit 1; }
+      go build -trimpath -ldflags "$LD" -o "${{targets.destdir}}/usr/bin/opentelemetry-operator" .
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/opentelemetry-operator" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor opentelemetry-operator)"
+      [ -z "$bad" ] || { echo "❌ 0-CVE float did not reach opentelemetry-operator:"; echo "$bad"; exit 1; }
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/bin/opentelemetry-operator
