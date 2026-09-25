@@ -1,0 +1,87 @@
+# Builds Easegress, the Go traffic orchestration gateway (proxy, filters, pipelines,
+# embedded etcd for clustering), from source onto Wolfi. Static Go binaries, no CGO:
+# easegress-server and the egctl admin client. The version is stamped via -X so
+# `easegress-server --version` reports the real release. Output is a signed APK in
+# Quenchworks' own repo. No upstream distro binaries.
+package:
+  name: quench-easegress
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Easegress, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/easegress-io/easegress/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOFLAGS="-mod=mod -buildvcs=false"
+      export GO111MODULE=on
+      export GOTOOLCHAIN=local
+      # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
+      # FLOOR is a FLOOR, not a pin. A bare `go get mod@vX` fails silently in two
+      # directions: it is a NO-OP when an upstream `replace` overrides it, and it
+      # becomes a DOWNGRADE once upstream requires more than vX -- re-introducing
+      # the CVE it was added to clear. So float only what is below the floor, then
+      # assert the SHIPPED BINARY carries nothing below it.
+      # Easegress pins old dependencies with published CVEs (opa 0.58, quic-go 0.40,
+      # pgx, jwt, chi, paho, cloudevents, azidentity, the otel zipkin exporter). This set
+      # was built and scanned clean as a unit at 2.11.0, so raise it together:
+      #   opa v1 needs viper 1.20.1, which switched to go-viper/mapstructure; patched below
+      #   opa v1 moves client-go to 0.32, so cli-runtime moves with it
+      #   quic-go 0.59.1 is the lowest release closing all four quic CVEs; it renamed
+      #   http3.Server.QuicConfig to QUICConfig; patched below
+      #   2.9/2.10 also ship go-retryablehttp 0.7.4 (fixed in 0.7.7)
+      #   the embedded etcd stays 3.5.27; it compiles against otelgrpc 0.60, not 0.61+
+      FLOOR="golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0 golang.org/x/crypto@v0.56.0 golang.org/x/sys@v0.47.0 golang.org/x/mod@v0.40.0 golang.org/x/oauth2@v0.36.0 google.golang.org/grpc@v1.83.2 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0 github.com/Azure/azure-sdk-for-go/sdk/azidentity@v1.14.1 github.com/buger/jsonparser@v1.1.2 github.com/cloudevents/sdk-go/v2@v2.16.2 github.com/eclipse/paho.mqtt.golang@v1.5.1 github.com/go-chi/chi/v5@v5.3.2 github.com/golang-jwt/jwt/v5@v5.3.1 github.com/jackc/pgx/v5@v5.9.2 github.com/open-policy-agent/opa@v1.8.0 github.com/quic-go/quic-go@v0.59.1 go.opentelemetry.io/otel/exporters/zipkin@v1.45.0 k8s.io/cli-runtime@v0.32.3 github.com/hashicorp/go-retryablehttp@v0.7.7"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is
+      # the EFFECTIVE version and a replace cannot hide behind the require line.
+      go list -m -e $MODS
+      need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
+      # the two API renames the float brings in (see above); no-ops if absent
+      sed -i 's#"github.com/mitchellh/mapstructure"#"github.com/go-viper/mapstructure/v2"#' pkg/option/option.go
+      sed -i 's/\bQuicConfig\b/QUICConfig/g' pkg/object/httpserver/runtime.go
+      go mod tidy
+      LD="-s -w -X github.com/megaease/easegress/v2/pkg/version.RELEASE=v${{package.version}} -X github.com/megaease/easegress/v2/pkg/version.REPO=https://github.com/easegress-io/easegress"
+      go build -trimpath -ldflags "$LD" -o "${{targets.destdir}}/usr/bin/easegress-server" ./cmd/server
+      go build -trimpath -ldflags "$LD" -o "${{targets.destdir}}/usr/bin/egctl" ./cmd/client
+      for b in easegress-server egctl; do
+        bad="$(go version -m "${{targets.destdir}}/usr/bin/$b" \
+          | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor "$b")"
+        [ -z "$bad" ] || { echo "❌ 0-CVE float did not reach $b:"; echo "$bad"; exit 1; }
+      done
