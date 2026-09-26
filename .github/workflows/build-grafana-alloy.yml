@@ -96,10 +96,23 @@ jobs:
       - name: Assemble single-arch image for the scan gate
         run: apko build apko.rendered.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}
 
+      # Validate the VEX BEFORE Trivy is allowed to honour it (scripts/check-vex.py):
+      # an entry removes a finding from the 0-CVE gate, so it must be airtight.
+      - name: Install uv (for the VEX validator)
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+      - name: Check VEX
+        working-directory: ${{ github.workspace }}
+        run: uv run scripts/check-vex.py grafana-alloy
+
       - name: Scan, the hard 0-CVE gate (before publish)
         uses: aquasecurity/trivy-action@d2a0b60797ff03db6132bd4e2b293f9b37081297 # master 2026-09-26, v0.36.0+11, bundles trivy v0.71.2
         env:
           TRIVY_DETECTION_PRIORITY: comprehensive
+          # Documented VEX clearance: Loki CVE-2026-21726 on the pinned pseudo-version
+          # v3.0.0-20260915071729-5cf8c23a258d, whose commit contains the fix (PR
+          # #20437, compare API: ahead 2097, behind 0). See the file for the proof.
+          # trivy-action has no `vex:` input; pass it through the TRIVY_VEX env.
+          TRIVY_VEX: apps/grafana-alloy/vex.openvex.json
         with:
           input: apps/grafana-alloy/image.tar
           format: table

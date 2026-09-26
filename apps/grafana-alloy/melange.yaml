@@ -99,8 +99,15 @@ pipeline:
       # SchemaURL/ServiceNameKey/ServiceVersionKey all exist in v1.43.0, so the
       # import path is the only thing that changes. The grep fails the build if a
       # future tag renames or moves the import instead of silently no-opping.
-      grep -q 'semconv "go.opentelemetry.io/otel/semconv/v1.41.0"' internal/runtime/tracing/tracing.go
-      sed -i 's|otel/semconv/v1\.41\.0|otel/semconv/v1.43.0|' internal/runtime/tracing/tracing.go
+      # 1.20.0 already imports v1.43.0 upstream (with otel 1.46), so the rewrite
+      # applies only where v1.41.0 is still imported; any other version fails.
+      tr=internal/runtime/tracing/tracing.go
+      if grep -q 'semconv "go.opentelemetry.io/otel/semconv/v1.41.0"' "$tr"; then
+        sed -i 's|otel/semconv/v1\.41\.0|otel/semconv/v1.43.0|' "$tr"
+      else
+        grep -q 'semconv "go.opentelemetry.io/otel/semconv/v1.43.0"' "$tr" \
+          || { echo "tracing.go imports a semconv version this recipe has not checked:" >&2; grep semconv "$tr" >&2; exit 1; }
+      fi
       cd collector
 
       # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
@@ -166,6 +173,15 @@ pipeline:
       #
       # busybox-safe: `find -exec ... +`, never `xargs` -- busybox xargs exits 123
       # when nothing matches and `set -e` then kills the step with no message.
+      # 1.20.0 moved to Grafana's cadvisor v0.60.5 fork (upstream took the step
+      # the DEAD END note above could not), which is on github.com/moby/moby/client,
+      # so docker/docker is no longer in the graph and there is nothing to sever.
+      # Run the sever only where the build still needs the module (1.19.2).
+      # `go mod why -vendor -m`, not `go list -m`: the module stays in the GRAPH
+      # through other modules' go.mod files, and plain `go mod why` also counts
+      # dependencies' tests (1.20.0's only path is percona-backup-mongodb's gcs
+      # test). -vendor drops those, matching what the binary links.
+      if ! go mod why -vendor -m github.com/docker/docker | grep -q 'does not need'; then
       DD="github.com/grafana/alloy/otel_engine/ddcompat"
       go mod download github.com/docker/docker github.com/google/cadvisor
       DOCKER_DIR="$(go list -m -f '{{.Dir}}' github.com/docker/docker)"
@@ -210,6 +226,7 @@ pipeline:
       go mod edit -replace "github.com/google/cadvisor=./third_party/cadvisor"
       ( cd ddcompat && go mod tidy )
       ( cd third_party/cadvisor && go mod tidy )
+      fi
 
       go build -trimpath -tags "netgo embedalloyui" -ldflags "${LDFLAGS}" \
         -o "${{targets.destdir}}/usr/bin/alloy" .

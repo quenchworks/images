@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/grafana-alloy/2026-09-26",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-09-26T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-21726"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/grafana/loki/v3@v3.0.0-20260915071729-5cf8c23a258d"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "PROVEN false-positive: the fix is in the pinned commit. Alloy 1.20.0 pins Loki by commit 5cf8c23a258d (2026-09-15, from Loki main), which Go renders as the pseudo-version v3.0.0-20260915071729-5cf8c23a258d; Trivy compares its v3.0.0 base against the advisory's '< 3.6.4' and flags it. The fix (GHSA-497x-rrr9-68jp, double-encoded path traversal in the Ruler API namespace) is grafana/loki PR #20437, merged to main on 2026-01-15 as 9f5d215c07344d1ff93821b1bfd4c37b23e885c1 and backported to release-3.6.x as #20463 for the 3.6.4 tag. Verified with the GitHub compare API rather than by date: 9f5d215c...5cf8c23a258d is status=ahead, ahead_by=2097, behind_by=0, so the pinned commit contains the fix. v3.6.4 itself shows as diverged only because it lives on the release branch. Scoped to this exact pseudo-version: a different Loki commit must be re-checked."
+    }
+  ]
+}
