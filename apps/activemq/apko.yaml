@@ -1,0 +1,56 @@
+# Assembles the Apache ActiveMQ Classic runtime image on a Wolfi JRE. Nonroot,
+# multi-arch, SBOM by apko. OpenWire on :61616; the web console and Jolokia on :8161
+# accept loopback clients only (upstream's default; reach them with a port-forward).
+# KahaDB and the log files live under /data. Heap comes from JDK_JAVA_OPTIONS.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-activemq@local
+
+accounts:
+  groups:
+    - groupname: activemq
+      gid: 1001
+  users:
+    - username: activemq
+      uid: 1001
+      gid: 1001
+      homedir: /data
+  run-as: 1001
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  ACTIVEMQ_HOME: /opt/activemq
+  JDK_JAVA_OPTIONS: "-Xms64m -XX:MaxRAMPercentage=75.0"
+
+work-dir: /opt/activemq
+
+# bin/activemq's command line, with ACTIVEMQ_DATA=/data and java.io.tmpdir=/tmp
+entrypoint:
+  command: /usr/lib/jvm/java-21-openjdk/bin/java -XX:+ExitOnOutOfMemoryError -Djava.util.logging.config.file=logging.properties -Djava.security.auth.login.config=/opt/activemq/conf/login.config -Dcom.sun.management.jmxremote -Djava.awt.headless=true -Djava.io.tmpdir=/tmp --add-reads=java.xml=java.logging --add-opens java.base/java.security=ALL-UNNAMED --add-opens java.base/java.net=ALL-UNNAMED --add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/java.util=ALL-UNNAMED --add-opens java.naming/javax.naming.spi=ALL-UNNAMED --add-opens java.rmi/sun.rmi.transport.tcp=ALL-UNNAMED --add-opens java.base/java.util.concurrent=ALL-UNNAMED --add-opens java.base/java.util.concurrent.atomic=ALL-UNNAMED --add-opens java.base/sun.nio.ch=ALL-UNNAMED --add-exports=java.base/sun.net.www.protocol.http=ALL-UNNAMED --add-exports=java.base/sun.net.www.protocol.https=ALL-UNNAMED --add-exports=java.base/sun.net.www.protocol.jar=ALL-UNNAMED --add-exports=jdk.xml.dom/org.w3c.dom.html=ALL-UNNAMED --add-exports=jdk.naming.rmi/com.sun.jndi.url.rmi=ALL-UNNAMED -Dactivemq.classpath=/opt/activemq/conf -Dactivemq.home=/opt/activemq -Dactivemq.base=/opt/activemq -Dactivemq.conf=/opt/activemq/conf -Dactivemq.data=/data -Djolokia.conf=file:/opt/activemq/conf/jolokia-access.xml -jar /opt/activemq/bin/activemq.jar
+cmd: start
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-activemq"
+  org.opencontainers.image.licenses: "Apache-2.0"
