@@ -313,6 +313,50 @@ pipeline:
                    throw new Error('minimatch braceExpand broken at $d');"
       done
 
+      # --- decode-uri-component CVE-2026-45822: 0.5.0 with a CommonJS entry ----------------
+      # Every version below 0.5.0 is affected, and 0.5.0 ships ESM only ("type": "module",
+      # `export default function`), while query-string 7.1.3 (the last CommonJS line, which
+      # soketi's compiled dist requires) does `require("decode-uri-component")(str)`. That is
+      # what killed the 2026-09-19 boot test with ERR_REQUIRE_ESM. 0.5.0 is one file with no
+      # imports, so the same code gets a CommonJS entry: drop the `export` keyword, assign
+      # module.exports, and remove "type": "module". Like brace-expansion above, NOT a gate
+      # bypass: the installed package IS 0.5.0, the fixed code is what runs, and the asserts
+      # fail the build if a copy escaped the override or a future release changes shape.
+      find node_modules -type d -name decode-uri-component -print0 > "$HOME/.duc-copies"
+      DUC_COPIES="$HOME/.duc-copies" node -e '
+        const fs = require("fs"), path = require("path");
+        const copies = fs.readFileSync(process.env.DUC_COPIES, "utf8").split("\0").filter(Boolean);
+        if (!copies.length) throw new Error("no decode-uri-component copy found under node_modules");
+        let conv = 0;
+        for (const d of copies) {
+          const pj = path.join(d, "package.json"), js = path.join(d, "index.js");
+          const j = JSON.parse(fs.readFileSync(pj, "utf8"));
+          if (j.version !== "0.5.0") throw new Error("override missed decode-uri-component at " + d + " (" + j.version + ")");
+          let src = fs.readFileSync(js, "utf8");
+          if (!src.includes("module.exports = decodeUriComponent")) {
+            const decl = "export default function decodeUriComponent(";
+            if (src.split(decl).length !== 2 || /^\s*import\s/m.test(src))
+              throw new Error("decode-uri-component 0.5.0 changed shape at " + d);
+            src = src.replace(decl, "function decodeUriComponent(")
+                + "\n// QuenchWorks: 0.5.0 is ESM only; query-string 7.x and soketi are CommonJS.\n"
+                + "module.exports = decodeUriComponent;\nmodule.exports.default = decodeUriComponent;\n";
+            fs.writeFileSync(js, src);
+            delete j.type; j.main = "./index.js";
+            fs.writeFileSync(pj, JSON.stringify(j, null, 2) + "\n");
+            conv++;
+          }
+          const f = require(path.resolve(d));
+          if (typeof f !== "function" || f("%E2%82%AC") !== "€" || f("%E0%A4%A") !== "%E0%A4%A")
+            throw new Error("decode-uri-component CommonJS entry broken at " + d);
+        }
+        console.log("decode-uri-component: " + copies.length + " copy(ies) at 0.5.0, " + conv + " converted");
+      '
+      # ...and query-string, the consumer that crashed, must parse through it from the tree.
+      for d in $(find node_modules -type d -name query-string); do
+        node -e "const q=require(require('path').resolve('$d'));
+                 if (q.parse('a=%20b&c=%E2%82%AC').c!=='€') throw new Error('query-string broken at $d');"
+      done
+
       # Strip uWebSockets.js prebuilts that don't match this build's linux/<arch>, so
       # (a) melange's dep scanner doesn't emit a cross-arch SO dependency that breaks
       # apko's solve, and (b) the image only carries the binary it can actually load.
