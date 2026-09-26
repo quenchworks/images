@@ -19,6 +19,12 @@ docker network create "$NET" >/dev/null
 
 docker run -d --name "$TAG-pg" --network "$NET" --network-alias pg \
   -e POSTGRES_PASSWORD="$PW" -e POSTGRES_USER=dtrack -e POSTGRES_DB=dtrack "$PG" >/dev/null
+# the server does not retry its database at startup, it exits: wait for PostgreSQL
+for i in $(seq 1 60); do
+  docker exec "$TAG-pg" pg_isready -h 127.0.0.1 -U dtrack -d dtrack >/dev/null 2>&1 && break
+  [ "$i" = 60 ] && { echo "postgres never ready"; docker logs "$TAG-pg" | tail -20; exit 1; }
+  sleep 1
+done
 docker run -d --name "$TAG-api" --network "$NET" -p 127.0.0.1:18080:8080 -p 127.0.0.1:19000:9000 \
   -e DT_DATASOURCE_URL="jdbc:postgresql://pg:5432/dtrack" \
   -e DT_DATASOURCE_USERNAME=dtrack -e DT_DATASOURCE_PASSWORD="$PW" "$IMAGE" >/dev/null
