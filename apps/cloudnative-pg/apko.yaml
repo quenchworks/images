@@ -1,0 +1,37 @@
+# Assembles the CloudNativePG operator image. Nonroot uid 1001, multi-arch, SBOM
+# by apko. The chart supplies the CRDs, RBAC and webhook configuration.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-cloudnative-pg@local
+
+accounts:
+  groups:
+    - groupname: cnpg
+      gid: 1001
+  users:
+    - username: cnpg
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /manager
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-cloudnative-pg"
+  org.opencontainers.image.licenses: "Apache-2.0"
