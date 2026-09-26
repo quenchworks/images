@@ -40,6 +40,12 @@ docker exec "$NAME" sh -c 'mkdir -p /tmp/mw /tmp/mwdata && cd /var/www/html && \
   || { cat /tmp/mw-install.log; fail "maintenance/run.php install failed"; }
 docker exec "$NAME" test -f /tmp/mw/LocalSettings.php || fail "installer wrote no LocalSettings.php"
 echo "installed into SQLite"
+# update.php is the upgrade path the chart runs on every start. It checks the
+# root composer.json pins against vendor/, so a vendor float that leaves a pin
+# behind scans clean and boots, then fails here.
+docker exec -e MW_CONFIG_FILE=/tmp/mw/LocalSettings.php "$NAME" sh -c 'cd /var/www/html && php maintenance/run.php update --quick' \
+  > /tmp/mw-update.log 2>&1 || { tail -20 /tmp/mw-update.log; fail "maintenance/run.php update failed"; }
+echo "update.php ran clean"
 
 page="$(curl -sS -w '\n%{http_code}' "$BASE/index.php?title=Main_Page" || true)"
 [ "$(tail -n1 <<<"$page")" = "200" ] || fail "Main_Page did not serve HTTP 200"

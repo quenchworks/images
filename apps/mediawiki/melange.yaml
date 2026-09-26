@@ -135,6 +135,18 @@ pipeline:
           fwrite(STDERR,"$n missing after update\n"); exit(1);' "$spec"
       done
       rm -rf /tmp/composer-home
+      # update.php refuses to run ("your composer.lock file is not up to date")
+      # when the ROOT composer.json pins a version other than the one vendor/
+      # holds, and core pins guzzle exactly. Move each floated pin the root file
+      # carries, then assert none is left behind.
+      cd ..
+      for spec in $specs; do
+        n="${spec%%:*}"; v="${spec#*:}"
+        sed -i -E "s|(\"$n\": )\"[^\"]*\"|\1\"$v\"|" composer.json
+        if grep -q "\"$n\"" composer.json; then
+          grep -q "\"$n\": \"$v\"" composer.json || { echo "root pin for $n not moved to $v" >&2; exit 1; }
+        fi
+      done
 
   - name: Install the nginx site config (FastCGI to php-fpm, port 8080, /var/www/html)
     runs: |
