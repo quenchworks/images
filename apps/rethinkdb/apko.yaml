@@ -1,0 +1,46 @@
+# RethinkDB from Wolfi's rethinkdb apk (built from source by Wolfi). No melange
+# step. Data lives in /data (the chart mounts a volume there). Ports: 28015
+# client driver, 29015 cluster, 8080 web admin.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - __PKG__
+
+accounts:
+  groups:
+    - groupname: rethinkdb
+      gid: 1001
+  users:
+    - username: rethinkdb
+      uid: 1001
+      gid: 1001
+      homedir: /data
+  run-as: 1001
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+work-dir: /data
+
+entrypoint:
+  command: /usr/bin/rethinkdb --bind all --directory /data/rethinkdb_data --no-update-check
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-rethinkdb"
+  org.opencontainers.image.licenses: "Apache-2.0"
