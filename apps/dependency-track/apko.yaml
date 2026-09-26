@@ -1,0 +1,59 @@
+# Assembles the Dependency-Track API server image on a Wolfi JRE. Nonroot, multi-arch,
+# SBOM by apko. API on :8080 (/api/...), health and metrics on :9000 (/health). Needs
+# PostgreSQL: set DT_DATASOURCE_URL (jdbc:postgresql://...), DT_DATASOURCE_USERNAME and
+# DT_DATASOURCE_PASSWORD. JVM flags go in JDK_JAVA_OPTIONS.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-dependency-track@local
+
+accounts:
+  groups:
+    - groupname: dtrack
+      gid: 1001
+  users:
+    - username: dtrack
+      uid: 1001
+      gid: 1001
+      homedir: /data
+  run-as: 1001
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  TZ: Etc/UTC
+  LANG: C.UTF-8
+  HOME: /data
+  DT_DATA_DIRECTORY: /data
+  JAVA_HOME: /usr/lib/jvm/java-25-openjdk
+  # upstream's JAVA_OPTIONS, applied by the JVM itself so no shell is needed
+  JDK_JAVA_OPTIONS: "-XX:+UseG1GC -XX:+UseStringDeduplication -XX:+UseCompactObjectHeaders -XX:MaxGCPauseMillis=250 -XX:MaxRAMPercentage=80.0"
+
+work-dir: /opt/dependency-track
+
+entrypoint:
+  command: /usr/lib/jvm/java-25-openjdk/bin/java --add-opens java.base/java.util.concurrent=ALL-UNNAMED --enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow -Djdk.http.auth.tunneling.disabledSchemes= -cp /opt/dependency-track/dependency-track-apiserver.jar:/opt/dependency-track/lib/* org.dependencytrack.Application
+cmd: -context /
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-dependency-track"
+  org.opencontainers.image.licenses: "Apache-2.0"

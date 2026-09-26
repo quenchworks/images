@@ -1,0 +1,54 @@
+# Packages the OWASP Dependency-Track API server (official dist: the application jar and
+# its lib/ directory of plain jars) onto Wolfi. Upstream starts it with
+# `-cp 'dependency-track-apiserver.jar:lib/*'`, so a lib/ jar can be replaced under its
+# own name: the manifest's Class-Path entry for the old file no longer resolves and the
+# JVM skips it, while the lib/* wildcard loads the new one. Output is a signed APK in
+# Quenchworks' own repo. No upstream distro binaries.
+package:
+  name: quench-dependency-track
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened OWASP Dependency-Track API server, packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-25-jre     # upstream runs on Java 25 (it passes -XX:+UseCompactObjectHeaders)
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - wget
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/DependencyTrack/dependency-track/releases/download/${{package.version}}/dependency-track-apiserver-dist.tar.gz
+      expected-sha256: "__SHA256__"
+      strip-components: 0
+  - runs: |
+      set -eu
+      app="${{targets.destdir}}/opt/dependency-track"
+      install -d "$app"
+      cp -r dependency-track-apiserver.jar lib "$app/"
+      # freemarker CVE-2026-84939 (path traversal via a malformed locale), fixed in
+      # 2.3.35; the dist ships 2.3.34. The sha256 is
+      # from a download whose sha1 matched Maven Central's.
+      rm "$app/lib/freemarker-2.3.34.jar"
+      wget -q -O "$app/lib/freemarker-2.3.35.jar" https://repo1.maven.org/maven2/org/freemarker/freemarker/2.3.35/freemarker-2.3.35.jar
+      echo "0fac87dddd78f1223139e8ef88e819c7f483c0a3835cdf5982ad5e4576d1d896  $app/lib/freemarker-2.3.35.jar" | sha256sum -c -
+      test "$(ls "$app"/lib/freemarker-*.jar | wc -l)" = 1
+      chmod -R a+rX "$app"
+
+test:
+  pipeline:
+    - runs: |
+        test -f /opt/dependency-track/dependency-track-apiserver.jar
+        test -f /opt/dependency-track/lib/freemarker-2.3.35.jar
