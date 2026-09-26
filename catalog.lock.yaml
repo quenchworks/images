@@ -3945,6 +3945,48 @@ apps:
       published: '2026-09-26T13:19:55Z'
       size: 12.2 MB
       layers: 1
+  guacd:
+    image: ghcr.io/quenchworks/images/guacd
+    category: Apps & productivity
+    summary: guacd, the Apache Guacamole proxy daemon behind clientless browser access to RDP, VNC, SSH
+      and telnet hosts. Built from source against Wolfi FreeRDP 2 (the upstream image's default; 1.6.0
+      does not build on FreeRDP 3.32), libvncserver, libssh2 and libtelnet. The Kubernetes-exec protocol
+      is left out.
+    source: https://github.com/apache/guacamole-server/tags
+    upstream: https://github.com/apache/guacamole-server
+    license: Apache-2.0
+    tier: standard
+    status: built
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 1.6.0
+      digest: sha256:c2aa2a8412dbba8fbc7dc2901d11a1a1a2bb335619d7647e430b549add174937
+      published: '2026-09-26T13:35:26Z'
+      size: 58.2 MB
+      layers: 1
+  guacamole:
+    image: ghcr.io/quenchworks/images/guacamole
+    category: Apps & productivity
+    summary: Apache Guacamole, clientless remote desktop in the browser for RDP, VNC, SSH and telnet hosts,
+      as the web app (pair it with guacd). Assembled from Apache's release artifacts on Tomcat 9 and Wolfi
+      openjdk-21 with the PostgreSQL auth extension; logback and jackson swapped to fixed versions inside
+      the WAR. Configured through environment variables.
+    source: https://guacamole.apache.org/releases/
+    upstream: https://github.com/apache/guacamole-client
+    license: Apache-2.0
+    tier: standard
+    status: built
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 1.6.0
+      digest: sha256:642ae691b03777ea053628a2df213edfebd9f83d294d1b9133ef52fd7df37639
+      published: '2026-09-26T13:39:55Z'
+      size: 116.0 MB
+      layers: 1
   actions-runner:
     image: ghcr.io/quenchworks/images/actions-runner
     category: CI/CD & registry
