@@ -22,6 +22,12 @@ for b in operator placement sentry injector scheduler; do
   grep -qiE "usage|flags" <<<"$out" || { echo "$b did not start: $out" | tail -5; exit 1; }
 done
 echo "  operator, placement, sentry, injector and scheduler start and print usage"
+# the upstream chart and the injector call the binaries at the filesystem root
+[ "$(docker run --rm --entrypoint /daprd "$IMAGE" --version 2>&1 | tail -1)" = "$v" ] || { echo "/daprd link missing"; exit 1; }
+for b in operator placement sentry injector scheduler; do
+  grep -qiE "usage|flags" <<<"$(docker run --rm --entrypoint "/$b" "$IMAGE" -h 2>&1 || true)" || { echo "/$b link missing"; exit 1; }
+done
+echo "  root-level links (/daprd, /operator, ...) resolve"
 
 docker run -d --name "$NAME" -p 127.0.0.1:13500:3500 --read-only --tmpfs /tmp "$IMAGE" \
   --app-id quench-smoke --mode standalone --dapr-http-port 3500 --resources-path /tmp \

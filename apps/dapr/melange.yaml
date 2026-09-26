@@ -84,3 +84,9 @@ pipeline:
           | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor "$b")"
         [ -z "$bad" ] || { echo "❌ 0-CVE float did not reach $b:"; echo "$bad"; exit 1; }
       done
+      # Upstream's image keeps the binaries at the filesystem root: its chart runs
+      # /operator, /sentry, ... and the injector patches sidecars to run /daprd. Link
+      # the same paths so the upstream chart and injector work unchanged.
+      for b in daprd operator placement sentry injector scheduler; do
+        ln -s usr/bin/$b "${{targets.destdir}}/$b"
+      done
