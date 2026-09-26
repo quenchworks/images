@@ -1,0 +1,55 @@
+# Assembles the Fluentd runtime image on Wolfi ruby-4.0. Nonroot, multi-arch, SBOM by
+# apko. Config at /fluentd/etc/fluent.conf (mount your own over it); forward on 24224,
+# HTTP on 9880. Buffers belong under /fluentd/buffer.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-fluentd@local
+
+accounts:
+  groups:
+    - groupname: fluent
+      gid: 1001
+  users:
+    - username: fluent
+      uid: 1001
+      gid: 1001
+      homedir: /fluentd
+  run-as: 1001
+
+paths:
+  - path: /fluentd/buffer
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  GEM_HOME: /usr/lib/fluentd/gems
+  GEM_PATH: /usr/lib/fluentd/gems
+  PATH: /usr/lib/fluentd/gems/bin:/usr/bin:/bin
+  LANG: C.UTF-8
+
+work-dir: /fluentd
+
+entrypoint:
+  command: /usr/lib/fluentd/gems/bin/fluentd
+cmd: -c /fluentd/etc/fluent.conf
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-fluentd"
+  org.opencontainers.image.licenses: "Apache-2.0"
