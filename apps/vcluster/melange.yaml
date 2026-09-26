@@ -1,0 +1,84 @@
+# Builds the vCluster syncer from source onto Wolfi. Flags follow upstream's
+# .goreleaser.yaml (id: vcluster): CGO off, -trimpath, version via
+# -X github.com/loft-sh/vcluster/pkg/telemetry.SyncerVersion. The binary lands at
+# /usr/bin/vcluster with /vcluster beside it, the path upstream's image and chart
+# exec (`/vcluster start`).
+package:
+  name: quench-vcluster
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened vCluster syncer, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - tzdata
+      - zstd
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/loft-sh/vcluster/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOTOOLCHAIN=local
+      export GOFLAGS=-mod=mod
+      # e2e/ (upstream's end-to-end suites, never part of the syncer) requires
+      # github.com/loft-sh/e2e-framework at a pseudo-version that is neither on the
+      # Go proxy nor publicly clonable, so resolving the module graph outside
+      # vendor/ fails. Drop the suites and both e2e-framework requires first;
+      # `go list -deps ./cmd/vcluster` imports neither.
+      rm -rf e2e
+      go mod edit -droprequire github.com/loft-sh/e2e-framework -droprequire sigs.k8s.io/e2e-framework
+      # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
+      # FLOOR is a floor, not a pin: only modules below it are raised, then the
+      # shipped binary is asserted at or above it. At v0.37.2 the tag carries
+      # x/crypto v0.53.0, x/mod v0.36.0, x/text v0.38.0, grpc v1.82.1, otel
+      # otlptrace v1.44.0 and ulikunitz/xz v0.5.14; 0.35 and 0.36 also carry
+      # oras-go/v2 v2.5/v2.6.0 (CVE-2026-50151, -50162, -50163, -85732) and
+      # mongo-driver v1.14.0 (CVE-2026-2303) and cel-go v0.26.0
+      # (GHSA-gcjh-h69q-9w9g, fixed 0.29.0). The rest of the canonical set
+      # (x/net, x/sys, x/oauth2, the otel family) keeps a later tag from slipping
+      # under it. docker/docker v28.5.2+incompatible is NOT floatable (its fix is
+      # only on the moby/moby path) and is cleared by vex.openvex.json instead.
+      FLOOR="golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0 golang.org/x/crypto@v0.56.0 golang.org/x/sys@v0.47.0 golang.org/x/mod@v0.40.0 golang.org/x/oauth2@v0.36.0 google.golang.org/grpc@v1.83.2 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0 github.com/ulikunitz/xz@v0.5.15 oras.land/oras-go/v2@v2.6.2 go.mongodb.org/mongo-driver@v1.17.7 github.com/google/cel-go@v0.29.0"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
+      go mod tidy
+      rm -rf vendor
+      go build -trimpath \
+        -ldflags "-s -w -X github.com/loft-sh/vcluster/pkg/telemetry.SyncerVersion=${{package.version}}" \
+        -o "${{targets.destdir}}/usr/bin/vcluster" ./cmd/vcluster
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/vcluster" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor vcluster)"
+      [ -z "$bad" ] || { echo "0-CVE float did not reach vcluster:"; echo "$bad"; exit 1; }
+      "${{targets.destdir}}/usr/bin/vcluster" version | grep -qx "${{package.version}}"
+      ln -s usr/bin/vcluster "${{targets.destdir}}/vcluster"

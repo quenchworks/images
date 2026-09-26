@@ -1,0 +1,62 @@
+# Assembles the vCluster syncer image. Nonroot uid 1001, multi-arch, SBOM by apko.
+# The syncer runs the virtual cluster's control plane as child processes. It execs
+# them from fixed paths (pkg/constants: /binaries/kube-apiserver,
+# /binaries/kube-controller-manager, /binaries/kine; kine has no override, and an
+# apiServer.command override drops every default flag), so the Wolfi binaries are
+# symlinked there instead of copied in by an initContainer. Kubernetes 1.36 is
+# upstream's default distro version for every shipped line. State (the kine
+# SQLite store, certs) lives under /data, which the chart mounts.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-vcluster@local
+    - kube-apiserver-1.36
+    - kube-controller-manager-1.36
+    - kine
+
+accounts:
+  groups:
+    - groupname: vcluster
+      gid: 1001
+  users:
+    - username: vcluster
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  - path: /binaries
+    type: directory
+    uid: 0
+    gid: 0
+    permissions: 0o755
+  - path: /binaries/kube-apiserver
+    type: symlink
+    source: /usr/bin/kube-apiserver-1.36
+  - path: /binaries/kube-controller-manager
+    type: symlink
+    source: /usr/bin/kube-controller-manager-1.36
+  - path: /binaries/kine
+    type: symlink
+    source: /usr/bin/kine
+
+entrypoint:
+  command: /vcluster start
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-vcluster"
+  org.opencontainers.image.licenses: "Apache-2.0"

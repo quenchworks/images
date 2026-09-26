@@ -1,0 +1,25 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/vcluster/2026-09-26",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-09-26T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-33997"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/docker/docker@v28.5.2%2Bincompatible"
+        },
+        {
+          "@id": "pkg:golang/github.com/docker/docker@v28.3.3%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "CVE-2026-33997 is a privilege-validation bypass in the Moby daemon's plugin installation. The vCluster syncer (./cmd/vcluster) links exactly one package from the module: github.com/docker/docker/pkg/homedir, a helper that returns the user's home directory, reached through github.com/docker/cli/cli/config/credentials. Checked with `go list -deps ./cmd/vcluster` at v0.37.2 (docker v28.5.2) and v0.35.4 (docker v28.3.3): no daemon, plugin or API server package is in the build. The fix (29.3.1) exists only under the github.com/moby/moby module path, so the +incompatible module cannot be floated to it. Scoped to these exact versions: a tag that links more of docker/docker must be re-checked."
+    }
+  ]
+}
