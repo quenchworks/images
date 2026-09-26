@@ -27,13 +27,17 @@ environment:
       - wget
 
 pipeline:
-  - uses: fetch
-    with:
-      uri: https://cdn.crate.io/downloads/releases/cratedb/x64_linux/crate-${{package.version}}.tar.gz
-      expected-sha256: "__SHA256__"
-      strip-components: 1
   - runs: |
       set -eu
+      # per-arch tarball: the OpenDAL jar embeds one architecture's native library
+      case "$(uname -m)" in
+        x86_64)  arch=x64_linux; sha=__SHA_AMD__ ;;
+        aarch64) arch=aarch64_linux; sha=__SHA_ARM__ ;;
+        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+      esac
+      wget -q -O crate.tar.gz "https://cdn.crate.io/downloads/releases/cratedb/$arch/crate-${{package.version}}.tar.gz"
+      echo "$sha  crate.tar.gz" | sha256sum -c -
+      tar -xzf crate.tar.gz --strip-components=1
       home="${{targets.destdir}}/opt/crate"
       install -d "$home"
       cp -r bin config lib plugins LICENSE NOTICE "$home/"
@@ -53,8 +57,10 @@ pipeline:
       swap jackson-dataformat-yaml-2.21.1.jar com/fasterxml/jackson/dataformat jackson-dataformat-yaml 2.21.5 c26143ac5503fd545bd5e9063f45a2499be89971559875e47cc868ef9359d10b
       swap log4j-api-2.26.0.jar org/apache/logging/log4j log4j-api 2.26.1 f1810a4704ccce019d02bba029dc02a4f2ac0c997f647b465e7d409c1927f822
       swap log4j-core-2.26.0.jar org/apache/logging/log4j log4j-core 2.26.1 2ec8c3bf5a6d7c89be8620116a2fc973f7dda1ad0261ad393c4d4726edfd3dcb
-      sed -i '/^rootLogger.appenderRef.rolling.ref/d' "$home/config/log4j2.properties"
-      ! grep -q '^rootLogger.appenderRef.rolling' "$home/config/log4j2.properties"
+      # drop the rolling file appender entirely: even unreferenced, log4j builds it and
+      # CrateDB tries to create logs/ under the read-only home
+      sed -i '/^rootLogger.appenderRef.rolling/d; /^appender\.rolling\./d' "$home/config/log4j2.properties"
+      ! grep -q 'rolling' "$home/config/log4j2.properties"
       chmod -R a+rX "$home"
 
 test:
