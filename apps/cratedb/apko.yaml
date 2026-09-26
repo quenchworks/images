@@ -1,0 +1,57 @@
+# Assembles the CrateDB runtime image on Wolfi's openjdk-25 JRE. Nonroot, multi-arch,
+# SBOM by apko. HTTP/SQL API on :4200, PostgreSQL wire protocol on :5432, transport
+# on :4300; data under /data. The entrypoint is bin/crate's JVM command without the
+# shell (GC file logging left out); heap comes from JDK_JAVA_OPTIONS. Pass -C<setting>
+# arguments to change settings, e.g. -Cdiscovery.type=single-node.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-cratedb@local
+
+accounts:
+  groups:
+    - groupname: crate
+      gid: 1001
+  users:
+    - username: crate
+      uid: 1001
+      gid: 1001
+      homedir: /data
+  run-as: 1001
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  JAVA_HOME: /usr/lib/jvm/java-25-openjdk
+  CRATE_HOME: /opt/crate
+  # CrateDB's guidance: heap at most half of the memory, the rest for Lucene's page cache
+  JDK_JAVA_OPTIONS: "-Xms256m -XX:MaxRAMPercentage=50.0"
+
+work-dir: /data
+
+entrypoint:
+  command: /usr/lib/jvm/java-25-openjdk/bin/java -Djava.awt.headless=true -XX:+UseG1GC -XX:G1ReservePercent=25 -XX:InitiatingHeapOccupancyPercent=30 -XX:+UseCompactObjectHeaders -Djdk.tls.rejectClientInitiatedRenegotiation=true -Dfile.encoding=UTF-8 -Dlog4j.shutdownHookEnabled=false -Dlog4j2.disable.jmx=true -Dlog4j.skipJansi=true -Dio.netty.recycler.maxCapacityPerThread=0 --sun-misc-unsafe-memory-access=allow --enable-native-access=ALL-UNNAMED --add-modules jdk.incubator.vector -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/data -cp /opt/crate/lib/* io.crate.bootstrap.CrateDB -Cpath.home=/opt/crate
+cmd: -Cpath.data=/data -Cnetwork.host=_site_
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-cratedb"
+  org.opencontainers.image.licenses: "Apache-2.0"

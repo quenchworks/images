@@ -1,0 +1,65 @@
+# Packages CrateDB (official tarball) onto Wolfi's openjdk-25 JRE. The bundled jdk/ is
+# dropped. bin/crate puts every lib/*.jar on the classpath, so vulnerable jars are
+# replaced under their own names; the sha256 of each replacement is from a download
+# whose sha1 matched Maven Central's. Logging is console only (the rolling file
+# appender would need a writable logs/ on a read-only root filesystem). Output is a
+# signed APK in Quenchworks' own repo.
+package:
+  name: quench-cratedb
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened CrateDB, packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-25-jre     # the bundled JDK is 25; Lucene needs jdk.incubator.vector
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - wget
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://cdn.crate.io/downloads/releases/cratedb/x64_linux/crate-${{package.version}}.tar.gz
+      expected-sha256: "__SHA256__"
+      strip-components: 1
+  - runs: |
+      set -eu
+      home="${{targets.destdir}}/opt/crate"
+      install -d "$home"
+      cp -r bin config lib plugins LICENSE NOTICE "$home/"
+      # jackson 2.21.1 (CVE-2026-54512..54518, 59888, 59889 and GHSA-r7wm/mhm7) and
+      # log4j 2.26.0 (CVE-2026-49844): each family moves as a unit. jackson-annotations
+      # is versioned 2.21 without a patch and stays; dataformat-cbor 2.17.2 has no
+      # finding and stays.
+      swap() {  # <old jar> <maven path> <artifact> <version> <sha256>
+        rm "$home/lib/$1"
+        wget -q -O "$home/lib/$3-$4.jar" "https://repo1.maven.org/maven2/$2/$3/$4/$3-$4.jar"
+        echo "$5  $home/lib/$3-$4.jar" | sha256sum -c -
+      }
+      swap jackson-core-2.21.1.jar com/fasterxml/jackson/core jackson-core 2.21.5 b64b5874162b503a0e58a8f7758266e8dd9f91bf49e3a59ae0b5f47589a231b7
+      swap jackson-databind-2.21.1.jar com/fasterxml/jackson/core jackson-databind 2.21.5 507418c0fafd38b2b2cfb704521630da613a8e4cc8381195a6f418017883e2c0
+      swap jackson-dataformat-csv-2.21.1.jar com/fasterxml/jackson/dataformat jackson-dataformat-csv 2.21.5 b278bd22805093e1b3e31c9ad7fa2773d3ac9e250da8cb566bd914334cc51a96
+      swap jackson-dataformat-smile-2.21.1.jar com/fasterxml/jackson/dataformat jackson-dataformat-smile 2.21.5 193b7a7c0c2a2a663f805a8222dfe03ce94de2cee07254c85a696e64b12194f2
+      swap jackson-dataformat-yaml-2.21.1.jar com/fasterxml/jackson/dataformat jackson-dataformat-yaml 2.21.5 c26143ac5503fd545bd5e9063f45a2499be89971559875e47cc868ef9359d10b
+      swap log4j-api-2.26.0.jar org/apache/logging/log4j log4j-api 2.26.1 f1810a4704ccce019d02bba029dc02a4f2ac0c997f647b465e7d409c1927f822
+      swap log4j-core-2.26.0.jar org/apache/logging/log4j log4j-core 2.26.1 2ec8c3bf5a6d7c89be8620116a2fc973f7dda1ad0261ad393c4d4726edfd3dcb
+      sed -i '/^rootLogger.appenderRef.rolling.ref/d' "$home/config/log4j2.properties"
+      ! grep -q '^rootLogger.appenderRef.rolling' "$home/config/log4j2.properties"
+      chmod -R a+rX "$home"
+
+test:
+  pipeline:
+    - runs: |
+        test -f /opt/crate/lib/jackson-databind-2.21.5.jar
+        test ! -e /opt/crate/lib/jackson-databind-2.21.1.jar
+        test ! -e /opt/crate/jdk
