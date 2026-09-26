@@ -39,4 +39,4 @@ echo "  daprd self-hosted: healthy, metadata reports app quench-smoke"
 user="$(docker inspect "$IMAGE" --format '{{.Config.User}}')"
 [ "$user" = "1001" ] || { echo "expected user 1001, got '$user'"; exit 1; }
 
-echo "smoke test passed (Dapr $v, nonroot user: $user, six binaries stamped, daprd self-hosted)"
+echo "smoke test passed (Dapr $v, nonroot user: $user, daprd stamped, control plane starts, daprd self-hosted)"
