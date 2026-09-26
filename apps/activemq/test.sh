@@ -12,14 +12,15 @@ cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
 docker run -d --name "$NAME" "$IMAGE" >/dev/null
+# docker logs keeps the lines from before a restart, so wait for the Nth start
 wait_started() {
   for i in $(seq 1 90); do
-    docker logs "$NAME" 2>&1 | grep -qE "Apache ActiveMQ [0-9.]+ .* started" && return 0
+    [ "$(docker logs "$NAME" 2>&1 | grep -cE "Apache ActiveMQ [0-9.]+ .* started")" -ge "$1" ] && return 0
     sleep 1
   done
   echo "broker never started"; docker logs "$NAME" 2>&1 | tail -40; exit 1
 }
-wait_started
+wait_started 1
 line="$(docker logs "$NAME" 2>&1 | grep -oE "Apache ActiveMQ [0-9.]+ \([^)]*\) started" | tail -1)"
 echo "$line"
 [ -z "$WANT" ] || grep -q "ActiveMQ $WANT " <<<"$line" || { echo "expected $WANT"; exit 1; }
@@ -30,13 +31,13 @@ cli() {
     -Dactivemq.data=/tmp/cli -jar /opt/activemq/bin/activemq.jar "$@" \
     --brokerUrl tcp://localhost:61616 --destination queue://smoke --messageCount 5 2>&1
 }
-out="$(cli producer --persistent true)"
+out="$(cli producer --persistent true || true)"
 grep -qiE "produced:? *5|5 messages" <<<"$out" || { echo "producer: $out" | tail -15; exit 1; }
 echo "  produced 5 persistent messages"
 
 docker restart "$NAME" >/dev/null
-wait_started
-out="$(cli consumer --receiveTimeout 20000)"
+wait_started 2
+out="$(cli consumer --receiveTimeout 20000 || true)"
 grep -qiE "consumed:? *5|5 messages" <<<"$out" || { echo "consumer: $out" | tail -15; exit 1; }
 echo "  consumed all 5 after a broker restart (KahaDB)"
 
