@@ -1,0 +1,38 @@
+# Assembles the Flux source-controller runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Metrics on :8080, health on :9440 (/healthz, /readyz). Needs a Kubernetes API and the
+# Flux CRDs; the chart provides both.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-flux-source-controller@local
+
+accounts:
+  groups:
+    - groupname: flux
+      gid: 1001
+  users:
+    - username: flux
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/source-controller
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-flux-source-controller"
+  org.opencontainers.image.licenses: "Apache-2.0"
