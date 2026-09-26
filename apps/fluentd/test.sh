@@ -15,7 +15,8 @@ ver="$(docker run --rm "$IMAGE" --version 2>&1 | tail -1)"
 echo "reported: $ver"
 [ -z "$WANT" ] || [ "$ver" = "fluentd $WANT" ] || { echo "expected fluentd $WANT"; exit 1; }
 
-docker run -d --name "$NAME" -p 127.0.0.1:19880:9880 "$IMAGE" >/dev/null
+# read-only root and a non-sticky /tmp, as in Kubernetes with an emptyDir
+docker run -d --name "$NAME" -p 127.0.0.1:19880:9880 --read-only --tmpfs /tmp:mode=0777 "$IMAGE" >/dev/null
 for i in $(seq 1 60); do
   docker logs "$NAME" 2>&1 | grep -q "fluentd worker is now running" && break
   [ "$i" = 60 ] && { echo "fluentd never started"; docker logs "$NAME" | tail -30; exit 1; }

@@ -39,6 +39,16 @@ pipeline:
       # build leftovers: the compiled objects stay in the extension dirs, the rest goes
       rm -rf "$GEMS/cache"
       find "$GEMS" \( -name '*.o' -o -name 'mkmf.log' -o -name 'gem_make.out' \) -delete
+      # Ruby's Dir.tmpdir rejects a world-writable directory without the sticky bit,
+      # which is what an emptyDir or tmpfs at /tmp is in Kubernetes; fluentd then dies
+      # creating its lock dir ("could not find a temporary directory"). The launcher
+      # hands it a private 0700 subdirectory and then loads fluentd.
+      cat > "${{targets.destdir}}/usr/lib/fluentd/launch.rb" <<'RB'
+      priv = File.join(ENV.fetch('TMPDIR', '/tmp'), 'fluentd')
+      Dir.mkdir(priv, 0o700) unless File.directory?(priv)
+      ENV['TMPDIR'] = priv
+      load '/usr/lib/fluentd/gems/bin/fluentd'
+      RB
       install -d "${{targets.destdir}}/fluentd/etc"
       cat > "${{targets.destdir}}/fluentd/etc/fluent.conf" <<'CONF'
       # default config: accept forward (24224) and HTTP (9880), print everything

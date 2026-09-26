@@ -40,8 +40,9 @@ environment:
 work-dir: /fluentd
 
 entrypoint:
-  # ruby runs the binstub directly, so the image needs no /usr/bin/env or shell
-  command: /usr/bin/ruby /usr/lib/fluentd/gems/bin/fluentd
+  # ruby runs the launcher directly (no /usr/bin/env or shell needed); it gives fluentd
+  # a private TMPDIR, then loads the fluentd binstub
+  command: /usr/bin/ruby /usr/lib/fluentd/launch.rb
 cmd: -c /fluentd/etc/fluent.conf
 
 archs:
