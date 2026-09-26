@@ -1,0 +1,46 @@
+# Assembles the GitLab Runner image. Nonroot uid 1001, multi-arch, SBOM by apko.
+# `gitlab-runner run` reads /home/gitlab-runner/config.toml; the chart renders it
+# (Kubernetes executor) from a runner authentication token.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-gitlab-runner@local
+
+accounts:
+  groups:
+    - groupname: gitlab-runner
+      gid: 1001
+  users:
+    - username: gitlab-runner
+      uid: 1001
+      gid: 1001
+      homedir: /home/gitlab-runner
+  run-as: 1001
+
+paths:
+  - path: /home/gitlab-runner
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /usr/bin/gitlab-runner run --working-directory=/home/gitlab-runner --config=/home/gitlab-runner/config.toml
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-gitlab-runner"
+  org.opencontainers.image.licenses: "MIT"
