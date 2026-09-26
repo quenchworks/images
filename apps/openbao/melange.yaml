@@ -175,6 +175,13 @@ pipeline:
       cluster_addr = "$CLUSTER_ADDR"
       HCL
 
+      # BAO_CONFIG_EXTRA_DIR: a directory of extra .hcl files (a mounted ConfigMap)
+      # merged after the seeded file -- e.g. a `seal "static"` block for auto-unseal
+      # and `initialize` stanzas for declarative self-initialization. bao merges
+      # repeated -config flags.
+      if [ -n "${BAO_CONFIG_EXTRA_DIR:-}" ]; then
+        exec bao server -config="$CONFIG_FILE" -config="$BAO_CONFIG_EXTRA_DIR"
+      fi
       exec bao server -config="$CONFIG_FILE"
       EOS
       chmod 0755 "${{targets.destdir}}/usr/bin/docker-entrypoint.sh"
