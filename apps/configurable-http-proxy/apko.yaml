@@ -23,8 +23,10 @@ accounts:
       gid: 1001
   run-as: 1001
 
+# The CLI's shebang is `#!/usr/bin/env node`, and this shell-free image has no
+# /usr/bin/env, so node runs the script directly.
 entrypoint:
-  command: /usr/bin/configurable-http-proxy --ip=0.0.0.0 --port=8000 --api-ip=0.0.0.0 --api-port=8001
+  command: /usr/bin/node /opt/chp/node_modules/configurable-http-proxy/bin/configurable-http-proxy --ip=0.0.0.0 --port=8000 --api-ip=0.0.0.0 --api-port=8001
 
 archs:
   - x86_64

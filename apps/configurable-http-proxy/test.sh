@@ -12,7 +12,7 @@ trap cleanup EXIT
 
 user="$(docker inspect "$IMAGE" --format '{{.Config.User}}')"
 [ "$user" = "1001" ] || { echo "expected user 1001, got '$user'"; exit 1; }
-ver="$(docker run --rm --entrypoint /usr/bin/configurable-http-proxy "$IMAGE" --version)"
+ver="$(docker run --rm --entrypoint /usr/bin/node "$IMAGE" /opt/chp/node_modules/configurable-http-proxy/bin/configurable-http-proxy --version)"
 echo "configurable-http-proxy $ver"
 [ -z "$WANT" ] || [ "$ver" = "$WANT" ] || { echo "expected $WANT"; exit 1; }
 
