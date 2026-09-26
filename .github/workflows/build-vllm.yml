@@ -11,7 +11,7 @@ name: build-vllm
 # via build.conf render() (__VER__ -> the version + the wheels.vllm.ai/<VER>/cpu index).
 # The per-version merge job assembles the multi-arch index, signs + attests it (SBOM
 # TRIMMED to packages-only first — vLLM's ~140-pkg + native-file SBOM blows past the 16 MB
-# attest-sbom limit), notifies charts on newest.
+# actions/attest limit), notifies charts on newest.
 on:
   workflow_dispatch:
 permissions:
@@ -26,7 +26,7 @@ env:
 
 jobs:
   prep:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       vers: ${{ steps.v.outputs.vers }}
       blocked: ${{ steps.v.outputs.blocked }}
@@ -52,7 +52,7 @@ jobs:
       matrix:
         ver: ${{ fromJson(needs.prep.outputs.vers) }}
         arch:
-          - { name: x86_64,  platform: amd64, runner: ubuntu-latest }
+          - { name: x86_64,  platform: amd64, runner: ubuntu-24.04 }
           - { name: aarch64, platform: arm64, runner: ubuntu-24.04-arm }
     runs-on: ${{ matrix.arch.runner }}
     defaults:
@@ -166,7 +166,7 @@ jobs:
   merge:
     needs: [prep, build]
     if: ${{ needs.prep.outputs.blocked != 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -202,9 +202,9 @@ jobs:
           output-file: sbom.spdx.json
           upload-artifact: false
 
-      - name: Trim the SBOM to packages-only (attest-sbom has a 16 MB limit)
+      - name: Trim the SBOM to packages-only (actions/attest has a 16 MB limit)
         # vLLM's venv (torch+cpu, opencv, triton, ...) ships tens of thousands of files;
-        # the full SPDX file+relationship graph exceeds the 16 MB attest-sbom limit. Trim
+        # the full SPDX file+relationship graph exceeds the 16 MB actions/attest limit. Trim
         # to packages-only, which is what the attestation needs.
         run: |
           jq 'del(.files) | del(.relationships)' sbom.spdx.json > sbom.trimmed.json
@@ -212,19 +212,21 @@ jobs:
           ls -l sbom.spdx.json
 
       - name: Attest the SBOM (keyless, pushed to GHCR)
-        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: ${{ env.GHCR_IMAGE }}
           subject-digest: ${{ steps.merge.outputs.digest }}
           sbom-path: sbom.spdx.json
           push-to-registry: true
+          create-storage-record: false
 
       - name: Attest build provenance (SLSA, pushed to GHCR)
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: ${{ env.GHCR_IMAGE }}
           subject-digest: ${{ steps.merge.outputs.digest }}
           push-to-registry: true
+          create-storage-record: false
 
       - name: Notify the charts repo (newest version only)
         if: ${{ matrix.ver == needs.prep.outputs.latest }}
