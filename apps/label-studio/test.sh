@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Smoke test for a built Label Studio image. Usage: test.sh <image-ref> [version]
 # Boots the server on SQLite with an admin user and API token from the
-# environment, and requires /health UP, /version to report this release, a
+# environment, and requires /health UP, /api/version to report this release, a
 # project created and listed through the token-authenticated API, and a bad
 # token refused.
 set -euo pipefail
@@ -32,7 +32,7 @@ for i in $(seq 1 120); do
 done
 echo "health: $health"
 
-ver="$(curl -fsS "http://127.0.0.1:$PORT/version")"
+ver="$(curl -fsS "http://127.0.0.1:$PORT/api/version")"
 release="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["release"])' <<<"$ver")"
 echo "label-studio $release"
 [ -z "$WANT" ] || [ "$release" = "$WANT" ] || { echo "expected $WANT"; exit 1; }
