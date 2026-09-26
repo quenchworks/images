@@ -1,0 +1,86 @@
+# Packages the Dependency-Track web UI (official static bundle) with a nonroot,
+# read-only-rootfs nginx config. The UI reads static/config.json at load; the shipped
+# one points at the same origin, so put the UI and the API behind one address: the
+# config includes /etc/dependency-track-frontend/conf.d/*.conf inside the server
+# block, where the chart adds `location /api { proxy_pass ... }`. Output is a signed
+# APK in Quenchworks' own repo.
+package:
+  name: quench-dependency-track-frontend
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Dependency-Track web UI (static bundle on nginx)"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - nginx
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/DependencyTrack/frontend/releases/download/${{package.version}}/frontend-dist.zip
+      expected-sha256: "__SHA256__"
+      extract: false
+  - runs: |
+      set -eu
+      unzip -q frontend-dist.zip
+      html="${{targets.destdir}}/usr/share/nginx/html"
+      install -d "$html" "${{targets.destdir}}/etc/dependency-track-frontend/conf.d"
+      cp -a dist/. "$html/"
+      test -f "$html/index.html" && test -f "$html/static/config.json"
+      chmod -R a+rX "$html"
+      cat > "${{targets.destdir}}/etc/dependency-track-frontend/nginx.conf" <<'EOF'
+      # daemon off so nginx stays in the foreground as PID 1 (no shell wrapper).
+      daemon off;
+      worker_processes auto;
+      pid /tmp/nginx.pid;
+      error_log /dev/stderr notice;
+
+      events {
+          worker_connections 1024;
+      }
+
+      http {
+          include       /etc/nginx/mime.types;
+          default_type  application/octet-stream;
+
+          client_body_temp_path /tmp/client_body_temp;
+          proxy_temp_path       /tmp/proxy_temp;
+          fastcgi_temp_path     /tmp/fastcgi_temp;
+          uwsgi_temp_path       /tmp/uwsgi_temp;
+          scgi_temp_path        /tmp/scgi_temp;
+
+          access_log /dev/stdout;
+          sendfile      on;
+          gzip          on;
+          server_tokens off;
+          # BOM uploads go through the /api proxy when the chart adds one
+          client_max_body_size 50m;
+
+          server {
+              listen      8080;
+              server_name _;
+              root        /usr/share/nginx/html;
+              index       index.html;
+
+              include /etc/dependency-track-frontend/conf.d/*.conf;
+
+              location = /static/config.json {
+                  add_header Cache-Control "no-store";
+              }
+              location / {
+                  try_files $uri $uri/ /index.html;
+              }
+          }
+      }
+      EOF

@@ -1,0 +1,46 @@
+# Assembles the Dependency-Track frontend runtime image: the static SPA bundle plus the Wolfi
+# nginx package serving it. Minimal, nonroot, multi-arch, SBOM by apko. nginx
+# listens on 8080 against /etc/dependency-track-frontend/nginx.conf (shipped by quench-dependency-track-frontend)
+# and serves /usr/share/nginx/html. Mount a writable tmpfs at /tmp for a read-only
+# rootfs; the chart can mount its own assets/config over the docroot.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - nginx
+    - quench-dependency-track-frontend@local
+
+accounts:
+  groups:
+    - groupname: dtrack
+      gid: 1001
+  users:
+    - username: dtrack
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# Exec nginx directly (PID 1, foreground). No shell in the image and no entrypoint
+# script: nginx handles signals fine as PID 1. `daemon off;` lives in the config
+# (below), so the command needs no quotes or shell.
+entrypoint:
+  command: /usr/bin/nginx -c /etc/dependency-track-frontend/nginx.conf
+
+work-dir: /usr/share/nginx/html
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-dependency-track-frontend"
+  org.opencontainers.image.licenses: "Apache-2.0"
