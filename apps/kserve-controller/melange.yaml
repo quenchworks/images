@@ -50,8 +50,10 @@ pipeline:
           }'
       }
       # Upstream pins grpc with a replace (a CVE fix when it was written), which
-      # go get cannot move; raise the replace to the floor instead.
-      go mod edit -replace google.golang.org/grpc=google.golang.org/grpc@v1.83.2
+      # go get cannot move; raise the replace to the floor instead, and the
+      # require with it (the float check reads both lines of go version -m).
+      go mod edit -replace google.golang.org/grpc=google.golang.org/grpc@v1.83.2 \
+        -require google.golang.org/grpc@v1.83.2
       need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
       if [ -n "$need" ]; then go get $need; fi
       go mod tidy
