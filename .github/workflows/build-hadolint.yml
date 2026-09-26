@@ -152,7 +152,7 @@ jobs:
         ver: ${{ fromJson(needs.prep.outputs.vers) }}
     steps:
       - uses: actions/checkout@v5
-      - uses: sigstore/hadolint-installer@v3
+      - uses: sigstore/cosign-installer@v3
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -170,8 +170,8 @@ jobs:
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
           echo "published ${GHCR_IMAGE}:${{ matrix.ver }}@${digest}"
 
-      - name: Sign the multi-arch index (hadolint keyless)
-        run: hadolint sign --yes "${GHCR_IMAGE}@${{ steps.merge.outputs.digest }}"
+      - name: Sign the multi-arch index (cosign keyless)
+        run: cosign sign --yes "${GHCR_IMAGE}@${{ steps.merge.outputs.digest }}"
 
       - name: Generate SBOM (SPDX) for the signed index
         uses: anchore/sbom-action@v0
