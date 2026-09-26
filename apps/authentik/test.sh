@@ -22,8 +22,11 @@ echo "  Config.User: $USER_CFG"
 [ "$USER_CFG" = "1001" ] || { echo "FAIL: image user is not 1001"; exit 1; }
 
 echo "authentik-server version (Go binary, no DB required):"
-VER_OUT="$(docker run --rm --entrypoint /usr/bin/authentik-server "$IMAGE" version 2>/dev/null \
-           || docker run --rm --entrypoint /usr/bin/authentik-server "$IMAGE" --version)"
+# --version only. 2026.8 removed the `version` subcommand, and cobra ignores an
+# unknown positional arg on the root command, so `authentik-server version` starts
+# the server and waits for PostgreSQL forever (it hung this boot test for 50
+# minutes on both arches). rootCmd sets Version:, so --version prints and exits.
+VER_OUT="$(docker run --rm --entrypoint /usr/bin/authentik-server "$IMAGE" --version)"
 echo "$VER_OUT" | sed 's/^/  /'
 echo "$VER_OUT" | grep -q '[0-9]\{4\}\.[0-9]' || { echo "FAIL: no CalVer version line"; exit 1; }
 if [ -n "$EXPECT_VER" ]; then
