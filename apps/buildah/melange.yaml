@@ -1,7 +1,7 @@
 # Builds buildah from source onto Wolfi with upstream's Linux build tags, minus
 # btrfs (no btrfs headers) and gpgme (containers_image_openpgp verifies
-# signatures in Go). The OCI runtime, the rootless storage driver and the uid
-# mapping helpers come from Wolfi as runtime deps.
+# signatures in Go). The OCI runtime, netavark, the rootless storage driver and
+# the uid mapping helpers come from Wolfi as runtime deps.
 package:
   name: quench-buildah
   version: __VER__
@@ -13,6 +13,7 @@ package:
     runtime:
       - ca-certificates-bundle
       - crun
+      - netavark                     # looked up when creating a build container
       - containers-common
       - fuse-overlayfs
       - just-newuidmap-newgidmap
