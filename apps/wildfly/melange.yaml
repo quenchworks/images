@@ -1,0 +1,122 @@
+# Packages the official WildFly distribution onto Wolfi with a hardened runtime
+# layout: nonroot, read-only rootfs (every runtime write lands under /tmp), bound to
+# 0.0.0.0 on 8080, management on 127.0.0.1:9990. Output is a signed APK in
+# QuenchWorks' own repo.
+package:
+  name: quench-wildfly
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened WildFly application server, packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-21-jre
+      - busybox          # bin/standalone.sh is /bin/sh with sed/awk/tr/readlink
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - curl
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/wildfly/wildfly/releases/download/${{package.version}}.Final/wildfly-${{package.version}}.Final.tar.gz
+      expected-sha256: "__SHA256__"
+      strip-components: 1
+
+  - name: Swap the flagged OpenTelemetry family to 1.62.0
+    runs: |
+      set -eu
+      # CVE-2026-45292 is in opentelemetry-api 1.48.0 (fixed 1.62.0). The api is
+      # versioned with context, sdk and the exporters as one family, so every 1.48.0
+      # jar moves together; instrumentation 2.14 and semconv 1.32 are other trains
+      # and are not flagged. JBoss Modules loads jars by the filename in each
+      # module.xml, so the swap renames the jar AND rewrites its resource-root. Each
+      # jar's sha256 is from a download whose sha1 matched Maven Central.
+      B=https://repo1.maven.org/maven2/io/opentelemetry
+      swap() { # <artifact> <old> <new> <sha256 of new>
+        old="$(find modules -name "opentelemetry-$1-$2.jar")"
+        [ "$(printf '%s\n' "$old" | grep -c .)" = 1 ] || { echo "expected one opentelemetry-$1-$2.jar, found: $old" >&2; exit 1; }
+        dir="$(dirname "$old")"
+        grep -q "path=\"opentelemetry-$1-$2.jar\"" "$dir/module.xml" || { echo "module.xml in $dir does not name $1-$2" >&2; exit 1; }
+        curl -fsSL -o "$dir/opentelemetry-$1-$3.jar" "$B/opentelemetry-$1/$3/opentelemetry-$1-$3.jar"
+        echo "$4  $dir/opentelemetry-$1-$3.jar" | sha256sum -c -
+        rm -f "$old"
+        sed -i "s|path=\"opentelemetry-$1-$2.jar\"|path=\"opentelemetry-$1-$3.jar\"|" "$dir/module.xml"
+      }
+        swap api 1.48.0 1.62.0 d58143928c049233653e6bf1282ff8a767ebdd5e6a82b3f336158c30e40b431d
+        swap api-incubator 1.48.0-alpha 1.62.0-alpha 6b8dbe21aea973896555c65e94de694ff73f788bdf47c712f8b2267a57b5d0d8
+        swap context 1.48.0 1.62.0 8ec86c3609222b9b6307bf40154c1f1c288d1f18ada0155409e7797adbdbe517
+        swap exporter-common 1.48.0 1.62.0 50f84b5b58048f69bd684ec874413944209995e01c177200555c151dabfe1ec9
+        swap exporter-logging 1.48.0 1.62.0 2fa59f0b8b7e6ffbde3dbbafac995fb5191ff00c634bd193aa00093ef2601063
+        swap exporter-otlp-common 1.48.0 1.62.0 79eaaaf044df15209ee1461b668f7c93547734a793d6cf6ad5e57290d3f8c0ea
+        swap sdk 1.48.0 1.62.0 99d421ea0e5a1ca8e45cb67f1d5db7f0e8a718dd55eeb86c1323597e1f10aed3
+        swap sdk-common 1.48.0 1.62.0 bf9d13df9a50e49a5db664ba8ebfad79f73f03219d2ac6f6709d432f6896eba0
+        swap sdk-extension-autoconfigure 1.48.0 1.62.0 4165984bdc3261486918a55815ae57d5e75ba08730d1e1ccf97908720659b619
+        swap sdk-extension-autoconfigure-spi 1.48.0 1.62.0 220c22bcf420faae59b7225c789f572eaa22e7af2304d55508aaf2a3efcfecf8
+        swap sdk-logs 1.48.0 1.62.0 51c94329bc8e335ed79027d29d49c075c11b91b39e48679edf590e784a392406
+        swap sdk-metrics 1.48.0 1.62.0 50b057fbf063f6801f623212f4b51b6a3fefc77837314a1316b2f54894c8b5d4
+        swap sdk-trace 1.48.0 1.62.0 fb6c0953b229a6da1db813135ae11a621bf9da56b7356c1e93049ed4b088c232
+      if find modules -name 'opentelemetry-*-1.48.0*.jar' | grep -q .; then
+        echo "an opentelemetry 1.48.0 jar was not swapped:" >&2; find modules -name 'opentelemetry-*-1.48.0*.jar' >&2; exit 1
+      fi
+      if grep -rl 'opentelemetry-[a-z-]*-1\.48\.0' --include=module.xml modules | grep -q .; then
+        echo "a module.xml still names a 1.48.0 jar" >&2; exit 1
+      fi
+
+  - name: Install under /opt/wildfly with a read-only-rootfs layout
+    runs: |
+      set -eu
+      dest="${{targets.destdir}}/opt/wildfly"
+      install -d "$dest"
+      cp -a bin modules jboss-modules.jar standalone welcome-content copyright.txt LICENSE.txt README.txt version.txt "$dest/"
+      install -d "$dest/docs" && cp -a docs/licenses "$dest/docs/"
+      # Domain mode, the Windows and PowerShell launchers, the appclient and the XSD
+      # docs are not used by a standalone container. welcome-content is: the default
+      # config serves it at / and fails a boot operation without it.
+      find "$dest/bin" \( -name '*.bat' -o -name '*.ps1' \) -delete
+      rm -rf "$dest/bin/client" "$dest/bin/service"
+      # Runtime writes all go to /tmp/wildfly (emptyDir/tmpfs). data, log and tmp are
+      # moved by system properties in the entrypoint; the deployment scanner writes
+      # marker files next to each deployment, so deployments/ is a symlink there.
+      rm -rf "$dest/standalone/deployments"
+      ln -s /tmp/wildfly/deployments "$dest/standalone/deployments"
+      chmod -R a+rX "$dest"
+
+      install -d "${{targets.destdir}}/usr/bin"
+      # The server's own directories, loaded with -P. Not passed as -D arguments:
+      # standalone.sh rewrites -Djboss.server.{log,config}.dir through `readlink -m`,
+      # which busybox's readlink lacks, so the value came back empty and the boot
+      # logger fell back to the read-only /opt/wildfly/standalone/log.
+      cat > "$dest/bin/quench-container.properties" <<'EOP'
+      jboss.server.config.dir=/tmp/wildfly/configuration
+      jboss.server.data.dir=/tmp/wildfly/data
+      jboss.server.log.dir=/tmp/wildfly/log
+      jboss.server.temp.dir=/tmp/wildfly/tmp
+      EOP
+      cat > "${{targets.destdir}}/usr/bin/wildfly-entrypoint.sh" <<'EOS'
+      #!/bin/sh
+      set -eu
+      # WildFly writes config history (and CLI changes) next to its config, so the
+      # configuration is copied to the writable /tmp each start. A file mounted over
+      # /opt/wildfly/standalone/configuration/<name> is copied too, so it takes effect.
+      W=/tmp/wildfly
+      mkdir -p "$W/configuration" "$W/data" "$W/log" "$W/tmp" "$W/deployments"
+      cp -r /opt/wildfly/standalone/configuration/. "$W/configuration/"
+      # standalone.sh builds the boot log and logging.properties paths from these.
+      export JBOSS_LOG_DIR="$W/log" JBOSS_CONFIG_DIR="$W/configuration"
+      exec /opt/wildfly/bin/standalone.sh \
+        -b "${WILDFLY_BIND:-0.0.0.0}" \
+        -bmanagement "${WILDFLY_BIND_MANAGEMENT:-127.0.0.1}" \
+        -P /opt/wildfly/bin/quench-container.properties \
+        "$@"
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/wildfly-entrypoint.sh"
