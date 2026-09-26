@@ -41,10 +41,11 @@ ARCHES = ["amd64", "arm64"]
 def human(n: int) -> str:
     """bytes -> human size (e.g. 123.4 MB)."""
     f = float(n)
-    for unit in ("B", "KB", "MB", "GB"):
-        if f < 1024 or unit == "GB":
+    for unit in ("B", "KB", "MB"):
+        if f < 1024:
             return f"{f:.1f} {unit}"
         f /= 1024
+    return f"{f:.1f} GB"
 
 
 def _raw(ref: str):
@@ -274,7 +275,8 @@ def self_test():
 
 def main():
     if "--self-test" in sys.argv:
-        return self_test()
+        self_test()
+        return
     cat = collect(with_meta="--meta" in sys.argv)
     # ponytail: kill YAML anchors (&id001/*id001) -- the repeated arches list
     # gets deduplicated into an alias otherwise, which reads as noise.

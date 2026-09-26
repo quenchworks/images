@@ -3,7 +3,6 @@
 # 11.0.x is the current GA line, so we ship the NEWEST 11.0 patch only. Scrape
 # the tomcat-11 release-directory listing for v11.0.<p>/ entries and report the
 # newest one.
-import re
 from _lib import scrape, report
 
 cands = scrape("https://downloads.apache.org/tomcat/tomcat-11/",

@@ -225,7 +225,6 @@ def main() -> int:
         print(f"!! {app}: unhandled map(s) {unknown} -- bump by hand")
         return 3
 
-    newest = versions[-1]
     entries: dict[str, dict[str, str]] = {m: {} for m in maps}
 
     for v in versions:

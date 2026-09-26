@@ -22,7 +22,7 @@ sweep cannot be kicked off before the fix actually lands. It only edits recipes
 whose STATUS block names that package; anything blocked for another reason is
 listed and left alone.
 """
-import sys, re, io, os, tarfile, urllib.request, subprocess, pathlib, argparse
+import sys, re, io, tarfile, urllib.request, subprocess, pathlib, argparse
 
 IDX = "https://packages.wolfi.dev/os/{arch}/APKINDEX.tar.gz"
 REPO = "quenchworks/images"

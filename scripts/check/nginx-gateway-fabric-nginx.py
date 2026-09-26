@@ -15,7 +15,8 @@ from _lib import github, github_tags, report, current, BASE
 report("nginx-gateway-fabric-nginx", github("nginx/nginx-gateway-fabric"))
 
 ver = (current("nginx-gateway-fabric-nginx") or ["?"])[-1]
-conf = open(f"{BASE}/apps/nginx-gateway-fabric-nginx/build.conf").read()
+with open(f"{BASE}/apps/nginx-gateway-fabric-nginx/build.conf") as fh:
+    conf = fh.read()
 
 
 def pinned(name):
