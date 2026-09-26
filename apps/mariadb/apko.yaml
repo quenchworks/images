@@ -37,11 +37,13 @@ paths:
     uid: 1001
     gid: 1001
     permissions: 0o700
+  # Sticky and world-writable, as in the official image: MariaDB Operator runs
+  # its pods as uid 999, and the socket and pid file go here.
   - path: /run/mysqld
     type: directory
     uid: 1001
     gid: 1001
-    permissions: 0o755
+    permissions: 0o1777
 
 archs:
   - x86_64
