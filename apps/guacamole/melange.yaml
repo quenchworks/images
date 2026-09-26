@@ -1,0 +1,113 @@
+# Assembles Guacamole from release artifacts. Nothing is compiled:
+#   - Apache Tomcat 9.0.122 (the servlet container; javax API, as the app needs)
+#   - guacamole-<v>.war, exploded to webapps/guacamole with its vulnerable jars
+#     swapped (below)
+#   - guacamole-auth-jdbc-<v>: the PostgreSQL extension, the pgjdbc driver, and
+#     the schema SQL for the chart's database init
+# Configuration comes from environment variables: guacamole.properties turns on
+# enable-environment-properties, so GUACD_HOSTNAME, POSTGRESQL_HOSTNAME, ... map to
+# guacd-hostname, postgresql-hostname, ... with no startup script rewriting files.
+package:
+  name: quench-guacamole
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Apache Guacamole web application on Tomcat 9"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - busybox
+      - ca-certificates-bundle
+      - openjdk-21-jre
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - curl
+
+pipeline:
+  - runs: |
+      set -eu
+      V=${{package.version}}
+      A=https://downloads.apache.org
+      M=https://repo1.maven.org/maven2
+      get() { curl -fsSL -o "$1" "$2"; echo "$3  $1" | sha256sum -c -; }
+
+      # Tomcat 9 (sha256 of the download; Apache's .sha512 matches it)
+      get /tmp/tomcat.tgz "$A/tomcat/tomcat-9/v9.0.122/bin/apache-tomcat-9.0.122.tar.gz" \
+        d8ec7e512e1450d23bceb14e93ac647ad20524ae8457a6eef529c077f8829890
+      dest="${{targets.destdir}}/opt/tomcat"
+      install -d "$dest"
+      tar xzf /tmp/tomcat.tgz -C "$dest" --strip-components=1 \
+        apache-tomcat-9.0.122/bin apache-tomcat-9.0.122/lib apache-tomcat-9.0.122/conf \
+        apache-tomcat-9.0.122/LICENSE apache-tomcat-9.0.122/NOTICE
+      find "$dest/bin" \( -name '*.bat' -o -name '*.exe' -o -name '*.tar.gz' \) -delete
+      chmod -R a+rX "$dest"
+      # No demo webapps: only guacamole. Runtime dirs point at a writable /tmp.
+      install -d "$dest/webapps"
+      ln -s /tmp/tomcat/logs "$dest/logs"
+      ln -s /tmp/tomcat/temp "$dest/temp"
+      ln -s /tmp/tomcat/work "$dest/work"
+
+      # The web app (sha256 matches Apache's published guacamole-<v>.war.sha256)
+      get /tmp/guacamole.war "$A/guacamole/$V/binary/guacamole-$V.war" __SHA256__
+      app="$dest/webapps/guacamole"
+      install -d "$app"
+      (cd "$app" && unzip -q /tmp/guacamole.war)
+
+      # Jar swaps inside WEB-INF/lib, one version per family (measured 2026-09-26
+      # with trivy on the 1.6.0 WAR: 10 findings, all here). logback 1.3.15 has
+      # fixes only on 1.5.x (slf4j 2.0, which the WAR already ships). Each swap
+      # asserts the old jar is present, so a release that moves a library fails
+      # loudly instead of gaining a second copy.
+      lib="$app/WEB-INF/lib"
+      swap() {
+        test -f "$lib/$1" || { echo "FATAL: $1 not shipped; re-audit the swaps"; exit 1; }
+        get "$lib/$(basename "$2")" "$M/$2" "$3"
+        rm -f "$lib/$1"
+      }
+      swap logback-core-1.3.15.jar ch/qos/logback/logback-core/1.5.34/logback-core-1.5.34.jar 42eda264c0c650c2bec59e66151a88b708a8663dc1b49d788202d53e78b8caae
+      swap logback-classic-1.3.15.jar ch/qos/logback/logback-classic/1.5.34/logback-classic-1.5.34.jar b65e05076a5c1aadb659b4fe4bc5fee31cb26cd70390292eb03e4a7a24cff10f
+      swap jackson-core-2.19.0.jar com/fasterxml/jackson/core/jackson-core/2.21.5/jackson-core-2.21.5.jar b64b5874162b503a0e58a8f7758266e8dd9f91bf49e3a59ae0b5f47589a231b7
+      swap jackson-databind-2.19.0.jar com/fasterxml/jackson/core/jackson-databind/2.21.5/jackson-databind-2.21.5.jar 507418c0fafd38b2b2cfb704521630da613a8e4cc8381195a6f418017883e2c0
+      swap jackson-annotations-2.19.0.jar com/fasterxml/jackson/core/jackson-annotations/2.21/jackson-annotations-2.21.jar 53ca085f4a150f703f49e1aabd935bd03b43e1ea3d55d135438292af22cef56b
+      swap jackson-module-jaxb-annotations-2.19.0.jar com/fasterxml/jackson/module/jackson-module-jaxb-annotations/2.21.5/jackson-module-jaxb-annotations-2.21.5.jar 795ac3ea3b2ac0b91722b14e0a3cec4816163053fba469a5974bb1b3ff5e3ae8
+
+      # GUACAMOLE_HOME: the PostgreSQL auth extension and its driver, plus the
+      # schema SQL (Guacamole does not create its own tables).
+      home="${{targets.destdir}}/etc/guacamole"
+      install -d "$home/extensions" "$home/lib" "${{targets.destdir}}/usr/share/guacamole/schema"
+      get /tmp/jdbc.tgz "$A/guacamole/$V/binary/guacamole-auth-jdbc-$V.tar.gz" \
+        97bc5fd3d67d25c0e98a475d1dfd308a037859f549fac47171c723b7a7039366
+      tar xzf /tmp/jdbc.tgz -C /tmp
+      cp "/tmp/guacamole-auth-jdbc-$V/postgresql/guacamole-auth-jdbc-postgresql-$V.jar" "$home/extensions/"
+      cp /tmp/guacamole-auth-jdbc-$V/postgresql/schema/*.sql "${{targets.destdir}}/usr/share/guacamole/schema/"
+      get "$home/lib/postgresql-42.7.13.jar" "$M/org/postgresql/postgresql/42.7.13/postgresql-42.7.13.jar" \
+        6e0e4cc2d8cae902084f8a2b18728b073a6fd9d1f87c9d8bff8f298c18185b93
+      printf '%s\n' 'enable-environment-properties: true' > "$home/guacamole.properties"
+      chmod -R a+rX "$home" "${{targets.destdir}}/usr/share/guacamole"
+
+      # Entrypoint: make the writable dirs, then exec Tomcat's Bootstrap directly
+      # (what `catalina.sh run` execs), with GUACAMOLE_HOME set.
+      install -d "${{targets.destdir}}/usr/bin"
+      cat > "${{targets.destdir}}/usr/bin/guacamole-entrypoint.sh" <<'EOS'
+      #!/bin/sh
+      set -eu
+      mkdir -p /tmp/tomcat/logs /tmp/tomcat/temp /tmp/tomcat/work
+      exec "$JAVA_HOME/bin/java" ${JAVA_OPTS:-} \
+        -Djava.util.logging.config.file=/opt/tomcat/conf/logging.properties \
+        -Djava.util.logging.manager=org.apache.juli.ClassLoaderLogManager \
+        -Djdk.tls.ephemeralDHKeySize=2048 \
+        -Djava.protocol.handler.pkgs=org.apache.catalina.webresources \
+        -Dcatalina.base=/opt/tomcat -Dcatalina.home=/opt/tomcat \
+        -Djava.io.tmpdir=/tmp/tomcat/temp \
+        -classpath /opt/tomcat/bin/bootstrap.jar:/opt/tomcat/bin/tomcat-juli.jar \
+        org.apache.catalina.startup.Bootstrap start
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/guacamole-entrypoint.sh"
