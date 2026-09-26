@@ -100,10 +100,15 @@ pipeline:
       # provenance is still carried by git-checkout expected-commit + the -X GitCommit ldflag.
       go build -trimpath -buildvcs=false \
         -ldflags "-s -w \
-          -X github.com/openbao/openbao/version.fullVersion=${{package.version}} \
-          -X github.com/openbao/openbao/version.GitCommit=__COMMIT__ \
-          -X github.com/openbao/openbao/version.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+          -X github.com/openbao/openbao/v2/internal/version.fullVersion=${{package.version}} \
+          -X github.com/openbao/openbao/v2/internal/version.GitCommit=__COMMIT__ \
+          -X github.com/openbao/openbao/v2/internal/version.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         -o "${{targets.destdir}}/usr/bin/bao" .
+      # -X on a symbol that does not exist is silently ignored: the version package
+      # moved to v2/internal/version, the old flags stamped nothing, and the binary
+      # reported v2.0.0-HEAD. Assert the stamp took.
+      "${{targets.destdir}}/usr/bin/bao" version | grep -q "OpenBao v${{package.version}}" \
+        || { echo "version stamp missing: $("${{targets.destdir}}/usr/bin/bao" version)" >&2; exit 1; }
 
       # The float is only real if it reached the BINARY. Every `dep`/`=>` line of
       # `go version -m` must be at or above its floor -- the `=>` line is what

@@ -7,7 +7,8 @@
 # or 503 sealed -- both prove it's up). Read-only rootfs + writable tmpfs for data/config/tmp.
 set -euo pipefail
 
-IMAGE="${1:?usage: test.sh <image-ref>}"
+IMAGE="${1:?usage: test.sh <image-ref> [version]}"
+WANT="${2:-}"
 DEV="quench-openbao-dev-$$"
 SRV="quench-openbao-srv-$$"
 
@@ -51,7 +52,10 @@ got="$(docker exec -e BAO_ADDR=http://127.0.0.1:8200 -e BAO_TOKEN=root "$DEV" \
 [ "$got" = "hello" ] || { echo "kv roundtrip failed: got '$got'"; docker logs "$DEV"; exit 1; }
 echo "kv roundtrip OK (value='$got')"
 
-echo "dev version:"; docker exec "$DEV" bao version | head -1
+ver="$(docker exec "$DEV" bao version | head -1)"
+echo "dev version: $ver"
+# The stamp once missed (a moved package made -X a no-op) and the binary said v2.0.0-HEAD.
+[ -z "$WANT" ] || grep -q "OpenBao v${WANT}" <<<"$ver" || { echo "expected OpenBao v${WANT}"; exit 1; }
 
 ############################################
 # 2) DEFAULT (non-dev) raft server: sealed-but-listening
