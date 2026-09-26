@@ -1,0 +1,37 @@
+# Assembles the shellcheck image: the static binary on Wolfi's base layout. Nonroot,
+# multi-arch, SBOM by apko. Mount files to lint, or pipe them in on stdin with "-".
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-shellcheck@local
+
+accounts:
+  groups:
+    - groupname: shellcheck
+      gid: 1001
+  users:
+    - username: shellcheck
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/shellcheck
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-shellcheck"
+  org.opencontainers.image.licenses: "GPL-3.0-only"

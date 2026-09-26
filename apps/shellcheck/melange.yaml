@@ -1,0 +1,35 @@
+# Packages shellcheck (the shell script static analysis tool) from its official static release binary onto
+# Wolfi, per arch. Output is a signed APK in Quenchworks' own repo.
+package:
+  name: quench-shellcheck
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened shellcheck, the official static binary on Wolfi"
+  copyright:
+    - license: GPL-3.0-only
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - curl
+      - xz
+
+pipeline:
+  - runs: |
+      set -eu
+      VER="${{package.version}}"
+      case "$(uname -m)" in
+        x86_64)  sarch=x86_64; sha=__SHA_AMD__ ;;
+        aarch64) sarch=aarch64; sha=__SHA_ARM__ ;;
+        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+      esac
+      curl -fsSL -o dl "https://github.com/koalaman/shellcheck/releases/download/v${VER}/shellcheck-v${VER}.linux.${sarch}.tar.xz"
+      echo "$sha  dl" | sha256sum -c -
+      tar -xJf dl
+      install -Dm0755 "shellcheck-v${VER}/shellcheck" "${{targets.destdir}}/usr/bin/shellcheck"
