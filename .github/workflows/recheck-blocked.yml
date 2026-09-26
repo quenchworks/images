@@ -99,6 +99,15 @@ jobs:
             # `cp apko.yaml ...` fails, set -e propagates out of the subshell, and
             # the single most permanently-blocked app kills the whole sweep before
             # any other app is reported.
+            # BLOCKED_BY names a block the CVE gate cannot clear. coolify-realtime
+            # passes the gate and crashes at boot (ERR_REQUIRE_ESM), so re-gating
+            # it only reopened an "unblock ready" issue every Monday (#7).
+            blocked_by="$( ( set +u; . "$conf" >/dev/null 2>&1; echo "${BLOCKED_BY:-cve}" ) )"
+            if [ "$blocked_by" != "cve" ]; then
+              echo "SKIP $app (blocked by $blocked_by, not by a CVE)"
+              echo "| $app | - | ⏭ blocked by $blocked_by; the CVE gate cannot clear it |" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
             if [ ! -f "apps/$app/apko.yaml" ]; then
               echo "SKIP $app (no apko.yaml -- nothing to gate)"
               echo "| $app | - | ⏭ no recipe to gate |" >> "$GITHUB_STEP_SUMMARY"
