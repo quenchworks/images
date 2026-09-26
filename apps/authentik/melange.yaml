@@ -1,8 +1,8 @@
 # Builds authentik (identity provider: OIDC / SAML / LDAP) entirely from source on
 # Wolfi. This is a four-language build that mirrors upstream's multi-stage Dockerfile:
 #
-#   1. web UI       nodejs-24 + npm      -> web/dist + web/authentik (static assets)
-#   2. Go server    go-1.26 (CGO)        -> /usr/bin/authentik-server  (server, healthcheck)
+#   1. web UI       nodejs-24 + pnpm     -> web/dist + web/authentik (static assets)
+#   2. Go server    go-1.27 (CGO)        -> /usr/bin/authentik-server  (server, healthcheck)
 #   3. Rust core    rust + cmake/clang   -> /usr/bin/authentik         (worker, allinone)
 #   4. Python core  python-3.14 + uv     -> /ak-root/.venv             (Django, `manage`)
 #
@@ -63,9 +63,10 @@ environment:
       - perl             # aws-lc-fips-sys generates asm via perl during its cmake build
       # --- Node (web UI) ---
       - nodejs-24
+      - corepack          # fetches the pnpm web/package.json pins, sha512-verified
       - npm
       # --- Go (server/proxy) ---
-      - go-1.26
+      - go-1.27
       # --- Rust (orchestrator/worker) ---
       - rust
       - clang            # aws-lc / bindgen (python-kadmin-rs, ring) need a C/clang toolchain
@@ -98,20 +99,27 @@ pipeline:
       destination: src
 
   # ---------------------------------------------------------------------------
-  # 1. Web UI (nodejs-24 + npm). Mirrors upstream's node-builder stage:
-  #    npm ci in web/, then `npm run build` + `npm run build:sfe`. Outputs land
-  #    in web/dist and web/authentik. NODE_ENV=production ONLY for the build step;
-  #    devDependencies (vite/wireit/esbuild) are needed for `npm ci`.
+  # 1. Web UI (nodejs-24 + pnpm). Mirrors upstream's node-builder stage:
+  #    a frozen pnpm install in web/, then `build` + `build:sfe`. Outputs land in
+  #    web/dist and web/authentik. NODE_ENV=production ONLY for the build step;
+  #    devDependencies (vite/wireit/esbuild) are needed for the install.
+  #    2026.8 moved web/ from npm to pnpm and pins it in packageManager
+  #    (pnpm@12.4.0+sha512...). Wolfi's pnpm is 10.x, so corepack fetches the
+  #    pinned release and checks it against that sha512; build:sfe calls `pnpm`
+  #    itself, so corepack's shims go on PATH.
   # ---------------------------------------------------------------------------
   - runs: |
       cd src/web
-      export npm_config_fund=false npm_config_audit=false
-      npm ci
-      NODE_ENV=production GIT_BUILD_HASH="quench" npm run build
-      NODE_ENV=production GIT_BUILD_HASH="quench" npm run build:sfe
+      export COREPACK_HOME="$(mktemp -d)" COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+      shims="$(mktemp -d)"; corepack enable --install-directory "$shims" pnpm
+      export PATH="$shims:$PATH"
+      grep -q '"packageManager": "pnpm@' package.json
+      pnpm install --frozen-lockfile
+      NODE_ENV=production GIT_BUILD_HASH="quench" pnpm run build
+      NODE_ENV=production GIT_BUILD_HASH="quench" pnpm run build:sfe
 
   # ---------------------------------------------------------------------------
-  # 2. Go server (go-1.26, CGO on). Version is embedded from the in-tree
+  # 2. Go server (go-1.27, CGO on). Version is embedded from the in-tree
   #    internal/constants/VERSION file, so no ldflag stamping is needed. FIPS140
   #    is intentionally NOT set (clean-room hardening on stock Wolfi OpenSSL).
   # ---------------------------------------------------------------------------
