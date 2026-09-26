@@ -1,0 +1,84 @@
+# Builds podman and rootlessport from source onto Wolfi with upstream's Linux
+# build tags, minus btrfs (no btrfs headers) and gpgme (containers_image_openpgp
+# verifies signatures in Go). The OCI runtime, conmon, netavark, the rootless
+# storage driver and the uid mapping helpers come from Wolfi as runtime deps.
+package:
+  name: quench-podman
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Podman (rootless), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - conmon
+      - crun
+      - netavark
+      - containers-common
+      - fuse-overlayfs
+      - just-newuidmap-newgidmap
+      - rootlesskit-config-nonroot   # /etc/subuid and /etc/subgid for "nonroot"
+      - libseccomp
+      - sqlite-libs
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go
+      - libseccomp-dev
+      - sqlite-dev
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/containers/podman/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      export CGO_ENABLED=1
+      export GOTOOLCHAIN=local
+      export GOFLAGS=-mod=mod
+      # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
+      # FLOOR is a floor, not a pin: only modules below it are raised, and the
+      # shipped binaries are asserted at or above it after the build. 6.1.2 needs
+      # only x/net; 6.0.2 also carries runc v1.4.2 and fulcio v1.8.5.
+      FLOOR="golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0 golang.org/x/crypto@v0.56.0 golang.org/x/sys@v0.47.0 golang.org/x/mod@v0.40.0 golang.org/x/oauth2@v0.36.0 google.golang.org/grpc@v1.83.2 github.com/moby/buildkit@v0.31.1 github.com/moby/go-archive@v0.3.0 github.com/opencontainers/runc@v1.4.3 github.com/sigstore/fulcio@v1.8.6 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
+      go mod tidy
+      rm -rf vendor
+      TAGS="grpcnotrace seccomp libsqlite3 exclude_graphdriver_btrfs containers_image_openpgp"
+      go build -trimpath -ldflags "-s -w" -tags "$TAGS" -o "${{targets.destdir}}/usr/bin/podman" ./cmd/podman
+      go build -trimpath -ldflags "-s -w" -tags "$TAGS" -o "${{targets.destdir}}/usr/libexec/podman/rootlessport" ./cmd/rootlessport
+      for b in usr/bin/podman usr/libexec/podman/rootlessport; do
+        bad="$(go version -m "${{targets.destdir}}/$b" \
+          | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor "$b")"
+        [ -z "$bad" ] || { echo "0-CVE float did not reach $b:"; echo "$bad"; exit 1; }
+      done
+      "${{targets.destdir}}/usr/bin/podman" --version | grep -Fx "podman version ${{package.version}}"
+
+test:
+  pipeline:
+    - runs: |
+        podman --version
