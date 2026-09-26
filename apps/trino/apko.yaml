@@ -1,0 +1,51 @@
+# Assembles the Trino image: the engine on Wolfi's openjdk-25, nonroot uid 1001,
+# multi-arch, SBOM by apko. The default command runs a single-node coordinator on
+# 8080 with the jmx, memory, tpcds and tpch catalogs; the chart mounts its own
+# /etc/trino for coordinator/worker roles and catalogs.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-trino@local
+
+accounts:
+  groups:
+    - groupname: trino
+      gid: 1001
+  users:
+    - username: trino
+      uid: 1001
+      gid: 1001
+      homedir: /data/trino
+  run-as: 1001
+
+paths:
+  - path: /data/trino
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  JAVA_HOME: /usr/lib/jvm/default-jvm
+  LANG: C.UTF-8
+
+entrypoint:
+  command: /usr/bin/trino-launcher run --etc-dir /etc/trino
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-trino"
+  org.opencontainers.image.licenses: "Apache-2.0"

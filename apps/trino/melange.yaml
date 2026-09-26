@@ -1,0 +1,106 @@
+# Assembles Trino from upstream's release assets. Nothing in the engine is rebuilt:
+#   - trino-server-core-<v>.tar.gz: the engine (lib/) and the core plugins
+#   - connector plugins: upstream's default container catalogs (jmx, memory,
+#     tpcds, tpch) plus postgresql, each from its release zip
+#   - bin/linux-<arch>/launcher: airlift launcher 318 (the version airbase 395
+#     pins), rebuilt from source with the current Go toolchain
+# Left out, with the reason:
+#   - plugin/exchange-filesystem and plugin/spooling-filesystem: fault-tolerant
+#     execution and the spooling protocol on S3/Azure/GCS. They are the only
+#     carriers of every jar finding in the core (netty 4.2.16, httpclient5 5.6.2).
+#   - bin/darwin-*, linux-ppc64le and the other arch's binaries.
+#   - libjvmkill.so (upstream's image adds it from a separate image);
+#     -XX:+ExitOnOutOfMemoryError in jvm.config covers the same case.
+package:
+  name: quench-trino
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Trino, assembled from upstream release assets on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - openjdk-25-default-jvm
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - curl
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/trinodb/trino/releases/download/${{package.version}}/trino-server-core-${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      V=${{package.version}}
+      R=https://github.com/trinodb/trino/releases/download/$V
+      dest="${{targets.destdir}}/usr/lib/trino"
+      mkdir -p "$dest"
+      cp -a lib plugin secrets-plugin NOTICE README.txt "$dest/"
+      rm -rf "$dest/plugin/exchange-filesystem" "$dest/plugin/spooling-filesystem"
+
+      # Connector plugins. sha256 from each asset's download (they match the
+      # digests GitHub publishes on the release).
+      plug() {
+        curl -fsSL -o "/tmp/$1.zip" "$R/trino-$1-$V.zip"
+        echo "$2  /tmp/$1.zip" | sha256sum -c -
+        unzip -q "/tmp/$1.zip" -d /tmp/plug
+        mv "/tmp/plug/trino-$1-$V" "$dest/plugin/$1"
+      }
+      plug jmx d28d6182227a87c1459504d405a8c9f0d7d9a847bf40a4e1ccbc2a673e6f5ca9
+      plug memory 267d46f0c80790e1cd7390b5d1831eeef604bf319e9be066a165684f86451544
+      plug postgresql 04eaa15357b5d3e74783d098ab2ebb570e2e1fe069cc3c128f28916e81e41650
+      plug tpcds 902f4d866babc32c7a7148433174d2f397bea5cc8e9a46031735a1df28d01ca6
+      plug tpch 303d89111e6ed671074bd54d9967d3a18a99d7510c26ac7b0c342abe26d76fe0
+
+      # The launcher finds the install root by walking up from its own (resolved)
+      # path to the directory holding bin/launcher, and preloads
+      # bin/linux-<arch>/libprocname.so when present. Keep that layout: upstream's
+      # bin/launcher script as the marker, this arch's libprocname.so, and the
+      # rebuilt Go binary beside it.
+      case "$(uname -m)" in x86_64) a=amd64 ;; aarch64) a=arm64 ;; esac
+      mkdir -p "$dest/bin/linux-$a"
+      cp bin/launcher bin/launcher.properties "$dest/bin/"
+      cp "bin/linux-$a/libprocname.so" "$dest/bin/linux-$a/"
+      curl -fsSL -o /tmp/launcher.tgz https://github.com/airlift/launcher/archive/refs/tags/318.tar.gz
+      echo "b9293b91a04578caa67018dfb8eba6c6fd52f709e3a765e9d74a7e9027c90afd  /tmp/launcher.tgz" | sha256sum -c -
+      tar xzf /tmp/launcher.tgz -C /tmp
+      # x/text v0.33.0 (CVE-2026-56852) floats to the canonical v0.41.0 floor; the
+      # grep asserts the float reached the binary.
+      (cd /tmp/launcher-318/src/main/go \
+        && GOTOOLCHAIN=local go get golang.org/x/text@v0.41.0 && go mod tidy \
+        && CGO_ENABLED=0 GOTOOLCHAIN=local go build -trimpath \
+             -ldflags "-s -w -X launcher/args.Version=318" \
+             -o "$dest/bin/linux-$a/launcher" .)
+      go version -m "$dest/bin/linux-$a/launcher" | grep -q "golang.org/x/text[[:space:]]*v0.41.0"
+      # os.Executable resolves symlinks, so one arch-neutral entrypoint works.
+      mkdir -p "${{targets.destdir}}/usr/bin"
+      ln -s "../lib/trino/bin/linux-$a/launcher" "${{targets.destdir}}/usr/bin/trino-launcher"
+
+      # Default config: upstream's container defaults (single-node coordinator,
+      # the four default catalogs) without the jvmkill agent line, plus a
+      # postgresql catalog left for the operator to add.
+      etc="${{targets.destdir}}/etc/trino"
+      mkdir -p "$etc/catalog"
+      printf '%s\n' 'coordinator=true' 'node-scheduler.include-coordinator=true' \
+        'http-server.http.port=8080' 'discovery.uri=http://localhost:8080' > "$etc/config.properties"
+      printf '%s\n' 'node.environment=quench' 'node.data-dir=/data/trino' > "$etc/node.properties"
+      printf '%s\n' -server -XX:InitialRAMPercentage=80 -XX:MaxRAMPercentage=80 \
+        -XX:G1HeapRegionSize=32M -XX:+ExplicitGCInvokesConcurrent \
+        -XX:+HeapDumpOnOutOfMemoryError -XX:+ExitOnOutOfMemoryError \
+        -XX:-OmitStackTraceInFastThrow -XX:ReservedCodeCacheSize=256M \
+        -XX:PerMethodRecompilationCutoff=10000 -XX:PerBytecodeRecompilationCutoff=10000 \
+        -Djdk.attach.allowAttachSelf=true -Djdk.nio.maxCachedBufferSize=2000000 > "$etc/jvm.config"
+      : > "$etc/log.properties"
+      for c in jmx memory tpcds tpch; do echo "connector.name=$c" > "$etc/catalog/$c.properties"; done
