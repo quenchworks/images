@@ -1,8 +1,9 @@
 # Assembles the WildFly image: the distribution on Wolfi's openjdk-21 JRE. Nonroot
 # (uid 1001), multi-arch, read-only-rootfs friendly (mount a writable /tmp). HTTP on
-# 8080 (all interfaces), management on 9990 (loopback). Drop a WAR into
-# /opt/wildfly/standalone/deployments (a symlink to /tmp/wildfly/deployments), or
-# pass -c standalone-microprofile.xml and friends as arguments.
+# 8080 (all interfaces), management on 9990 (loopback). Put WARs in
+# /opt/wildfly/standalone/deployments (COPY in a derived image, or mount); the
+# entrypoint copies them into the /tmp/wildfly server base at start. Pass
+# -c standalone-microprofile.xml and friends as arguments.
 contents:
   keyring:
     - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub

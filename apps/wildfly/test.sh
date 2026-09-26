@@ -29,7 +29,7 @@ chmod 0755 "$WAR"; chmod 0644 "$WAR/quench.war"
 boot() { # <extra args...>; leaves the container running
   docker rm -f "$NAME" >/dev/null 2>&1 || true
   docker run -d --name "$NAME" --read-only --tmpfs /tmp:rw,mode=1777 \
-    -v "$WAR/quench.war:/tmp/wildfly/deployments/quench.war:ro" \
+    -v "$WAR/quench.war:/opt/wildfly/standalone/deployments/quench.war:ro" \
     -p 127.0.0.1:8080:8080 "$IMAGE" "$@" >/dev/null
   for i in $(seq 1 120); do
     logs="$(docker logs "$NAME" 2>&1)"

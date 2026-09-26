@@ -84,39 +84,32 @@ pipeline:
       # config serves it at / and fails a boot operation without it.
       find "$dest/bin" \( -name '*.bat' -o -name '*.ps1' \) -delete
       rm -rf "$dest/bin/client" "$dest/bin/service"
-      # Runtime writes all go to /tmp/wildfly (emptyDir/tmpfs). data, log and tmp are
-      # moved by system properties in the entrypoint; the deployment scanner writes
-      # marker files next to each deployment, so deployments/ is a symlink there.
-      rm -rf "$dest/standalone/deployments"
-      ln -s /tmp/wildfly/deployments "$dest/standalone/deployments"
+      # Runtime writes all go to /tmp/wildfly (emptyDir/tmpfs), which the entrypoint
+      # makes the server base dir. standalone/ here stays the read-only SOURCE:
+      # configuration/ and deployments/ are copied into the base on every start, so a
+      # derived image can COPY a WAR into standalone/deployments and a mount over a
+      # file there takes effect. (A symlink into /tmp was tried first: Docker then
+      # creates /tmp/wildfly as root for a WAR mounted beneath it, uid 1001 cannot
+      # create its siblings, and a COPY into it vanishes under the tmpfs.)
+      install -d "$dest/standalone/deployments"
       chmod -R a+rX "$dest"
 
       install -d "${{targets.destdir}}/usr/bin"
-      # The server's own directories, loaded with -P. Not passed as -D arguments:
-      # standalone.sh rewrites -Djboss.server.{log,config}.dir through `readlink -m`,
-      # which busybox's readlink lacks, so the value came back empty and the boot
-      # logger fell back to the read-only /opt/wildfly/standalone/log.
-      cat > "$dest/bin/quench-container.properties" <<'EOP'
-      jboss.server.config.dir=/tmp/wildfly/configuration
-      jboss.server.data.dir=/tmp/wildfly/data
-      jboss.server.log.dir=/tmp/wildfly/log
-      jboss.server.temp.dir=/tmp/wildfly/tmp
-      EOP
       cat > "${{targets.destdir}}/usr/bin/wildfly-entrypoint.sh" <<'EOS'
       #!/bin/sh
       set -eu
-      # WildFly writes config history (and CLI changes) next to its config, so the
-      # configuration is copied to the writable /tmp each start. A file mounted over
-      # /opt/wildfly/standalone/configuration/<name> is copied too, so it takes effect.
       W=/tmp/wildfly
-      mkdir -p "$W/configuration" "$W/data" "$W/log" "$W/tmp" "$W/deployments"
+      mkdir -p "$W/configuration" "$W/deployments"
       cp -r /opt/wildfly/standalone/configuration/. "$W/configuration/"
-      # standalone.sh builds the boot log and logging.properties paths from these.
-      export JBOSS_LOG_DIR="$W/log" JBOSS_CONFIG_DIR="$W/configuration"
+      cp -r /opt/wildfly/standalone/deployments/. "$W/deployments/"
+      # standalone.sh derives the log and config dirs from JBOSS_BASE_DIR and passes
+      # it as jboss.server.base.dir, so data, log, tmp and deployments all resolve
+      # under /tmp. Set through the environment, not -D: the script rewrites those -D
+      # values with `readlink -m`, which busybox lacks, and they came back empty.
+      export JBOSS_BASE_DIR="$W"
       exec /opt/wildfly/bin/standalone.sh \
         -b "${WILDFLY_BIND:-0.0.0.0}" \
         -bmanagement "${WILDFLY_BIND_MANAGEMENT:-127.0.0.1}" \
-        -P /opt/wildfly/bin/quench-container.properties \
         "$@"
       EOS
       chmod 0755 "${{targets.destdir}}/usr/bin/wildfly-entrypoint.sh"
