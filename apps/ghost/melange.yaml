@@ -160,6 +160,10 @@ pipeline:
         # Staying on 1.25.x (not 1.26) keeps the same ABI set and the minimal bump.
         "  're2@<1.26.1': 1.26.1",               # CVE-2026-67550, then a further advisory on 1.25.2
         "  'ip-address@<10.3.1': 10.3.1",        # same advisory code-server needed
+        "  'image-size@<2.0.3': 2.0.3",          # CVE-2025-71329/71330 HIGH (JXL/HEIF and ICNS
+                                                 # parser DoS): every version through 2.0.2 is
+                                                 # affected, so 2.0.3 is a MAJOR jump from Ghost's
+                                                 # 1.2.1. Its CJS API changed; see the shim below.
         "  'js-yaml@<4.3.2': 4.3.2",             # CVE on 4.3.0 (4.3.0 was itself a fix pin);
                                                  # CVE-2026-84375 then landed on the 4.3.1 fix too
         "  'undici@<6.28.0': 6.28.0",           # TWO undici majors coexist in this tree, so each
@@ -322,6 +326,52 @@ pipeline:
         node -e "const b=require(require('path').resolve('$d'));
                  if (typeof b!=='function'||b('a{b,c}').join()!=='ab,ac')
                    throw new Error('brace-expansion CJS interop broken at $d');"
+      done
+
+      # --- image-size 2.x: restore the 1.x call shape on the fixed parser ---------------
+      # Ghost (core/server/lib/image/image-size.js, blog-icon.js) and
+      # markdown-it-image-lazy-loading call `require('image-size')(input)` with a Buffer
+      # OR a file path, the 1.x API. 2.x exports named-only and dropped path input from
+      # its main entry, so a bare bump throws "sizeOf is not a function" on the first
+      # image Ghost sizes, long after boot. Same repair as brace-expansion above: the
+      # CJS entry re-exports a callable (a path is read into a Buffer) that runs the
+      # 2.0.3 parser, which is where the fix lives. No gate bypass: 2.0.3 IS installed.
+      python3.13 - <<'PYEOF'
+      import json, os
+      SHIM = ('\n// QuenchWorks: 1.x call shape (Buffer or path) over the 2.x parser.\n'
+              'const __qwFs = require("fs");\n'
+              'const __qwSizeOf = (input) => lookup_1.imageSize(typeof input === "string" ? __qwFs.readFileSync(input) : input);\n'
+              'module.exports = Object.assign(__qwSizeOf, exports, { default: __qwSizeOf });\n')
+      copies = sorted(os.path.join(r, 'image-size', 'package.json')
+                      for r, dirs, _ in os.walk('node_modules') if 'image-size' in dirs)
+      assert copies, "image-size not found under node_modules"
+      stale = [p for p in copies if json.load(open(p))['version'] != '2.0.3']
+      assert not stale, "override missed image-size copies: %s" % stale
+      n = 0
+      for pj in copies:
+          cjs = os.path.join(os.path.dirname(pj), 'dist/cjs/index.js')
+          src = open(cjs).read()
+          assert 'lookup_1.imageSize' in src, "image-size CJS entry changed shape: " + cjs
+          if '__qwSizeOf' not in src:
+              open(cjs, 'a').write(SHIM); n += 1
+      print("image-size: %d copy(ies) at 2.0.3, %d shimmed" % (len(copies), n))
+      PYEOF
+      # Prove it the way the consumers call it, resolving image-size FROM each consumer:
+      # Ghost's root and the markdown plugin, each with a path and with a Buffer.
+      # -print -quit, not `| head -1`: head closing the pipe SIGPIPEs find, and the
+      # pipeline's exit 141 fails the step under pipefail.
+      png="$(find core -name '*.png' -not -path '*/node_modules/*' -print -quit)"
+      test -n "$png"
+      md="$(dirname "$(find node_modules/.pnpm -path '*markdown-it-image-lazy-loading/package.json' -print -quit)")"
+      test -d "$md"
+      for from in "$PWD" "$md"; do
+        node -e "
+          const p=require('path'), fs=require('fs');
+          const sizeOf=require(require.resolve('image-size',{paths:['$from']}));
+          const a=sizeOf(p.resolve('$png')), b=sizeOf(fs.readFileSync('$png'));
+          if (typeof sizeOf!=='function'||!a.width||a.width!==b.width)
+            throw new Error('image-size 1.x call shape broken from $from');
+          console.log('image-size from', '$from'.split('/').pop(), a.width+'x'+a.height, a.type);"
       done
 
       # --- TypeScript 7's Go compiler must not ship in a runtime image -------------------

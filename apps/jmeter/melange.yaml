@@ -74,6 +74,7 @@ pipeline:
       #   httpcore5-h2 5.2.4 -> 5.4.3 (CVE-2026-54399/-54428; no 5.2.x/5.3.x fix,
       #   and httpclient5 5.6.x requires core 5.4.x -- the pair moves together),
       #   jsoup 1.17.1 -> 1.23.1 (CVE-2026-71497 XSS; same-major).
+      # Sep-2026: freemarker 2.3.32 -> 2.3.35 (CVE-2026-84939, CRITICAL; same line).
       # Remove the vulnerable originals, then fetch the replacements pinned by
       # sha256 from Maven Central (xmlgraphics-commons 2.9 / xml-apis stay put --
       # batik 1.17 is compatible with them).
@@ -95,6 +96,10 @@ pipeline:
             "$lib"/batik-util-1.16.jar "$lib"/batik-xml-1.16.jar \
             "$lib"/httpclient5-5.3.jar "$lib"/httpcore5-5.2.4.jar \
             "$lib"/httpcore5-h2-5.2.4.jar "$lib"/jsoup-1.17.1.jar
+      # rm -f is silent on a wrong name, which would leave the vulnerable jar
+      # beside its replacement; the newest swap asserts its target first.
+      test -f "$lib"/freemarker-2.3.32.jar || { echo "freemarker-2.3.32.jar not shipped; re-audit the swap" >&2; exit 1; }
+      rm -f "$lib"/freemarker-2.3.32.jar
 
       base="https://repo1.maven.org/maven2"
       MANIFEST="e03144f48c8d5307da2894570b4972aab8c72f22440f8dcdb745be2485ce2024  com/fasterxml/jackson/core/jackson-core/2.18.9/jackson-core-2.18.9.jar
@@ -131,7 +136,8 @@ pipeline:
       80712ff129210d7c73d9fcc1195cbee5c3c34744965c7a05ea107b3648922f18  org/apache/httpcomponents/client5/httpclient5/5.6.3/httpclient5-5.6.3.jar
       18bfbbabb478dfb67f31aeaf428c387f3c3df654582e1309f708ee1f3086830a  org/apache/httpcomponents/core5/httpcore5/5.4.3/httpcore5-5.4.3.jar
       c7db7026b8e2dea39132b04a6069f6671e2858309b20a146ec5c7dd6ed73a0b6  org/apache/httpcomponents/core5/httpcore5-h2/5.4.3/httpcore5-h2-5.4.3.jar
-      8b15e2b28eeb1e0a88a9b7dab4dc0c23524491c56959785dea22f7846897b668  org/jsoup/jsoup/1.23.1/jsoup-1.23.1.jar"
+      8b15e2b28eeb1e0a88a9b7dab4dc0c23524491c56959785dea22f7846897b668  org/jsoup/jsoup/1.23.1/jsoup-1.23.1.jar
+      0fac87dddd78f1223139e8ef88e819c7f483c0a3835cdf5982ad5e4576d1d896  org/freemarker/freemarker/2.3.35/freemarker-2.3.35.jar"
       echo "$MANIFEST" | while read -r sum path; do
         [ -z "$sum" ] && continue
         f="${path##*/}"

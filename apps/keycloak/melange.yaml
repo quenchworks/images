@@ -103,6 +103,8 @@ pipeline:
       # 4.1.136.Final FILENAME (the quarkus app-model pins exact filenames and
       # `kc.sh build` pre-flights their existence); a missing target hard-fails via
       # swap() -- upstream renaming a jar must break the build, never silently skip.
+      # freemarker 2.3.32 -> 2.3.35: CVE-2026-84939 (CRITICAL), same 2.3 line.
+      swap "https://repo1.maven.org/maven2/org/freemarker/freemarker/2.3.35/freemarker-2.3.35.jar" org.freemarker.freemarker-2.3.32.jar 0fac87dddd78f1223139e8ef88e819c7f483c0a3835cdf5982ad5e4576d1d896
       NET="https://repo1.maven.org/maven2/io/netty"
       swap "$NET/netty-buffer/4.1.137.Final/netty-buffer-4.1.137.Final.jar" io.netty.netty-buffer-4.1.136.Final.jar f474b14c7734f15e0540394cb6f39d67777b7581a42919e4ac89d253d4efd929
       swap "$NET/netty-codec/4.1.137.Final/netty-codec-4.1.137.Final.jar" io.netty.netty-codec-4.1.136.Final.jar 9987b6a660b0a6b1f0d791485dae33180b3d1c63687c006fe6d3fd025e9e3798

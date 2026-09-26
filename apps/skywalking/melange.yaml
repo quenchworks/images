@@ -138,6 +138,8 @@ pipeline:
       swap at/yawk/lz4 lz4-java 1.10.1 1.11.2
       # pgjdbc 42.7.11 -> 42.7.13 (CVE-2026-54291, fix 42.7.12); newest of the 42.7 line.
       swap org/postgresql postgresql 42.7.11 42.7.13
+      # freemarker 2.3.31 -> 2.3.35: CVE-2026-84939 (CRITICAL), same 2.3 line.
+      swap org/freemarker freemarker 2.3.31 2.3.35
 
       # ---- (3) POST-SWAP CLASSPATH AUDIT: one version per swapped artifact ----------
       # A swap that left two versions of one artifact on the classpath would still load
@@ -149,7 +151,8 @@ pipeline:
       jars = sorted(f for f in os.listdir(libs) if f.endswith(".jar"))
       swapped = """jackson-databind jackson-core jackson-annotations
                    log4j-api log4j-core log4j-slf4j-impl lz4-java postgresql
-                   micrometer-core micrometer-commons micrometer-observation""".split()
+                   micrometer-core micrometer-commons micrometer-observation
+                   freemarker""".split()
       dup = {}
       for a in swapped:
           rx = re.compile(rf"^{re.escape(a)}-(\d[^/]*?)\.jar$")
