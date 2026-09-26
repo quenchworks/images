@@ -29,7 +29,10 @@ docker volume create "$VOL" >/dev/null
 rootless="$(docker run --rm --privileged "$IMAGE" --storage-driver vfs info --format '{{.host.rootless}}')"
 echo "rootless: $rootless"
 [ "$rootless" = true ] || { echo "buildah is not running rootless"; exit 1; }
-docker run --rm --privileged -v "$VOL:/home/nonroot/.local/share/containers" -v "$WORK:/ctx:ro" "$IMAGE" \
+# Buildah overlays the build context with its upper layer in /var/tmp, and the
+# kernel refuses an overlay upper on overlayfs (the container's root), so
+# /var/tmp is a tmpfs here and an emptyDir in a pod.
+docker run --rm --privileged --tmpfs /var/tmp:exec,mode=1777 -v "$VOL:/home/nonroot/.local/share/containers" -v "$WORK:/ctx:ro" "$IMAGE" \
   --storage-driver vfs build --isolation chroot -t smoke:latest -f /ctx/Containerfile /ctx \
   || { echo "buildah build failed"; exit 1; }
 label="$(docker run --rm --privileged -v "$VOL:/home/nonroot/.local/share/containers" "$IMAGE" \

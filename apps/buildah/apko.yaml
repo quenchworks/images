@@ -2,8 +2,10 @@
 # apko. Buildah maps its user namespace through /etc/subuid
 # (rootlesskit-config-nonroot maps the user named nonroot, so uid 1001 carries
 # that name). Storage lives under the home directory. Building in a pod needs it
-# privileged (or seccomp and AppArmor unconfined plus /dev/fuse). RUN steps use
-# the host network: Wolfi has no passt for rootless networking.
+# privileged (or seccomp and AppArmor unconfined plus /dev/fuse), and /var/tmp
+# on an emptyDir: build contexts are overlaid there, and overlayfs refuses an
+# upper directory on the container's own overlayfs. RUN steps use the host
+# network: Wolfi has no passt for rootless networking.
 contents:
   keyring:
     - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
