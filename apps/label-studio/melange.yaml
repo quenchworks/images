@@ -49,6 +49,12 @@ pipeline:
       "$VENV/bin/pip" install --no-cache-dir --upgrade pip
       "$VENV/bin/pip" install --no-cache-dir "label-studio==${VER}"
       "$VENV/bin/pip" uninstall -y opencv-python-headless psycopg-binary
+      # core/version.py asks git for the version through shell=True and catches
+      # only CalledProcessError; with no /bin/sh the FileNotFoundError kills the
+      # boot. Treat it like a failed git call, which falls back to version_.py.
+      vpy="$VENV/lib/python3.13/site-packages/label_studio/core/version.py"
+      sed -i 's/^        except CalledProcessError:$/        except (CalledProcessError, OSError):/' "$vpy"
+      grep -q 'except (CalledProcessError, OSError):' "$vpy"
       "$VENV/bin/python" -c "import importlib.metadata as m, sys; v = m.version('label-studio'); assert v == sys.argv[1], v; print('label-studio', v)" "${VER}"
       # pyarrow must come from Wolfi, psycopg must load the system libpq.
       "$VENV/bin/python" -c "import pyarrow, psycopg; assert pyarrow.__file__.startswith('/usr/lib/'), pyarrow.__file__; assert psycopg.pq.__impl__ == 'python', psycopg.pq.__impl__; print('pyarrow', pyarrow.__version__, 'libpq', psycopg.pq.version())"
