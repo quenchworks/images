@@ -1,0 +1,42 @@
+# Assembles the OpenResty image: the from-source build on Wolfi's base layout.
+# Shell-free, nonroot (uid 1001), multi-arch, SBOM by apko. The entrypoint is the
+# binary; `daemon off;` is in nginx.conf. Mount a writable /tmp (pid and temp
+# paths) and server blocks into /etc/nginx/conf.d.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-openresty@local
+
+accounts:
+  groups:
+    - groupname: openresty
+      gid: 1001
+  users:
+    - username: openresty
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  PATH: /usr/local/openresty/bin:/usr/local/openresty/nginx/sbin:/usr/local/openresty/luajit/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+entrypoint:
+  command: /usr/local/openresty/bin/openresty
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-openresty"
+  org.opencontainers.image.licenses: "BSD-2-Clause"
