@@ -1,0 +1,76 @@
+# Assembles NiFi from the release zip. Nothing is compiled. Measured 2026-09-26
+# with trivy against the 2.12.0 distribution with every NAR unpacked (1806 jars):
+# 16 findings in two NARs, handled here:
+#   - nifi-hazelcast-services-nar: hazelcast 5.7.0 shades jackson 2.21.2 and
+#     3.1.2. The NAR only provides the Hazelcast map cache services, so it is
+#     removed (the other distributed cache services stay).
+#   - nifi-aws-nar: wire 5.2.0 (CVEs fixed in 6.x). The whole wire family moves to
+#     6.4.5 inside the NAR, which is unpacked, patched and re-zipped.
+# nifi.web.https.host is emptied so the UI binds every interface in a container;
+# everything else is upstream's default (HTTPS on 8443, single-user login).
+package:
+  name: quench-nifi
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Apache NiFi, assembled from the Apache binary distribution"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - busybox
+      - ca-certificates-bundle
+      - openjdk-21-jre
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - curl
+      - zip
+
+pipeline:
+  - runs: |
+      set -eu
+      V=${{package.version}}
+      curl -fsSL -o /tmp/nifi.zip "https://downloads.apache.org/nifi/$V/nifi-$V-bin.zip"
+      echo "__SHA256__  /tmp/nifi.zip" | sha256sum -c -
+      install -d "${{targets.destdir}}/opt"
+      unzip -q /tmp/nifi.zip -d /tmp/nifi
+      mv "/tmp/nifi/nifi-$V" "${{targets.destdir}}/opt/nifi"
+      home="${{targets.destdir}}/opt/nifi"
+      rm -f "$home"/bin/*.cmd
+
+      test -f "$home/lib/nifi-hazelcast-services-nar-$V.nar"
+      rm -f "$home/lib/nifi-hazelcast-services-nar-$V.nar"
+
+      nar="$home/lib/nifi-aws-nar-$V.nar"
+      rm -rf /tmp/aws && mkdir /tmp/aws && unzip -q "$nar" -d /tmp/aws
+      dep=/tmp/aws/META-INF/bundled-dependencies
+      M=https://repo1.maven.org/maven2/com/squareup/wire
+      # swap <artifact> <sha256 of the 6.4.5 jar, from a download>
+      swap() {
+        test -f "$dep/$1-5.2.0.jar" || { echo "FATAL: $1-5.2.0.jar not shipped; re-audit"; exit 1; }
+        curl -fsSL -o "$dep/$1-6.4.5.jar" "$M/$1/6.4.5/$1-6.4.5.jar"
+        echo "$2  $dep/$1-6.4.5.jar" | sha256sum -c -
+        rm -f "$dep/$1-5.2.0.jar"
+      }
+      swap wire-compiler 69ae4fdb5439b3c1514af9f0ac2a9f54813e40525b0c334510b03ede29c0856b
+      swap wire-grpc-client-jvm 65c80c03f71577ed4aa2ad6c5b081aee46705bad3dcfa9300b94acab7a39ff74
+      swap wire-java-generator 5dc1105e4d3095ad7de68ae353f1c20031f9d06d14cf9e80fafae777e8ed6a82
+      swap wire-kotlin-generator e74cba1267580999f76c4b4da27dea3ab5e5ea00c9364b9e65a0a52ac08e41f1
+      swap wire-runtime f5d0a99dd738a8eb534d55005117142b426a67386c466241635725d739eafafc
+      swap wire-runtime-jvm 525cb6f4d838555ed882ebf1567bb4069ab0aa5a5bc69a3fce0be27e6fbb5b4c
+      swap wire-schema a0ce94a389fca5edfc1c9a99d08e692f9971f4c038f7fcbcfc16a93d275f8fe9
+      swap wire-schema-jvm b6177b19b2d6479f57802bb2b33c621f7272d8d210e398be083a9ef4a9d5858f
+      swap wire-swift-generator 622c5cda05009e9fd1c67bef958cd42e3a6347ceb98d25f266817538e3ece74e
+      # re-zip with the manifest first, as a jar expects
+      rm -f "$nar"
+      (cd /tmp/aws && zip -qX "$nar" META-INF/MANIFEST.MF && zip -qrX "$nar" . -x META-INF/MANIFEST.MF)
+
+      sed -i 's/^nifi.web.https.host=localhost$/nifi.web.https.host=/' "$home/conf/nifi.properties"
+      grep -qx 'nifi.web.https.host=' "$home/conf/nifi.properties"

@@ -1,0 +1,53 @@
+# Assembles the NiFi image: Wolfi openjdk-21, nonroot uid 1001, multi-arch, SBOM by
+# apko. `nifi.sh run` keeps NiFi in the foreground; the UI is HTTPS on 8443 with a
+# generated certificate and single-user login (set the credentials with
+# `nifi.sh set-single-user-credentials`, as the chart does). NiFi writes its
+# repositories, state and conf under /opt/nifi, so the tree belongs to the user.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-nifi@local
+
+accounts:
+  groups:
+    - groupname: nifi
+      gid: 1001
+  users:
+    - username: nifi
+      uid: 1001
+      gid: 1001
+      homedir: /opt/nifi
+  run-as: 1001
+
+paths:
+  - path: /opt/nifi
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+    recursive: true
+
+environment:
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  NIFI_HOME: /opt/nifi
+
+entrypoint:
+  command: /opt/nifi/bin/nifi.sh run
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-nifi"
+  org.opencontainers.image.licenses: "Apache-2.0"
