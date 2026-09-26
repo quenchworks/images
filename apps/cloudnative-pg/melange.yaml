@@ -1,8 +1,8 @@
 # Builds the CloudNativePG manager (cmd/manager) from source onto Wolfi: the same
 # binary serves as the operator (`manager controller`) and, copied into each
-# PostgreSQL pod, as the instance manager (`manager instance ...`). It lands at
-# /usr/bin/manager with /manager beside it, the path upstream's image and its
-# bootstrap-controller use.
+# PostgreSQL pod, as the instance manager (`manager instance ...`). Both arches'
+# binaries sit at /operator/manager_<goarch>, as in upstream's image; /manager
+# points at the native one.
 package:
   name: quench-cloudnative-pg
   version: __VER__
@@ -53,9 +53,21 @@ pipeline:
       if [ -n "$need" ]; then go get $need; fi
       go mod tidy
       P=github.com/cloudnative-pg/cloudnative-pg/pkg/versions
-      go build -trimpath -ldflags "-s -w -X $P.buildVersion=${{package.version}}" \
-        -o "${{targets.destdir}}/usr/bin/manager" ./cmd/manager
-      bad="$(go version -m "${{targets.destdir}}/usr/bin/manager" \
-        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor manager)"
-      [ -z "$bad" ] || { echo "0-CVE float did not reach manager:"; echo "$bad"; exit 1; }
-      ln -s usr/bin/manager "${{targets.destdir}}/manager"
+      # The operator lists the architectures it can serve by scanning
+      # /operator/manager_<goarch>, and refuses a pod whose arch has no file
+      # ("invalid architecture: amd64"). Upstream ships both arches in every
+      # image so mixed-arch clusters work; so does this (static, CGO off).
+      dest="${{targets.destdir}}/operator"
+      mkdir -p "$dest"
+      for a in amd64 arm64; do
+        GOARCH=$a go build -trimpath -ldflags "-s -w -X $P.buildVersion=${{package.version}}" \
+          -o "$dest/manager_$a" ./cmd/manager
+        bad="$(go version -m "$dest/manager_$a" \
+          | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor "manager_$a")"
+        [ -z "$bad" ] || { echo "0-CVE float did not reach manager_$a:"; echo "$bad"; exit 1; }
+      done
+      native="$(go env GOARCH)"
+      ln -s "operator/manager_$native" "${{targets.destdir}}/manager"
+      mkdir -p "${{targets.destdir}}/usr/bin"
+      ln -s "../../operator/manager_$native" "${{targets.destdir}}/usr/bin/manager"
+      "${{targets.destdir}}/operator/manager_$native" version | grep -F "Version:${{package.version}}"
