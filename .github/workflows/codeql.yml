@@ -1,0 +1,39 @@
+name: codeql
+
+# Code scanning via CodeQL (advanced setup): the workflows and the Python
+# tooling in scripts/. Removed on 2026-06-17 while the repo was private (CodeQL
+# there needs paid Advanced Security); the repo is public now, where it is free.
+# Runs on workflow and script changes plus weekly, not on every recipe commit.
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/**', 'scripts/**']
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/**', 'scripts/**']
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [actions, python]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: github/codeql-action/init@1190a975f95ce23525efb6a3fc21ea29567c1b52 # v3.38.2
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-and-quality
+      - uses: github/codeql-action/analyze@1190a975f95ce23525efb6a3fc21ea29567c1b52 # v3.38.2
+        with:
+          category: "/language:${{ matrix.language }}"
