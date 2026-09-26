@@ -1,0 +1,38 @@
+# Assembles the configurable-http-proxy image: Wolfi nodejs-24, nonroot uid 1001,
+# multi-arch, SBOM by apko. Public traffic on 8000, the REST API on 8001 (set
+# CONFIGPROXY_AUTH_TOKEN; the hub uses the same token).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-configurable-http-proxy@local
+
+accounts:
+  groups:
+    - groupname: chp
+      gid: 1001
+  users:
+    - username: chp
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/configurable-http-proxy --ip=0.0.0.0 --port=8000 --api-ip=0.0.0.0 --api-port=8001
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-configurable-http-proxy"
+  org.opencontainers.image.licenses: "BSD-3-Clause"

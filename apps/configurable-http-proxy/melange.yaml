@@ -1,0 +1,40 @@
+# Installs configurable-http-proxy from npm (--omit=dev) under /opt/chp on Wolfi
+# nodejs-24, with /usr/bin/configurable-http-proxy linked to its CLI.
+package:
+  name: quench-configurable-http-proxy
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened configurable-http-proxy (the JupyterHub proxy), packaged on Wolfi"
+  copyright:
+    - license: BSD-3-Clause
+  dependencies:
+    runtime:
+      - nodejs-24
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - nodejs-24
+      - npm
+
+pipeline:
+  - runs: |
+      set -eu
+      VER="${{package.version}}"
+      dest="${{targets.destdir}}/opt/chp"
+      install -d "$dest"
+      cd "$dest"
+      npm install --omit=dev --no-audit --no-fund "configurable-http-proxy@${VER}"
+      rm -f package-lock.json
+      node node_modules/.bin/configurable-http-proxy --version | grep -qx "${VER}"
+      install -d "${{targets.destdir}}/usr/bin"
+      ln -sf ../../opt/chp/node_modules/configurable-http-proxy/bin/configurable-http-proxy \
+        "${{targets.destdir}}/usr/bin/configurable-http-proxy"
+      chmod -R a+rX "$dest"

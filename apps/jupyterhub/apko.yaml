@@ -1,0 +1,49 @@
+# Assembles the JupyterHub hub image: Wolfi python-3.13, nonroot uid 1001,
+# multi-arch, SBOM by apko. The hub keeps its SQLite database and cookie secret
+# in /srv/jupyterhub (the chart mounts a volume there) and talks to a separate
+# configurable-http-proxy.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-jupyterhub@local
+
+accounts:
+  groups:
+    - groupname: jupyterhub
+      gid: 1001
+  users:
+    - username: jupyterhub
+      uid: 1001
+      gid: 1001
+      homedir: /srv/jupyterhub
+  run-as: 1001
+
+paths:
+  - path: /srv/jupyterhub
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+work-dir: /srv/jupyterhub
+
+entrypoint:
+  command: /usr/bin/jupyterhub
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-jupyterhub"
+  org.opencontainers.image.licenses: "BSD-3-Clause"
