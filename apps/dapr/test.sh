@@ -12,12 +12,16 @@ NAME="quench-dapr-smoke-$$"
 cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
-for b in daprd operator placement sentry injector scheduler; do
-  v="$(docker run --rm --entrypoint "/usr/bin/$b" "$IMAGE" --version 2>&1 | tail -1)"
-  echo "$b: $v"
-  case "$v" in ""|*edge*|*dev*) echo "$b version not stamped"; exit 1 ;; esac
-  [ -z "$WANT" ] || grep -q "$WANT" <<<"$v" || { echo "$b: expected $WANT"; exit 1; }
+v="$(docker run --rm "$IMAGE" --version 2>&1 | tail -1 || true)"
+echo "daprd: $v"
+case "$v" in ""|*edge*|*dev*) echo "daprd version not stamped"; exit 1 ;; esac
+[ -z "$WANT" ] || [ "$v" = "$WANT" ] || { echo "daprd: expected $WANT"; exit 1; }
+# the control-plane binaries have no --version flag; each must start and print usage
+for b in operator placement sentry injector scheduler; do
+  out="$(docker run --rm --entrypoint "/usr/bin/$b" "$IMAGE" -h 2>&1 || true)"
+  grep -qiE "usage|flags" <<<"$out" || { echo "$b did not start: $out" | tail -5; exit 1; }
 done
+echo "  operator, placement, sentry, injector and scheduler start and print usage"
 
 docker run -d --name "$NAME" -p 127.0.0.1:13500:3500 --read-only --tmpfs /tmp "$IMAGE" \
   --app-id quench-smoke --mode standalone --dapr-http-port 3500 --resources-path /tmp \
