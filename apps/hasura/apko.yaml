@@ -1,0 +1,45 @@
+# Assembles the Hasura GraphQL Engine image: nonroot uid 1001, multi-arch, SBOM
+# by apko. Configure it with HASURA_GRAPHQL_* variables; the metadata database is
+# HASURA_GRAPHQL_DATABASE_URL (or HASURA_GRAPHQL_METADATA_DATABASE_URL). The
+# console assets are served from /srv/console-assets, the path upstream uses.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-hasura@local
+
+accounts:
+  groups:
+    - groupname: hasura
+      gid: 1001
+  users:
+    - username: hasura
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  LANG: C.UTF-8
+  HASURA_GRAPHQL_SERVER_PORT: "8080"
+  # Upstream reports anonymous usage to Hasura by default.
+  HASURA_GRAPHQL_ENABLE_TELEMETRY: "false"
+
+entrypoint:
+  command: /usr/bin/graphql-engine serve
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-hasura"
+  org.opencontainers.image.licenses: "Apache-2.0"

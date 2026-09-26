@@ -1,0 +1,67 @@
+# Repackages upstream's Hasura GraphQL Engine server binary on Wolfi. See
+# build.conf for why it comes from the upstream image, pulled by digest.
+package:
+  name: quench-hasura
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Hasura GraphQL Engine, packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - glibc
+      - libstdc++
+      - gmp
+      - unixodbc
+      - libpq-18
+      - zlib
+      - ca-certificates-bundle
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - crane
+      - upx
+      - glibc
+      - libstdc++
+      - gmp
+      - unixodbc
+      - libpq-18
+      - zlib
+
+pipeline:
+  - runs: |
+      set -eu
+      VER="${{package.version}}"
+      case "$(uname -m)" in
+        x86_64)  plat=linux/amd64; dig=__DIG_AMD__ ;;
+        aarch64) plat=linux/arm64; dig=__DIG_ARM__ ;;
+        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+      esac
+      mkdir -p rootfs
+      crane export --platform "$plat" "index.docker.io/hasura/graphql-engine@${dig}" - \
+        | tar -x -C rootfs usr/bin/graphql-engine srv/console-assets
+      # amd64 ships UPX-packed, arm64 does not.
+      if upx -t rootfs/usr/bin/graphql-engine >/dev/null 2>&1; then
+        upx -d rootfs/usr/bin/graphql-engine
+      fi
+      # Must be this version and the Apache-2.0 Community Edition.
+      rootfs/usr/bin/graphql-engine version | tee version.txt
+      grep -q "Hasura GraphQL Engine: v${VER}-ce$" version.txt
+      dest="${{targets.destdir}}"
+      install -Dm0755 rootfs/usr/bin/graphql-engine "${dest}/usr/bin/graphql-engine"
+      mkdir -p "${dest}/srv"
+      cp -a rootfs/srv/console-assets "${dest}/srv/console-assets"
+      chmod -R a+rX "${dest}/srv/console-assets"
+
+test:
+  pipeline:
+    - runs: |
+        graphql-engine version
