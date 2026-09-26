@@ -12,14 +12,14 @@
 # image -- we build BOTH halves from source on Wolfi so the Trivy scan attributes the
 # real dependency tree and nothing comes from an untracked upstream layer.
 #
-# Coolify pins realtime_version 1.0.16 (versions.json) at coolify tag v4.1.2, and that
+# Coolify pins realtime_version 1.0.18 (versions.json) at coolify tag v4.3.23, and that
 # Dockerfile pins soketi 1.6-16-alpine (== soketi release 1.6.1) and cloudflared
 # 2025.7.0. We map those to from-source / Wolfi-tracked equivalents:
 #   * soketi      -> built from the soketi 1.6.1 git tag (TypeScript -> `tsc`), pruned
 #                    to production deps, installed under /app (same layout: /app/bin/
 #                    server.js is the entrypoint soketi expects).
 #   * terminal    -> the three upstream files (terminal-server.js, terminal-utils.js,
-#                    package.json) from coolify v4.1.2, with `npm ci` against the
+#                    package.json) from coolify v4.3.23, with `npm ci` against the
 #                    committed package-lock.json. node-pty 1.1.0 is a NATIVE addon, so
 #                    build-base + python3 are present and we `npm rebuild node-pty`
 #                    exactly as upstream does to compile it for the build arch.
@@ -96,14 +96,14 @@ environment:
       - go-1.26                 # cloudflared from-source build (go.mod requires go 1.26)
 
 pipeline:
-  # Coolify repo at tag v4.1.2 carries the realtime sources under
+  # Coolify repo at tag v4.3.23 carries the realtime sources under
   # docker/coolify-realtime/ (terminal-server.js, terminal-utils.js, package.json,
-  # package-lock.json, soketi-entrypoint.sh) -- realtime_version 1.0.16.
+  # package-lock.json, soketi-entrypoint.sh) -- realtime_version 1.0.18.
   - uses: git-checkout
     with:
       repository: https://github.com/coollabsio/coolify
-      tag: v4.1.2
-      expected-commit: e7dff30b7c998c301fd91bd169727b90c59ec291
+      tag: v4.3.23
+      expected-commit: e2e2d4010bcd590084b66d6f748f3eec8e2bbee9
       destination: coolify
 
   # soketi from its own source tree at the 1.6.1 release tag, built and pruned the
@@ -402,19 +402,9 @@ pipeline:
       export npm_config_python="$PYTHON"
 
       cd coolify/docker/coolify-realtime
-      # Bump ws to its fixed release (upstream pins 8.20.1; 8.21.0 fixes CVE-2026-48779)
-      # via an override, so the terminal server ships no fixable CVE. This diverges from
-      # the committed package-lock.json, so we use `npm install` (not `npm ci`) below.
-      node -e '
-        const fs = require("fs"), p = "package.json", j = JSON.parse(fs.readFileSync(p));
-        const pins = { "ws": "8.21.0" };
-        j.overrides = Object.assign({}, j.overrides, pins);
-        for (const k of Object.keys(pins)) {
-          if (j.dependencies && j.dependencies[k]) j.dependencies[k] = pins[k];
-          if (j.devDependencies && j.devDependencies[k]) j.devDependencies[k] = pins[k];
-        }
-        fs.writeFileSync(p, JSON.stringify(j, null, 2));
-      '
+      # ws: upstream pins 8.21.3 as of v4.3.23, above the 8.21.0 that fixes
+      # CVE-2026-48779, so the override this step used to inject (8.21.0) would now
+      # DOWNGRADE it. It is a floor check instead, after the install below.
       # Reproduce the realtime Dockerfile: install deps, then rebuild the node-pty native
       # addon for THIS build arch (amd64/arm64 native runners, no emulation). build-base +
       # python3 supply the toolchain.
@@ -428,6 +418,8 @@ pipeline:
       # minipass-fetch stack, no undici) directly -- bypassing npm's script-driven
       # node-gyp lookup entirely.
       npm install --ignore-scripts --no-audit --no-fund
+      node -e 'const v=require("./node_modules/ws/package.json").version.split(".").map(Number);
+               if (v[0]<8 || (v[0]===8 && v[1]<21)) throw new Error("ws "+v.join(".")+" is below the 8.21.0 fix floor");'
       npm install --no-save --no-audit --no-fund --ignore-scripts node-gyp@10
       nodegyp="$PWD/node_modules/node-gyp/bin/node-gyp.js"
       test -f "$nodegyp"
