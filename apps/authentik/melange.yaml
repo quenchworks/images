@@ -69,7 +69,12 @@ environment:
       - go-1.27
       # --- Rust (orchestrator/worker) ---
       - rust
-      - clang            # aws-lc / bindgen (python-kadmin-rs, ring) need a C/clang toolchain
+      # clang 19, not the unversioned clang (22): aws-lc-fips-sys 0.14 builds the
+      # fips-2025-09-12-lts aws-lc, whose delocated FIPS module fails to assemble on
+      # aarch64 with clang 21+ ("fixup value out of range  adr x3, .L.str.192";
+      # aws/aws-lc#3533, fixed on main, not on that LTS branch). Upstream builds on
+      # Debian trixie's clang 19. Also serves bindgen (python-kadmin-rs, ring).
+      - clang-19
       # --- Python (Django core) via uv ---
       - python-3.14
       - python-3.14-dev
