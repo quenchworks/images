@@ -47,7 +47,9 @@ pipeline:
       priv = File.join(ENV.fetch('TMPDIR', '/tmp'), 'fluentd')
       Dir.mkdir(priv, 0o700) unless File.directory?(priv)
       ENV['TMPDIR'] = priv
-      load '/usr/lib/fluentd/gems/bin/fluentd'
+      # fluentd names itself, and spawns its workers, from $0
+      $0 = '/usr/lib/fluentd/gems/bin/fluentd'
+      load $0
       RB
       install -d "${{targets.destdir}}/fluentd/etc"
       cat > "${{targets.destdir}}/fluentd/etc/fluent.conf" <<'CONF'
