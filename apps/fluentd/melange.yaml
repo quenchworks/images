@@ -34,7 +34,7 @@ pipeline:
       set -eu
       GEMS="${{targets.destdir}}/usr/lib/fluentd/gems"
       export GEM_HOME="$GEMS" GEM_PATH="$GEMS"
-      gem install --no-document --env-shebang fluentd -v ${{package.version}}
+      gem install --no-document fluentd -v ${{package.version}}
       "$GEMS/bin/fluentd" --version | grep -q "fluentd ${{package.version}}"
       # build leftovers: the compiled objects stay in the extension dirs, the rest goes
       rm -rf "$GEMS/cache"

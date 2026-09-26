@@ -40,7 +40,8 @@ environment:
 work-dir: /fluentd
 
 entrypoint:
-  command: /usr/lib/fluentd/gems/bin/fluentd
+  # ruby runs the binstub directly: its #!/usr/bin/env shebang has no env to find here
+  command: /usr/bin/ruby /usr/lib/fluentd/gems/bin/fluentd
 cmd: -c /fluentd/etc/fluent.conf
 
 archs:
