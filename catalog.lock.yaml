@@ -3781,6 +3781,44 @@ apps:
       published: '2026-09-24T09:35:41Z'
       size: 191.9 MB
       layers: 1
+  shellcheck:
+    image: ghcr.io/quenchworks/images/shellcheck
+    category: CI/CD & registry
+    summary: Static analysis for shell scripts. Flags quoting bugs, unsafe globbing, and portability issues
+      in sh and bash; pipe a script in with "-" or mount a directory. Image only, no chart.
+    source: https://github.com/koalaman/shellcheck
+    upstream: https://www.shellcheck.net
+    license: GPL-3.0-only
+    tier: standard
+    status: built
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 0.11.0
+      digest: sha256:1e8096db6c00e0f6ff91312f6f7cfb7b8b00785d315c875753d8b70fbfd9d6b2
+      published: '2026-09-26T05:13:23Z'
+      size: 4.0 MB
+      layers: 1
+  hadolint:
+    image: ghcr.io/quenchworks/images/hadolint
+    category: CI/CD & registry
+    summary: Dockerfile linter. Checks Dockerfiles against best-practice rules and runs ShellCheck on
+      every RUN instruction; pipe a Dockerfile in with "-". Image only, no chart.
+    source: https://github.com/hadolint/hadolint
+    upstream: https://github.com/hadolint/hadolint
+    license: GPL-3.0-only
+    tier: standard
+    status: built
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 2.15.1
+      digest: sha256:66d9e18afbe03749a21d9923800fa465047fa0167959aca8c7da335c7199f443
+      published: '2026-09-26T05:13:09Z'
+      size: 12.5 MB
+      layers: 1
   cosign:
     image: ghcr.io/quenchworks/images/cosign
     category: Security & supply chain
@@ -4689,6 +4727,37 @@ apps:
       digest: sha256:e9132003d55d5a41ec2f33c86287a0d363f4915cf08aa062dbd676134d6655e3
       published: '2026-09-20T05:00:56Z'
       size: 128.7 MB
+      layers: 1
+  mediawiki:
+    image: ghcr.io/quenchworks/images/mediawiki
+    category: Apps & productivity
+    summary: MediaWiki, the wiki engine behind Wikipedia. The official release on a hardened Wolfi php-8.3-fpm
+      + nginx runtime (nonroot, read-only rootfs), with the vendored guzzle and webauthn libraries floated
+      to their fixed releases by a targeted composer update. Ships 1.43 LTS and the supported stable lines.
+      The chart installs the schema on first start, into SQLite by default or an external MySQL or PostgreSQL.
+    source: https://releases.wikimedia.org/mediawiki/
+    upstream: https://www.mediawiki.org
+    license: GPL-2.0-or-later
+    tier: standard
+    status: built
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 1.46.0
+      digest: sha256:2b933c82fc82cf39cd64a704c3b6d82972cba71f340b5fb7b6a05fe457c24efb
+      published: '2026-09-26T05:46:17Z'
+      size: 167.2 MB
+      layers: 1
+    - version: 1.45.4
+      digest: sha256:57a4d317bcfa257ac6abfa9ba2cbc0173779439329ace2153bd4fdc31972d1e2
+      published: '2026-09-26T05:46:15Z'
+      size: 151.5 MB
+      layers: 1
+    - version: 1.43.9
+      digest: sha256:e05945135457fb6f59a7ec9eaf8491c6e4d5c1c74209e851ac74234ce66ddacf
+      published: '2026-09-26T05:46:15Z'
+      size: 162.0 MB
       layers: 1
   wordpress:
     image: ghcr.io/quenchworks/images/wordpress
