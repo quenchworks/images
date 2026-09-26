@@ -22,8 +22,10 @@ out="$(docker run --rm --privileged "$IMAGE" "${P[@]}" run --rm --network none "
   || { echo "podman run failed:"; echo "$out"; exit 1; }
 echo "$out" | tail -5
 grep -q "0.22.1" <<<"$out" || { echo "inner container did not run"; exit 1; }
-uidmap="$(docker run --rm --privileged --entrypoint /usr/bin/podman "$IMAGE" "${P[@]}" unshare cat /proc/self/uid_map)"
-echo "user namespace: $uidmap"
-[ "$(wc -l <<<"$uidmap")" -ge 2 ] || { echo "subuid range not mapped"; exit 1; }
+# The image is shell-free (no cat for `podman unshare`), so read the mapping
+# from podman info: the user itself plus the /etc/subuid range.
+sizes="$(docker run --rm --privileged "$IMAGE" "${P[@]}" info --format '{{range .Host.IDMappings.UIDMap}}{{.Size}} {{end}}')"
+echo "uid map sizes: $sizes"
+grep -q "65536" <<<"$sizes" || { echo "subuid range not mapped"; exit 1; }
 
 echo "smoke test passed (podman ${WANT:-?}: pulled and ran a container rootless; nonroot user: $user)"
