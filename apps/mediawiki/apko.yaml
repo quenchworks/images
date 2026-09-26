@@ -1,0 +1,130 @@
+# Assembles the MediaWiki runtime image: the MediaWiki tree (quench-mediawiki) plus
+# a hardened Wolfi PHP-FPM (127.0.0.1:9000) and Wolfi nginx (:8080), supervised by
+# supervisord. Nonroot (uid/gid 1001), multi-arch, read-only-rootfs friendly. SBOM
+# by apko. No upstream MediaWiki image is inherited; the runtime is built from
+# Wolfi packages.
+#
+# Ports:
+#   8080/tcp  nginx, serves /var/www/html and FastCGI-passes .php to php-fpm
+#   9000/tcp  php-fpm, loopback only
+#
+# Writable at runtime (emptyDir/PVC): /var/www/html/images (uploads) and /tmp
+# (supervisord, nginx and php scratch, and $wgCacheDirectory). Set MW_CONFIG_FILE
+# to a mounted LocalSettings.php; the chart does, and also creates the schema with
+# maintenance/run.php install on first start.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - busybox                       # provides /bin/sh for the entrypoint script
+    - ca-certificates-bundle
+    - supervisor                    # process supervisor for php-fpm + nginx
+    - nginx                         # Wolfi nginx (web tier)
+    - quench-mediawiki@local        # the MediaWiki tree + runtime wiring
+    # PHP 8.3 meets every shipped line's floor (1.46 needs >=8.3). Extensions: the
+    # ext-* list in composer.json (calendar ctype dom fileinfo iconv intl mbstring
+    # openssl xml xmlreader), the installer's recommended set (apcu for the object
+    # cache, gd for thumbnails; ImageMagick is left out as a standing CVE source),
+    # and one driver per supported database: pdo_sqlite, mysqli, pgsql.
+    - php-8.3
+    - php-8.3-fpm
+    - php-8.3-fpm-config
+    - php-8.3-config
+    - php-8.3-opcache
+    - php-8.3-opcache-config
+    - php-8.3-calendar
+    - php-8.3-calendar-config
+    - php-8.3-ctype
+    - php-8.3-ctype-config
+    - php-8.3-dom
+    - php-8.3-dom-config
+    - php-8.3-fileinfo
+    - php-8.3-fileinfo-config
+    - php-8.3-iconv
+    - php-8.3-iconv-config
+    - php-8.3-intl
+    - php-8.3-intl-config
+    - php-8.3-mbstring
+    - php-8.3-mbstring-config
+    - php-8.3-openssl
+    - php-8.3-openssl-config
+    - php-8.3-xml
+    - php-8.3-xml-config
+    - php-8.3-xmlreader
+    - php-8.3-xmlreader-config
+    - php-8.3-xmlwriter
+    - php-8.3-xmlwriter-config
+    - php-8.3-simplexml
+    - php-8.3-simplexml-config
+    - php-8.3-curl
+    - php-8.3-curl-config
+    - php-8.3-zip
+    - php-8.3-zip-config
+    - php-8.3-gd
+    - php-8.3-gd-config
+    - php-8.3-exif
+    - php-8.3-exif-config
+    - php-8.3-sodium
+    - php-8.3-sodium-config
+    - php-8.3-bcmath
+    - php-8.3-bcmath-config
+    - php-8.3-gmp
+    - php-8.3-gmp-config
+    - php-8.3-apcu
+    - php-8.3-apcu-config
+    - php-8.3-pdo
+    - php-8.3-pdo-config
+    - php-8.3-pdo_sqlite
+    - php-8.3-pdo_sqlite-config
+    - php-8.3-mysqli
+    - php-8.3-mysqli-config
+    - php-8.3-mysqlnd
+    - php-8.3-mysqlnd-config
+    - php-8.3-pgsql
+    - php-8.3-pgsql-config
+
+accounts:
+  groups:
+    - groupname: mediawiki
+      gid: 1001
+  users:
+    - username: mediawiki
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/mediawiki-entrypoint.sh
+
+work-dir: /var/www/html
+
+paths:
+  # Uploads, the one writable app path (emptyDir/PVC at runtime).
+  - path: /var/www/html/images
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+    recursive: true
+  # /tmp holds supervisord pid/sock, nginx pid + temp dirs, php session/upload scratch.
+  - path: /tmp
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o1777
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-mediawiki"
+  org.opencontainers.image.licenses: "GPL-2.0-or-later"

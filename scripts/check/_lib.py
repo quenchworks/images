@@ -69,7 +69,9 @@ def pypi(pkg):
 
 def scrape(url, pattern):
     """Fetch a directory-listing / page and return all regex group-1 matches."""
-    html = urllib.request.urlopen(url, timeout=30).read().decode("utf-8", "replace")
+    # Wikimedia (and others) refuse urllib's default agent with a 403.
+    req = urllib.request.Request(url, headers={"User-Agent": "quenchworks-update-check (info@quench-works.com)"})
+    html = urllib.request.urlopen(req, timeout=30).read().decode("utf-8", "replace")
     return re.findall(pattern, html)
 
 def json_get(url):
