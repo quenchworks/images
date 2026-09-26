@@ -1,0 +1,59 @@
+# Assembles the Label Studio image: Wolfi python-3.13, nonroot uid 1001,
+# multi-arch, SBOM by apko. SQLite database, uploads and media live under
+# /label-studio/data (the chart mounts a volume there); set DJANGO_DB=default
+# and the POSTGRE_* variables to use PostgreSQL instead.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-label-studio@local
+
+accounts:
+  groups:
+    - groupname: labelstudio
+      gid: 1001
+  users:
+    - username: labelstudio
+      uid: 1001
+      gid: 1001
+      homedir: /label-studio
+  run-as: 1001
+
+paths:
+  - path: /label-studio
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /label-studio/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  HOME: /label-studio
+  LABEL_STUDIO_BASE_DATA_DIR: /label-studio/data
+  PYTHONUNBUFFERED: "1"
+
+work-dir: /label-studio
+
+entrypoint:
+  command: /usr/bin/label-studio start --no-browser --host 0.0.0.0 --port 8080
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-label-studio"
+  org.opencontainers.image.licenses: "Apache-2.0"

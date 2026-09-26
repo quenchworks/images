@@ -1,0 +1,67 @@
+# Installs Label Studio from PyPI into a venv on Wolfi python-3.13. Three wheels
+# bundle native libraries the scanner cannot see, so they are replaced:
+#   pyarrow: the wheel statically links OpenSSL and libcurl; the venv uses
+#     Wolfi's py3.13-pyarrow (system-site-packages), built on Wolfi's libs.
+#   psycopg-binary: bundles manylinux libpq, krb5, openldap, pcre; removed, so
+#     psycopg runs its pure-Python implementation on Wolfi's libpq.
+#   opencv-python-headless: bundles OpenSSL 1.1.1w and ffmpeg 5; removed. Only
+#     the SDK's brush-to-COCO export imports cv2 (lazily); that export is
+#     unavailable in this image.
+package:
+  name: quench-label-studio
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Label Studio data labeling tool, packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - python-3.13            # the venv references the system interpreter
+      - py3.13-pyarrow~24.0.0  # label-studio-sdk requires pyarrow 24
+      - libpq-18
+      - ca-certificates-bundle
+      - glibc
+      - libstdc++
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - python-3.13
+      - py3.13-pip
+      - py3.13-pyarrow~24.0.0
+      - libpq-18
+      - build-base             # fallback for any transitive dep without a wheel
+
+pipeline:
+  - runs: |
+      set -eu
+      VER="${{package.version}}"
+      dest="${{targets.destdir}}"
+      VENV=/opt/label-studio/venv
+      python3.13 -m venv --system-site-packages "$VENV"
+      "$VENV/bin/pip" install --no-cache-dir --upgrade pip
+      "$VENV/bin/pip" install --no-cache-dir "label-studio==${VER}"
+      "$VENV/bin/pip" uninstall -y opencv-python-headless psycopg-binary
+      "$VENV/bin/python" -c "import importlib.metadata as m, sys; v = m.version('label-studio'); assert v == sys.argv[1], v; print('label-studio', v)" "${VER}"
+      # pyarrow must come from Wolfi, psycopg must load the system libpq.
+      "$VENV/bin/python" -c "import pyarrow, psycopg; assert pyarrow.__file__.startswith('/usr/lib/'), pyarrow.__file__; assert psycopg.pq.__impl__ == 'python', psycopg.pq.__impl__; print('pyarrow', pyarrow.__version__, 'libpq', psycopg.pq.version())"
+      if find "$VENV" -path '*.libs/*' \( -name 'libssl*' -o -name 'libcrypto*' \) | grep .; then
+        echo "a wheel still bundles OpenSSL"; exit 1
+      fi
+      "$VENV/bin/pip" uninstall -y pip
+      install -d "${dest}/opt/label-studio" "${dest}/usr/bin"
+      cp -a "$VENV" "${dest}/opt/label-studio/venv"
+      ln -sf /opt/label-studio/venv/bin/label-studio "${dest}/usr/bin/label-studio"
+      chmod -R a+rX "${dest}/opt/label-studio"
+
+test:
+  pipeline:
+    - runs: |
+        /opt/label-studio/venv/bin/python -c "import importlib.metadata as m; print(m.version('label-studio'))"
