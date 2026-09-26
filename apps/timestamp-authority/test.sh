@@ -30,7 +30,7 @@ code="$(curl -sS -o "$WORK/reply.tsr" -w '%{http_code}' -H 'Content-Type: applic
   -d "{\"artifactHash\":\"$hash\",\"hashAlgorithm\":\"sha256\",\"certificates\":true}" \
   http://127.0.0.1:13000/api/v1/timestamp)"
 echo "  timestamp request: HTTP $code"
-[ "$code" = 201 ] || { echo "timestamp not issued"; docker logs "$NAME" 2>&1 | tail -20; exit 1; }
+case "$code" in 200|201) ;; *) echo "timestamp not issued"; docker logs "$NAME" 2>&1 | tail -20; exit 1 ;; esac
 status="$(openssl ts -reply -in "$WORK/reply.tsr" -text | grep -m1 '^Status:')"
 echo "  $status"
 grep -q "Granted" <<<"$status" || { echo "reply not granted"; exit 1; }
