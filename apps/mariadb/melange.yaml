@@ -148,9 +148,17 @@ pipeline:
         wait "$pid" 2>/dev/null || true
       fi
 
-      exec mariadbd --datadir="$DATADIR" --socket="$SOCK"
+      # Arguments go to mariadbd (MariaDB Operator passes spec.args), and a
+      # leading "mariadbd" is accepted as the official image does.
+      if [ "${1:-}" = mariadbd ]; then shift; fi
+      exec mariadbd --datadir="$DATADIR" --socket="$SOCK" "$@"
       SCRIPT
       chmod 0755 "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh"
+      # The official image's layout: my.cnf includes conf.d (MariaDB Operator
+      # mounts its TLS and custom config there) and mariadb.conf.d (Galera).
+      install -d "${{targets.destdir}}/etc/mysql/conf.d" "${{targets.destdir}}/etc/mysql/mariadb.conf.d"
+      printf '[mysqld]\n!includedir /etc/mysql/conf.d/\n!includedir /etc/mysql/mariadb.conf.d/\n' \
+        > "${{targets.destdir}}/etc/mysql/my.cnf"
 
 test:
   pipeline:
