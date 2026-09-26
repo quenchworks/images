@@ -1,0 +1,89 @@
+# Assembles the rootless BuildKit image. Nonroot uid 1001, multi-arch, SBOM by apko.
+# Layout follows upstream's rootless image: rootlesskit starts buildkitd in a user
+# namespace mapped through /etc/subuid (rootlesskit-config-nonroot maps the user
+# named nonroot, so uid 1001 carries that name), state under ~/.local/share/buildkit, the
+# socket under $XDG_RUNTIME_DIR/buildkit. In Kubernetes the pod needs seccomp and
+# AppArmor Unconfined (not privileged) and usually --oci-worker-no-process-sandbox;
+# the chart sets both.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-buildkit@local
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+      homedir: /home/nonroot
+  run-as: 1001
+
+paths:
+  # Wolfi ships newuidmap/newgidmap with no setuid bit and no file capability.
+  # Rootless needs one of them to write the subuid range into the user namespace;
+  # upstream's Alpine image uses setuid shadow-uidmap, so this does the same.
+  - path: /usr/bin/newuidmap
+    type: permissions
+    permissions: 0o4755
+  - path: /usr/bin/newgidmap
+    type: permissions
+    permissions: 0o4755
+  - path: /home/nonroot/.local/share/buildkit
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /home/nonroot/.local/tmp
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  # apko creates missing parents root 0700, which uid 1001 cannot traverse.
+  - path: /run/user
+    type: directory
+    uid: 0
+    gid: 0
+    permissions: 0o755
+  - path: /run/user/1001
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+  # Last, so the parents created above end up owned by the user as well.
+  - path: /home/nonroot
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+    recursive: true
+
+environment:
+  HOME: /home/nonroot
+  USER: nonroot
+  XDG_RUNTIME_DIR: /run/user/1001
+  TMPDIR: /home/nonroot/.local/tmp
+  BUILDKIT_HOST: unix:///run/user/1001/buildkit/buildkitd.sock
+
+entrypoint:
+  command: /usr/bin/rootlesskit /usr/bin/buildkitd
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-buildkit"
+  org.opencontainers.image.licenses: "Apache-2.0"

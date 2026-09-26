@@ -1,0 +1,91 @@
+# Builds BuildKit from source onto Wolfi: buildkitd (the daemon) and buildctl (the
+# client). Flags follow upstream's Dockerfile: CGO off, tags
+# "osusergo netgo static_build seccomp", version stamped via -X on
+# github.com/moby/buildkit/version. The rootless runtime (rootlesskit, runc,
+# fuse-overlayfs, newuidmap) comes from Wolfi as runtime deps. rootlesskit pulls
+# rootlesskit-config-nonroot, which owns /etc/subuid and /etc/subgid
+# ("nonroot:100000:65536"), so the image names its uid-1001 user nonroot.
+package:
+  name: quench-buildkit
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened BuildKit (rootless buildkitd + buildctl), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - runc
+      - rootlesskit
+      - fuse-overlayfs
+      - fuse3
+      - just-newuidmap-newgidmap
+      # git sources: git spawns /bin/sh for ssh and hooks, so the image keeps a shell.
+      - busybox
+      - git
+      - openssh-client
+      - pigz
+      - xz
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/moby/buildkit/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOTOOLCHAIN=local
+      export GOFLAGS=-mod=mod
+      # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
+      # FLOOR is a floor, not a pin: only modules below it are raised, and the
+      # shipped binaries are asserted at or above it after the build.
+      # At v0.33.0: containerd/v2 v2.3.4 (CVE-2026-53495, fixed 2.3.5), x/crypto
+      # v0.55.0 (CVE-2026-56855, CVE-2026-78662), moby/go-archive v0.2.0
+      # (CVE-2026-17106, HIGH, buildkitd only). The 0.31 and 0.32 lines also carry
+      # x/mod v0.38.0 (CVE-2026-56864), grpc v1.81/v1.82 (CVE-2026-84304, -84303,
+      # -84445) and otel otlptrace v1.44.0 (CVE-2026-81870); otel floats as one
+      # family so the exporters stay on the core's version.
+      FLOOR="github.com/containerd/containerd/v2@v2.3.5 golang.org/x/crypto@v0.56.0 github.com/moby/go-archive@v0.3.0 golang.org/x/mod@v0.40.0 google.golang.org/grpc@v1.83.2 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
+      go mod tidy
+      rm -rf vendor
+      PKG=github.com/moby/buildkit
+      LDF="-s -w -X ${PKG}/version.Version=v${{package.version}} -X ${PKG}/version.Package=${PKG}"
+      go build -trimpath -ldflags "$LDF" -o "${{targets.destdir}}/usr/bin/buildctl" ./cmd/buildctl
+      go build -trimpath -ldflags "$LDF -extldflags '-static'" \
+        -tags "osusergo netgo static_build seccomp" \
+        -o "${{targets.destdir}}/usr/bin/buildkitd" ./cmd/buildkitd
+      for b in buildctl buildkitd; do
+        bad="$(go version -m "${{targets.destdir}}/usr/bin/$b" \
+          | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor "$b")"
+        [ -z "$bad" ] || { echo "0-CVE float did not reach $b:"; echo "$bad"; exit 1; }
+      done
+      "${{targets.destdir}}/usr/bin/buildctl" --version | grep -F "v${{package.version}}"
+      "${{targets.destdir}}/usr/bin/buildkitd" --version | grep -F "v${{package.version}}"
