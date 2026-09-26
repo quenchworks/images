@@ -69,11 +69,12 @@ environment:
       - go-1.27
       # --- Rust (orchestrator/worker) ---
       - rust
-      # clang 19, not the unversioned clang (22): aws-lc-fips-sys 0.14 builds the
-      # fips-2025-09-12-lts aws-lc, whose delocated FIPS module fails to assemble on
-      # aarch64 with clang 21+ ("fixup value out of range  adr x3, .L.str.192";
-      # aws/aws-lc#3533, fixed on main, not on that LTS branch). Upstream builds on
-      # Debian trixie's clang 19. Also serves bindgen (python-kadmin-rs, ring).
+      # clang 19, as upstream (Debian trixie). aws-lc-fips-sys 0.14 builds the
+      # fips-2025-09-12-lts aws-lc, whose delocated FIPS module can outgrow the
+      # +-1 MiB reach of aarch64 `adr` ("fixup value out of range"; aws/aws-lc#3533,
+      # fixed on main, not on that LTS branch). clang 19 alone did NOT fix it here:
+      # see the no-default-config wrapper in the Rust step. Also serves bindgen
+      # (python-kadmin-rs, ring).
       - clang-19
       # --- Python (Django core) via uv ---
       - python-3.14
@@ -157,7 +158,16 @@ pipeline:
         # Also export it explicitly as belt-and-suspenders.
         export RUSTFLAGS="--cfg tokio_unstable"
         # aws-lc-fips-sys builds its FIPS module via cmake (needs go + perl + clang).
-        export AWS_LC_FIPS_SYS_CC=clang
+        # Wolfi's /etc/clang/*.cfg (openssf-compiler-options) adds
+        # -mbranch-protection=standard, -ftrivial-auto-var-init=zero, stack
+        # protectors and frame pointers to EVERY clang call. On aarch64 that bloats
+        # bcm-delocated.S until `adr` fixups go out of range and the arm64 build
+        # dies. Upstream's Debian clang has no such config, so the FIPS module is
+        # built with --no-default-config, which matches upstream. Nothing else in
+        # the build uses this wrapper.
+        printf '#!/bin/sh\nexec clang --no-default-config "$@"\n' > /usr/local/bin/clang-fips
+        chmod 0755 /usr/local/bin/clang-fips
+        export AWS_LC_FIPS_SYS_CC=/usr/local/bin/clang-fips
         export PYO3_PYTHON="$(command -v python3.14)"
         cargo build --package authentik --no-default-features --features core --release --locked
         install -Dm0755 target/release/authentik /usr/bin-stage/authentik
