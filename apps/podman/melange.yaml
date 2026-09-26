@@ -77,6 +77,19 @@ pipeline:
         [ -z "$bad" ] || { echo "0-CVE float did not reach $b:"; echo "$bad"; exit 1; }
       done
       "${{targets.destdir}}/usr/bin/podman" --version | grep -Fx "podman version ${{package.version}}"
+      # containers-common's /etc/containers/storage.conf sets graphroot to the
+      # rootful /var/lib/containers/storage, and Podman 6 applies it to rootless
+      # users too. The image points CONTAINERS_STORAGE_CONF here instead.
+      install -d "${{targets.destdir}}/usr/share/quench-podman"
+      cat > "${{targets.destdir}}/usr/share/quench-podman/storage.conf" <<'CONF'
+      [storage]
+      driver = "overlay"
+      graphroot = "$HOME/.local/share/containers/storage"
+      runroot = "$XDG_RUNTIME_DIR/containers"
+
+      [storage.options.overlay]
+      mount_program = "/usr/bin/fuse-overlayfs"
+      CONF
 
 test:
   pipeline:
