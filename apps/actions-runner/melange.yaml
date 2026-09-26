@@ -1,0 +1,97 @@
+# Packages GitHub's self-hosted Actions runner from its official per-arch release
+# tarball onto Wolfi, under /home/runner like GitHub's own image. Output is a signed
+# APK in QuenchWorks' own repo.
+#
+# JavaScript actions run on Wolfi's nodejs-24, not the bundled Node:
+#   * externals/node24/bin/node is a symlink to Wolfi's /usr/bin/node, so the
+#     scanner sees the Node that actually runs and it floats with Wolfi fixes.
+#   * The bundled npm copies (the scanner's findings: tar, undici, sigstore,
+#     ip-address...) are removed: the runner executes actions with `node`, never npm.
+#   * Node 20 is end of life (2026-04-30). This runner already runs node20 actions
+#     on Node 24 by default; externals/node20 points at node24, so even the
+#     ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION opt-out runs a patched Node.
+#   * The *_alpine externals (musl builds for Alpine job containers) are removed.
+package:
+  name: quench-actions-runner
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks GitHub Actions runner, on Wolfi's nodejs-24"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - nodejs-24
+      - bash            # run.sh, config.sh and the runner's own scripts are bash
+      - busybox
+      - ca-certificates-bundle
+      - git
+      - curl
+      - gnutar          # actions (checkout, cache, upload-artifact) shell out to GNU tar
+      - gzip
+      - icu-libs        # .NET globalization
+      - krb5-libs       # .NET System.Net.Security (libgssapi)
+      - openssl
+      - zlib
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - curl
+
+pipeline:
+  - runs: |
+      set -eu
+      VER="${{package.version}}"
+      case "$(uname -m)" in
+        x86_64)  rarch=x64;   sha=__SHA_AMD__ ;;
+        aarch64) rarch=arm64; sha=__SHA_ARM__ ;;
+        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+      esac
+      curl -fsSL -o runner.tar.gz "https://github.com/actions/runner/releases/download/v${VER}/actions-runner-linux-${rarch}-${VER}.tar.gz"
+      echo "$sha  runner.tar.gz" | sha256sum -c -
+      R="${{targets.destdir}}/home/runner"
+      install -d "$R"
+      tar xzf runner.tar.gz -C "$R"
+
+      # .NET's LTTng tracing provider links liblttng-ust.so.0, which Wolfi does not
+      # ship. The runtime loads it only when LTTng tracing is switched on, and
+      # removing it is the documented way to run without LTTng.
+      rm -f "$R/bin/libcoreclrtraceptprovider.so"
+
+      # Node: Wolfi's node24 for everything (see the header).
+      E="$R/externals"
+      test -x "$E/node24/bin/node"
+      rm -rf "$E/node20" "$E/node20_alpine" "$E/node24_alpine" "$E/node24"
+      install -d "$E/node24/bin"
+      ln -s /usr/bin/node "$E/node24/bin/node"
+      ln -s node24 "$E/node20"
+      # anything else under externals would be an unreviewed bundled runtime
+      test "$(ls "$E" | tr '\n' ' ')" = "node20 node24 " || { echo "unexpected externals: $(ls "$E")" >&2; exit 1; }
+
+      # Registration helper for use outside ARC (ARC runs /home/runner/run.sh itself).
+      install -d "${{targets.destdir}}/usr/bin"
+      cat > "${{targets.destdir}}/usr/bin/runner-entrypoint.sh" <<'EOS'
+      #!/bin/bash
+      set -euo pipefail
+      cd /home/runner
+      # Under ARC the scale set passes a just-in-time config; run.sh reads it.
+      if [ -n "${ACTIONS_RUNNER_INPUT_JITCONFIG:-}" ] || [ -f .runner ]; then
+        exec ./run.sh "$@"
+      fi
+      : "${RUNNER_URL:?set RUNNER_URL (repo or org URL) and RUNNER_TOKEN, or run under ARC}"
+      : "${RUNNER_TOKEN:?set RUNNER_TOKEN, a registration token for RUNNER_URL}"
+      args=(--unattended --replace --url "$RUNNER_URL" --token "$RUNNER_TOKEN"
+            --name "${RUNNER_NAME:-$(hostname)}" --work "${RUNNER_WORKDIR:-_work}")
+      [ -z "${RUNNER_LABELS:-}" ] || args+=(--labels "$RUNNER_LABELS")
+      [ -z "${RUNNER_GROUP:-}" ] || args+=(--runnergroup "$RUNNER_GROUP")
+      [ "${RUNNER_EPHEMERAL:-true}" != true ] || args+=(--ephemeral)
+      ./config.sh "${args[@]}"
+      exec ./run.sh "$@"
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/runner-entrypoint.sh"

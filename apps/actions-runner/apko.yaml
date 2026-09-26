@@ -1,0 +1,56 @@
+# Assembles the GitHub Actions runner image: the runner under /home/runner on
+# Wolfi, uid 1001 like GitHub's own image, so ARC scale sets can use it as their
+# runner image (they run /home/runner/run.sh). Standalone, the entrypoint
+# registers with RUNNER_URL + RUNNER_TOKEN. The runner writes its config,
+# credentials, _diag and _work under /home/runner, so the rootfs is writable.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-actions-runner@local
+
+accounts:
+  groups:
+    - groupname: runner
+      gid: 1001
+  users:
+    - username: runner
+      uid: 1001
+      gid: 1001
+      homedir: /home/runner
+  run-as: 1001
+
+paths:
+  - path: /home/runner
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+    recursive: true
+
+environment:
+  HOME: /home/runner
+  # Run every JavaScript action on Node 24 (the only Node in the image).
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+entrypoint:
+  command: /usr/bin/runner-entrypoint.sh
+
+work-dir: /home/runner
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-actions-runner"
+  org.opencontainers.image.licenses: "MIT"
