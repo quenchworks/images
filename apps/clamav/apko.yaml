@@ -1,0 +1,45 @@
+# ClamAV runtime image: quench-clamav, built from the release tarball (see
+# melange.yaml). Nonroot uid 1001, multi-arch, no shell. The entrypoint is
+# clamd; the same image runs freshclam (the chart's updater) and clamscan.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-clamav@local
+
+accounts:
+  groups:
+    - groupname: clamav
+      gid: 1001
+  users:
+    - username: clamav
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/clamd --config-file=/etc/clamav/clamd.conf
+
+paths:
+  - path: /var/lib/clamav
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-clamav"
+  org.opencontainers.image.licenses: "GPL-2.0-only"

@@ -1,0 +1,105 @@
+# Builds ClamAV from the release tarball: CMake + ninja for the C/C++ side, and
+# cargo OFFLINE for libclamav_rust, from the crates the tarball vendors. Milter,
+# systemd and the unit tests are off. Ships clamd.conf and freshclam.conf for a
+# container: foreground (logging to stdout), TCP 3310, database in /var/lib/clamav.
+package:
+  name: quench-clamav
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened ClamAV (clamd, freshclam, clamscan), built from source on Wolfi"
+  copyright:
+    - license: GPL-2.0-only
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - bzip2-dev
+      - ca-certificates-bundle
+      - cmake
+      - curl-dev
+      - json-c-dev
+      - libxml2-dev
+      - ncurses-dev
+      - openssl-dev
+      - pcre2-dev
+      - pkgconf
+      - rust
+      - samurai
+      - zlib-dev
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://www.clamav.net/downloads/production/clamav-${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      export CARGO_NET_OFFLINE=true
+      # curl-dev pulls ngtcp2-dev, which pulls openssl-hardened-dev. That package
+      # is one file: a configuration.h defining OPENSSL_NO_DEPRECATED over the
+      # normal one. The vendored Rust openssl crate then fails on DH_get0_key and
+      # friends, although the runtime libcrypto3 exports them. Build against a
+      # private copy of the headers with that one define removed.
+      inc="$PWD/.ossl-include"
+      mkdir -p "$inc"; cp -a /usr/include/openssl "$inc/"
+      sed -i '/# ifndef OPENSSL_NO_DEPRECATED$/,/# endif/d' "$inc/openssl/configuration.h"
+      ! grep -q 'define OPENSSL_NO_DEPRECATED$' "$inc/openssl/configuration.h"
+      cmake -S . -B build -G Ninja \
+        -D OPENSSL_INCLUDE_DIR="$inc" \
+        -D CMAKE_BUILD_TYPE=Release \
+        -D CMAKE_INSTALL_PREFIX=/usr \
+        -D CMAKE_INSTALL_LIBDIR=lib \
+        -D CMAKE_INSTALL_SBINDIR=bin \
+        -D APP_CONFIG_DIRECTORY=/etc/clamav \
+        -D DATABASE_DIRECTORY=/var/lib/clamav \
+        -D ENABLE_MILTER=OFF \
+        -D ENABLE_SYSTEMD=OFF \
+        -D ENABLE_TESTS=OFF \
+        -D ENABLE_MAN_PAGES=OFF \
+        -D ENABLE_DOXYGEN=OFF
+      cmake --build build
+      DESTDIR="${{targets.destdir}}" cmake --install build
+      d="${{targets.destdir}}"
+      rm -rf "$d/usr/include" "$d/usr/lib/pkgconfig" "$d/usr/share/doc" "$d/usr/bin/clamav-config"
+      rm -f "$d/etc/clamav/"*.sample
+      ver="$(LD_LIBRARY_PATH="$d/usr/lib" "$d/usr/bin/clamscan" --version 2>&1 || true)"
+      echo "clamscan --version: $ver"
+      printf '%s\n' "$ver" | grep -F "ClamAV ${{package.version}}"
+  - runs: |
+      d="${{targets.destdir}}"
+      install -d "$d/etc/clamav"
+      # No LogFile/UpdateLogFile: both are opened with O_NOFOLLOW, so the
+      # /dev/stdout symlink fails (ELOOP) and clamd exits. In the foreground
+      # they log to stdout without one.
+      # clamd refuses to start without a signature database, so the image
+      # does not boot on its own. Run freshclam first into /var/lib/clamav (the
+      # chart does this with an init container), or mount a database there.
+      cat > "$d/etc/clamav/clamd.conf" <<'CONF'
+      Foreground yes
+      LogTime yes
+      LogClean no
+      DatabaseDirectory /var/lib/clamav
+      TemporaryDirectory /tmp
+      TCPSocket 3310
+      TCPAddr 0.0.0.0
+      MaxThreads 10
+      StreamMaxLength 100M
+      SelfCheck 3600
+      CONF
+      cat > "$d/etc/clamav/freshclam.conf" <<'CONF'
+      Foreground yes
+      LogTime yes
+      DatabaseDirectory /var/lib/clamav
+      DatabaseMirror database.clamav.net
+      Checks 12
+      CONF
+      chmod 0644 "$d/etc/clamav/clamd.conf" "$d/etc/clamav/freshclam.conf"
