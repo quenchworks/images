@@ -61,7 +61,9 @@ pipeline:
         bad="$(go version -m "$b" | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor "$b")"
         [ -z "$bad" ] || { echo "0-CVE float did not reach $b:"; echo "$bad"; exit 1; }
       done
-      "$d/plugins/velero-plugin-for-aws" 2>&1 | grep -q "This binary is a plugin"
+      # run directly the plugin prints a notice and exits 1, so capture, then match
+      out="$("$d/plugins/velero-plugin-for-aws" 2>&1 || true)"
+      case "$out" in *"This binary is a plugin"*) ;; *) echo "not the Velero plugin: $out"; exit 1 ;; esac
 
 test:
   pipeline:
