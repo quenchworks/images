@@ -1,0 +1,45 @@
+# PowerDNS Authoritative runtime image: quench-powerdns, built from the release
+# tarball (see melange.yaml). Nonroot uid 1001, multi-arch, no shell.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - mariadb-connector-c       # see melange.yaml: pins the libmariadb.so.3 provider
+    - quench-powerdns@local
+
+accounts:
+  groups:
+    - groupname: pdns
+      gid: 1001
+  users:
+    - username: pdns
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/pdns_server --config-dir=/etc/powerdns
+
+paths:
+  - path: /var/lib/powerdns
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-powerdns"
+  org.opencontainers.image.licenses: "GPL-2.0-only"

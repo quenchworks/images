@@ -1,0 +1,91 @@
+# Builds PowerDNS Authoritative (pdns_server, pdnsutil, pdns_control) from the
+# release tarball, with the lmdb, gsqlite3, gpgsql, gmysql and bind backends
+# linked in statically (--with-modules, no dynmodules), so there is no module
+# search path to get wrong. Ships a bootable default config on LMDB.
+package:
+  name: quench-powerdns
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened PowerDNS Authoritative Server, built from source on Wolfi"
+  copyright:
+    - license: GPL-2.0-only
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      # Named explicitly: apko resolves so:libmariadb.so.3 to Wolfi's stale
+      # `mariadb` 10.6.11 package, which does not provide it where the loader
+      # looks (pdns_server died on "libmariadb.so.3: cannot open shared object").
+      - mariadb-connector-c
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - bison
+      - boost-dev
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - curl-dev
+      - flex
+      - libsodium-dev
+      - lmdb-dev
+      - luajit-dev
+      - mariadb-connector-c-dev
+      - openssl-dev
+      - pkgconf
+      - postgresql-18-dev
+      - ragel
+      - sqlite-dev
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://downloads.powerdns.com/releases/pdns-${{package.version}}.tar.bz2
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      ./configure --prefix=/usr --sbindir=/usr/bin --sysconfdir=/etc/powerdns \
+        --with-modules="bind lmdb gsqlite3 gpgsql gmysql" --with-dynmodules="" \
+        --with-lua=luajit --with-libsodium --enable-systemd=no \
+        --disable-ixfrdist --enable-tools=no \
+        | tee configure.out
+      make -j"$(nproc)"
+      make install DESTDIR="${{targets.destdir}}"
+      rm -rf "${{targets.destdir}}/usr/share/man" "${{targets.destdir}}/etc/powerdns/pdns.conf-dist"
+      "${{targets.destdir}}/usr/bin/pdns_server" --version 2>&1 | grep -F "Authoritative Server ${{package.version}}"
+      # Capture first: grep -q exits on the first match, pdns_server gets SIGPIPE,
+      # and under pipefail a found module reads as missing.
+      # --list-modules exits 99 after printing the list.
+      mods="$("${{targets.destdir}}/usr/bin/pdns_server" --list-modules 2>&1 || true)"
+      for m in bind lmdb gsqlite3 gpgsql gmysql; do
+        printf '%s\n' "$mods" | grep -qx "$m" || { echo "module $m missing"; printf '%s\n' "$mods"; exit 1; }
+      done
+      # Modules are linked in (the list above comes from the binary alone), but
+      # make install still drops per-backend .so/.la files in /usr/lib/pdns.
+      # Keep the directory empty: pdns_server warns at every start without it.
+      rm -rf "${{targets.destdir}}/usr/lib/pdns"
+      install -d "${{targets.destdir}}/usr/lib/pdns"
+  - runs: |
+      d="${{targets.destdir}}"
+      install -d "$d/etc/powerdns"
+      # nonroot cannot bind :53, so DNS listens on 5353 (UDP and TCP); a
+      # Kubernetes Service maps 53 to it. The HTTP API and webserver are OFF here:
+      # enabling them needs an api-key, and baking one into an image would make
+      # every copy share it. The chart turns them on with a generated key.
+      # socket-dir is /tmp so pdns_control works on a read-only rootfs.
+      cat > "$d/etc/powerdns/pdns.conf" <<'CONF'
+      launch=lmdb
+      lmdb-filename=/var/lib/powerdns/pdns.lmdb
+      local-address=0.0.0.0:5353, [::]:5353
+      socket-dir=/tmp
+      guardian=no
+      daemon=no
+      disable-syslog=yes
+      log-timestamp=no
+      write-pid=no
+      CONF
+      chmod 0644 "$d/etc/powerdns/pdns.conf"
