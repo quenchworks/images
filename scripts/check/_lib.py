@@ -38,9 +38,13 @@ def _gh(path, jq):
     return [t.strip().lstrip("v") for t in r.stdout.split() if t.strip()]
 
 def github(repo):
-    """Stable, non-draft release tags (v-stripped). Newest first-ish."""
+    """Stable, non-draft release tags (v-stripped). Newest first-ish.
+
+    The name filter backs up the prerelease flag, which upstreams forget:
+    kgateway published v2.5.0-beta.1 with prerelease=false."""
     return _gh(f"repos/{repo}/releases?per_page=40",
-               '.[]|select(.prerelease==false and .draft==false)|.tag_name')
+               '.[]|select(.prerelease==false and .draft==false)|.tag_name'
+               '|select(test("[-.](alpha|beta|rc|pre|preview)[.0-9]*$"; "i")|not)')
 
 def github_tags(repo):
     """Plain git tags (for repos that don't cut GitHub Releases)."""
@@ -161,6 +165,9 @@ def report_wolfi_lines(app, prefix, depth, line_only=False):
     majors = wolfi_majors(prefix, 12)
     wmap = {}
     for w in majors:
+        # Wolfi's 3.14.7_git20260925 is a branch snapshot of 3.14.7, not a newer
+        # release (see apps/python/build.conf), so drop the suffix.
+        w = re.sub(r'_git\d+$', '', w)
         wmap[".".join(re.findall(r'\d+', w)[:depth])] = w
     behind = []
     print(app)
