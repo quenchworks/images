@@ -2,7 +2,8 @@
 # Smoke test for a built Trino image. Usage: test.sh <image-ref> [version]
 # Boots the default single-node coordinator, waits for /v1/info to report
 # starting=false, then runs real queries over the client REST protocol: a tpch
-# aggregate, a join, and a CREATE/SELECT round trip in the memory catalog.
+# aggregate, a join, and a CREATE/SELECT round trip in the memory catalog, and
+# checks that the iceberg plugin loaded.
 set -euo pipefail
 
 IMAGE="${1:?usage: test.sh <image-ref> [version]}"
@@ -22,6 +23,15 @@ for i in $(seq 1 90); do
   sleep 2
 done
 echo "info: $info"
+# every bundled connector plugin loaded, including iceberg with its swapped jars,
+# and Jetty's Brotli native library found libstdc++
+logs="$(docker logs "$NAME" 2>&1)"
+for p in iceberg postgresql tpch; do
+  grep -q -- "-- Finished loading plugin $p --" <<<"$logs" \
+    || { echo "plugin $p did not load"; grep -iE "plugin|error" <<<"$logs" | tail -20; exit 1; }
+done
+! grep -q "Failed to load Brotli native library" <<<"$logs" || { echo "brotli native library failed to load"; exit 1; }
+echo "  plugins loaded: iceberg postgresql tpch; brotli native ok"
 if [ -n "$WANT" ]; then
   grep -q "\"version\":\"$WANT\"" <<<"$info" || { echo "expected version $WANT"; exit 1; }
 fi
