@@ -1,0 +1,42 @@
+# Squid runtime image: Wolfi's pinned `squid` apk (__PKG__, substituted per matrix
+# entry by build.conf render()) plus quench-squid-config. Nonroot uid 1001,
+# multi-arch, no shell. The config needs no helpers, so nothing in it forks
+# /bin/sh.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - __PKG__
+    - quench-squid-config@local
+
+accounts:
+  groups:
+    - groupname: squid
+      gid: 1001
+  users:
+    - username: squid
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# -N keeps squid in the foreground as PID 1 (it daemonizes otherwise, and the
+# container exits). It also disables SMP workers, so there is no IPC socket dir.
+entrypoint:
+  command: /usr/bin/squid -N -f /etc/squid/quench.conf
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-squid"
+  org.opencontainers.image.licenses: "GPL-2.0-or-later"

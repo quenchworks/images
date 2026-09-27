@@ -1,0 +1,71 @@
+# Packages the DEFAULT Squid config only; squid itself comes from Wolfi's `squid`
+# apk (see build.conf). The apk already owns /etc/squid.conf (the compiled-in
+# default path), so ours lives at /etc/squid/quench.conf and the image passes -f.
+package:
+  name: quench-squid-config
+  version: __VER__
+  epoch: 0
+  description: "Bootable default config for the Quenchworks hardened Squid image"
+  copyright:
+    - license: GPL-2.0-or-later
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+
+pipeline:
+  - runs: |
+      d="${{targets.destdir}}"
+      install -d "$d/etc/squid"
+      # Shaped for a container on a read-only rootfs, run as nonroot:
+      #   * no pid file and no cache_dir: nothing to write on disk,
+      #     so the only writable mount the image needs is /tmp (coredump_dir).
+      #   * logs go to stdout/stderr for kubectl logs.
+      #   * localnet is ALLOWED, unlike upstream's default, which defines the
+      #     acl but only allows localhost. Pod and node CIDRs are RFC 1918 or
+      #     CGN space, so a proxy that only serves localhost is useless here.
+      cat > "$d/etc/squid/quench.conf" <<'CONF'
+      # Quenchworks default Squid config. The Helm chart replaces this file.
+      acl localnet src 10.0.0.0/8
+      acl localnet src 100.64.0.0/10
+      acl localnet src 172.16.0.0/12
+      acl localnet src 192.168.0.0/16
+      acl localnet src fc00::/7
+      acl localnet src fe80::/10
+
+      acl SSL_ports port 443
+      acl Safe_ports port 80
+      acl Safe_ports port 21
+      acl Safe_ports port 443
+      acl Safe_ports port 1025-65535
+
+      http_access deny !Safe_ports
+      http_access deny CONNECT !SSL_ports
+      http_access allow localhost manager
+      http_access deny manager
+      http_access deny to_localhost
+      http_access deny to_linklocal
+      http_access allow localnet
+      http_access allow localhost
+      http_access deny all
+
+      http_port 3128
+
+      cache_mem 64 MB
+      pid_filename none
+      access_log stdio:/dev/stdout
+      cache_log /dev/stderr
+      cache_store_log none
+      logfile_rotate 0
+      coredump_dir /tmp
+
+      refresh_pattern ^ftp:             1440 20% 10080
+      refresh_pattern -i (/cgi-bin/|\?) 0    0%  0
+      refresh_pattern .                 0    20% 4320
+      CONF
+      chmod 0644 "$d/etc/squid/quench.conf"
