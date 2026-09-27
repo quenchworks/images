@@ -57,6 +57,9 @@ pipeline:
       http_port 3128
 
       cache_mem 64 MB
+      # squid sizes its descriptor tables from the fd limit, and containerd's is
+      # about a billion: without a cap the pod is OOMKilled before it logs a line.
+      max_filedescriptors 65536
       pid_filename none
       access_log stdio:/dev/stdout
       cache_log /dev/stderr
