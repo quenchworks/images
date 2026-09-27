@@ -228,6 +228,17 @@ def report(app, candidates, n=None, keep=None, clean=None):
     elif vkey(top[0]) < have:
         status = f"BROKEN CHECK -- we ship {cur[-1]} but upstream's newest is {top[0]}; wrong source?"
     else:
+        # The newest-n window only compares against our NEWEST version, so a patch on
+        # an older line we still ship (cert-manager 1.20.3 while 1.20.4 existed,
+        # clickhouse 26.7.14.3 while 26.7.15.52 existed) never showed up. Flag any
+        # shipped version with a newer same-line patch that we do not ship.
+        shipped = set(cur)
+        for c in cur[:-1]:
+            pre = c.rsplit(".", 1)[0] + "."
+            same = [v for v in cands if v.startswith(pre) and v.count(".") == c.count(".")
+                    and v not in shipped and vkey(v) > vkey(c)]
+            if same:
+                behind.append(max(same, key=vkey))
         status = f"UPDATE -> {behind}" if behind else "ok"
     print(f"{app:20s} have={(cur[-1] if cur else '?'):>14s}  latest{n}={top}  {status}")
     return behind
