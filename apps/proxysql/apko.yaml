@@ -1,0 +1,48 @@
+# ProxySQL runtime image: Wolfi's pinned `proxysql` apk (__PKG__, substituted per
+# matrix entry by build.conf render()) plus quench-proxysql-config. Nonroot uid
+# 1001, multi-arch, no shell.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - __PKG__
+    - quench-proxysql-config@local
+
+accounts:
+  groups:
+    - groupname: proxysql
+      gid: 1001
+  users:
+    - username: proxysql
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# -f: foreground. -D: datadir, where proxysql keeps proxysql.db (its SQLite
+# config store) and stats; it must be writable.
+entrypoint:
+  command: /usr/bin/proxysql -f -c /etc/proxysql/quench.cnf -D /var/lib/proxysql
+
+paths:
+  - path: /var/lib/proxysql
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-proxysql"
+  org.opencontainers.image.licenses: "GPL-3.0-or-later"
