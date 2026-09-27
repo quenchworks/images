@@ -1,0 +1,71 @@
+# Builds PowerDNS Recursor (pdns_recursor, rec_control) from the release
+# tarball: autotools for the C++ server, cargo for rec-rust-lib (the settings
+# code). DNS over TLS to upstreams and newly-observed-domain tracking are on;
+# SNMP and dnstap are off. curl-dev is left out on purpose: it drags in the
+# hardened OpenSSL headers (see apps/clamav/melange.yaml).
+package:
+  name: quench-powerdns-recursor
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened PowerDNS Recursor, built from source on Wolfi"
+  copyright:
+    - license: GPL-2.0-only
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - boost-dev
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - libcap-dev
+      - libsodium-dev
+      - luajit-dev
+      - openssl-dev
+      - pkgconf
+      - python3
+      - rust
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://downloads.powerdns.com/releases/pdns-recursor-${{package.version}}.tar.xz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      ./configure --prefix=/usr --sbindir=/usr/bin --sysconfdir=/etc/powerdns \
+        --enable-dns-over-tls --enable-nod --with-lua=luajit --with-libcrypto=/usr \
+        --with-libsodium --with-libcap --enable-systemd=no
+      make -j"$(nproc)"
+      make install DESTDIR="${{targets.destdir}}"
+      d="${{targets.destdir}}"
+      rm -rf "$d/usr/share/man" "$d/etc/powerdns/"*-dist
+      ver="$("$d/usr/bin/pdns_recursor" --version 2>&1 || true)"
+      echo "pdns_recursor --version: $ver"
+      printf '%s\n' "$ver" | grep -F "Recursor ${{package.version}}"
+  - runs: |
+      d="${{targets.destdir}}"
+      install -d "$d/etc/powerdns"
+      # nonroot cannot bind :53, so DNS listens on 5353; a Kubernetes Service
+      # maps 53 to it. allow_from is private and CGN space, not the world: an
+      # open resolver gets abused for amplification. socket_dir is /tmp so
+      # rec_control works on a read-only rootfs.
+      cat > "$d/etc/powerdns/recursor.yml" <<'CONF'
+      incoming:
+        listen: ['0.0.0.0:5353', '[::]:5353']
+        allow_from: ['127.0.0.0/8', '10.0.0.0/8', '100.64.0.0/10', '172.16.0.0/12', '192.168.0.0/16', '::1/128', 'fc00::/7', 'fe80::/10']
+      recursor:
+        socket_dir: /tmp
+        daemon: false
+      logging:
+        disable_syslog: true
+        timestamp: false
+      CONF
+      chmod 0644 "$d/etc/powerdns/recursor.yml"
