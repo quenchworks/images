@@ -1,0 +1,49 @@
+# Assembles the Sigstore Rekor v2 (rekor-tiles) image: static POSIX-backend
+# server, nonroot uid 1001, multi-arch, SBOM by apko. Writes on HTTP 3000 and
+# gRPC 3001, metrics on 2112. Tiles and checkpoints go to /var/lib/rekor, which
+# any static file server can serve as the read API. Pass --hostname (the log
+# origin) and --signer-filepath (an ed25519, ECDSA or RSA private key).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-rekor-tiles@local
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# The log directory, owned by the runtime user so the image runs standalone; in
+# the chart a PVC is mounted here and fsGroup sets its ownership.
+paths:
+  - path: /var/lib/rekor
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+entrypoint:
+  command: /usr/bin/rekor-server serve --http-address=0.0.0.0 --grpc-address=0.0.0.0 --storage-dir=/var/lib/rekor
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-rekor-tiles"
+  org.opencontainers.image.licenses: "Apache-2.0"
