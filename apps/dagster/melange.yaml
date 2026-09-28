@@ -16,6 +16,7 @@ package:
       # Native code from Wolfi, on its scanned OpenSSL and libpq: the psycopg2-binary wheel
       # carried OpenSSL 3.5.8 in psycopg2_binary.libs and grpcio a static BoringSSL.
       - py3.13-grpcio-1.84
+      - py3.13-psycopg          # SQLAlchemy 2.1 maps postgresql:// to psycopg (v3), not psycopg2
       - libpq-18
 
 environment:
@@ -30,6 +31,7 @@ environment:
       - python-3.13
       - py3.13-pip
       - py3.13-grpcio-1.84
+      - py3.13-psycopg          # SQLAlchemy 2.1 maps postgresql:// to psycopg (v3), not psycopg2
       - python-3.13-dev        # Python.h for the psycopg2-binary source build
       - postgresql-18-dev      # pg_config and libpq headers for the same build
       - build-base             # fallback for any transitive dep without a wheel
@@ -57,7 +59,7 @@ pipeline:
       SITE="$VENV/lib/python3.13/site-packages"
       if ls -d "$SITE"/*.libs 2>/dev/null | grep -q .; then echo "bundled native libs:"; ls -d "$SITE"/*.libs; exit 1; fi
       test ! -e "$SITE/grpc" || { echo "grpcio still in the venv"; exit 1; }
-      "$VENV/bin/python" -c "import grpc, psycopg2; assert grpc.__file__.startswith('/usr/lib/python3.13/site-packages/'), grpc.__file__; print('grpc', grpc.__version__, 'from Wolfi; psycopg2', psycopg2.__version__, 'libpq', psycopg2.__libpq_version__)"
+      "$VENV/bin/python" -c "import grpc, psycopg, psycopg2, sqlalchemy; assert grpc.__file__.startswith('/usr/lib/python3.13/site-packages/'), grpc.__file__; sqlalchemy.create_engine('postgresql://u:p@127.0.0.1/db'); print('grpc', grpc.__version__, 'from Wolfi; psycopg', psycopg.__version__, psycopg.pq.__impl__, 'psycopg2', psycopg2.__version__, 'sqlalchemy', sqlalchemy.__version__)"
       "$VENV/bin/pip" uninstall -y pip
       install -d "${dest}/opt/dagster"
       cp -a "$VENV" "${dest}/opt/dagster/venv"
