@@ -1,0 +1,54 @@
+# Builds Homepage from the release tag: pnpm install from the frozen lockfile,
+# `next build --webpack` into the standalone bundle, then only what upstream's
+# Dockerfile ships: .next/standalone, .next/static and public. src/skeleton is
+# copied too: at startup the app copies a skeleton file into the config dir for
+# any config file that is missing, and exits if it cannot.
+package:
+  name: quench-homepage
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Homepage dashboard, built from source on Wolfi"
+  copyright:
+    - license: GPL-3.0-only
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - nodejs-22
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - nodejs-22
+      - pnpm
+      - python3
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/gethomepage/homepage/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      export NEXT_TELEMETRY_DISABLED=1
+      pnpm install --frozen-lockfile
+      pnpm run build
+      app="${{targets.destdir}}/usr/share/homepage"
+      install -d "$app/.next" "$app/src"
+      cp -a .next/standalone/. "$app/"
+      cp -a .next/static "$app/.next/static"
+      cp -a public "$app/public"
+      cp -a src/skeleton "$app/src/skeleton"
+      # Next's file tracing drags the test runner into the standalone bundle
+      # (vitest 4.1.10, CVE-2026-84373). Nothing at runtime imports it; the boot
+      # test proves that.
+      rm -rf "$app"/node_modules/.pnpm/vitest@* "$app"/node_modules/.pnpm/@vitest+*
+      ! find "$app/node_modules" -maxdepth 3 -name 'vitest*' | grep -q .
+      test -f "$app/server.js"
+      grep -q "\"version\": \"${{package.version}}\"" "$app/package.json"

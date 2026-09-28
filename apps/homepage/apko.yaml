@@ -1,0 +1,57 @@
+# Homepage runtime image: quench-homepage (the Next.js standalone bundle) on
+# nodejs-22. Nonroot uid 1001, multi-arch, no shell. Upstream's entrypoint is a
+# shell script that probes for IPv6 and chowns /app/config; here node runs the
+# server directly, bound to 0.0.0.0, with logs on stdout and /app/config as the
+# (writable) config directory.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-homepage@local
+
+accounts:
+  groups:
+    - groupname: homepage
+      gid: 1001
+  users:
+    - username: homepage
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  NODE_ENV: production
+  NEXT_TELEMETRY_DISABLED: "1"
+  HOSTNAME: 0.0.0.0
+  PORT: "3000"
+  HOMEPAGE_CONFIG_DIR: /app/config
+  LOG_TARGETS: stdout
+
+work-dir: /usr/share/homepage
+
+entrypoint:
+  command: /usr/bin/node /usr/share/homepage/server.js
+
+paths:
+  - path: /app/config
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-homepage"
+  org.opencontainers.image.licenses: "GPL-3.0-only"
