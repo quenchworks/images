@@ -9,6 +9,7 @@ package:
   dependencies:
     runtime:
       - python-3.13            # the venv references the system interpreter
+      - py3.13-numpy-2.5       # Wolfi build on its OpenBLAS; the wheel bundles its own in numpy.libs
       - ca-certificates-bundle
       - glibc
       - libstdc++
@@ -26,6 +27,7 @@ environment:
       - ca-certificates-bundle
       - python-3.13
       - py3.13-pip
+      - py3.13-numpy-2.5
       - build-base             # fallback for any transitive dep without a wheel
 
 pipeline:
@@ -34,12 +36,17 @@ pipeline:
       VER="${{package.version}}"
       dest="${{targets.destdir}}"
       VENV=/opt/checkov/venv
-      python3.13 -m venv "$VENV"
+      python3.13 -m venv --system-site-packages "$VENV"
       "$VENV/bin/pip" install --no-cache-dir --upgrade pip
       "$VENV/bin/pip" install --no-cache-dir "checkov==${VER}"
       # 0-CVE: checkov pins asteval==1.0.6; 1.0.9 is the fix (see build.conf)
       "$VENV/bin/pip" install --no-cache-dir --no-deps "asteval==1.0.9"
       "$VENV/bin/python" -c "import importlib.metadata as m, sys; v = m.version('checkov'); assert v == sys.argv[1], v; a = m.version('asteval'); assert a == '1.0.9', a; print('checkov', v, 'asteval', a)" "${VER}"
+      # Wolfi's numpy (system site-packages) satisfies rustworkx, so pip leaves it there.
+      SITE="$VENV/lib/python3.13/site-packages"
+      if ls -d "$SITE"/*.libs 2>/dev/null | grep -q .; then echo "bundled native libs:"; ls -d "$SITE"/*.libs; exit 1; fi
+      test ! -e "$SITE/numpy" || { echo "numpy installed into the venv instead of from Wolfi"; exit 1; }
+      "$VENV/bin/python" -c "import numpy as n; assert n.__file__.startswith('/usr/lib/python3.13/site-packages/'), n.__file__; print('numpy', n.__version__, 'from Wolfi')"
       "$VENV/bin/pip" uninstall -y pip
       install -d "${dest}/opt/checkov"
       cp -a "$VENV" "${dest}/opt/checkov/venv"
