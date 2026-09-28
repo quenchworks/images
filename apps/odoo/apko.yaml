@@ -1,0 +1,54 @@
+# Assembles the Odoo Community Edition runtime image on Wolfi python-3.13. Nonroot,
+# multi-arch, SBOM by apko, no shell. HTTP on :8069 (longpolling/websocket on the same
+# port under the threaded server). The filestore and sessions live under /data. Odoo
+# refuses to connect as the database user "postgres"; give it its own role.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-odoo@local
+
+accounts:
+  groups:
+    - groupname: odoo
+      gid: 1001
+  users:
+    - username: odoo
+      uid: 1001
+      gid: 1001
+      homedir: /data
+  run-as: 1001
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  HOME: /data
+  PYTHONUNBUFFERED: "1"
+
+work-dir: /data
+
+entrypoint:
+  command: /opt/odoo/venv/bin/odoo
+cmd: --data-dir=/data
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-odoo"
+  org.opencontainers.image.licenses: "LGPL-3.0-only"

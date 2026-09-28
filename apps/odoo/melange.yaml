@@ -1,0 +1,103 @@
+# Packages Odoo Community Edition into a venv at /opt/odoo/venv from the nightly source
+# tarball. The native dependencies come from Wolfi (system site-packages) so their C
+# libraries are Wolfi's; the few small C extensions Wolfi lacks build from source.
+package:
+  name: quench-odoo
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Odoo Community Edition, packaged on Wolfi"
+  copyright:
+    - license: LGPL-3.0-only
+  dependencies:
+    runtime:
+      - python-3.13
+      - py3.13-cryptography
+      - py3.13-pillow
+      - py3.13-lxml
+      - py3.13-psycopg2
+      - py3.13-gevent
+      - py3.13-greenlet
+      - py3.13-psutil
+      - py3.13-markupsafe
+      - py3.13-pyopenssl
+      - py3.13-cffi
+      - libpq-18
+      - postgresql-18-client    # pg_dump and pg_restore for the database manager
+      - libstdc++               # libsass
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - python-3.13
+      - python-3.13-dev
+      - py3.13-pip
+      - py3.13-setuptools
+      - py3.13-wheel
+      - py3.13-cryptography
+      - py3.13-pillow
+      - py3.13-lxml
+      - py3.13-psycopg2
+      - py3.13-gevent
+      - py3.13-greenlet
+      - py3.13-psutil
+      - py3.13-markupsafe
+      - py3.13-pyopenssl
+      - py3.13-cffi
+      - libpq-18
+      - build-base
+      - rust-1.98              # cbor2 6.x is a Rust extension; built here so no prebuilt wheel hides its crates
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://nightly.odoo.com/__LINE__/nightly/src/odoo___LINE__.__DATE__.tar.gz
+      expected-sha256: __SHA256__
+      strip-components: 1
+  - runs: |
+      set -eu
+      dest="${{targets.destdir}}"
+      VENV=/opt/odoo/venv
+      python3.13 -m venv --system-site-packages "$VENV"
+      PIP="$VENV/bin/pip"
+      "$PIP" install --no-cache-dir --upgrade pip
+      "$PIP" install --no-cache-dir --no-deps .
+      # setup.py's install_requires, unpinned, with PyPDF2 swapped for pypdf. The Wolfi
+      # packages already satisfy their entries, so pip leaves them in system site-packages;
+      # C extensions pip would otherwise take as manylinux wheels build from source.
+      "$VENV/bin/python" - > requirements.txt <<'PY'
+      import importlib.metadata as m, re
+      for r in m.requires("odoo"):
+          name = re.split(r"[\s\[<>=!~;]", r, 1)[0]
+          print("pypdf" if name.lower() == "pypdf2" else r)
+      PY
+      cat requirements.txt
+      "$PIP" install --no-cache-dir --no-binary libsass,cbor2,rjsmin,zope.interface,zope.event -r requirements.txt
+      site="$VENV/lib/python3.13/site-packages"
+      if ls -d "$site"/*.libs 2>/dev/null | grep -q .; then echo "bundled native libs:"; ls -d "$site"/*.libs; exit 1; fi
+      for p in cryptography PIL lxml psycopg2 gevent greenlet psutil markupsafe OpenSSL cffi PyPDF2; do
+        test ! -e "$site/$p" || { echo "$p installed into the venv instead of from Wolfi (or at all)"; exit 1; }
+      done
+      "$VENV/bin/python" -c "
+      import cryptography, PIL, lxml, psycopg2, gevent, greenlet, psutil, markupsafe, OpenSSL
+      for mod in (cryptography, PIL, lxml, psycopg2, gevent, greenlet, psutil, markupsafe, OpenSSL):
+          assert mod.__file__.startswith('/usr/lib/python3.13/site-packages/'), mod.__file__
+      import odoo.release, pypdf
+      print('odoo', odoo.release.version, 'pypdf', pypdf.__version__, '; native deps from Wolfi')
+      "
+      "$PIP" uninstall -y pip
+      install -d "${dest}/opt/odoo"
+      cp -a "$VENV" "${dest}/opt/odoo/venv"
+      chmod -R a+rX "${dest}/opt/odoo"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /opt/odoo/venv/bin/odoo
+        /opt/odoo/venv/bin/python -c "import odoo.release; print(odoo.release.version)"
