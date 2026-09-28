@@ -139,7 +139,7 @@ pipeline:
   # the k8s client so Patroni can use the Kubernetes API as its DCS (no external
   # etcd; leader election + cluster state live in k8s endpoints/configmaps, and it
   # maintains a `role` pod label the chart's primary Service selects). psycopg[binary]
-  # is Patroni's Postgres driver (bundled libpq wheel, no system libpq dep). The
+  # is Patroni's Postgres driver (python impl on the libpq this package builds). The
   # postgres binaries Patroni shells out to (postgres, pg_ctl, pg_rewind, initdb) are
   # already on PATH at /usr/bin from the install above. This is an ADDED capability:
   # the default entrypoint still runs plain single-node postgres; the chart's HA mode
@@ -151,7 +151,7 @@ pipeline:
       /opt/patroni/venv/bin/pip install --no-cache-dir --upgrade pip
       /opt/patroni/venv/bin/pip install --no-cache-dir \
         "patroni[kubernetes]" \
-        "psycopg[binary]"
+        "psycopg"
 
       # SECURITY BUMPS: Patroni's transitive tree (via the kubernetes client) pulls
       # urllib3 / requests / certifi / setuptools, which routinely lag a fixable CVE.
@@ -164,6 +164,12 @@ pipeline:
         "certifi>=2025.1.31" \
         "setuptools==83.0.0"
       /opt/patroni/venv/bin/pip check
+      # psycopg's python impl on the image's own libpq: psycopg-binary's wheel carried its
+      # own libpq and OpenSSL 3.5.8 in psycopg_binary.libs, where the scan cannot see them.
+      SITE=/opt/patroni/venv/lib/python3.13/site-packages
+      if ls -d "$SITE"/*.libs 2>/dev/null | grep -q .; then echo "bundled native libs:"; ls -d "$SITE"/*.libs; exit 1; fi
+      test ! -e "$SITE/psycopg_binary" || { echo "psycopg-binary is back in the venv"; exit 1; }
+      /opt/patroni/venv/bin/python -c "import psycopg; assert psycopg.pq.__impl__ == 'python', psycopg.pq.__impl__; print('psycopg', psycopg.__version__, psycopg.pq.__impl__, 'libpq', psycopg.pq.version())"
 
       # Remove pip from the shipped venv. pip VENDORS its own copies of msgpack and
       # setuptools under pip/_vendor/, and those are what Trivy flags -- pip 26.x pins

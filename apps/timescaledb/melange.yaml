@@ -124,7 +124,7 @@ pipeline:
   # drives streaming replication + pg_rewind rejoin. There is no Wolfi apk for it,
   # so it is installed from PyPI into an isolated venv on python-3.13. `[kubernetes]`
   # pulls the k8s client so Patroni can use the Kubernetes API as its DCS (no
-  # external etcd). psycopg[binary] is its Postgres driver (bundled libpq wheel).
+  # external etcd). psycopg (python impl, on the image's libpq) is its Postgres driver.
   # The postgres binaries Patroni shells out to (postgres, pg_ctl, pg_rewind,
   # initdb) come from Wolfi's postgresql-17 already in the runtime. This is an
   # ADDED capability: the default entrypoint still runs plain single-node
@@ -137,7 +137,7 @@ pipeline:
       /opt/patroni/venv/bin/pip install --no-cache-dir --upgrade pip
       /opt/patroni/venv/bin/pip install --no-cache-dir \
         "patroni[kubernetes]" \
-        "psycopg[binary]"
+        "psycopg"
 
       # SECURITY BUMPS: Patroni's transitive tree (via the kubernetes client) pulls
       # urllib3 / requests / certifi / setuptools, which routinely lag a fixable CVE.
@@ -154,6 +154,12 @@ pipeline:
         "certifi>=2025.1.31" \
         "setuptools==83.0.0"
       /opt/patroni/venv/bin/pip check
+      # psycopg's python impl on the image's own libpq: psycopg-binary's wheel carried its
+      # own libpq and OpenSSL 3.5.8 in psycopg_binary.libs, where the scan cannot see them.
+      SITE=/opt/patroni/venv/lib/python3.13/site-packages
+      if ls -d "$SITE"/*.libs 2>/dev/null | grep -q .; then echo "bundled native libs:"; ls -d "$SITE"/*.libs; exit 1; fi
+      test ! -e "$SITE/psycopg_binary" || { echo "psycopg-binary is back in the venv"; exit 1; }
+      /opt/patroni/venv/bin/python -c "import psycopg; assert psycopg.pq.__impl__ == 'python', psycopg.pq.__impl__; print('psycopg', psycopg.__version__, psycopg.pq.__impl__, 'libpq', psycopg.pq.version())"
 
       # Assert the CLIs import + run without a DCS (full failover is exercised in the
       # chart's kind gate).
