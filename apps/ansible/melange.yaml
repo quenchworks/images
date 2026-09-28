@@ -23,7 +23,8 @@ package:
     runtime:
       - python-3.13            # the venv references the system interpreter; it must be present at runtime
       - ca-certificates-bundle # TLS to Galaxy / collection & role sources over HTTPS
-      - libgcc                 # C runtime for manylinux wheels (cryptography, cffi, PyYAML C ext)
+      - libgcc                 # C runtime for manylinux wheels (cffi, PyYAML C ext)
+      - py3.13-cryptography    # Wolfi build on its scanned OpenSSL; the wheel links its own statically
       - glibc
       - tzdata
 
@@ -38,6 +39,7 @@ environment:
       - ca-certificates-bundle
       - python-3.13
       - py3.13-pip
+      - py3.13-cryptography
       - build-base             # fallback for any transitive dep that has no wheel (sdist build)
 
 pipeline:
@@ -49,9 +51,15 @@ pipeline:
       VER="${{package.version}}"
       dest="${{targets.destdir}}"
 
-      python3.13 -m venv /opt/ansible/venv
+      python3.13 -m venv --system-site-packages /opt/ansible/venv
       /opt/ansible/venv/bin/pip install --no-cache-dir --upgrade pip
       /opt/ansible/venv/bin/pip install --no-cache-dir "ansible==${VER}"
+      # Wolfi's cryptography (system site-packages) satisfies ansible-core, so pip leaves it
+      # there; the manylinux wheel would carry a static OpenSSL the scan cannot see.
+      SITE=/opt/ansible/venv/lib/python3.13/site-packages
+      if ls -d "$SITE"/*.libs 2>/dev/null | grep -q .; then echo "bundled native libs:"; ls -d "$SITE"/*.libs; exit 1; fi
+      test ! -e "$SITE/cryptography" || { echo "cryptography installed into the venv instead of from Wolfi"; exit 1; }
+      /opt/ansible/venv/bin/python -c "import cryptography as c; assert c.__file__.startswith('/usr/lib/python3.13/site-packages/'), c.__file__; print('cryptography', c.__version__, 'from Wolfi')"
 
       # --- pip-vendored msgpack (GHSA-6v7p-g79w-8964, HIGH) --------------------
       # pip 26.2.1 vendors msgpack 1.1.2 and no fixed pip RELEASE exists yet, so the venv
