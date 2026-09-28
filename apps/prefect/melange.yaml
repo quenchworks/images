@@ -9,6 +9,7 @@ package:
   dependencies:
     runtime:
       - python-3.13            # the venv references the system interpreter
+      - py3.13-cryptography    # Wolfi build on its scanned OpenSSL; the wheel links its own statically
       - ca-certificates-bundle
       - glibc
       - libstdc++
@@ -25,6 +26,7 @@ environment:
       - ca-certificates-bundle
       - python-3.13
       - py3.13-pip
+      - py3.13-cryptography
       - build-base             # fallback for any transitive dep without a wheel
 
 pipeline:
@@ -33,12 +35,18 @@ pipeline:
       VER="${{package.version}}"
       dest="${{targets.destdir}}"
       VENV=/opt/prefect/venv
-      python3.13 -m venv "$VENV"
+      python3.13 -m venv --system-site-packages "$VENV"
       "$VENV/bin/pip" install --no-cache-dir --upgrade pip
       "$VENV/bin/pip" install --no-cache-dir "prefect==${VER}"
       "$VENV/bin/python" -c "import importlib.metadata as m, sys; v = m.version('prefect'); assert v == sys.argv[1], v; print('prefect', v)" "${VER}"
       # the UI build ships in the wheel; without it the server serves the API only
       test -f "$VENV"/lib/python3.13/site-packages/prefect/server/ui/index.html
+      # Wolfi's cryptography (system site-packages) satisfies the requirement, so pip leaves
+      # it there; the manylinux wheel would carry a static OpenSSL the scan cannot see.
+      SITE="$VENV/lib/python3.13/site-packages"
+      if ls -d "$SITE"/*.libs 2>/dev/null | grep -q .; then echo "bundled native libs:"; ls -d "$SITE"/*.libs; exit 1; fi
+      test ! -e "$SITE/cryptography" || { echo "cryptography installed into the venv instead of from Wolfi"; exit 1; }
+      "$VENV/bin/python" -c "import cryptography as c; assert c.__file__.startswith('/usr/lib/python3.13/site-packages/'), c.__file__; print('cryptography', c.__version__, 'from Wolfi')"
       "$VENV/bin/pip" uninstall -y pip
       install -d "${dest}/opt/prefect"
       cp -a "$VENV" "${dest}/opt/prefect/venv"
