@@ -31,9 +31,13 @@ package:
       - ca-certificates-bundle # TLS to the external Postgres backend store / S3 artifact store
       - glibc
       - tzdata
-      # psycopg2-binary ships a manylinux wheel with a vendored libpq, so no system
-      # libpq runtime dep is needed. If Trivy ever flags the vendored libpq, switch the
-      # pip dep to the Wolfi py3.12-psycopg2 package + a `libpq` runtime dep here.
+      # Native packages from Wolfi (system site-packages), built against Wolfi's scanned
+      # libpq, OpenSSL and OpenBLAS. The manylinux wheels pip would pick bundle their own
+      # (psycopg2-binary carried OpenSSL 3.5.8 in psycopg2_binary.libs), where the scan
+      # cannot see them.
+      - py3.12-psycopg2
+      - py3.12-cryptography
+      - py3.12-pandas
 
 environment:
   contents:
@@ -46,6 +50,9 @@ environment:
       - ca-certificates-bundle
       - python-3.12
       - py3.12-pip
+      - py3.12-psycopg2
+      - py3.12-cryptography
+      - py3.12-pandas
       - build-base             # fallback for any transitive dep that has no wheel (sdist build)
 
 pipeline:
@@ -69,7 +76,7 @@ pipeline:
       VER="${{package.version}}"
       dest="${{targets.destdir}}"
 
-      python3.12 -m venv /opt/mlflow/venv
+      python3.12 -m venv --system-site-packages /opt/mlflow/venv
       /opt/mlflow/venv/bin/pip install --no-cache-dir --upgrade pip
       /opt/mlflow/venv/bin/pip install --no-cache-dir \
         "mlflow-skinny==${VER}" \
@@ -86,8 +93,21 @@ pipeline:
         pandas \
         huey \
         aiohttp \
-        psycopg2-binary \
+        psycopg2 \
         boto3
+      # what the scan cannot see must not be there: no bundled native libs, and the
+      # native packages resolve to Wolfi's copies
+      SITE=/opt/mlflow/venv/lib/python3.12/site-packages
+      if ls -d "$SITE"/*.libs 2>/dev/null | grep -q .; then echo "bundled native libs:"; ls -d "$SITE"/*.libs; exit 1; fi
+      for p in psycopg2 psycopg2_binary cryptography numpy pandas; do
+        test ! -e "$SITE/$p" || { echo "$p installed into the venv instead of from Wolfi"; exit 1; }
+      done
+      /opt/mlflow/venv/bin/python -c "
+      import psycopg2, cryptography, numpy, pandas
+      for m in (psycopg2, cryptography, numpy, pandas):
+          assert m.__file__.startswith('/usr/lib/python3.12/site-packages/'), m.__file__
+      print('native deps from Wolfi: psycopg2', psycopg2.__version__, 'numpy', numpy.__version__, 'pandas', pandas.__version__)
+      "
       # --- pip-vendored msgpack (GHSA-6v7p-g79w-8964, HIGH) --------------------
       # pip 26.2.1 vendors msgpack 1.1.2 and no fixed pip RELEASE exists yet, so the venv
       # inherits it. Same four-part fix as apps/python and apps/ansible: sources, BYTECODE,
