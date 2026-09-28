@@ -276,6 +276,11 @@ pipeline:
       assert e.LIBXML_VERSION == xmlsec.get_libxml_version() == e.LIBXML_COMPILED_VERSION, (e.LIBXML_VERSION, xmlsec.get_libxml_version())
       print('lxml on libxml2', e.LIBXML_VERSION, 'libxslt', e.LIBXSLT_VERSION, '; xmlsec', xmlsec.get_libxmlsec_version())
       "
+      # pyroscope-io is a Rust wheel with OpenSSL 3.5.7 linked in, which the scan cannot
+      # see, and Wolfi has no build. authentik imports it only when AUTHENTIK_PYROSCOPE_HOST
+      # is set (authentik/lib/debug.py), so continuous profiling is unavailable here.
+      VIRTUAL_ENV="$VENV_PATH" uv pip uninstall pyroscope-io
+      test ! -e "$sp_chk/pyroscope" || { echo "pyroscope still in the venv"; exit 1; }
       # Assert the editable stubs are gone and the real workspace packages landed in
       # site-packages (fail the build here rather than ship a dangling venv).
       sp="$VENV_PATH/lib/python3.14/site-packages"
