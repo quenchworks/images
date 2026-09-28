@@ -189,6 +189,9 @@ pipeline:
       export UV_LINK_MODE=copy
       export UV_COMPILE_BYTECODE=1
       export UV_SYSTEM_CERTS=1
+      # upstream's Dockerfile list: these link the system OpenSSL, krb5 and libxml2 instead
+      # of the copies their wheels carry (cryptography's links OpenSSL statically)
+      export UV_NO_BINARY_PACKAGE="cryptography lxml python-kadmin-rs xmlsec"
       export VENV_PATH=/ak-root/.venv
       mkdir -p /ak-root
       # lxml + xmlsec build from SOURCE, as upstream's [tool.uv] no-binary-package pin
@@ -275,6 +278,13 @@ pipeline:
       import lxml.etree as e, xmlsec
       assert e.LIBXML_VERSION == xmlsec.get_libxml_version() == e.LIBXML_COMPILED_VERSION, (e.LIBXML_VERSION, xmlsec.get_libxml_version())
       print('lxml on libxml2', e.LIBXML_VERSION, 'libxslt', e.LIBXSLT_VERSION, '; xmlsec', xmlsec.get_libxmlsec_version())
+      "
+      # cryptography built against the same OpenSSL as the interpreter's ssl module
+      "$VENV_PATH/bin/python" -c "
+      import ssl
+      from cryptography.hazmat.backends.openssl.backend import backend
+      assert backend.openssl_version_text() == ssl.OPENSSL_VERSION, (backend.openssl_version_text(), ssl.OPENSSL_VERSION)
+      print('cryptography on', backend.openssl_version_text())
       "
       # pyroscope-io is a Rust wheel with OpenSSL 3.5.7 linked in, which the scan cannot
       # see, and Wolfi has no build. authentik imports it only when AUTHENTIK_PYROSCOPE_HOST
