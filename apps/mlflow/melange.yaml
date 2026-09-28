@@ -36,6 +36,7 @@ package:
       # (psycopg2-binary carried OpenSSL 3.5.8 in psycopg2_binary.libs), where the scan
       # cannot see them.
       - py3.12-psycopg2
+      - py3.12-psycopg          # SQLAlchemy 2.1 maps postgresql:// to psycopg (v3), not psycopg2
       - py3.12-cryptography
       - py3.12-pandas
 
@@ -51,6 +52,7 @@ environment:
       - python-3.12
       - py3.12-pip
       - py3.12-psycopg2
+      - py3.12-psycopg          # SQLAlchemy 2.1 maps postgresql:// to psycopg (v3), not psycopg2
       - py3.12-cryptography
       - py3.12-pandas
       - build-base             # fallback for any transitive dep that has no wheel (sdist build)
@@ -99,14 +101,15 @@ pipeline:
       # native packages resolve to Wolfi's copies
       SITE=/opt/mlflow/venv/lib/python3.12/site-packages
       if ls -d "$SITE"/*.libs 2>/dev/null | grep -q .; then echo "bundled native libs:"; ls -d "$SITE"/*.libs; exit 1; fi
-      for p in psycopg2 psycopg2_binary cryptography numpy pandas; do
+      for p in psycopg psycopg_binary psycopg2 psycopg2_binary cryptography numpy pandas; do
         test ! -e "$SITE/$p" || { echo "$p installed into the venv instead of from Wolfi"; exit 1; }
       done
       /opt/mlflow/venv/bin/python -c "
-      import psycopg2, cryptography, numpy, pandas
-      for m in (psycopg2, cryptography, numpy, pandas):
+      import psycopg, psycopg2, cryptography, numpy, pandas, sqlalchemy
+      for m in (psycopg, psycopg2, cryptography, numpy, pandas):
           assert m.__file__.startswith('/usr/lib/python3.12/site-packages/'), m.__file__
-      print('native deps from Wolfi: psycopg2', psycopg2.__version__, 'numpy', numpy.__version__, 'pandas', pandas.__version__)
+      sqlalchemy.create_engine('postgresql://u:p@127.0.0.1/db')  # the dialect's driver must import
+      print('native deps from Wolfi: psycopg', psycopg.__version__, psycopg.pq.__impl__, 'psycopg2', psycopg2.__version__, 'sqlalchemy', sqlalchemy.__version__, 'numpy', numpy.__version__, 'pandas', pandas.__version__)
       "
       # --- pip-vendored msgpack (GHSA-6v7p-g79w-8964, HIGH) --------------------
       # pip 26.2.1 vendors msgpack 1.1.2 and no fixed pip RELEASE exists yet, so the venv
