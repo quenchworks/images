@@ -1,0 +1,56 @@
+# Metabase runtime image: quench-metabase (the uberjar) on openjdk-25-jre.
+# Nonroot uid 1001, multi-arch, no shell. The application database defaults to
+# H2 in /data (MB_DB_FILE); point MB_DB_TYPE and friends at PostgreSQL for real
+# use. Drivers unpack into /data/plugins, and natives (lz4) into /tmp.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-metabase@local
+
+accounts:
+  groups:
+    - groupname: metabase
+      gid: 1001
+  users:
+    - username: metabase
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  JAVA_HOME: /usr/lib/jvm/default-jvm
+  MB_JETTY_HOST: 0.0.0.0
+  MB_JETTY_PORT: "3000"
+  MB_DB_FILE: /data/metabase.db
+  MB_PLUGINS_DIR: /data/plugins
+  JAVA_TOOL_OPTIONS: "-Djava.io.tmpdir=/tmp -XX:+UseContainerSupport"
+
+work-dir: /data
+
+entrypoint:
+  command: /usr/lib/jvm/default-jvm/bin/java -jar /usr/share/metabase/metabase.jar
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-metabase"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"
