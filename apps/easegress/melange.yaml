@@ -76,10 +76,21 @@ pipeline:
       # the two API renames the float brings in (see above); no-ops if absent
       sed -i 's#"github.com/mitchellh/mapstructure"#"github.com/go-viper/mapstructure/v2"#' pkg/option/option.go
       sed -i 's/\bQuicConfig\b/QUICConfig/g' pkg/object/httpserver/runtime.go
+      # The validator filter imports github.com/golang-jwt/jwt v3.2.2 directly
+      # (CVE-2025-30204, never fixed on v3). v4.5.2 is the fixed successor with
+      # the same API for what the filter uses; the validator tests pass on it.
+      # busybox grep has no --include, hence find.
+      find pkg cmd -name '*.go' -exec grep -l '"github.com/golang-jwt/jwt"' {} + | xargs -r sed -i 's#"github.com/golang-jwt/jwt"#"github.com/golang-jwt/jwt/v4"#'
+      go get github.com/golang-jwt/jwt/v4@v4.5.2
       go mod tidy
       LD="-s -w -X github.com/megaease/easegress/v2/pkg/version.RELEASE=v${{package.version}} -X github.com/megaease/easegress/v2/pkg/version.REPO=https://github.com/easegress-io/easegress"
       go build -trimpath -ldflags "$LD" -o "${{targets.destdir}}/usr/bin/easegress-server" ./cmd/server
       go build -trimpath -ldflags "$LD" -o "${{targets.destdir}}/usr/bin/egctl" ./cmd/client
+      for b in easegress-server egctl; do
+        if go version -m "${{targets.destdir}}/usr/bin/$b" | grep -qE '[[:space:]]github.com/golang-jwt/jwt[[:space:]]'; then
+          echo "❌ golang-jwt/jwt v3 is still linked into $b"; exit 1
+        fi
+      done
       for b in easegress-server egctl; do
         bad="$(go version -m "${{targets.destdir}}/usr/bin/$b" \
           | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor "$b")"
