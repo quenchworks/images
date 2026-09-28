@@ -11,7 +11,12 @@ package:
       - python-3.13            # the venv references the system interpreter
       - ca-certificates-bundle # TLS to the LLM provider APIs
       - glibc
-      - libstdc++              # tokenizers / polars wheels link it
+      - libstdc++              # tokenizers wheel links it
+      # Native code from Wolfi: the wheels carried their own (numpy.libs OpenBLAS, a static
+      # OpenSSL in cryptography, BoringSSL in hf-xet), where the scan cannot see it.
+      - py3.13-numpy-2.5
+      - py3.13-cryptography
+      - py3.13-hf-xet
       - tzdata
 
 environment:
@@ -25,6 +30,9 @@ environment:
       - ca-certificates-bundle
       - python-3.13
       - py3.13-pip
+      - py3.13-numpy-2.5
+      - py3.13-cryptography
+      - py3.13-hf-xet
       - build-base             # fallback for any transitive dep without a wheel
 
 pipeline:
@@ -33,7 +41,7 @@ pipeline:
       VER="${{package.version}}"
       dest="${{targets.destdir}}"
       VENV=/opt/litellm/venv
-      python3.13 -m venv "$VENV"
+      python3.13 -m venv --system-site-packages "$VENV"
       "$VENV/bin/pip" install --no-cache-dir --upgrade pip
       "$VENV/bin/pip" install --no-cache-dir "litellm==${VER}"
 
@@ -64,6 +72,24 @@ pipeline:
       grep -qi '^prisma' proxy-reqs.txt
       "$VENV/bin/pip" install --no-cache-dir -r proxy-reqs.txt
       rm -f proxy-reqs.txt
+
+      # polars (FOCUS, CloudZero and Vantage cost exports) and pyroscope-io (continuous
+      # profiling, imported only when enabled) are Rust wheels with a static BoringSSL or
+      # OpenSSL the scan cannot see, and Wolfi has neither; the proxy imports and serves
+      # without them. numpy, cryptography and hf-xet leave the venv for Wolfi's copies.
+      "$VENV/bin/pip" uninstall -y polars polars-runtime-32 pyroscope-io numpy cryptography hf-xet
+      "$VENV/bin/pip" check
+      SITE="$VENV/lib/python3.13/site-packages"
+      if ls -d "$SITE"/*.libs 2>/dev/null | grep -q .; then echo "bundled native libs:"; ls -d "$SITE"/*.libs; exit 1; fi
+      for p in polars _polars_runtime_32 pyroscope numpy cryptography hf_xet; do
+        test ! -e "$SITE/$p" || { echo "$p still in the venv"; exit 1; }
+      done
+      "$VENV/bin/python" -c "
+      import numpy, cryptography, hf_xet
+      for m in (numpy, cryptography, hf_xet):
+          assert m.__file__.startswith('/usr/lib/python3.13/site-packages/'), m.__file__
+      print('numpy', numpy.__version__, 'cryptography', cryptography.__version__, 'hf_xet from Wolfi')
+      "
 
       # license guard: the proprietary package must not be in the image
       if "$VENV/bin/pip" show litellm-enterprise >/dev/null 2>&1; then
