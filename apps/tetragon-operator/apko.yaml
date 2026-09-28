@@ -1,0 +1,35 @@
+# Tetragon operator image: Wolfi's pinned tetragon-operator apk. Nonroot uid
+# 1001, multi-arch, no shell.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - tetragon-operator=__REL__
+
+accounts:
+  groups:
+    - groupname: tetragon
+      gid: 1001
+  users:
+    - username: tetragon
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/tetragon-operator
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-tetragon-operator"
+  org.opencontainers.image.licenses: "Apache-2.0"

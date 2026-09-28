@@ -1,0 +1,81 @@
+# Builds Tetragon (agent, tetra CLI, BPF objects) from the v__VER__ tag with
+# github.com/cilium/ebpf floated to v0.22.0 (see build.conf for why).
+package:
+  name: quench-tetragon
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Tetragon eBPF runtime-security agent, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+    - license: GPL-2.0-only   # the BPF programs in /var/lib/tetragon
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - bash              # bpf/Makefile sets SHELL=/bin/bash
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - clang-15
+      - elfutils-dev
+      - git
+      - go-1.27
+      - libbpf-dev
+      - linux-headers
+      - llvm-15
+      - make
+      - zlib-dev
+
+pipeline:
+  - uses: git-checkout
+    with:
+      repository: https://github.com/cilium/tetragon
+      tag: v${{package.version}}
+      expected-commit: __COMMIT__
+  - name: Float cilium/ebpf to v0.22.0 and grpc to v1.83.2 (CVE fixes)
+    runs: |
+      set -eu
+      # The same edit upstream made in 4ea98a4: ebpf 0.22 removed
+      # btf.FlushKernelSpec, and these are its only callers.
+      sed -i '/defer ebtf.FlushKernelSpec()/d' pkg/bpf/detect_linux.go
+      sed -i '/^\tflushKernelSpec()$/d' pkg/sensors/load.go
+      sed -i '/^func flushKernelSpec() {$/,/^}$/d; /^\t"github.com\/cilium\/ebpf\/btf"$/d' pkg/sensors/load_linux.go
+      sed -i '/^func flushKernelSpec() {}$/d' pkg/sensors/load_windows.go
+      ! grep -rn -e 'FlushKernelSpec' -e 'flushKernelSpec' --include='*.go' pkg cmd
+      go get github.com/cilium/ebpf@v0.22.0
+      # grpc v1.82.1 carries CVE-2026-84303/84304/84445; v1.83.2 is the
+      # catalog's canonical grpc floor.
+      go get google.golang.org/grpc@v1.83.2
+      go mod tidy
+      go mod vendor
+      grep -q 'github.com/cilium/ebpf v0.22.0' go.mod
+      grep -q 'google.golang.org/grpc v1.83.2' go.mod
+  - name: Compile the BPF programs
+    runs: |
+      make -C bpf -j"$(nproc)"
+  - name: Build tetragon and tetra
+    runs: |
+      set -eu
+      ld="-w -X github.com/cilium/tetragon/pkg/version.Version=${{package.version}}"
+      for b in tetragon tetra; do
+        CGO_ENABLED=0 go build -mod=vendor -trimpath -tags netgo,osusergo \
+          -ldflags "$ld" -o "${{targets.destdir}}/usr/bin/$b" ./cmd/$b
+      done
+      install -d "${{targets.destdir}}/var/lib/tetragon"
+      install -m 0644 bpf/objs/* "${{targets.destdir}}/var/lib/tetragon/"
+      # Capture before grep -q: an early grep exit SIGPIPEs the producer, and
+      # under pipefail a match then reads as a failure.
+      objs="$(ls "${{targets.destdir}}/var/lib/tetragon/")"
+      printf '%s\n' "$objs" | grep -q '\.o$'
+      # The agent has no --version flag; tetra reports the same stamped
+      # pkg/version.Version.
+      ver="$("${{targets.destdir}}/usr/bin/tetra" version 2>&1 || true)"
+      echo "tetra version: $ver"
+      printf '%s\n' "$ver" | grep -F "${{package.version}}"
