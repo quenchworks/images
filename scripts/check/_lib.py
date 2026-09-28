@@ -232,12 +232,18 @@ def report(app, candidates, n=None, keep=None, clean=None):
         # an older line we still ship (cert-manager 1.20.3 while 1.20.4 existed,
         # clickhouse 26.7.14.3 while 26.7.15.52 existed) never showed up. Flag any
         # shipped version with a newer same-line patch that we do not ship.
+        # Only OTHER lines: the newest line is already covered by the window, and
+        # a flat window of one line (buildkite-agent 4.0.4 4.0.5 4.0.6) would
+        # otherwise report the same patch once per entry.
         shipped = set(cur)
+        newest_pre = cur[-1].rsplit(".", 1)[0] + "."
         for c in cur[:-1]:
             pre = c.rsplit(".", 1)[0] + "."
+            if pre == newest_pre:
+                continue
             same = [v for v in cands if v.startswith(pre) and v.count(".") == c.count(".")
                     and v not in shipped and vkey(v) > vkey(c)]
-            if same:
+            if same and max(same, key=vkey) not in behind:
                 behind.append(max(same, key=vkey))
         status = f"UPDATE -> {behind}" if behind else "ok"
     print(f"{app:20s} have={(cur[-1] if cur else '?'):>14s}  latest{n}={top}  {status}")
