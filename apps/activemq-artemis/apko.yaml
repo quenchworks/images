@@ -1,0 +1,59 @@
+# Assembles the Apache Artemis runtime image on a Wolfi JRE. Nonroot, multi-arch, SBOM
+# by apko. One acceptor on :61616 speaks CORE, AMQP, STOMP, HORNETQ, MQTT and OpenWire;
+# AMQP :5672, STOMP :61613, HornetQ :5445 and MQTT :1883 have their own. The web console
+# on :8161 accepts loopback clients only (upstream's default). Login is required and
+# the image has no users: mount etc/artemis-users.properties and artemis-roles.properties.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-activemq-artemis@local
+
+accounts:
+  groups:
+    - groupname: artemis
+      gid: 1001
+  users:
+    - username: artemis
+      uid: 1001
+      gid: 1001
+      homedir: /data
+  run-as: 1001
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  ARTEMIS_HOME: /opt/artemis
+  ARTEMIS_INSTANCE: /opt/artemis-instance
+  JDK_JAVA_OPTIONS: "-Xms64m -XX:MaxRAMPercentage=75.0"
+
+work-dir: /opt/artemis-instance
+
+# the instance's bin/artemis command line (etc/artemis.profile JAVA_ARGS minus the fixed
+# heap), with java.io.tmpdir=/tmp
+entrypoint:
+  command: /usr/lib/jvm/java-21-openjdk/bin/java -XX:AutoBoxCacheMax=20000 -XX:+PrintClassHistogram -XX:+UseG1GC -XX:+UseStringDeduplication -XX:+ExitOnOutOfMemoryError -Dhawtio.disableProxy=true -Dhawtio.realm=activemq -Dhawtio.offline=true -Dhawtio.rolePrincipalClasses=org.apache.activemq.artemis.spi.core.security.jaas.RolePrincipal -Dhawtio.http.strictTransportSecurity=max-age=31536000;includeSubDomains;preload -Djolokia.policyLocation=classpath:jolokia-access.xml -Dlog4j2.disableJmx=true --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -Dhawtio.roles=amq -Djava.security.auth.login.config=/opt/artemis-instance/etc/login.config -classpath /opt/artemis/lib/artemis-boot.jar -Dartemis.home=/opt/artemis -Dartemis.instance=/opt/artemis-instance -Djava.io.tmpdir=/tmp -Ddata.dir=/data -Dartemis.instance.etc=/opt/artemis-instance/etc org.apache.activemq.artemis.boot.Artemis
+cmd: run
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-activemq-artemis"
+  org.opencontainers.image.licenses: "Apache-2.0"

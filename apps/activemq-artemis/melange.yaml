@@ -1,0 +1,64 @@
+# Packages Apache Artemis (official binary distribution) onto Wolfi, plus a broker
+# instance made at build time with `artemis create`, so the image starts the broker
+# with the instance script's JVM command line and no shell. The instance ships with no
+# users: mount etc/artemis-users.properties and etc/artemis-roles.properties (the chart
+# does it from a Secret). Journal, paging and the log files live under /data.
+package:
+  name: quench-activemq-artemis
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Apache Artemis, packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-21-jre     # Artemis 2.57 needs Java 17+
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - openjdk-21-jre
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://dlcdn.apache.org/artemis/artemis/${{package.version}}/apache-artemis-${{package.version}}-bin.tar.gz
+      expected-sha256: "__SHA256__"
+      strip-components: 1
+  - runs: |
+      set -eu
+      export JAVA_HOME=/usr/lib/jvm/java-21-openjdk
+      home="${{targets.destdir}}/opt/artemis"
+      inst="${{targets.destdir}}/opt/artemis-instance"
+      install -d "$home"
+      cp -r lib web schema LICENSE NOTICE licenses "$home/"
+      # create writes absolute paths into the instance; aim them at the installed tree
+      ./bin/artemis create "$inst" --silent --nio --no-autotune --require-login \
+        --user build --password "$(od -An -tx1 -N24 /dev/urandom | tr -d ' \n')" \
+        --home /opt/artemis --data /data
+      grep -rl "${{targets.destdir}}" "$inst/etc" | xargs -r sed -i "s|${{targets.destdir}}||g"
+      # the build user's hashed random password is nobody's credential; ship no users
+      printf '# Mount this file (user = password lines) to create broker users.\n' > "$inst/etc/artemis-users.properties"
+      printf '# Mount this file (role = user,user lines). The console needs role amq.\n' > "$inst/etc/artemis-roles.properties"
+      # the instance tree is read-only in the image; logs go under /data
+      sed -i 's|${sys:artemis.instance}/log/|/data/log/|' "$inst/etc/log4j2.properties"
+      rm -rf "$inst/bin" "$inst/lib" "$inst/log" "$inst/tmp"
+      # `artemis run` takes <instance>/lock/cli.lock and the web server unpacks the
+      # console into <instance>/tmp; both point at the writable /tmp
+      ln -s /tmp "$inst/lock"
+      ln -s /tmp "$inst/tmp"
+      if grep -rq "${{targets.destdir}}" "$inst/etc"; then echo "build path left in etc"; exit 1; fi
+      chmod -R a+rX "$home" "$inst"
+
+test:
+  pipeline:
+    - runs: |
+        test -f /opt/artemis/lib/artemis-boot.jar
+        test -f /opt/artemis-instance/etc/broker.xml
+        grep -q '<journal-directory>/data/journal' /opt/artemis-instance/etc/broker.xml
