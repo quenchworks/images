@@ -14,6 +14,12 @@ package:
       - glibc
       - libstdc++
       - tzdata
+      # Native code from Wolfi, on its scanned OpenSSL: the confluent-kafka wheel carried
+      # librdkafka with OpenSSL 3.5.7 in confluent_kafka.libs, grpcio a static BoringSSL
+      # and cryptography a static OpenSSL.
+      - librdkafka             # confluent-kafka is rebuilt from source against it
+      - py3.13-grpcio-1.84
+      - py3.13-cryptography
 
 environment:
   contents:
@@ -27,7 +33,11 @@ environment:
       - ca-certificates-bundle
       - go                     # setuptools-golang builds protopacelib with the system go
       - python-3.13
+      - python-3.13-dev        # Python.h for the confluent-kafka source build
       - py3.13-pip
+      - librdkafka-dev
+      - py3.13-grpcio-1.84
+      - py3.13-cryptography
 
 pipeline:
   - uses: fetch
@@ -45,7 +55,7 @@ pipeline:
       FLOOR="golang.org/x/crypto@v0.56.0 golang.org/x/text@v0.41.0 golang.org/x/sys@v0.47.0 golang.org/x/mod@v0.40.0 golang.org/x/net@v0.58.0 golang.org/x/sync@v0.22.0"
       ( cd go/protopace && go get $FLOOR && go mod tidy )
       VENV=/opt/karapace/venv
-      python3.13 -m venv "$VENV"
+      python3.13 -m venv --system-site-packages "$VENV"
       "$VENV/bin/pip" install --no-cache-dir --upgrade pip
       SETUPTOOLS_SCM_PRETEND_VERSION="$VER" "$VENV/bin/pip" install --no-cache-dir .
       "$VENV/bin/python" -c "import importlib.metadata as m, sys; v = m.version('karapace'); assert v == sys.argv[1], v; print('karapace', v)" "$VER"
@@ -58,6 +68,24 @@ pipeline:
         low="$(printf '%s\n%s\n' "$got" "$want" | sort -V | head -1)"
         [ "$low" = "$want" ] || { echo "FATAL: protopacelib links $mod $got, below $want"; exit 1; }
       done
+      # confluent-kafka stays that distribution at the same version, compiled from its
+      # sdist against Wolfi librdkafka (same release line); grpcio and cryptography leave the
+      # venv for Wolfi's copies in the system site-packages. pip check confirms the ranges.
+      CK=$("$VENV/bin/python" -c "import importlib.metadata as m; print(m.version('confluent-kafka'))")
+      "$VENV/bin/pip" uninstall -y grpcio cryptography
+      "$VENV/bin/pip" install --no-cache-dir --no-deps --force-reinstall --no-binary confluent-kafka "confluent-kafka==${CK}"
+      "$VENV/bin/pip" check
+      SITE="$VENV/lib/python3.13/site-packages"
+      if ls -d "$SITE"/*.libs 2>/dev/null | grep -q .; then echo "bundled native libs:"; ls -d "$SITE"/*.libs; exit 1; fi
+      for p in grpc cryptography; do test ! -e "$SITE/$p" || { echo "$p still in the venv"; exit 1; }; done
+      "$VENV/bin/python" -c "
+      import sys, grpc, cryptography, confluent_kafka
+      for m in (grpc, cryptography):
+          assert m.__file__.startswith('/usr/lib/python3.13/site-packages/'), m.__file__
+      lib = confluent_kafka.libversion()[0]
+      assert lib.split('.')[:2] == sys.argv[1].split('.')[:2], (lib, sys.argv[1])
+      print('confluent-kafka', confluent_kafka.version()[0], 'on librdkafka', lib, '; grpc', grpc.__version__, 'cryptography', cryptography.__version__, 'from Wolfi')
+      " "$CK"
       "$VENV/bin/pip" uninstall -y pip
       install -d "$dest/opt/karapace"
       cp -a "$VENV" "$dest/opt/karapace/venv"
