@@ -29,9 +29,13 @@ package:
       - glibc
       - libgcc                 # C++ runtime for manylinux wheels (pydantic-core, cryptography, etc.)
       - tzdata                 # Airflow is timezone-aware (pendulum) and reads the zoneinfo DB
-      # psycopg2-binary (pulled by the [postgres] extra) ships a manylinux wheel with a
-      # vendored libpq, so no system libpq runtime dep is needed. If Trivy ever flags the
-      # vendored libpq, switch to the Wolfi py3.12-psycopg2 pkg + a `libpq` runtime dep.
+      # Native code from Wolfi, built against its scanned OpenSSL and libpq. The manylinux
+      # wheels bundle their own where the scan cannot see them: psycopg2-binary and
+      # psycopg-binary each carried OpenSSL 3.5.8 in a .libs dir, grpcio a static
+      # BoringSSL, cryptography a static OpenSSL. See the install step.
+      - py3.12-grpcio-1.83     # the line Airflow's constraints pin; the build asserts it
+      - py3.12-cryptography
+      - libpq-18               # psycopg2 (rebuilt from source) and psycopg's python impl
 
 environment:
   contents:
@@ -44,6 +48,10 @@ environment:
       - ca-certificates-bundle
       - python-3.12
       - py3.12-pip
+      - py3.12-grpcio-1.83
+      - py3.12-cryptography
+      - python-3.12-dev        # Python.h for the psycopg2-binary source build
+      - postgresql-18-dev      # pg_config and libpq headers for the psycopg2-binary source build
       - build-base             # fallback for any transitive dep that has no wheel (sdist build)
 
 pipeline:
@@ -62,7 +70,7 @@ pipeline:
       # dir inside the sandbox for the build-time assertion below.
       export AIRFLOW_HOME=/tmp/airflow-build
 
-      python3.12 -m venv /opt/airflow-venv
+      python3.12 -m venv --system-site-packages /opt/airflow-venv
       /opt/airflow-venv/bin/pip install --no-cache-dir --upgrade pip
       /opt/airflow-venv/bin/pip install --no-cache-dir \
         "apache-airflow[celery,postgres,redis]==${VER}" \
@@ -88,6 +96,32 @@ pipeline:
         "starlette>=1.3.1" \
         "tornado>=6.5.7" \
         "aiosmtplib>=5.1.1"
+      # --- native packages: Wolfi's, or rebuilt from source ----------------------
+      # The providers require psycopg2-binary by name, so it stays that distribution at
+      # the same version, compiled from its sdist against Wolfi's libpq (no .libs). grpcio,
+      # cryptography and psycopg-binary come out of the venv: the system site-packages hold
+      # Wolfi's grpcio and cryptography, and psycopg falls back to its python impl on
+      # Wolfi's libpq (pip check does not enforce the [binary] extra).
+      V=/opt/airflow-venv
+      P2=$("$V/bin/python" -c "import importlib.metadata as m; print(m.version('psycopg2-binary'))")
+      GR=$("$V/bin/python" -c "import importlib.metadata as m; print(m.version('grpcio'))")
+      "$V/bin/pip" uninstall -y grpcio psycopg-binary cryptography
+      "$V/bin/pip" install --no-cache-dir --no-deps --force-reinstall --no-binary psycopg2-binary "psycopg2-binary==${P2}"
+      SITE="$V/lib/python3.12/site-packages"
+      if ls -d "$SITE"/*.libs 2>/dev/null | grep -q .; then echo "bundled native libs:"; ls -d "$SITE"/*.libs; exit 1; fi
+      for p in grpc cryptography psycopg_binary; do
+        test ! -e "$SITE/$p" || { echo "$p still in the venv"; exit 1; }
+      done
+      "$V/bin/python" -c "
+      import sys, grpc, cryptography, psycopg, psycopg2
+      for m in (grpc, cryptography):
+          assert m.__file__.startswith('/usr/lib/python3.12/site-packages/'), m.__file__
+      assert grpc.__version__.rsplit('.', 1)[0] == sys.argv[1].rsplit('.', 1)[0], (grpc.__version__, sys.argv[1])
+      assert psycopg.pq.__impl__ == 'python', psycopg.pq.__impl__
+      print('grpc', grpc.__version__, '(constraints', sys.argv[1] + ') cryptography', cryptography.__version__,
+            'psycopg', psycopg.pq.__impl__, psycopg.pq.version(), 'psycopg2', psycopg2.__version__)
+      " "$GR"
+
       # --- pip-vendored msgpack (GHSA-6v7p-g79w-8964, HIGH) --------------------
       # pip 26.2.1 vendors msgpack 1.1.2 and no fixed pip RELEASE exists yet, so the venv
       # inherits it. Same four-part fix as apps/python and apps/ansible: sources, BYTECODE,
