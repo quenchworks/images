@@ -1,0 +1,89 @@
+# Builds Concourse from the release tag: the Elm/less web UI with yarn, embedded into the
+# one `concourse` binary (web/handler.go go:embeds web/public), and the static init that
+# worker containers run as PID 1. The build-time Node tree never reaches the package.
+package:
+  name: quench-concourse
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Concourse CI (web and worker), built from source"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - bash
+      - build-base
+      - glibc-dev            # libc.a: init is linked statically
+      - ca-certificates-bundle
+      - go-1.27
+      - nodejs-24
+      - corepack
+      - git
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/concourse/concourse/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Build the web UI (less + elm + webpack) into web/public
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" COREPACK_HOME=/tmp/corepack COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+      mkdir -p /tmp/corepack-bin && corepack enable --install-directory /tmp/corepack-bin
+      export PATH="/tmp/corepack-bin:$PATH"
+      yarn install --immutable
+      yarn build
+      test -s web/public/elm.min.js && test -s web/public/main.css
+
+  - name: Build the concourse binary and init
+    runs: |
+      set -eu
+      export CGO_ENABLED=0 GOFLAGS=-mod=mod GO111MODULE=on GOTOOLCHAIN=local
+      # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
+      # FLOOR is a floor, not a pin. Measured 2026-09-29 on 8.3.1: containerd/v2 2.3.5,
+      # grpc 1.83.1, x/mod 0.38.0 and the otel 1.44.0 family (sdk carries
+      # CVE-2026-81870); the otel modules release as a set, so they move together.
+      FLOOR="github.com/containerd/containerd/v2@v2.3.6 google.golang.org/grpc@v1.83.2 golang.org/x/mod@v0.40.0 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      go list -m -e $MODS
+      need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
+      go mod tidy
+      go build -trimpath -ldflags "-s -w -X github.com/concourse/concourse.Version=${{package.version}}" \
+        -o "${{targets.destdir}}/usr/bin/concourse" ./cmd/concourse
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/concourse" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor concourse)"
+      [ -z "$bad" ] || { echo "0-CVE float did not reach concourse:"; echo "$bad"; exit 1; }
+      # PID 1 inside worker containers: a static C program, so it runs in any rootfs
+      install -d "${{targets.destdir}}/usr/local/concourse/bin"
+      gcc -O2 -static -o "${{targets.destdir}}/usr/local/concourse/bin/init" cmd/init/init.c
+      "${{targets.destdir}}/usr/bin/concourse" --version | grep -qx "${{package.version}}"
+
+test:
+  pipeline:
+    - runs: |
+        concourse --version
+        test -x /usr/local/concourse/bin/init

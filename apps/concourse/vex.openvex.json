@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/concourse/2026-09-29",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-09-29T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2020-5415"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/concourse/dex@v1.14.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "inline_mitigations_already_exist",
+      "impact_statement": "PROVEN false-positive, measured 2026-09-29 on 8.3.1. CVE-2020-5415 is Concourse's own advisory (GitLab login mapped the user's display name to the user identity, allowing impersonation). Its fixed versions mix two version spaces: Concourse releases 6.3.1 and 6.4.1, and a concourse/dex pseudo-version 0.0.0-20200730150203-821b48abfd88. The dex fork is now tagged v1.14.0 (committer date 2026-05-19), which sorts below 6.3.1, so every current dex release matches by construction. Checked the code rather than the numbers: in v1.14.0 connector/gitlab/gitlab.go sets PreferredUsername to user.Username (the GitLab login) and Username to the display name; Concourse 8.3.1 authorizes team membership on the token's preferred_username first (atc/api/accessor/accessor.go:236, userName() returns the preferred_username claim when set), and skymarshal passes claims.PreferredUsername to its display user id generator (skymarshal/token/access_token.go:108-114). The identity Concourse matches against a team's GitLab user allow-list is therefore the login, which a user cannot set to someone else's; the display name the 2020 flaw keyed on is not what authorizes."
+    }
+  ]
+}
