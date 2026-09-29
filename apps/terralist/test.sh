@@ -40,6 +40,8 @@ curl -fsS "$B/v1/modules/quench/label/null/versions" | grep -q '"version":"0.25.
 get="$(curl -fsS -o /dev/null -D - "$B/v1/modules/quench/label/null/0.25.0/download" | tr -d '\r' | sed -n 's/^[Xx]-[Tt]erraform-[Gg]et: //p')"
 [ -n "$get" ] || { echo "no X-Terraform-Get"; exit 1; }
 curl -fsS -o "$WORK/m.zip" "$get"
-unzip -l "$WORK/m.zip" | grep -q 'main.tf' || { echo "module zip has no main.tf"; exit 1; }
+# grep a file, not a pipe: under pipefail, grep -q closing early SIGPIPEs unzip and fails a match
+unzip -l "$WORK/m.zip" > "$WORK/m.list"
+grep -q 'main.tf' "$WORK/m.list" || { echo "module zip has no main.tf"; exit 1; }
 if docker logs "$NAME" 2>&1 | grep -E '"level":"(error|fatal|panic)"'; then echo "terralist logged errors"; exit 1; fi
 echo "smoke test passed (terralist ${WANT:-?}, uid $user, module uploaded, listed and served)"
