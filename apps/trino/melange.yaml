@@ -68,6 +68,21 @@ pipeline:
       plug tpcds 902f4d866babc32c7a7148433174d2f397bea5cc8e9a46031735a1df28d01ca6
       plug tpch 303d89111e6ed671074bd54d9967d3a18a99d7510c26ac7b0c342abe26d76fe0
       plug iceberg 59b4b9c5013b6df4b4459583aff6f4cb97c40cab9edf8d133dca04ea869b1140
+      # jackson-databind 2.22.1 (CVE-2026-68497/-19032/-83557) (and tools.jackson 3.2.1) sit in lib/ and
+      # every plugin; 2.22.2 and 3.2.2 fix them. Content swap, filename kept.
+      jd=$(mktemp)
+      curl -fsSL -o "$jd" https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-databind/2.22.2/jackson-databind-2.22.2.jar
+      echo "d0da14c12b16b5d54719aa172d83b542ff4abeb8b0fb7db476fde8ceece760ca  $jd" | sha256sum -c -
+      jd3=$(mktemp)
+      curl -fsSL -o "$jd3" https://repo1.maven.org/maven2/tools/jackson/core/jackson-databind/3.2.2/jackson-databind-3.2.2.jar
+      echo "d27509f990d990fc779a01f3f612005ff6c67dc3bb0a720f5f4d9b2f5c713401  $jd3" | sha256sum -c -
+      # the name prefix varies (group-prefixed in most plugins, bare in others), so match the suffix
+      test -n "$(find "$dest" -name '*jackson-databind-2.22.1.jar')" || { echo "databind 2.22.1 missing; dist moved"; exit 1; }
+      test -n "$(find "$dest" -name '*jackson-databind-3.2.1.jar')" || { echo "databind 3.2.1 missing; dist moved"; exit 1; }
+      chmod 644 "$jd" "$jd3"  # mktemp is 0600, cp copies the mode, and uid 1001 could not read the jars
+      find "$dest" -name '*jackson-databind-2.22.1.jar' -exec cp "$jd" {} \;
+      find "$dest" -name '*jackson-databind-3.2.1.jar' -exec cp "$jd3" {} \;
+      rm -f "$jd" "$jd3"
       # iceberg bundles netty 4.2.16 (CVE-2026-75595 CRITICAL and three more),
       # httpclient5 5.6.2 and libthrift 0.23.0. The whole netty family moves to
       # 4.2.17 together; natives for other operating systems are dropped.
