@@ -50,5 +50,22 @@ pipeline:
       # test proves that.
       rm -rf "$app"/node_modules/.pnpm/vitest@* "$app"/node_modules/.pnpm/@vitest+*
       ! find "$app/node_modules" -maxdepth 3 -name 'vitest*' | grep -q .
+      # ip-address 10.5.0 (CVE-2026-101910/-101913) and undici 8.10.0 (CVE-2026-85024) come from
+      # upstream's frozen lockfile, so the traced copies are swapped in place for the fixed
+      # same-line releases (the lockfile is not editable under --frozen-lockfile). Node fetches
+      # them because the build env has no curl.
+      swap_pnpm() {  # <name> <version> <sha256>
+        node -e 'fetch(process.argv[1]).then(r=>r.arrayBuffer()).then(b=>require("fs").writeFileSync("/tmp/p.tgz",Buffer.from(b)))' "https://registry.npmjs.org/$1/-/$1-$2.tgz"
+        echo "$3  /tmp/p.tgz" | sha256sum -c -
+        rm -rf /tmp/pk && mkdir /tmp/pk && tar -xzf /tmp/p.tgz -C /tmp/pk
+        n=0
+        for d in "$app"/node_modules/.pnpm/"$1"@*/node_modules/"$1"; do
+          test -d "$d" || continue
+          rm -rf "$d" && mkdir "$d" && cp -a /tmp/pk/package/. "$d/" && n=$((n+1))
+        done
+        test "$n" -gt 0 || { echo "no traced $1 copy found; the standalone layout moved"; exit 1; }
+      }
+      swap_pnpm ip-address 10.5.1 203c3d396fa03f1712802cb38859cb9b5bf689f8fd30296d3d1d159d3f34e6f8
+      swap_pnpm undici 8.10.2 740638ae32d78d2646a6727950e365fa26b6fa87913fa096e60ed4afeb4634aa
       test -f "$app/server.js"
       grep -q "\"version\": \"${{package.version}}\"" "$app/package.json"

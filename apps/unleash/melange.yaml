@@ -36,7 +36,7 @@ pipeline:
       export HOME="$(mktemp -d)"
       # Raise the vulnerable dependencies before install. router@1.3.8 pins path-to-regexp
       # 0.1.7 (fixed in 0.1.13, same 0.1 API); ip-address is a direct dependency that 8.0.3
-      # pins at 10.2.0 (fixed in 10.3.1, what 8.1 and 8.2 already ship). A raise only
+      # pins at 10.2.0 (fixed in 10.5.1, CVE-2026-101910/-101913). A raise only
       # ever goes up: a line that already carries a newer ip-address keeps it.
       node -e '
         const fs = require("fs"), p = JSON.parse(fs.readFileSync("package.json"));
@@ -44,7 +44,16 @@ pipeline:
         const cur = (p.dependencies || {})["ip-address"];
         const v = s => s.replace(/^[^0-9]*/, "").split(".").map(Number);
         const lt = (a, b) => { a = v(a); b = v(b); for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] < b[i]; return false; };
-        if (cur && lt(cur, "10.3.1")) p.dependencies["ip-address"] = "10.3.1";
+        if (cur && lt(cur, "10.5.1")) p.dependencies["ip-address"] = "10.5.1";
+        fs.writeFileSync("package.json", JSON.stringify(p, null, 2));
+      '
+      # nodemailer 9.x carries GHSA-6vj9-mwq6-2f5v, fixed only in 10.0.2+ (10.x needs Node >= 20 and
+      # keeps a CommonJS entry). A direct dependency is bumped in place, because npm refuses an
+      # override that conflicts with one.
+      node -e '
+        const fs = require("fs"), p = JSON.parse(fs.readFileSync("package.json"));
+        p.overrides = p.overrides || {};
+        if ((p.dependencies || {}).nodemailer) p.dependencies.nodemailer = "10.0.12"; else p.overrides.nodemailer = "10.0.12";
         fs.writeFileSync("package.json", JSON.stringify(p, null, 2));
       '
       # --ignore-scripts: the only install scripts are ssh2/cpu-features (optional native
@@ -56,7 +65,7 @@ pipeline:
         const fs = require("fs"), path = require("path");
         const v = s => s.split(".").map(Number);
         const lt = (a, b) => { a = v(a); b = v(b); for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] < b[i]; return false; };
-        const floor = [["path-to-regexp", "0.1.", "0.1.13"], ["ip-address", "10.", "10.3.1"]];
+        const floor = [["path-to-regexp", "0.1.", "0.1.13"], ["ip-address", "10.", "10.5.1"]];
         const bad = [];
         (function walk(d) {
           for (const e of fs.readdirSync(d, { withFileTypes: true })) {

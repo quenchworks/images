@@ -103,7 +103,7 @@ pipeline:
         const p=JSON.parse(fs.readFileSync("package.json","utf8"));
         // vulnerable DIRECT deps -> bump the declaration to the Trivy fixed version
         Object.assign(p.dependencies,{
-          "nodemailer":"9.1.1",           // direct 8.0.10; GHSA-2x7j/8m3c/cc9r/wmmp all need >= 9.1.0/9.1.1
+          "nodemailer":"10.0.10",          // direct 8.0.10; GHSA-6vj9-mwq6-2f5v fixed only at 10.0.2+ (10.x = Node>=20 + TS build, CJS entry kept)
           "tar":"7.5.22",                 // direct ^7.5.16 (CVE-2026-59873 CRIT +3, GHSA-r292 MED -> 7.5.21;
                                           // 7.5.22 is the newest 7.5.x, so the weekly node-tar
                                           // advisories have some headroom before the next bump)
@@ -194,7 +194,7 @@ pipeline:
                                           // GHSA-3f6p HIGH (auth-plugin downgrade) needs
                                           // >= 3.22.0, GHSA-rgwj MEDIUM (zlib-inflate DoS)
                                           // needs >= 3.23.1
-          "nodemailer":"9.1.1",
+          "nodemailer":"10.0.10",
           "@opentelemetry/propagator-jaeger":"2.9.0",  // transitive (CVE-2026-59892 HIGH)
           "protobufjs":"8.6.6",           // transitive 8.6.0 < 8.6.6 (CVE-2026-59876/59877)
           "qs":"6.16.0",                  // CVE-2026-82417/82562 landed on the prior 6.15.2 pin
@@ -224,9 +224,11 @@ pipeline:
                                           // (CVE-2026-63376/77465). 3->4 is a major bump but
                                           // toml.parse() is unchanged; smoke-tested against
                                           // the real installed copy.
-          // undici: no override. 2.38.7 resolves every copy above its CVE fix floor on its
-          // own (root 7.29.1, 7.29.0, 4x 6.28.1) and the 5.x edge the old `undici@5` pin
-          // existed for is GONE -- see the undici floor assert below for the evidence.
+          // undici CVE-2026-85024 needs 6.28.1 / 7.29.1 / 8.10.2. Scoped per major so each copy
+          // moves within its own line (the tree carries more than one major).
+          "undici@6":"6.28.1",
+          "undici@7":"7.29.1",
+          "undici@8":"8.10.2",
           "uuid":"11.1.1",
           "ws":"8.21.0"
         });
@@ -325,7 +327,7 @@ pipeline:
       # float moves those exports the build must fail rather than ship a broken createSafeNodeFetch.
       node - <<'JSEOF'
       const fs = require("fs"), path = require("path");
-      const FLOOR = { 6: [6, 28, 0], 7: [7, 29, 0], 8: [8, 9, 0] };
+      const FLOOR = { 6: [6, 28, 1], 7: [7, 29, 1], 8: [8, 10, 2] };
       const cmp = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
       // Recurse manually rather than glob: nested copies live many levels down, and
       // readdirSync/isDirectory does not follow symlinks, so nothing is visited twice.

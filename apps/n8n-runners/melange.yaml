@@ -27,6 +27,8 @@ package:
   copyright:
     - license: LicenseRef-n8n-Sustainable-Use-License-1.0
   dependencies:
+    replaces:
+      - npm-12                 # the package that owns npm; ships ip-address 10.5.1 over its bundled copy (step 5)
     runtime:
       - nodejs-24              # JS runner + the launcher spawns node
       - python-3.13            # base interpreter the Python runner venv references
@@ -136,6 +138,7 @@ pipeline:
       #   * qs 6.15.2 -> 6.16.0 (CVE-2026-82417 + CVE-2026-82562 DoS). Transitive via n8n-core
       #     and @n8n/backend-network (both pin 6.15.2 exactly, so it cannot float); same 6.x
       #     major, no API change.
+      #   * ip-address -> 10.5.1 (CVE-2026-101910/-101913), transitive via socks.
       #   * stream-json 1.9.1 -> 3.5.0 (CVE-2026-71429 DoS). Transitive via @n8n/backend-common
       #     (pinned 1.9.1 exactly). 3.5.0 is the first fixed release, so the two-major jump is
       #     forced -- and 3.x is an ESM-only API redesign, hence the migration step below.
@@ -148,6 +151,7 @@ pipeline:
         p.overrides=Object.assign(p.overrides||{},{
           "brace-expansion":"5.0.9",
           "fast-xml-parser":"5.7.0",
+          "ip-address":"10.5.1",
           "nanoid@3":"3.3.18",
           "nanoid@5":"5.1.6",
           "qs":"6.16.0",
@@ -389,6 +393,37 @@ pipeline:
       # runners run with HOME=/home/runner and workdir there.
       install -d "$dest/home/runner"
 
+  # 5. npm's own bundled ip-address (Wolfi npm ships 10.3.1; upstream npm 12.1.0 still bundles
+  #    10.5.0, one short of CVE-2026-101910/-101913's fix in 10.5.1). This package declares
+  #    `replaces: npm`, so apk lets its copy win over the npm package's.
+  - runs: |
+      set -eu
+      D="${{targets.destdir}}"
+      wget -q -O /tmp/ipaddr.tgz https://registry.npmjs.org/ip-address/-/ip-address-10.5.1.tgz
+      echo "203c3d396fa03f1712802cb38859cb9b5bf689f8fd30296d3d1d159d3f34e6f8  /tmp/ipaddr.tgz" | sha256sum -c -
+      mkdir -p /tmp/ipaddr "$D/usr/lib/node_modules/npm/node_modules/ip-address"
+      tar -xzf /tmp/ipaddr.tgz -C /tmp/ipaddr
+      cp -a /tmp/ipaddr/package/. "$D/usr/lib/node_modules/npm/node_modules/ip-address/"
+      chmod -R a+rX,go-w "$D/usr/lib/node_modules/npm/node_modules/ip-address"
+      # Wolfi's npm SPDX still records the old ip-address, and Trivy scans /var/lib/db/sbom as its
+      # own source, so the phantom 10.3.1 would keep the finding after the files are fixed.
+      DESTDIR_="$D" python3 - <<'PYEOF2'
+      import glob, json, os, pathlib
+      src = glob.glob("/var/lib/db/sbom/npm-12-*.spdx.json")
+      assert len(src) == 1, f"expected one npm-12 SPDX, got {src}"
+      doc = json.loads(pathlib.Path(src[0]).read_text())
+      hit = 0
+      for i, pkg in enumerate(doc["packages"]):
+          if pkg.get("name") == "ip-address" and pkg.get("versionInfo") != "10.5.1":
+              doc["packages"][i] = json.loads(json.dumps(pkg).replace(pkg["versionInfo"], "10.5.1"))
+              hit += 1
+      assert hit, "npm-12 SPDX no longer lists a stale ip-address: drop step 5"
+      dst = pathlib.Path(os.environ["DESTDIR_"]) / "var/lib/db/sbom" / os.path.basename(src[0])
+      dst.parent.mkdir(parents=True, exist_ok=True)
+      dst.write_text(json.dumps(doc, indent=2) + "\n")
+      print(f"corrected {hit} ip-address entry in {dst.name}")
+      PYEOF2
+
 test:
   pipeline:
     - runs: |
@@ -400,4 +435,5 @@ test:
         # the python runner venv must import its pinned deps + the runner module
         /opt/runners/task-runner-python/.venv/bin/python -c "import urllib3, websockets; print('py-runner deps ok')"
         # package managers present for operator customization
+        grep -q '"version": "10.5.1"' /usr/lib/node_modules/npm/node_modules/ip-address/package.json
         for t in uv poetry npm yarn pnpm; do command -v "$t" >/dev/null || { echo "missing $t"; exit 1; }; done

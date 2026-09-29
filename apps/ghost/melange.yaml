@@ -108,7 +108,7 @@ pipeline:
         "  'dompurify@<3.4.13': 3.4.13",         # GHSA-c2j3-45gr-mqc4, then a further advisory
                                                  # ON 3.4.12 (the version pinned to fix it)
         "  'esbuild@<0.28.1': 0.28.1",           # GHSA-g7r4-m6w7-qqqr
-        "  'fast-uri@<3.1.6': 3.1.6",            # CVE-2026-13676/16221 fixed at 3.1.5, then FOUR
+        "  'fast-uri@<3.1.7': 3.1.7",            # CVE-2026-84292/84394 (3.1.7); before that CVE-2026-13676/16221 fixed at 3.1.5, then FOUR
                                                  # more advisories (CVE-2026-75899/75931/75975/
                                                  # 76172, hostname/IDN/IPv6 SSRF confusion) landed
                                                  # ON 3.1.5 itself. 3.1.x is the only 3.x clearing
@@ -136,7 +136,7 @@ pipeline:
                                                  # (auth-plugin downgrade, needs >= 3.22.0) +
                                                  # GHSA-rgwj-5xj2-c3m3 MEDIUM (zlib-inflate
                                                  # decompression-bomb DoS, needs >= 3.23.1)
-        "  'nodemailer@<9.1.1': 9.1.1",          # GHSA-p6gq-j5cr-w38f fixed at 9.0.1, then
+        "  'nodemailer@<10.0.10': 10.0.10",      # GHSA-6vj9-mwq6-2f5v (fixed 10.0.2); earlier: GHSA-p6gq fixed at 9.0.1, then
                                                  # GHSA-2x7j/cc9r/wmmp (need >= 9.1.0) and
                                                  # GHSA-8m3c (needs >= 9.1.1) landed on 9.0.1 itself
         "  'postcss@<8.5.23': 8.5.23",           # GHSA-r28c-9q8g-f849 (fix 8.5.18; newest 8.5.x)
@@ -166,8 +166,9 @@ pipeline:
                                                  # 1.2.1. Its CJS API changed; see the shim below.
         "  'js-yaml@<4.3.2': 4.3.2",             # CVE on 4.3.0 (4.3.0 was itself a fix pin);
                                                  # CVE-2026-84375 then landed on the 4.3.1 fix too
-        "  'undici@<6.28.0': 6.28.0",           # TWO undici majors coexist in this tree, so each
-        "  'undici@7.28.0': 7.29.0",            # line needs its own pin -- a single
+        "  'undici@<6.28.1': 6.28.1",           # CVE-2026-85024 needs 6.28.1 / 7.29.1 / 8.10.2. TWO undici majors coexist in this tree, so each
+        "  'undici@7.28.0': 7.29.1",            # line needs its own pin -- a single
+        "  'undici@8.10.0': 8.10.2",            # 8.x copy, exact for the same reason as the 7.x pin
                                                  # `undici@<7.29.0` would drag the 6.x copy
                                                  # forward across a major.
                                                  # 2026-08-26 (2nd fix): the 6.x line WAS the exact
@@ -239,7 +240,7 @@ pipeline:
           if m:
               have.setdefault(m.group(1).replace("+", "/"), set()).add(m.group(2))
       # (package, version that must NOT survive) for every exact-version override above
-      banned = [("undici", "6.27.0"), ("undici", "7.28.0")]
+      banned = [("undici", "6.27.0"), ("undici", "6.28.0"), ("undici", "7.28.0"), ("undici", "7.29.0"), ("undici", "8.10.0"), ("fast-uri", "3.1.6")]
       bad = [f"{p}@{v}" for p, v in banned if v in have.get(p, ())]
       if bad:
           print("FATAL: override did not apply, these resolved versions survived:", ", ".join(bad))

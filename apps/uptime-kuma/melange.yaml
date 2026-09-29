@@ -51,8 +51,8 @@ pipeline:
         const pins = {
           "@grpc/grpc-js": "1.14.4", "@tootallnate/once": "2.0.1", "axios": "0.33.0",
           "glob": "10.5.0", "liquidjs": "10.27.2", "lodash": "4.18.0", "minimatch": "9.0.7",
-          "mysql2": "3.23.1", "nodemailer": "9.1.1", "protobufjs": "7.6.5", "qs": "6.16.0",
-          "tar": "7.5.21", "ws": "8.21.0",
+          "mysql2": "3.23.1", "nodemailer": "10.0.10", "protobufjs": "7.6.5", "qs": "6.16.0",
+          "tar": "7.5.21", "ws": "8.21.0", "undici": "6.28.1",
         };
         p.overrides = p.overrides || {};
         for (const [k, v] of Object.entries(pins)) {
@@ -65,7 +65,7 @@ pipeline:
       # every pin must be what actually got installed
       node -e '
         const lock = JSON.parse(require("fs").readFileSync("package-lock.json")).packages;
-        const want = { nodemailer: "9.1.1", tar: "7.5.21", protobufjs: "7.6.5", ws: "8.21.0", axios: "0.33.0" };
+        const want = { nodemailer: "10.0.10", tar: "7.5.21", protobufjs: "7.6.5", ws: "8.21.0", axios: "0.33.0" };
         for (const [k, v] of Object.entries(want)) {
           const got = lock["node_modules/" + k] && lock["node_modules/" + k].version;
           if (got !== v) { console.error(k, "is", got, "not", v); process.exit(1); }

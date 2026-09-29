@@ -61,6 +61,15 @@ pipeline:
       export npm_config_loglevel=warn
       export PYTHON="$(command -v python3.13 || command -v python3)"
       export npm_config_python="$PYTHON"
+      # nodemailer 9.x carries GHSA-6vj9-mwq6-2f5v, fixed only in 10.0.2+ (10.x needs Node >= 20 and
+      # keeps a CommonJS entry). A direct dependency is bumped in place, because npm refuses an
+      # override that conflicts with one.
+      node -e '
+        const fs = require("fs"), p = JSON.parse(fs.readFileSync("package.json"));
+        p.overrides = p.overrides || {};
+        if ((p.dependencies || {}).nodemailer) p.dependencies.nodemailer = "10.0.12"; else p.overrides.nodemailer = "10.0.12";
+        fs.writeFileSync("package.json", JSON.stringify(p, null, 2));
+      '
       npm install --omit=dev --no-audit --no-fund
 
       # Upstream Dockerfile fixes a non-readable file shipped by useragent-ng.
