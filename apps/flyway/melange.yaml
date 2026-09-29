@@ -1,5 +1,5 @@
-# Packages Flyway Community onto Wolfi from its release tarball, with two bundled JDBC
-# drivers replaced by fixed releases.
+# Packages Flyway Community onto Wolfi from its release tarball, with the mssql JDBC
+# driver replaced by a fixed release and the Databricks driver left out.
 package:
   name: quench-flyway
   version: __VER__
@@ -44,7 +44,12 @@ pipeline:
         echo "$3  $drivers/$new" | sha256sum -c -
         rm -f "$drivers/$1"
       }
-      swap databricks-jdbc-3.4.2.jar com/databricks/databricks-jdbc/3.4.3/databricks-jdbc-3.4.3.jar 191917c5a45629d33f4734ff599f9a4d4f4bdfc82f159ed7dc9f2b285a1d35d2
+      # The Databricks driver is left out. Its newest release (3.4.3) shades jackson-databind
+      # 2.18.9 under com/databricks/internal/, which has three advisories fixed in 2.18.10,
+      # and a relocated copy cannot be patched by swapping classes. Add it back once
+      # databricks-jdbc ships with jackson-databind 2.18.10 or later.
+      ls "$drivers"/databricks-jdbc-*.jar >/dev/null || { echo "FATAL: no databricks-jdbc to drop; re-audit"; exit 1; }
+      rm -f "$drivers"/databricks-jdbc-*.jar
       swap mssql-jdbc-12.10.2.jre11.jar com/microsoft/sqlserver/mssql-jdbc/13.6.0.jre11/mssql-jdbc-13.6.0.jre11.jar 4c566e4022c4dcf1489aeb639fe49a0f6ffae3d796fdc2f56b5b8882d4c3bf5a
       chmod -R a+rX "$dest"
 
