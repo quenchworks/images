@@ -1,0 +1,65 @@
+# Jellyfin media server image: Wolfi's pinned jellyfin and jellyfin-web apks on the .NET
+# runtime they depend on, with system ffmpeg. Nonroot uid 1001, multi-arch, no shell.
+# The API and web UI listen on :8096. State lives under /config (config, database,
+# logs), the image cache under /cache; mount volumes there, and the media wherever the
+# library points (the chart uses /media).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - tzdata
+    - jellyfin=__REL__
+    - jellyfin-web=__REL__
+
+accounts:
+  groups:
+    - groupname: jellyfin
+      gid: 1001
+  users:
+    - username: jellyfin
+      uid: 1001
+      gid: 1001
+      homedir: /config
+  run-as: 1001
+
+paths:
+  - path: /config
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /cache
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  HOME: /config
+  JELLYFIN_DATA_DIR: /config/data
+  JELLYFIN_CONFIG_DIR: /config/config
+  JELLYFIN_LOG_DIR: /config/log
+  JELLYFIN_CACHE_DIR: /cache
+  JELLYFIN_WEB_DIR: /usr/lib/jellyfin/jellyfin-web
+  JELLYFIN_FFMPEG: /usr/bin/ffmpeg
+  DOTNET_gcServer: "0"
+
+work-dir: /config
+
+entrypoint:
+  command: /usr/lib/jellyfin/jellyfin
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-jellyfin"
+  org.opencontainers.image.licenses: "GPL-2.0-only"
