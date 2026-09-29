@@ -1,0 +1,65 @@
+# Overlay for the Wolfi npm package, which still bundles ip-address 10.3.1 (CVE-2026-101910 and
+# CVE-2026-101913, fixed in 10.5.1). Upstream npm 12.1.0 bundles 10.5.0, so no npm release closes
+# them yet. The node image is otherwise pure Wolfi packages; this package ships only the fixed
+# ip-address tree and Wolfi's npm SPDX with that one entry corrected (Trivy reads
+# /var/lib/db/sbom as its own source, so a stale record keeps the finding after the files are fixed).
+# `replaces: npm-12` lets apk write over the files npm-12 owns.
+# RETIRE this package when a Wolfi npm ships ip-address >= 10.5.1: the SPDX step asserts a stale
+# entry exists, so the build fails and says so.
+package:
+  name: quench-node-npm-fix
+  version: __VER__
+  epoch: 0
+  description: "ip-address 10.5.1 over the copy bundled in Wolfi npm-12"
+  copyright:
+    - license: MIT
+  dependencies:
+    replaces:
+      - npm-12
+    runtime:
+      - npm
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - nodejs-__VERMAJOR__
+      - npm
+
+pipeline:
+  - runs: |
+      set -eu
+      D="${{targets.destdir}}"
+      node -e 'fetch(process.argv[1]).then(r=>r.arrayBuffer()).then(b=>require("fs").writeFileSync("/tmp/ipaddr.tgz",Buffer.from(b)))' https://registry.npmjs.org/ip-address/-/ip-address-10.5.1.tgz
+      echo "203c3d396fa03f1712802cb38859cb9b5bf689f8fd30296d3d1d159d3f34e6f8  /tmp/ipaddr.tgz" | sha256sum -c -
+      mkdir -p /tmp/ipaddr "$D/usr/lib/node_modules/npm/node_modules/ip-address" "$D/var/lib/db/sbom"
+      tar -xzf /tmp/ipaddr.tgz -C /tmp/ipaddr
+      cp -a /tmp/ipaddr/package/. "$D/usr/lib/node_modules/npm/node_modules/ip-address/"
+      chmod -R a+rX,go-w "$D/usr/lib/node_modules/npm/node_modules/ip-address"
+      # the tarball must actually be the version this recipe claims
+      grep -q '"version": "10.5.1"' "$D/usr/lib/node_modules/npm/node_modules/ip-address/package.json"
+      src="$(ls /var/lib/db/sbom/npm-12-*.spdx.json)"
+      test "$(echo "$src" | wc -l)" = 1
+      DESTDIR_="$D" SRC="$src" node -e '
+        const fs = require("fs"), path = require("path");
+        const doc = JSON.parse(fs.readFileSync(process.env.SRC, "utf8"));
+        let hit = 0;
+        doc.packages = doc.packages.map(p => {
+          if (p.name !== "ip-address" || p.versionInfo === "10.5.1") return p;
+          hit++;
+          return JSON.parse(JSON.stringify(p).split(p.versionInfo).join("10.5.1"));
+        });
+        if (!hit) throw new Error("npm-12 SPDX lists no stale ip-address: retire quench-node-npm-fix");
+        fs.writeFileSync(path.join(process.env.DESTDIR_, "var/lib/db/sbom", path.basename(process.env.SRC)), JSON.stringify(doc, null, 2) + "\n");
+        console.log("corrected " + hit + " ip-address entry in " + path.basename(process.env.SRC));
+      '
+
+test:
+  pipeline:
+    - runs: |
+        grep -q '"version": "10.5.1"' /usr/lib/node_modules/npm/node_modules/ip-address/package.json
