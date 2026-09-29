@@ -1,0 +1,301 @@
+# Packages Joomla (the joomla-cms Full_Package release tarball) for Wolfi. The tarball is
+# the finished application: PHP sources plus a resolved composer vendor tree under
+# libraries/vendor, so there is nothing to compile. We fetch the archive, verify its
+# sha256, and install it as the docroot at /var/www/html. PHP-FPM, its extensions and
+# nginx come from Wolfi (apko.yaml); this package lays down the app tree and the runtime
+# wiring (nginx config, php-fpm pool + php.ini overrides, supervisord, entrypoint).
+#
+# Configuration: Joomla reads configuration.php from JPATH_CONFIGURATION, which defaults
+# to the docroot. A read-only docroot cannot hold it, so an auto_prepend_file defines
+# JPATH_CONFIGURATION from $JOOMLA_CONFIG_DIR (the chart mounts a volume there), and the
+# CLI installer's own unconditional define is patched to honour the same variable.
+package:
+  name: quench-joomla
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Joomla (PHP), served by a Wolfi PHP-FPM + nginx runtime"
+  copyright:
+    - license: GPL-2.0-or-later   # every source header reads "GNU General Public License version 2 or later"
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+
+pipeline:
+  # The archive has no top-level directory, so it is fetched WITHOUT extraction and
+  # unpacked into its own dir (the workspace also holds melange-out).
+  - uses: fetch
+    with:
+      uri: https://github.com/joomla/joomla-cms/releases/download/${{package.version}}/Joomla_${{package.version}}-Stable-Full_Package.tar.gz
+      expected-sha256: __SHA256__
+      extract: false
+
+  - name: Install the Joomla tree as the docroot at /var/www/html
+    runs: |
+      set -eu
+      app="${{targets.destdir}}/var/www/html"
+      install -d -m 0755 "$app"
+      mkdir -p /tmp/joomla-src
+      tar -xzf "Joomla_${{package.version}}-Stable-Full_Package.tar.gz" -C /tmp/joomla-src
+      cp -a /tmp/joomla-src/. "$app/"
+      test -f "$app/index.php"
+      test -f "$app/administrator/index.php"
+      test -f "$app/cli/joomla.php"
+      test -f "$app/installation/joomla.php"
+      grep -q "MAJOR_VERSION" "$app/libraries/src/Version.php"
+      # The CLI installer defines JPATH_CONFIGURATION unconditionally, so it would write
+      # configuration.php into the read-only docroot. Make it defer to a predefined value,
+      # like the root, administrator and api entry points already do.
+      f="$app/installation/includes/defines.php"
+      grep -q "^.define('JPATH_CONFIGURATION', JPATH_ROOT);" "$f"
+      sed -i "s#^.define('JPATH_CONFIGURATION', JPATH_ROOT);#defined('JPATH_CONFIGURATION') || define('JPATH_CONFIGURATION', JPATH_ROOT);#" "$f"
+      grep -q "^defined('JPATH_CONFIGURATION') || define" "$f"
+      # writable at runtime (the chart mounts volumes/tmpfs over these): uploads, cache, tmp, logs
+      install -d -m 0755 "$app/images" "$app/cache" "$app/tmp" "$app/administrator/cache" "$app/administrator/logs"
+
+  - name: Install the nginx site config (FastCGI to php-fpm, port 8080, /var/www/html)
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/etc/joomla/conf.d"
+      # Run via `nginx -c /etc/joomla/nginx.conf`; /etc/nginx/nginx.conf belongs
+      # to the Wolfi nginx package. Nonroot and read-only-rootfs friendly: no user
+      # directive, pid and temp paths under /tmp, logs to stdout/stderr.
+      cat > "$destdir/etc/joomla/nginx.conf" <<'EOF'
+      worker_processes auto;
+      pid /tmp/nginx.pid;
+      error_log /dev/stderr warn;
+
+      events {
+          worker_connections 1024;
+      }
+
+      http {
+          include       /etc/nginx/mime.types;
+          default_type  application/octet-stream;
+          access_log    /dev/stdout;
+
+          client_body_temp_path /tmp/nginx-client-body;
+          proxy_temp_path       /tmp/nginx-proxy;
+          fastcgi_temp_path     /tmp/nginx-fastcgi;
+          uwsgi_temp_path       /tmp/nginx-uwsgi;
+          scgi_temp_path        /tmp/nginx-scgi;
+
+          sendfile      on;
+          tcp_nopush    on;
+          keepalive_timeout 65;
+          server_tokens off;
+          # Matches upload_max_filesize/post_max_size in the php.ini below.
+          client_max_body_size 64m;
+
+          server {
+              listen 8080 default_server;
+              listen [::]:8080 default_server;
+              server_name _;
+
+              root  /var/www/html;
+              index index.php;
+              charset utf-8;
+
+              location = /favicon.ico { access_log off; log_not_found off; }
+              location ~ /\.(?!well-known).* { deny all; }
+
+              # Never reachable over HTTP: the CLI installer and CLI, caches, temp files, logs.
+              location ^~ /installation/         { return 403; }
+              location ^~ /cli/                  { return 403; }
+              location ^~ /cache/                { return 403; }
+              location ^~ /tmp/                  { return 403; }
+              location ^~ /administrator/cache/  { return 403; }
+              location ^~ /administrator/logs/   { return 403; }
+              # Uploads are served as files. ^~ stops the regex match below, so an
+              # uploaded .php is returned as bytes and never executed.
+              location ^~ /images/ {
+                  try_files $uri =404;
+                  add_header X-Content-Type-Options nosniff;
+              }
+              location / {
+                  try_files $uri $uri/ /index.php?$args;
+              }
+              location /administrator/ {
+                  try_files $uri $uri/ /administrator/index.php?$args;
+              }
+              location /api/ {
+                  try_files $uri $uri/ /api/index.php?$args;
+              }
+
+              location ~ \.php$ {
+                  try_files $uri =404;
+                  include        /etc/nginx/fastcgi_params;
+                  fastcgi_split_path_info ^(.+\.php)(/.+)$;
+                  fastcgi_param  SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                  fastcgi_param  PATH_INFO $fastcgi_path_info;
+                  fastcgi_index  index.php;
+                  fastcgi_pass   127.0.0.1:9000;
+                  fastcgi_buffers 16 16k;
+                  fastcgi_buffer_size 32k;
+                  fastcgi_read_timeout 300;
+              }
+
+              location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff2?)$ {
+                  expires 30d;
+                  log_not_found off;
+                  access_log off;
+              }
+
+              # Chart drop-in server-level config (ConfigMap mounts land here).
+              include /etc/joomla/conf.d/*.conf;
+          }
+      }
+      EOF
+      : > "$destdir/etc/joomla/conf.d/.keep.conf"
+
+  - name: Install the php-fpm pool + php.ini overrides for nonroot / read-only rootfs
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/etc/php/php-fpm.d"
+      install -d "$destdir/etc/php/conf.d"
+
+      # The Wolfi php pool config (www.conf) sets user/group = nobody and zz-apko.conf
+      # pins listen to [::]:9000. A nonroot master (uid 1001) can't setuid workers, so
+      # the user/group directives are ignored with a warning (fine). This zzz- override
+      # (loaded last) pins the listen socket back to 127.0.0.1:9000 (what nginx
+      # FastCGI-passes to), keeps the master in the foreground and logs to stderr.
+      cat > "$destdir/etc/php/php-fpm.d/zzz-joomla.conf" <<'EOF'
+      [global]
+      daemonize = no
+      error_log = /proc/self/fd/2
+
+      [www]
+      listen = 127.0.0.1:9000
+      catch_workers_output = yes
+      decorate_workers_output = no
+      clear_env = no
+      pm = dynamic
+      pm.max_children = 16
+      pm.start_servers = 2
+      pm.min_spare_servers = 1
+      pm.max_spare_servers = 4
+      access.log = /proc/self/fd/2
+      EOF
+
+      # Joomla runtime PHP tuning: sane upload/memory limits, opcache on, sessions +
+      # upload scratch under /tmp (writable tmpfs on a read-only rootfs), errors to
+      # stderr (captured by supervisord), expose_php off.
+      install -d "$destdir/etc/joomla"
+      cat > "$destdir/etc/joomla/prepend.php" <<'EOF'
+      <?php
+      // Joomla looks for configuration.php in JPATH_CONFIGURATION, default the docroot.
+      // Point it at the mounted config volume before any Joomla file runs.
+      if (!defined('JPATH_CONFIGURATION') && ($d = getenv('JOOMLA_CONFIG_DIR'))) {
+          define('JPATH_CONFIGURATION', rtrim($d, '/'));
+      }
+      EOF
+      cat > "$destdir/etc/php/conf.d/zzz-joomla.ini" <<'EOF'
+      expose_php = Off
+      auto_prepend_file = /etc/joomla/prepend.php
+      memory_limit = 256M
+      apc.enable = 1
+      apc.shm_size = 64M
+      upload_max_filesize = 64M
+      post_max_size = 64M
+      max_execution_time = 300
+      max_input_time = 300
+      max_input_vars = 3000
+      sys_temp_dir = /tmp
+      upload_tmp_dir = /tmp
+      session.save_path = /tmp
+      error_reporting = E_ALL & ~E_DEPRECATED & ~E_STRICT
+      display_errors = Off
+      log_errors = On
+      error_log = /proc/self/fd/2
+      opcache.enable = 1
+      opcache.enable_cli = 0
+      opcache.memory_consumption = 128
+      opcache.max_accelerated_files = 10000
+      opcache.revalidate_freq = 2
+      EOF
+
+  - name: Install the supervisord config + container entrypoint
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/etc/joomla"
+      install -d "$destdir/usr/bin"
+
+      # supervisord runs php-fpm (on 127.0.0.1:9000) + nginx (on :8080) as the two
+      # always-on programs. It lives at /etc/joomla/supervisord.conf (NOT
+      # /etc/supervisord.conf, which the Wolfi supervisor-config package owns and would
+      # collide in apko's solve). Nonroot-friendly: pid + sock under /tmp, logs to
+      # stdout. The entrypoint points supervisord at this file explicitly.
+      cat > "$destdir/etc/joomla/supervisord.conf" <<'EOF'
+      [supervisord]
+      nodaemon=true
+      logfile=/dev/stdout
+      logfile_maxbytes=0
+      pidfile=/tmp/supervisord.pid
+
+      [unix_http_server]
+      file=/tmp/supervisor.sock
+
+      [supervisorctl]
+      serverurl=unix:///tmp/supervisor.sock
+
+      [rpcinterface:supervisor]
+      supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+
+      [program:php-fpm]
+      command=/usr/bin/php-fpm --nodaemonize --fpm-config /etc/php/php-fpm.conf
+      autostart=true
+      autorestart=true
+      priority=10
+      stdout_logfile=/dev/stdout
+      stdout_logfile_maxbytes=0
+      stderr_logfile=/dev/stderr
+      stderr_logfile_maxbytes=0
+
+      [program:nginx]
+      command=/usr/sbin/nginx -c /etc/joomla/nginx.conf -g "daemon off;"
+      autostart=true
+      autorestart=true
+      priority=20
+      stdout_logfile=/dev/stdout
+      stdout_logfile_maxbytes=0
+      stderr_logfile=/dev/stderr
+      stderr_logfile_maxbytes=0
+      EOF
+
+      # Container entrypoint: create the writable scratch dirs nginx + php need under
+      # /tmp (emptyDir/tmpfs on a read-only rootfs), then exec supervisord as PID 1.
+      cat > "$destdir/usr/bin/joomla-entrypoint.sh" <<'EOF'
+      #!/bin/sh
+      set -eu
+      # nginx temp paths + pid, php sessions/uploads all live under /tmp.
+      mkdir -p /tmp/nginx-client-body /tmp/nginx-proxy /tmp/nginx-fastcgi \
+               /tmp/nginx-uwsgi /tmp/nginx-scgi 2>/dev/null || true
+      exec supervisord -c /etc/joomla/supervisord.conf
+      EOF
+      chmod 0755 "$destdir/usr/bin/joomla-entrypoint.sh"
+
+  - name: Sanity-check the assembled tree
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      test -f "$destdir/var/www/html/index.php"
+      test -d "$destdir/var/www/html/libraries/vendor"
+      # no prebuilt ELF may remain anywhere in the app tree
+      if find "$destdir/var/www/html" -type f -exec sh -c 'head -c4 "$1" | grep -q ELF' _ {} \; -print | grep -q .; then
+        echo "prebuilt ELF binaries left in the app tree" >&2; exit 1
+      fi
+      test -f "$destdir/etc/joomla/nginx.conf"
+      test -f "$destdir/etc/joomla/prepend.php"
+      test -f "$destdir/etc/php/php-fpm.d/zzz-joomla.conf"
+      test -f "$destdir/etc/php/conf.d/zzz-joomla.ini"
+      test -f "$destdir/etc/joomla/supervisord.conf"
+      test -x "$destdir/usr/bin/joomla-entrypoint.sh"
