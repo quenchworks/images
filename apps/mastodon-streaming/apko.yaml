@@ -1,0 +1,45 @@
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-mastodon-streaming@local
+
+accounts:
+  groups:
+    - groupname: mastodon
+      gid: 1001
+  users:
+    - username: mastodon
+      uid: 1001
+      gid: 1001
+      homedir: /tmp
+  run-as: 1001
+
+environment:
+  NODE_ENV: production
+  BIND: 0.0.0.0
+  PORT: "4000"
+  HOME: /tmp
+
+work-dir: /opt/mastodon
+
+entrypoint:
+  command: /usr/bin/node
+cmd: ./streaming/index.js
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-mastodon-streaming"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"
