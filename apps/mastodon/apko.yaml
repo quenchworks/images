@@ -1,0 +1,60 @@
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-mastodon@local
+
+accounts:
+  groups:
+    - groupname: mastodon
+      gid: 1001
+  users:
+    - username: mastodon
+      uid: 1001
+      gid: 1001
+      homedir: /opt/mastodon/public/system
+  run-as: 1001
+
+paths:
+  # media uploads; the chart mounts a volume here
+  - path: /opt/mastodon/public/system
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  RAILS_ENV: production
+  NODE_ENV: production
+  RAILS_LOG_TO_STDOUT: enabled
+  RAILS_SERVE_STATIC_FILES: "true"
+  BIND: 0.0.0.0
+  PORT: "3000"
+  MASTODON_USE_LIBVIPS: "true"
+  BUNDLE_APP_CONFIG: /opt/mastodon/.bundle
+  BUNDLE_FROZEN: "true"
+  LD_PRELOAD: libjemalloc.so.2
+  HOME: /tmp
+
+work-dir: /opt/mastodon
+
+entrypoint:
+  command: /usr/bin/ruby /opt/mastodon/launch.rb
+cmd: web
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-mastodon"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"

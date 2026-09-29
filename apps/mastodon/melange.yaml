@@ -1,0 +1,145 @@
+# Packages Mastodon (web + sidekiq) into /opt/mastodon with its gems vendored under
+# vendor/bundle, built from source against Wolfi's system libraries. The JS/CSS bundle is
+# compiled here with Node, then node_modules is dropped: like upstream's image, the
+# runtime has no Node (the streaming server is its own image).
+package:
+  name: quench-mastodon
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Mastodon (web + sidekiq), packaged on Wolfi"
+  copyright:
+    - license: AGPL-3.0-only
+  dependencies:
+    runtime:
+      - ruby-4.0
+      - ruby4.0-bundler
+      - libpq-18
+      - libvips-8.17
+      - ffmpeg
+      - icu
+      - libidn
+      - libxml2
+      - libxslt
+      - yaml
+      - gmp
+      - libmagic
+      - jemalloc
+      - zlib
+      - libgcc
+      - libstdc++
+      - tzdata
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - bash
+      - ca-certificates-bundle
+      - build-base
+      - pkgconf
+      - git
+      - ruby-4.0
+      - ruby-4.0-dev
+      - ruby4.0-bundler
+      - postgresql-18-dev
+      - libvips-8.17-dev
+      - icu-dev
+      - libidn-dev
+      - libxml2-dev
+      - libxslt-dev
+      - yaml-dev
+      - gmp-dev
+      - openssl-dev
+      - libffi-dev
+      - zlib-dev
+      - file
+      - nodejs-24
+      - corepack
+      - tzdata
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/mastodon/mastodon/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+      strip-components: 1
+  - runs: |
+      set -eu
+      APP="${{targets.destdir}}/opt/mastodon"
+      install -d "$APP"
+      # the build dir also holds melange-out, the destdir itself
+      for f in $(ls -A | grep -vx melange-out); do cp -a "$f" "$APP/"; done
+      cd "$APP"
+
+      export BUNDLE_APP_CONFIG="$APP/.bundle" RAILS_ENV=production
+      bundle config set --local path vendor/bundle
+      bundle config set --local without 'development:test'
+      # source gems only, nokogiri on the system libxml2 and libxslt
+      bundle config set --local force_ruby_platform true
+      bundle config set --local build.nokogiri '--use-system-libraries'
+      # rack-proxy 1.0.1 has a fixed advisory (>= 1.0.3); move only it, within the Gemfile
+      bundle lock --update rack-proxy --conservative
+      bundle install --jobs 4 --retry 3
+      ruby -e 'v = File.read("Gemfile.lock")[/^    rack-proxy \(([\d.]+)\)/, 1]; abort("rack-proxy #{v} below 1.0.3") if Gem::Version.new(v) < Gem::Version.new("1.0.3"); puts "rack-proxy #{v}"'
+
+      # what the scan cannot see must not be there: nokogiri on the system libxml2, no
+      # precompiled platform in the lock, no bundled .libs directory
+      bundle exec ruby -e 'require "nokogiri"; v = Nokogiri::VERSION_INFO["libxml"]; abort("nokogiri libxml2 is #{v["source"]}, not system") unless v["source"] == "system"; puts "nokogiri #{Nokogiri::VERSION} on system libxml2 #{v["loaded"]}"'
+      test "$(sed -n '/^PLATFORMS/,/^$/p' Gemfile.lock | grep -c .)" = 2 || { grep -A5 '^PLATFORMS' Gemfile.lock; echo "Gemfile.lock lists a precompiled platform"; exit 1; }
+      if find vendor/bundle -type d -name '*.libs' | grep -q .; then echo "bundled native libs"; exit 1; fi
+
+      # assets: the production JS tree only, then precompile, then drop Node's tree
+      export COREPACK_HOME=/tmp/corepack COREPACK_ENABLE_DOWNLOAD_PROMPT=0 HOME=/tmp/home
+      mkdir -p /tmp/corepack-bin "$HOME" && corepack enable --install-directory /tmp/corepack-bin
+      export PATH="/tmp/corepack-bin:$PATH"
+      yarn workspaces focus --production @mastodon/mastodon
+      SECRET_KEY_BASE_DUMMY=1 bundle exec rails assets:precompile
+      test -f public/packs/.vite/manifest.json || test -d public/packs
+      rm -rf node_modules streaming/node_modules .yarn/cache tmp
+
+      bundle exec bootsnap precompile --gemfile app/ lib/ config/ || true
+
+      # build leftovers
+      rm -rf vendor/bundle/ruby/*/cache
+      find vendor/bundle \( -name '*.o' -o -name 'mkmf.log' -o -name 'gem_make.out' \) -delete
+      rm -rf .git .github spec streaming .devcontainer .storybook
+
+      # writable paths: tmp into /tmp (launch.rb creates it); public/system (media) stays a
+      # directory the chart mounts a volume over
+      ln -s /tmp/mastodon tmp
+      install -d public/system
+      rm -rf log && ln -s /tmp/mastodon/log log
+
+      cat > launch.rb <<'RB'
+      # Creates the writable scratch paths the read-only tree points at, then hands over
+      # to puma (web, the default), sidekiq, or a rails/rake/tootctl command. TMPDIR gets a
+      # private 0700 directory because Ruby's Dir.tmpdir rejects a world-writable /tmp
+      # without the sticky bit, which is what an emptyDir is.
+      require 'fileutils'
+      run = '/tmp/mastodon-run'
+      FileUtils.mkdir_p(run, mode: 0o700)
+      ENV['TMPDIR'] = run
+      %w[cache pids sockets log].each { |d| FileUtils.mkdir_p(File.join('/tmp/mastodon', d)) }
+      cmd = ARGV.shift || 'web'
+      case cmd
+      when 'web'     then exec('bundle', 'exec', 'puma', '-C', 'config/puma.rb', *ARGV)
+      when 'sidekiq' then exec('bundle', 'exec', 'sidekiq', *ARGV)
+      when 'rails'   then exec('bundle', 'exec', 'rails', *ARGV)
+      when 'rake'    then exec('bundle', 'exec', 'rake', *ARGV)
+      when 'tootctl' then exec('bundle', 'exec', 'bin/tootctl', *ARGV)
+      else abort("launch.rb: unknown command #{cmd}")
+      end
+      RB
+      chmod -R a+rX,go-w "$APP"
+
+test:
+  pipeline:
+    - runs: |
+        test -f /opt/mastodon/launch.rb
+        test -d /opt/mastodon/public/packs
+        cd /opt/mastodon && BUNDLE_FROZEN=true bundle exec ruby -e 'require "vips"; puts Vips.version_string'
