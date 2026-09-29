@@ -1,0 +1,150 @@
+# Packages Redmine into /opt/redmine with its gems vendored under vendor/bundle, built
+# against Wolfi's system libraries. The app tree is read-only at runtime; the writable
+# paths (tmp, log, files, plugin_assets) are symlinks into /tmp and /data that
+# launch.rb creates at start.
+package:
+  name: quench-redmine
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Redmine, packaged on Wolfi"
+  copyright:
+    - license: GPL-2.0-only
+  dependencies:
+    runtime:
+      - ruby-4.0
+      - ruby4.0-bundler      # launch.rb execs `bundle exec`
+      - libpq-18
+      - libxml2
+      - libxslt
+      - yaml
+      - zlib
+      - libgcc
+      - libstdc++
+      - tzdata
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - build-base
+      - pkgconf
+      - ruby-4.0
+      - ruby-4.0-dev
+      - ruby4.0-bundler
+      - postgresql-18-dev
+      - libxml2-dev
+      - libxslt-dev
+      - yaml-dev
+      - openssl-dev
+      - libffi-dev
+      - zlib-dev
+      - rust-1.98            # commonmarker is a Rust extension
+      - clang-19             # libclang for its bindgen (rb-sys)
+      - git
+      - tzdata
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://www.redmine.org/releases/redmine-${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+      strip-components: 1
+  - runs: |
+      set -eu
+      APP="${{targets.destdir}}/opt/redmine"
+      install -d "$APP"
+      # the build dir also holds melange-out, the destdir itself
+      for f in $(ls -A | grep -vx melange-out); do cp -a "$f" "$APP/"; done
+      cd "$APP"
+
+      # The Gemfile reads config/database.yml at bundle time to choose its database gems,
+      # so the file must exist, name postgresql, and stay ERB (the values come from the env).
+      cat > config/database.yml <<'YML'
+      production:
+        adapter: postgresql
+        encoding: utf8
+        host: <%= ENV.fetch("REDMINE_DB_HOST", "localhost") %>
+        port: <%= ENV.fetch("REDMINE_DB_PORT", "5432") %>
+        database: <%= ENV.fetch("REDMINE_DB_NAME", "redmine") %>
+        username: <%= ENV.fetch("REDMINE_DB_USER", "redmine") %>
+        password: <%= ENV.fetch("REDMINE_DB_PASSWORD", "") %>
+      YML
+      # db:migrate would dump db/schema.rb into a read-only tree; a production install has
+      # no use for the dump
+      cat > config/additional_environment.rb <<'RB'
+      config.active_record.dump_schema_after_migration = false
+      RB
+      # puma sits only in the test group upstream; the production server comes from here.
+      # json is a FLOOR: bundler otherwise keeps the json 2.9.1 the resolver first met,
+      # and CVE-2026-54696 is fixed in 2.19.9.
+      printf "gem 'puma'\ngem 'json', '>= 2.19.9'\n" > Gemfile.local
+
+      export BUNDLE_APP_CONFIG="$APP/.bundle"
+      bundle config set --local path vendor/bundle
+      bundle config set --local without 'development:test:minimagick'
+      # source gems, and the system libxml2 and libxslt for nokogiri
+      bundle config set --local force_ruby_platform true
+      bundle config set --local build.nokogiri '--use-system-libraries'
+      bundle install --jobs 4 --retry 3
+
+      # what the scan cannot see must not be there: nokogiri on the system libxml2, source
+      # gems only, no bundled .libs directory
+      bundle exec ruby -e 'require "nokogiri"; v = Nokogiri::VERSION_INFO["libxml"]; abort("nokogiri libxml2 is #{v["source"]}, not system") unless v["source"] == "system"; puts "nokogiri #{Nokogiri::VERSION} on system libxml2 #{v["loaded"]}"'
+      grep -A2 '^PLATFORMS' Gemfile.lock
+      test "$(sed -n '/^PLATFORMS/,/^$/p' Gemfile.lock | grep -c .)" = 2 || { echo "Gemfile.lock lists a precompiled platform"; exit 1; }
+      if find vendor/bundle -type d -name '*.libs' | grep -q .; then echo "bundled native libs"; exit 1; fi
+
+      # propshaft serves the compiled assets in production
+      SECRET_KEY_BASE_DUMMY=1 RAILS_ENV=production bundle exec rake assets:precompile
+
+      # build leftovers
+      rm -rf vendor/bundle/ruby/*/cache
+      find vendor/bundle \( -name '*.o' -o -name 'mkmf.log' -o -name 'gem_make.out' \) -delete
+      rm -rf vendor/bundle/ruby/*/gems/*/ext/*/target vendor/bundle/ruby/*/gems/*/target
+      rm -rf .git .github test extra doc/CHANGELOG.old
+      # rbpdf ships ttf2ufm, a 32-bit font converter used only to prepare fonts, which needs
+      # the i386 loader; nothing at runtime runs it
+      find vendor/bundle -type f \( -name 'ttf2ufm' -o -name 'ttf2ufm.exe' \) -delete
+
+      # writable paths point into /tmp and /data; launch.rb creates them at start
+      rm -rf tmp log files public/plugin_assets
+      ln -s /tmp/redmine/tmp tmp
+      ln -s /tmp/redmine/log log
+      ln -s /data/files files
+      ln -s /tmp/redmine/plugin_assets public/plugin_assets
+
+      cat > launch.rb <<'RB'
+      # Creates the writable paths the read-only tree points at, then hands over to
+      # puma (server, the default), rake, or rails runner. TMPDIR gets a private 0700
+      # directory because Ruby's Dir.tmpdir rejects a world-writable /tmp without the
+      # sticky bit, which is what an emptyDir is.
+      require 'fileutils'
+      run = '/tmp/redmine-run'
+      FileUtils.mkdir_p(run, mode: 0o700)
+      ENV['TMPDIR'] = run
+      %w[tmp/cache tmp/pids tmp/sessions tmp/sockets tmp/imports tmp/thumbnails log plugin_assets].each do |d|
+        FileUtils.mkdir_p(File.join('/tmp/redmine', d))
+      end
+      FileUtils.mkdir_p('/data/files')
+      cmd = ARGV.shift || 'server'
+      case cmd
+      when 'server' then exec('bundle', 'exec', 'puma', '-e', 'production', '-b', 'tcp://0.0.0.0:3000', *ARGV)
+      when 'rake'   then exec('bundle', 'exec', 'rake', *ARGV)
+      when 'runner' then exec('bundle', 'exec', 'rails', 'runner', *ARGV)
+      else abort("launch.rb: unknown command #{cmd}")
+      end
+      RB
+      chmod -R a+rX,go-w "$APP"
+
+test:
+  pipeline:
+    - runs: |
+        test -f /opt/redmine/launch.rb
+        test -f /opt/redmine/Gemfile.lock
+        cd /opt/redmine && BUNDLE_FROZEN=true bundle exec ruby -e 'require "nokogiri"; puts Nokogiri::VERSION'
