@@ -50,6 +50,16 @@ pipeline:
       if ls -d "$SITE"/*.libs 2>/dev/null | grep -q .; then echo "bundled native libs:"; ls -d "$SITE"/*.libs; exit 1; fi
       test ! -e "$SITE/cryptography" || { echo "cryptography installed into the venv instead of from Wolfi"; exit 1; }
       "$VENV/bin/python" -c "import cryptography as c; assert c.__file__.startswith('/usr/lib/python3.13/site-packages/'), c.__file__; print('cryptography', c.__version__, 'from Wolfi')"
+      # The wheel vendors moment 2.30.1 (CVE-2026-17495, fixed 2.31.0) as static browser JS
+      # in share/jupyterhub/static/components/moment; the templates load components/moment/moment.
+      # Swap in the 2.31.0 npm package, which has the same layout.
+      M="$VENV/share/jupyterhub/static/components/moment"
+      grep -q '"version": "2.30.1"' "$M/package.json"
+      python3.13 -c 'import urllib.request, sys; urllib.request.urlretrieve(sys.argv[1], "/tmp/moment.tgz")' https://registry.npmjs.org/moment/-/moment-2.31.0.tgz
+      echo "efddf549c13aa7cf270f573d9c464978ab0810c0652673ae6af1189bb56ab3f8  /tmp/moment.tgz" | sha256sum -c -
+      rm -rf "$M" /tmp/moment && mkdir -p "$M" /tmp/moment && tar -xzf /tmp/moment.tgz -C /tmp/moment
+      cp -a /tmp/moment/package/. "$M/"
+      grep -q '"version": "2.31.0"' "$M/package.json" && test -s "$M/moment.js"
       "$VENV/bin/pip" uninstall -y pip
       install -d "${dest}/opt/jupyterhub" "${dest}/usr/bin"
       cp -a "$VENV" "${dest}/opt/jupyterhub/venv"
