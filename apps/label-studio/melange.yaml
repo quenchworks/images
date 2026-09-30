@@ -49,6 +49,20 @@ pipeline:
       "$VENV/bin/pip" install --no-cache-dir --upgrade pip
       "$VENV/bin/pip" install --no-cache-dir "label-studio==${VER}"
       "$VENV/bin/pip" uninstall -y opencv-python-headless psycopg-binary
+      # PyJWT 2.13.0 carries CVE-2026-102268 (CRITICAL) and nine more; 2.14.0 fixes them.
+      # label-studio-sdk 2.1.2 declares pyjwt>=2.13.0,<2.14.0. 2.14.0 is a security-only
+      # release (HMAC key hardening, JWKS fetch limits, stricter JWS parsing) that removes no
+      # API, and the SDK calls only jwt.decode(verify_signature=False),
+      # jwt.get_unverified_header and jwt.InvalidTokenError (checked in the 2.1.2 wheel,
+      # tokens/client_ext.py, core/utils/io.py, interface/cli.py). So the fix is pinned
+      # exactly, and the SDK's installed requirement is widened to what was verified.
+      "$VENV/bin/pip" install --no-cache-dir "PyJWT==2.14.0"
+      md="$(ls -d "$VENV"/lib/python3.13/site-packages/label_studio_sdk-*.dist-info)/METADATA"
+      grep -q '^Requires-Dist: pyjwt (>=2.13.0,<2.14.0)$\|^Requires-Dist: pyjwt<2.14.0,>=2.13.0$' "$md"
+      sed -i 's/^Requires-Dist: pyjwt (>=2.13.0,<2.14.0)$/Requires-Dist: pyjwt (>=2.13.0,<2.15.0)/; s/^Requires-Dist: pyjwt<2.14.0,>=2.13.0$/Requires-Dist: pyjwt<2.15.0,>=2.13.0/' "$md"
+      "$VENV/bin/python" -c "import importlib.metadata as m; v = m.version('PyJWT'); assert v == '2.14.0', v; print('PyJWT', v)"
+      # the only broken requirement left is the opencv wheel removed on purpose above
+      "$VENV/bin/pip" check | grep -v 'requires opencv-python-headless, which is not installed' | grep . && exit 1 || true
       # core/version.py asks git for the version through shell=True and catches
       # only CalledProcessError; with no /bin/sh the FileNotFoundError kills the
       # boot. Treat it like a failed git call, which falls back to version_.py.
