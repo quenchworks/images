@@ -61,10 +61,10 @@ echo "login form rendered (Twig + autoloader + config.inc.php all live)"
 echo -n "php: "; docker exec "$NAME" php --version | head -1
 for ext in mysqli mysqlnd mbstring iconv openssl sodium zip bz2 gd curl ctype \
            fileinfo xml dom simplexml json hash pcre session zlib; do
-  docker exec "$NAME" php -m | grep -qi "^${ext}$" \
+  grep -qi "^${ext}$" <<<"$(docker exec "$NAME" php -m)" \
     || { echo "PHP extension '$ext' missing"; docker exec "$NAME" php -m; exit 1; }
 done
-docker exec "$NAME" php -m | grep -qi opcache \
+grep -qi opcache <<<"$(docker exec "$NAME" php -m)" \
   || { echo "OPcache not loaded"; exit 1; }
 echo "PHP extensions present (mysqli mysqlnd mbstring iconv openssl sodium zip bz2 gd curl ctype fileinfo xml dom simplexml + opcache)"
 

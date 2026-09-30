@@ -74,16 +74,19 @@ echo "occ version:"
 docker exec -w /var/www/html "$NAME" php occ --version --no-warnings \
   || { echo "php occ --version failed"; docker logs "$NAME"; exit 1; }
 
-# Required + recommended PHP extensions must be present in the runtime.
+# Required + recommended PHP extensions must be present in the runtime. php -m is read once
+# and grepped as a here-string: piping it into grep -q made grep exit on the first match,
+# php died of SIGPIPE, and pipefail reported a present extension as missing (arm64 CI).
+mods="$(docker exec "$NAME" php -m)"
 for ext in ctype curl dom gd fileinfo mbstring openssl posix simplexml \
            xmlreader xmlwriter zip pdo pdo_mysql pdo_pgsql pdo_sqlite \
            intl bcmath gmp exif sodium apcu redis imagick ldap; do
-  docker exec "$NAME" php -m | grep -qi "^${ext}$" \
-    || { echo "PHP extension '$ext' missing"; docker exec "$NAME" php -m; exit 1; }
+  grep -qi "^${ext}$" <<<"$mods" \
+    || { echo "PHP extension '$ext' missing"; echo "$mods"; exit 1; }
 done
 # opcache is reported as "Zend OPcache" by php -m.
-docker exec "$NAME" php -m | grep -qi "opcache" \
-  || { echo "PHP extension 'opcache' missing"; docker exec "$NAME" php -m; exit 1; }
+grep -qi "opcache" <<<"$mods" \
+  || { echo "PHP extension 'opcache' missing"; echo "$mods"; exit 1; }
 echo "PHP extensions present (required + recommended)"
 
 # runtime pieces

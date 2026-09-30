@@ -57,11 +57,11 @@ grep -qi 'drupal' /tmp/drupal-out.html || {
 # php version + required extensions loaded in the runtime.
 echo "php version:"; docker exec "$NAME" php --version | head -1
 for ext in gd pdo pdo_mysql pdo_pgsql pdo_sqlite mbstring dom simplexml xml ctype curl openssl fileinfo; do
-  docker exec "$NAME" php -m | grep -qi "^${ext}$" \
+  grep -qi "^${ext}$" <<<"$(docker exec "$NAME" php -m)" \
     || { echo "PHP extension '$ext' missing"; docker exec "$NAME" php -m; exit 1; }
 done
 # OPcache registers as a Zend extension ("Zend OPcache"), not a plain module line.
-docker exec "$NAME" php -m | grep -qi opcache \
+grep -qi opcache <<<"$(docker exec "$NAME" php -m)" \
   || { echo "OPcache not loaded"; docker exec "$NAME" php -m; exit 1; }
 echo "PHP extensions present: gd pdo pdo_mysql pdo_pgsql pdo_sqlite mbstring dom simplexml xml ctype curl openssl fileinfo opcache(Zend)"
 

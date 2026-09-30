@@ -62,7 +62,7 @@ docker exec -w /var/www/html "$NAME" php artisan --version \
 
 # Required PHP extensions must be loaded in the runtime.
 for ext in pdo_pgsql pgsql redis bcmath gd intl mbstring pcntl; do
-  docker exec "$NAME" php -m | grep -qi "^${ext}$" \
+  grep -qi "^${ext}$" <<<"$(docker exec "$NAME" php -m)" \
     || { echo "PHP extension '$ext' missing from runtime"; docker exec "$NAME" php -m; exit 1; }
 done
 echo "PHP extensions present: pdo_pgsql pgsql redis bcmath gd intl mbstring pcntl"
