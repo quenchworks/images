@@ -68,5 +68,7 @@ done
 [ "$state" = running ] || { docker logs "$T-worker" 2>&1 | tail -30; fail "the worker never reached running (state: ${state:-none})"; }
 echo "worker registered and running: $(sed -n 's/.*"platform":"\([a-z]*\)".*/\1/p' <<<"$w" | head -1)"
 # The bundled resource type: without registry-image no task image can be fetched.
-grep -q '"type":"registry-image"' <<<"$w" || fail "the worker does not advertise the registry-image resource type"
-echo "smoke test passed (concourse ${WANT:-?}, uid $user, API, embedded UI, local login, main team, worker running with registry-image)"
+for rt in registry-image time; do
+  grep -q "\"type\":\"$rt\"" <<<"$w" || fail "the worker does not advertise the $rt resource type"
+done
+echo "smoke test passed (concourse ${WANT:-?}, uid $user, API, embedded UI, local login, main team, worker running with registry-image and time)"

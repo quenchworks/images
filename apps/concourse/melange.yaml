@@ -117,51 +117,57 @@ pipeline:
 
   # The worker advertises every directory under resource-types/ that has a
   # resource_metadata.json and runs <dir>/rootfs.tgz as that type's container image. Without
-  # registry-image no task image can be fetched at all, so it is bundled here. Upstream's
+  # registry-image no task image can be fetched at all; time is the common trigger. Upstream's
   # rootfs is wolfi-base plus ca-certificates and tzdata with the three static binaries in
   # /opt/resource; this builds the same from the release tag.
   # Trivy does not look inside rootfs.tgz, so the same binaries also ship unpacked in
   # resource-bin/ (outside resource-types/, where every entry must be a type) for the scan.
-  - name: Build the registry-image resource type
+  - name: Build the bundled resource types (registry-image, time)
     runs: |
       set -eu
       export CGO_ENABLED=0 GOFLAGS=-mod=mod GOTOOLCHAIN=local
-      V=1.18.0
-      mkdir -p /tmp/rir && cd /tmp/rir
-      curl -fsSL -o src.tgz https://github.com/concourse/registry-image-resource/archive/refs/tags/v$V.tar.gz
-      echo "df42c61a2d4b82c8183d448213cf4adfa23c4bf88d862fbdbceb3f016fe281ec  src.tgz" | sha256sum -c -
-      tar -xzf src.tgz --strip-components=1
-      # v1.18.0 pins x/crypto v0.54.0 (CVE-2026-56854/-56855/-78662) and x/mod v0.39.0
-      # (CVE-2026-56864/-56865)
-      go get golang.org/x/crypto@v0.56.0 golang.org/x/mod@v0.40.0 && go mod tidy
-      S="${{targets.destdir}}/usr/local/concourse/resource-bin/registry-image"
-      install -d "$S"
-      for c in check in out; do
-        go build -trimpath -ldflags "-s -w" -o "$S/$c" "./cmd/$c"
-      done
-      for c in check in out; do
-        m="$(go version -m "$S/$c")"
-        for want in "golang.org/x/crypto v0.56.0" "golang.org/x/mod v0.40.0"; do
-          mod="${want% *}"; ver="${want#* }"
-          got="$(awk -v m="$mod" '$1 == "dep" && $2 == m { print $3 }' <<<"$m")"
-          [ -z "$got" ] || [ "$got" = "$ver" ] || { echo "$c links $mod $got, not $ver"; exit 1; }
+      # build_type NAME VERSION SHA256 PKGDIR FLOOR...: build check/in/out from the
+      # concourse/NAME-resource tag, float each FLOOR module@version and assert the binaries
+      # link exactly that version, then pack the rootfs and its metadata.
+      build_type() {
+        name=$1 v=$2 sum=$3 pkgdir=$4; shift 4
+        w=/tmp/rt-$name && mkdir -p "$w" && cd "$w"
+        curl -fsSL -o src.tgz "https://github.com/concourse/$name-resource/archive/refs/tags/v$v.tar.gz"
+        echo "$sum  src.tgz" | sha256sum -c -
+        tar -xzf src.tgz --strip-components=1
+        go get "$@" && go mod tidy
+        S="${{targets.destdir}}/usr/local/concourse/resource-bin/$name"
+        install -d "$S"
+        for c in check in out; do
+          go build -trimpath -ldflags "-s -w" -o "$S/$c" "./$pkgdir$c"
+          m="$(go version -m "$S/$c")"
+          for f in "$@"; do
+            got="$(awk -v m="${f%@*}" '$1 == "dep" && $2 == m { print $3 }' <<<"$m")"
+            [ -z "$got" ] || [ "$got" = "${f#*@}" ] || { echo "$name/$c links ${f%@*} $got, not ${f#*@}"; exit 1; }
+          done
         done
-      done
-      R=/tmp/rir-rootfs
-      install -d "$R/opt/resource" "$R/etc/ssl/certs" "$R/usr/share" "$R/root"
-      install -d -m 1777 "$R/tmp"
-      cp "$S/check" "$S/in" "$S/out" "$R/opt/resource/"
-      cp /etc/ssl/certs/ca-certificates.crt "$R/etc/ssl/certs/"
-      cp -a /usr/share/zoneinfo "$R/usr/share/"
-      printf 'root:x:0:0:root:/root:/sbin/nologin\n' > "$R/etc/passwd"
-      printf 'root:x:0:\n' > "$R/etc/group"
-      T="${{targets.destdir}}/usr/local/concourse/resource-types/registry-image"
-      install -d "$T"
-      tar -C "$R" -czf "$T/rootfs.tgz" .
-      printf '{"type":"registry-image","version":"%s","privileged":false,"unique_version_history":false}\n' "$V" \
-        > "$T/resource_metadata.json"
-      list="$(tar -tzf "$T/rootfs.tgz")"
-      grep -qx './opt/resource/check' <<<"$list"
+        R=/tmp/rt-$name-rootfs
+        install -d "$R/opt/resource" "$R/etc/ssl/certs" "$R/usr/share" "$R/root"
+        install -d -m 1777 "$R/tmp"
+        cp "$S/check" "$S/in" "$S/out" "$R/opt/resource/"
+        cp /etc/ssl/certs/ca-certificates.crt "$R/etc/ssl/certs/"
+        cp -a /usr/share/zoneinfo "$R/usr/share/"
+        printf 'root:x:0:0:root:/root:/sbin/nologin\n' > "$R/etc/passwd"
+        printf 'root:x:0:\n' > "$R/etc/group"
+        T="${{targets.destdir}}/usr/local/concourse/resource-types/$name"
+        install -d "$T"
+        tar -C "$R" -czf "$T/rootfs.tgz" .
+        printf '{"type":"%s","version":"%s","privileged":false,"unique_version_history":false}\n' "$name" "$v" \
+          > "$T/resource_metadata.json"
+        list="$(tar -tzf "$T/rootfs.tgz")"
+        grep -qx './opt/resource/check' <<<"$list"
+      }
+      # registry-image v1.18.0 pins x/crypto v0.54.0 (CVE-2026-56854/-56855/-78662) and
+      # x/mod v0.39.0 (CVE-2026-56864/-56865); time v1.11.4 pins x/mod v0.38.0 (the same two).
+      build_type registry-image 1.18.0 df42c61a2d4b82c8183d448213cf4adfa23c4bf88d862fbdbceb3f016fe281ec cmd/ \
+        golang.org/x/crypto@v0.56.0 golang.org/x/mod@v0.40.0
+      build_type time 1.11.4 4c660e6aacebddebe921b7d3ef1b59eda7bf63537b87d52a0bb6456a628b04d4 "" \
+        golang.org/x/mod@v0.40.0
 
 test:
   pipeline:
@@ -170,3 +176,4 @@ test:
         test -x /usr/local/concourse/bin/init
         test -s /usr/local/concourse/resource-types/registry-image/rootfs.tgz
         grep -q '"type":"registry-image"' /usr/local/concourse/resource-types/registry-image/resource_metadata.json
+        grep -q '"type":"time"' /usr/local/concourse/resource-types/time/resource_metadata.json
