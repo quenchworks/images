@@ -136,7 +136,7 @@ pipeline:
                                           // actually adds the lstat-based assertPathSafe guard,
                                           // so 0.6.1 is the real fix, not 0.6.0.
           "@anthropic-ai/sdk":"0.91.1",
-          "brace-expansion":"5.0.9",      // CVE-2026-14257 + follow-ons; 5.0.9 is the same
+          "brace-expansion":"5.0.12",      // CVE-2026-14257 + follow-ons; 5.0.9 is the same
                                           // major as the 5.0.8 this was pinned to, so the CJS
                                           // interop step below still applies unchanged
           "nanoid@3":"3.3.18",            // transitive 3.3.8 flagged; scoped @3 so any 5.x
@@ -277,7 +277,7 @@ pipeline:
       copies = sorted(os.path.join(r, 'brace-expansion', 'package.json')
                       for r, dirs, _ in os.walk('node_modules') if 'brace-expansion' in dirs)
       assert copies, "brace-expansion not found under node_modules"
-      stale = [p for p in copies if json.load(open(p))['version'].split('.')[0] != '5']
+      stale = [p for p in copies if json.load(open(p))['version'] != '5.0.12']  # CVE-2026-102276/-102278 sit on 5.0.9/5.0.10
       assert not stale, "override missed brace-expansion copies: %s" % stale
       n = 0
       for pj in copies:

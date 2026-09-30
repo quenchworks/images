@@ -224,7 +224,7 @@ pipeline:
                                         // downgrade) + GHSA-rgwj-5xj2-c3m3 (zlib-inflate DoS);
                                         // fixed at 3.22.0 / 3.23.1 respectively, newest used
           "ip": "1.1.9",
-          "brace-expansion": "5.0.9",   // CVE-2026-14257 then CVE-2026-69152 (which landed
+          "brace-expansion": "5.0.12",   // CVE-2026-14257 then CVE-2026-69152 (which landed
                                         // ON 5.0.8, the version pinned to fix the first);
                                         // see the interop step below
           "js-yaml": "4.3.2",           // CVE in 4.3.0/4.3.1 (CVE-2026-84375, DoS in YAML parsing)
@@ -294,7 +294,7 @@ pipeline:
         const ver = d => JSON.parse(fs.readFileSync(path.join(d, "package.json"), "utf8")).version;
         const copies = fs.readFileSync(process.env.BE_COPIES, "utf8").split("\0").filter(Boolean);
         if (!copies.length) throw new Error("no brace-expansion copy found under node_modules");
-        const stale = copies.filter(d => !ver(d).startsWith("5."));
+        const stale = copies.filter(d => ver(d) !== "5.0.12");  // CVE-2026-102276/-102278 sit on 5.0.9 and 5.0.10
         if (stale.length) throw new Error("override missed brace-expansion copies: " + stale.join(" "));
         let shim = 0;
         for (const d of copies) {

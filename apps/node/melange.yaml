@@ -1,16 +1,16 @@
-# Overlay for the Wolfi npm package, which still bundles ip-address 10.3.1 (CVE-2026-101910 and
-# CVE-2026-101913, fixed in 10.5.1). Upstream npm 12.1.0 bundles 10.5.0, so no npm release closes
-# them yet. The node image is otherwise pure Wolfi packages; this package ships only the fixed
-# ip-address tree and Wolfi's npm SPDX with that one entry corrected (Trivy reads
-# /var/lib/db/sbom as its own source, so a stale record keeps the finding after the files are fixed).
-# `replaces: npm-12` lets apk write over the files npm-12 owns.
-# RETIRE this package when a Wolfi npm ships ip-address >= 10.5.1: the SPDX step asserts a stale
-# entry exists, so the build fails and says so.
+# Overlay for the Wolfi npm package, whose bundled tree still carries vulnerable ip-address and
+# brace-expansion copies (versions and CVEs at FIXES below; upstream npm 12.1.0 bundles the same
+# ones, so no npm release closes them yet). The node image is otherwise pure Wolfi packages; this
+# package ships only the fixed trees and Wolfi's npm SPDX with those entries corrected (Trivy
+# reads /var/lib/db/sbom as its own source, so a stale record keeps the finding after the files
+# are fixed). `replaces: npm-12` lets apk write over the files npm-12 owns.
+# RETIRE an entry when a Wolfi npm ships it fixed: the SPDX step fails on an entry it finds no
+# stale copy of, and says so.
 package:
   name: quench-node-npm-fix
   version: __VER__
   epoch: 0
-  description: "ip-address 10.5.1 over the copy bundled in Wolfi npm-12"
+  description: "fixed ip-address and brace-expansion over the copies bundled in Wolfi npm-12"
   copyright:
     - license: MIT
   dependencies:
@@ -35,31 +35,46 @@ pipeline:
   - runs: |
       set -eu
       D="${{targets.destdir}}"
-      node -e 'fetch(process.argv[1]).then(r=>r.arrayBuffer()).then(b=>require("fs").writeFileSync("/tmp/ipaddr.tgz",Buffer.from(b)))' https://registry.npmjs.org/ip-address/-/ip-address-10.5.1.tgz
-      echo "203c3d396fa03f1712802cb38859cb9b5bf689f8fd30296d3d1d159d3f34e6f8  /tmp/ipaddr.tgz" | sha256sum -c -
-      mkdir -p /tmp/ipaddr "$D/usr/lib/node_modules/npm/node_modules/ip-address" "$D/var/lib/db/sbom"
-      tar -xzf /tmp/ipaddr.tgz -C /tmp/ipaddr
-      cp -a /tmp/ipaddr/package/. "$D/usr/lib/node_modules/npm/node_modules/ip-address/"
-      chmod -R a+rX,go-w "$D/usr/lib/node_modules/npm/node_modules/ip-address"
-      # the tarball must actually be the version this recipe claims
-      grep -q '"version": "10.5.1"' "$D/usr/lib/node_modules/npm/node_modules/ip-address/package.json"
+      NM="$D/usr/lib/node_modules/npm/node_modules"
+      mkdir -p "$D/var/lib/db/sbom"
+      # <package> <version> <sha256 of the registry tarball>. Each replaces the copy npm-12
+      # bundles, same major, so npm's own requires keep resolving.
+      #   ip-address 10.7.1: CVE-2026-101910/-101913 (10.5.1), then -101911/-101912 (10.7.1)
+      #   brace-expansion 5.0.12: CVE-2026-102276/-102278/-102277 landed on 5.0.9 to 5.0.11
+      FIXES="ip-address 10.7.1 7f99ac7abda701afe1fd1e36de462236fb4d1eb8c595d7ae0267bba7d8ee55f8
+      brace-expansion 5.0.12 ef8448ec78f20b692f04fa6d01f39b5ab34c66404bea3429f5a39c6c9e0be8b4"
+      echo "$FIXES" | while read -r name ver sha; do
+        node -e 'fetch(process.argv[1]).then(r=>r.arrayBuffer()).then(b=>require("fs").writeFileSync("/tmp/pkg.tgz",Buffer.from(b)))' "https://registry.npmjs.org/$name/-/$name-$ver.tgz"
+        echo "$sha  /tmp/pkg.tgz" | sha256sum -c -
+        test -d "/usr/lib/node_modules/npm/node_modules/$name" || { echo "npm no longer bundles $name; drop it from FIXES"; exit 1; }
+        rm -rf /tmp/pkg && mkdir -p /tmp/pkg "$NM/$name"
+        tar -xzf /tmp/pkg.tgz -C /tmp/pkg
+        cp -a /tmp/pkg/package/. "$NM/$name/"
+        chmod -R a+rX,go-w "$NM/$name"
+        grep -q "\"version\": \"$ver\"" "$NM/$name/package.json"
+      done
       src="$(ls /var/lib/db/sbom/npm-12-*.spdx.json)"
       test "$(echo "$src" | wc -l)" = 1
-      DESTDIR_="$D" SRC="$src" node -e '
+      FIXES="$FIXES" DESTDIR_="$D" SRC="$src" node -e '
         const fs = require("fs"), path = require("path");
+        const want = Object.fromEntries(process.env.FIXES.trim().split("\n").map(l => l.trim().split(/\s+/).slice(0, 2)));
         const doc = JSON.parse(fs.readFileSync(process.env.SRC, "utf8"));
-        let hit = 0;
+        const hit = {};
         doc.packages = doc.packages.map(p => {
-          if (p.name !== "ip-address" || p.versionInfo === "10.5.1") return p;
-          hit++;
-          return JSON.parse(JSON.stringify(p).split(p.versionInfo).join("10.5.1"));
+          const v = want[p.name];
+          if (!v || p.versionInfo === v) return p;
+          hit[p.name] = (hit[p.name] || 0) + 1;
+          return JSON.parse(JSON.stringify(p).split(p.versionInfo).join(v));
         });
-        if (!hit) throw new Error("npm-12 SPDX lists no stale ip-address: retire quench-node-npm-fix");
+        for (const n of Object.keys(want))
+          if (!hit[n]) throw new Error("npm-12 SPDX lists no stale " + n + ": drop it from FIXES, or retire this package");
         fs.writeFileSync(path.join(process.env.DESTDIR_, "var/lib/db/sbom", path.basename(process.env.SRC)), JSON.stringify(doc, null, 2) + "\n");
-        console.log("corrected " + hit + " ip-address entry in " + path.basename(process.env.SRC));
+        console.log("corrected " + JSON.stringify(hit) + " in " + path.basename(process.env.SRC));
       '
 
 test:
   pipeline:
     - runs: |
-        grep -q '"version": "10.5.1"' /usr/lib/node_modules/npm/node_modules/ip-address/package.json
+        grep -q '"version": "10.7.1"' /usr/lib/node_modules/npm/node_modules/ip-address/package.json
+        grep -q '"version": "5.0.12"' /usr/lib/node_modules/npm/node_modules/brace-expansion/package.json
+        npm --version

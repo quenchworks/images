@@ -28,7 +28,7 @@ package:
     - license: LicenseRef-n8n-Sustainable-Use-License-1.0
   dependencies:
     replaces:
-      - npm-12                 # the package that owns npm; ships ip-address 10.5.1 over its bundled copy (step 5)
+      - npm-12                 # the package that owns npm; ships fixed ip-address and brace-expansion over its bundled copies (step 5)
     runtime:
       - nodejs-24              # JS runner + the launcher spawns node
       - python-3.13            # base interpreter the Python runner venv references
@@ -138,7 +138,7 @@ pipeline:
       #   * qs 6.15.2 -> 6.16.0 (CVE-2026-82417 + CVE-2026-82562 DoS). Transitive via n8n-core
       #     and @n8n/backend-network (both pin 6.15.2 exactly, so it cannot float); same 6.x
       #     major, no API change.
-      #   * ip-address -> 10.5.1 (CVE-2026-101910/-101913), transitive via socks.
+      #   * ip-address -> 10.7.1 (CVE-2026-101910 to -101913), transitive via socks.
       #   * stream-json 1.9.1 -> 3.5.0 (CVE-2026-71429 DoS). Transitive via @n8n/backend-common
       #     (pinned 1.9.1 exactly). 3.5.0 is the first fixed release, so the two-major jump is
       #     forced -- and 3.x is an ESM-only API redesign, hence the migration step below.
@@ -149,9 +149,9 @@ pipeline:
         // scoped overrides below still cover every transitive copy per major.
         if (p.dependencies && p.dependencies.nanoid) p.dependencies.nanoid="3.3.18";
         p.overrides=Object.assign(p.overrides||{},{
-          "brace-expansion":"5.0.9",
+          "brace-expansion":"5.0.12",
           "fast-xml-parser":"5.7.0",
-          "ip-address":"10.5.1",
+          "ip-address":"10.7.1",
           "nanoid@3":"3.3.18",
           "nanoid@5":"5.1.6",
           "qs":"6.16.0",
@@ -189,7 +189,7 @@ pipeline:
       # longer pulls brace-expansion at all (2.31.6's did, via glob->minimatch). The
       # override is then a harmless no-op. What must still fail is a copy that EXISTS
       # and escaped the pin, so assert-if-present rather than assert-exists.
-      stale = [p for p in copies if json.load(open(p))['version'].split('.')[0] != '5']
+      stale = [p for p in copies if json.load(open(p))['version'] != '5.0.12']  # CVE-2026-102276/-102278 sit on 5.0.9/5.0.10
       assert not stale, "override missed brace-expansion copies: %s" % stale
       if not copies:
           print("brace-expansion: absent from this tree, override is a no-op")
@@ -393,36 +393,48 @@ pipeline:
       # runners run with HOME=/home/runner and workdir there.
       install -d "$dest/home/runner"
 
-  # 5. npm's own bundled ip-address (Wolfi npm ships 10.3.1; upstream npm 12.1.0 still bundles
-  #    10.5.0, one short of CVE-2026-101910/-101913's fix in 10.5.1). This package declares
-  #    `replaces: npm`, so apk lets its copy win over the npm package's.
+  # 5. npm's own bundled ip-address and brace-expansion (Wolfi npm-12 ships vulnerable copies,
+  #    and upstream npm 12.1.0 bundles the same). This package declares `replaces: npm-12`, so
+  #    apk lets its copies win over the npm package's. Same step as apps/node's overlay.
   - runs: |
       set -eu
       D="${{targets.destdir}}"
-      wget -q -O /tmp/ipaddr.tgz https://registry.npmjs.org/ip-address/-/ip-address-10.5.1.tgz
-      echo "203c3d396fa03f1712802cb38859cb9b5bf689f8fd30296d3d1d159d3f34e6f8  /tmp/ipaddr.tgz" | sha256sum -c -
-      mkdir -p /tmp/ipaddr "$D/usr/lib/node_modules/npm/node_modules/ip-address"
-      tar -xzf /tmp/ipaddr.tgz -C /tmp/ipaddr
-      cp -a /tmp/ipaddr/package/. "$D/usr/lib/node_modules/npm/node_modules/ip-address/"
-      chmod -R a+rX,go-w "$D/usr/lib/node_modules/npm/node_modules/ip-address"
-      # Wolfi's npm SPDX still records the old ip-address, and Trivy scans /var/lib/db/sbom as its
-      # own source, so the phantom 10.3.1 would keep the finding after the files are fixed.
-      DESTDIR_="$D" python3 - <<'PYEOF2'
-      import glob, json, os, pathlib
-      src = glob.glob("/var/lib/db/sbom/npm-12-*.spdx.json")
-      assert len(src) == 1, f"expected one npm-12 SPDX, got {src}"
-      doc = json.loads(pathlib.Path(src[0]).read_text())
-      hit = 0
-      for i, pkg in enumerate(doc["packages"]):
-          if pkg.get("name") == "ip-address" and pkg.get("versionInfo") != "10.5.1":
-              doc["packages"][i] = json.loads(json.dumps(pkg).replace(pkg["versionInfo"], "10.5.1"))
-              hit += 1
-      assert hit, "npm-12 SPDX no longer lists a stale ip-address: drop step 5"
-      dst = pathlib.Path(os.environ["DESTDIR_"]) / "var/lib/db/sbom" / os.path.basename(src[0])
-      dst.parent.mkdir(parents=True, exist_ok=True)
-      dst.write_text(json.dumps(doc, indent=2) + "\n")
-      print(f"corrected {hit} ip-address entry in {dst.name}")
-      PYEOF2
+      NM="$D/usr/lib/node_modules/npm/node_modules"
+      mkdir -p "$D/var/lib/db/sbom"
+      # <package> <version> <sha256 of the registry tarball>. Each replaces the copy npm-12
+      # bundles, same major, so npm's own requires keep resolving.
+      #   ip-address 10.7.1: CVE-2026-101910/-101913 (10.5.1), then -101911/-101912 (10.7.1)
+      #   brace-expansion 5.0.12: CVE-2026-102276/-102278/-102277 landed on 5.0.9 to 5.0.11
+      FIXES="ip-address 10.7.1 7f99ac7abda701afe1fd1e36de462236fb4d1eb8c595d7ae0267bba7d8ee55f8
+      brace-expansion 5.0.12 ef8448ec78f20b692f04fa6d01f39b5ab34c66404bea3429f5a39c6c9e0be8b4"
+      echo "$FIXES" | while read -r name ver sha; do
+        node -e 'fetch(process.argv[1]).then(r=>r.arrayBuffer()).then(b=>require("fs").writeFileSync("/tmp/pkg.tgz",Buffer.from(b)))' "https://registry.npmjs.org/$name/-/$name-$ver.tgz"
+        echo "$sha  /tmp/pkg.tgz" | sha256sum -c -
+        test -d "/usr/lib/node_modules/npm/node_modules/$name" || { echo "npm no longer bundles $name; drop it from FIXES"; exit 1; }
+        rm -rf /tmp/pkg && mkdir -p /tmp/pkg "$NM/$name"
+        tar -xzf /tmp/pkg.tgz -C /tmp/pkg
+        cp -a /tmp/pkg/package/. "$NM/$name/"
+        chmod -R a+rX,go-w "$NM/$name"
+        grep -q "\"version\": \"$ver\"" "$NM/$name/package.json"
+      done
+      src="$(ls /var/lib/db/sbom/npm-12-*.spdx.json)"
+      test "$(echo "$src" | wc -l)" = 1
+      FIXES="$FIXES" DESTDIR_="$D" SRC="$src" node -e '
+        const fs = require("fs"), path = require("path");
+        const want = Object.fromEntries(process.env.FIXES.trim().split("\n").map(l => l.trim().split(/\s+/).slice(0, 2)));
+        const doc = JSON.parse(fs.readFileSync(process.env.SRC, "utf8"));
+        const hit = {};
+        doc.packages = doc.packages.map(p => {
+          const v = want[p.name];
+          if (!v || p.versionInfo === v) return p;
+          hit[p.name] = (hit[p.name] || 0) + 1;
+          return JSON.parse(JSON.stringify(p).split(p.versionInfo).join(v));
+        });
+        for (const n of Object.keys(want))
+          if (!hit[n]) throw new Error("npm-12 SPDX lists no stale " + n + ": drop it from FIXES, or retire this package");
+        fs.writeFileSync(path.join(process.env.DESTDIR_, "var/lib/db/sbom", path.basename(process.env.SRC)), JSON.stringify(doc, null, 2) + "\n");
+        console.log("corrected " + JSON.stringify(hit) + " in " + path.basename(process.env.SRC));
+      '
 
 test:
   pipeline:
@@ -435,5 +447,6 @@ test:
         # the python runner venv must import its pinned deps + the runner module
         /opt/runners/task-runner-python/.venv/bin/python -c "import urllib3, websockets; print('py-runner deps ok')"
         # package managers present for operator customization
-        grep -q '"version": "10.5.1"' /usr/lib/node_modules/npm/node_modules/ip-address/package.json
+        grep -q '"version": "10.7.1"' /usr/lib/node_modules/npm/node_modules/ip-address/package.json
+        grep -q '"version": "5.0.12"' /usr/lib/node_modules/npm/node_modules/brace-expansion/package.json
         for t in uv poetry npm yarn pnpm; do command -v "$t" >/dev/null || { echo "missing $t"; exit 1; }; done
