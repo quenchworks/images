@@ -226,6 +226,10 @@ pipeline:
       #                                       dep (starlette/httpx/dramatiq), pulled in
       #                                       only via uv.lock, so nothing in pyproject
       #                                       names it -- the override is the only lever.
+      #      oauthlib 3.3.1 -> 4.0.0 (CVE-2026-49264/-49265, 2026-09-30): only requests-oauthlib
+      #      and the kubernetes client use it; authentik imports no oauthlib class itself
+      #      (its OAuth1 source goes through requests_oauthlib). 4.0 breaks only the OAuth2
+      #      PROVIDER side (revocation JSONP removed, grant validation order), not the client.
       #      The two python-3.14 / python-3.14-base rows (CVE-2026-15308, fixed in
       #      3.14.6-r4) need NO edit: apko.yaml lists `python-3.14` UNPINNED, so a
       #      plain rebuild resolves Wolfi's newest (r4 is published on both arches).
@@ -250,6 +254,7 @@ pipeline:
           '  "sqlparse==0.6.0",\n'
           '  "djangorestframework==3.17.2",\n'
           '  "anyio==4.14.2",\n'
+          '  "oauthlib==4.0.0",\n'
           ']\n'
       )
       t, n = re.subn(r'(?m)^\[tool\.uv\]\s*$', overrides, t, count=1)
