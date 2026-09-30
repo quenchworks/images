@@ -70,6 +70,13 @@ pipeline:
       PY
       cat requirements.txt
       "$PIP" install --no-cache-dir -r requirements.txt gunicorn
+      # oauthlib 3.3.1 (CVE-2026-49264/-49265) arrives via google-auth-oauthlib ->
+      # requests-oauthlib (oauthlib>=3.0.0), the OAuth client side. pgAdmin's own OAuth2
+      # login is Authlib. 4.0.0 breaks only oauthlib's OAuth2 provider API.
+      "$PIP" install --no-cache-dir "oauthlib==4.0.0"
+      # nothing installed may reject oauthlib 4.0.0 (pip check also reports the deliberate
+      # Wolfi psycopg swap, so only oauthlib lines count here)
+      if "$PIP" check | grep -i oauthlib; then echo "a package rejects oauthlib 4.0.0"; exit 1; fi
       # what the scan cannot see must not be there
       site="$VENV/lib/python3.13/site-packages"
       if ls -d "$site"/*.libs 2>/dev/null | grep -q .; then echo "❌ bundled native libs:"; ls -d "$site"/*.libs; exit 1; fi
