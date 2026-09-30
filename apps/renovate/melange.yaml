@@ -56,6 +56,10 @@ pipeline:
       # 2026-08-10: CVE-2026-69152 then landed on 5.0.8 itself (fixed in 5.0.9), so the staged
       # version moves to 5.0.9. Per-line fixes now exist (1.1.18 / 2.1.4 / 3.0.6), but forcing
       # one 5.x copy everywhere keeps a single version to audit instead of three.
+      # 2026-09-30: CVE-2026-102276 and -102278 (HIGH) landed on 5.0.9 and 5.0.10; the staged
+      # version is 5.0.12, the newest 5.x (5.0.10 to 5.0.12 shipped within an hour on 2026-09-14). Renovate's own
+      # hoisted copy is 5.0.9, so a copy is now replaced whenever it is not the staged
+      # version, not only when it is off the 5.x line.
       # Parent-bumping is not available either: rimraf 6 / glob 11 are promise-only and callback-
       # style mv/rimraf 2 would break, and minimatch 9.0.9 (the newest 9.x) deliberately REVERTED
       # from brace-expansion ^5.0.2 back to ^2.0.2.
@@ -71,7 +75,7 @@ pipeline:
       # cannot hoist into (and rewrite) the tree we just installed.
       mkdir -p .be-stage
       echo '{"name":"quench-be-stage","private":true}' > .be-stage/package.json
-      ( cd .be-stage && npm install --no-audit --no-fund --no-package-lock brace-expansion@5.0.9 )
+      ( cd .be-stage && npm install --no-audit --no-fund --no-package-lock brace-expansion@5.0.12 )
       # Enumerate with `find`, NOT fs.readdirSync({recursive:true}). The readdir walker
       # matched only the hoisted top-level copy — which already floats to 5.0.9 on its
       # own — so it replaced nothing and the two NESTED copies shipped vulnerable
@@ -90,8 +94,9 @@ pipeline:
         const copies=fs.readFileSync(process.env.BE_COPIES,"utf8").split("\0").filter(Boolean);
         if(!copies.length) throw new Error("no brace-expansion copy under "+root);
         let rep=0, shim=0;
+        const want=ver(path.join(stage,"brace-expansion"));
         for(const d of copies){
-          if(!ver(d).startsWith("5.")){
+          if(ver(d)!==want){
             fs.rmSync(d,{recursive:true});
             fs.cpSync(path.join(stage,"brace-expansion"),d,{recursive:true});
             // 5.x needs balanced-match ^4 while the tree hoists ^1 for the old copies, so nest it.
@@ -100,7 +105,7 @@ pipeline:
           }
           const cjs=path.join(d,"dist","commonjs","index.js");
           if(!fs.readFileSync(cjs,"utf8").includes("Object.assign(expand")){fs.appendFileSync(cjs,SHIM);shim++;}
-          if(!ver(d).startsWith("5.")) throw new Error("brace-expansion still "+ver(d)+" at "+d);
+          if(ver(d)!==want) throw new Error("brace-expansion still "+ver(d)+" at "+d+", want "+want);
           const b=require(d);
           if(typeof b!=="function"||b("a{b,c}").join()!=="ab,ac")
             throw new Error("brace-expansion CJS interop broken at "+d);
