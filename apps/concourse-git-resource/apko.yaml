@@ -1,0 +1,48 @@
+# The git resource type's image. Concourse runs /opt/resource/{check,in,out} directly and,
+# for a non-root image user, gives the resource's volumes to that uid.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-concourse-git-resource@local
+
+accounts:
+  groups:
+    - groupname: git-resource
+      gid: 1001
+  users:
+    - username: git-resource
+      uid: 1001
+      gid: 1001
+      homedir: /home/git-resource
+  run-as: 1001
+
+paths:
+  - path: /home/git-resource
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  HOME: /home/git-resource
+
+entrypoint:
+  command: /opt/resource/check
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-concourse-git-resource"
+  org.opencontainers.image.licenses: "Apache-2.0"

@@ -1,0 +1,108 @@
+# Packages concourse/git-resource: the check/in/out scripts under /opt/resource, the git
+# config upstream's Dockerfile sets, proxytunnel (not in Wolfi) built from its tag, and
+# git-lfs from its tag.
+package:
+  name: quench-concourse-git-resource
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Concourse git resource type"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - bash
+      # /bin/sh (git runs upload-pack and hooks through it) and the sed/grep/awk the
+      # scripts call; upstream's base, wolfi-base, carries the same busybox
+      - busybox
+      - ca-certificates-bundle
+      - coreutils
+      - git
+      - git-crypt
+      - gnupg
+      - gnupg-dirmngr
+      - gpg
+      - gpg-agent
+      - jq
+      - openssh-client
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - build-base
+      - ca-certificates-bundle
+      - curl
+      - go
+      - openssl-dev
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/concourse/git-resource/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Install the resource scripts and the system git config
+    runs: |
+      set -eu
+      R="${{targets.destdir}}/opt/resource"
+      install -d "$R"
+      for f in assets/*; do install -m 0755 "$f" "$R/"; done
+      test -x "$R/check" && test -x "$R/in" && test -x "$R/out"
+      # Upstream sets these with git config --global as root; /etc/gitconfig applies to
+      # any user, and this image runs as uid 1001.
+      install -d "${{targets.destdir}}/etc"
+      cat > "${{targets.destdir}}/etc/gitconfig" <<'EOT'
+      [user]
+      	email = git@localhost
+      	name = git
+      [pull]
+      	rebase = false
+      [protocol "file"]
+      	allow = always
+      [http]
+      	version = HTTP/2
+      EOT
+
+  - name: Build proxytunnel (used by the https_tunnel source option)
+    runs: |
+      set -eu
+      mkdir -p /tmp/pt && cd /tmp/pt
+      curl -fsSL -o pt.tgz https://github.com/proxytunnel/proxytunnel/archive/refs/tags/v1.13.0.tar.gz
+      echo "1b1ae36327254cac351aa5358767c177b050ab4ce4a75fa100244da7816849e9  pt.tgz" | sha256sum -c -
+      tar -xzf pt.tgz --strip-components=1
+      make CFLAGS="-O2 -Wall"
+      install -D -m 0755 proxytunnel "${{targets.destdir}}/usr/bin/proxytunnel"
+
+  # Wolfi's git-lfs 3.8.0-r1 links golang.org/x/crypto v0.54.0 (CVE-2026-56854/-56855/-78662)
+  # and 3.8.0 is the newest upstream, so it is built here with x/crypto v0.56.0.
+  - name: Build git-lfs
+    runs: |
+      set -eu
+      export CGO_ENABLED=0 GOFLAGS=-mod=mod GOTOOLCHAIN=auto
+      mkdir -p /tmp/lfs && cd /tmp/lfs
+      curl -fsSL -o lfs.tgz https://github.com/git-lfs/git-lfs/archive/refs/tags/v3.8.0.tar.gz
+      echo "a12ecfc17ebee002d1f6acca79442029d41cbf5e5b4ba9e02249ed96de20300f  lfs.tgz" | sha256sum -c -
+      tar -xzf lfs.tgz --strip-components=1
+      go get golang.org/x/crypto@v0.56.0 && go mod tidy
+      go build -trimpath -ldflags "-s -w -X 'github.com/git-lfs/git-lfs/v3/config.Vendor=Quenchworks'" \
+        -o "${{targets.destdir}}/usr/bin/git-lfs" .
+      m="$(go version -m "${{targets.destdir}}/usr/bin/git-lfs")"
+      grep -Eq 'dep[[:space:]]+golang.org/x/crypto[[:space:]]+v0.56.0' <<<"$m" \
+        || { echo "git-lfs does not link golang.org/x/crypto v0.56.0"; exit 1; }
+
+test:
+  environment:
+    contents:
+      packages:
+        - bash
+  pipeline:
+    - runs: |
+        test -x /opt/resource/check
+        v="$(proxytunnel --version 2>&1)"
+        grep -q proxytunnel <<<"$v"
+        v="$(git-lfs version)"
+        grep -q 'git-lfs/3.8.0' <<<"$v"

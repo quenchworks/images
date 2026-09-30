@@ -2325,8 +2325,17 @@ catalog:
 
   - name: concourse
     category: CI/CD & registry
-    summary: Concourse CI, built from the release tag with its web UI compiled and embedded in the one Go binary, the containerd, grpc and otel modules floated to their fixed releases. The web node (ATC and TSA) runs nonroot on a read-only rootfs against an external PostgreSQL; the worker runs privileged on Wolfi's containerd, runc and CNI plugins. The built-in resource types (git, registry-image, time, s3) are not bundled yet, so pipelines declare them as custom resource_types.
+    summary: Concourse CI, built from the release tag with its web UI compiled and embedded in the one Go binary, the containerd, grpc and otel modules floated to their fixed releases. The web node (ATC and TSA) runs nonroot on a read-only rootfs against an external PostgreSQL; the worker runs privileged on Wolfi's containerd and runc with the CNI plugins built from source, and bundles the registry-image and time resource types built from their tags. The git resource type is its own image, concourse-git-resource.
     source: https://github.com/concourse/concourse
+    upstream: https://concourse-ci.org
+    license: Apache-2.0
+    tier: standard
+    status: built
+
+  - name: concourse-git-resource
+    category: CI/CD & registry
+    summary: Concourse's git resource type, the upstream check/in/out scripts on Wolfi git, git-crypt, gnupg and openssh, with git-lfs and proxytunnel built from source. Load it in a pipeline with resource_types (type registry-image); the worker bundles registry-image and time. Image only, no chart.
+    source: https://github.com/concourse/git-resource
     upstream: https://concourse-ci.org
     license: Apache-2.0
     tier: standard
