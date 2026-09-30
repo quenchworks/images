@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/joomla/2026-09-30",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-09-30T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2024-39912"
+      },
+      "products": [
+        {
+          "@id": "pkg:composer/web-auth/webauthn-lib@4.5.2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "PROVEN false-positive for the flagged component, measured 2026-09-30 on the Joomla 6.1.4 Full_Package. CVE-2024-39912 (GHSA-875x-g8p7-5w27) is a username-enumeration flaw in web-auth/webauthn-lib's ProfileBasedRequestOptionsBuilder: it returns assertion options without allowedCredentials when no user is found. Joomla pins webauthn-lib 4.5.2 exactly on every branch (6.1.4 and 5.4.9 composer.json). Verified on the archive: libraries/vendor/web-auth/webauthn-lib holds 78 PHP files and `grep -r ProfileBasedRequestOptionsBuilder` over the whole Joomla tree returns 0 matches, so the vulnerable class is not present. Joomla builds its own assertion options instead (plugins/system/webauthn/src/Authentication.php getPubkeyRequestOptions, called from PluginTraits/AjaxHandlerChallenge.php). That code has its own, separate behaviour: an unknown username becomes an empty User and gets an empty credential list, exactly like a real user with no passkey, so the response reveals whether an account has a registered passkey rather than whether it exists. Upgrading webauthn-lib would not change that Joomla code path, and it is not the flaw this advisory describes."
+    }
+  ]
+}

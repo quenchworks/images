@@ -35,6 +35,8 @@ docker exec "$DB" mariadb -ujoomla -pjoomlapw -e 'select 1' joomla >/dev/null 2>
 docker run -d --name "$NAME" --network "$NET" \
   --read-only --tmpfs /tmp \
   --tmpfs /var/www/html/images:mode=1777 --tmpfs /var/www/config:mode=1777 \
+  --tmpfs /var/www/html/tmp:mode=1777 --tmpfs /var/www/html/cache:mode=1777 \
+  --tmpfs /var/www/html/administrator/cache:mode=1777 --tmpfs /var/www/html/administrator/logs:mode=1777 \
   -e JOOMLA_CONFIG_DIR=/var/www/config \
   -p "127.0.0.1:${PORT}:8080" \
   "$IMAGE" >/dev/null

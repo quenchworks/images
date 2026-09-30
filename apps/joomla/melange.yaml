@@ -56,8 +56,53 @@ pipeline:
       grep -q "^.define('JPATH_CONFIGURATION', JPATH_ROOT);" "$f"
       sed -i "s#^.define('JPATH_CONFIGURATION', JPATH_ROOT);#defined('JPATH_CONFIGURATION') || define('JPATH_CONFIGURATION', JPATH_ROOT);#" "$f"
       grep -q "^defined('JPATH_CONFIGURATION') || define" "$f"
+      # The installer's requirements check wants the docroot writable when no
+      # configuration.php exists yet; the file goes to JPATH_CONFIGURATION, so check that.
+      f="$app/installation/src/Model/ChecksModel.php"
+      grep -q "configuration.php') && is_writable(JPATH_ROOT)" "$f"
+      sed -i "s#configuration.php') \&\& is_writable(JPATH_ROOT)#configuration.php') \&\& is_writable(JPATH_CONFIGURATION)#" "$f"
+      grep -q "configuration.php') && is_writable(JPATH_CONFIGURATION)" "$f"
+      # The docroot is read-only, so the installer cannot delete /installation afterwards.
+      # Keep the CLI installer (nginx never serves /installation) but drop the web entry
+      # point: while installation/index.php exists, every page redirects to the installer.
+      # Do the rest of the installer's cleanup here, and skip its folder delete when the
+      # folder is not writable.
+      rm "$app/installation/index.php"
+      rm -f "$app/joomla.xml"
+      [ -e "$app/robots.txt" ] || mv "$app/robots.txt.dist" "$app/robots.txt"
+      f="$app/installation/src/Console/InstallCommand.php"
+      grep -q "if (!(new Version())->isInDevelopmentState()) {" "$f"
+      sed -i "s#if (!(new Version())->isInDevelopmentState()) {#if (!(new Version())->isInDevelopmentState() \&\& is_writable(JPATH_INSTALLATION)) {#" "$f"
+      grep -q "isInDevelopmentState() && is_writable(JPATH_INSTALLATION)) {" "$f"
       # writable at runtime (the chart mounts volumes/tmpfs over these): uploads, cache, tmp, logs
       install -d -m 0755 "$app/images" "$app/cache" "$app/tmp" "$app/administrator/cache" "$app/administrator/logs"
+
+  # phpseclib 3.0.55 (vendored by 5.4.9 and 6.1.4) has CVE-2026-84308, fixed in 3.0.57, a
+  # patch release that adds and removes no class, so the composer classmap stays valid.
+  - uses: fetch
+    with:
+      uri: https://github.com/phpseclib/phpseclib/archive/refs/tags/3.0.57.tar.gz
+      expected-sha256: 18023e70ca9257e66e289d201d4af4da5d2c91d1de8adc68c23a58dca4f29761
+      extract: false
+
+  - name: Swap the vendored phpseclib up to 3.0.57 when it is older
+    runs: |
+      set -eu
+      vendor="${{targets.destdir}}/var/www/html/libraries/vendor"
+      have=$(grep -A1 '"name": "phpseclib/phpseclib"' "$vendor/composer/installed.json" | sed -n 's/.*"version": "\([^"]*\)".*/\1/p')
+      test -n "$have"
+      if [ "$(printf '%s\n' "$have" 3.0.57 | sort -V | head -1)" = "$have" ] && [ "$have" != 3.0.57 ]; then
+        mkdir -p /tmp/phpseclib
+        tar -xzf 3.0.57.tar.gz -C /tmp/phpseclib --strip-components=1
+        rm -rf "$vendor/phpseclib/phpseclib/phpseclib"
+        cp -a /tmp/phpseclib/phpseclib "$vendor/phpseclib/phpseclib/phpseclib"
+        chmod -R u=rwX,go=rX "$vendor/phpseclib/phpseclib/phpseclib"
+        diff -r /tmp/phpseclib/phpseclib "$vendor/phpseclib/phpseclib/phpseclib"
+        ref=d17e0ddaeaf6f22f7e007cbb437d78792fe2a0e4
+        sed -i "/\"name\": \"phpseclib\/phpseclib\"/,/\"type\": \"library\"/{s/\"$have\"/\"3.0.57\"/;s/\"$have.0\"/\"3.0.57.0\"/;s/[0-9a-f]\{40\}/$ref/g}" "$vendor/composer/installed.json"
+        sed -i "/'phpseclib\/phpseclib' => array(/,/),/{s/'$have'/'3.0.57'/;s/'$have.0'/'3.0.57.0'/;s/[0-9a-f]\{40\}/$ref/}" "$vendor/composer/installed.php"
+      fi
+      grep -A1 '"name": "phpseclib/phpseclib"' "$vendor/composer/installed.json" | grep -q '"version": "3.0.57"'
 
   - name: Install the nginx site config (FastCGI to php-fpm, port 8080, /var/www/html)
     runs: |
