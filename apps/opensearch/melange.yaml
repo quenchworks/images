@@ -88,10 +88,16 @@ pipeline:
       echo "d0da14c12b16b5d54719aa172d83b542ff4abeb8b0fb7db476fde8ceece760ca  $jd2" | sha256sum -c -
       curl -fsSL -o "$jd3" "$MC/tools/jackson/core/jackson-databind/3.2.2/jackson-databind-3.2.2.jar"
       echo "d27509f990d990fc779a01f3f612005ff6c67dc3bb0a720f5f4d9b2f5c713401  $jd3" | sha256sum -c -
-      [ "$(find "$dest" -name 'jackson-databind-2.22.1.jar' | wc -l)" -gt 0 ] || { echo "databind 2.22.1 not found; dist moved"; exit 1; }
-      [ "$(find "$dest" -name 'jackson-databind-3.2.1.jar' | wc -l)" -gt 0 ] || { echo "databind 3.2.1 not found; dist moved"; exit 1; }
-      find "$dest" -name 'jackson-databind-2.22.1.jar' -exec cp "$jd2" {} \;
-      find "$dest" -name 'jackson-databind-3.2.1.jar'  -exec cp "$jd3" {} \;
+      # 3.9.0 ships 2.22.2 and 3.2.2 itself; swap only a vulnerable copy, and otherwise
+      # require the fixed one, so a dist that moved elsewhere still fails here.
+      for pair in "2.22.1 2.22.2 $jd2" "3.2.1 3.2.2 $jd3"; do
+        set -- $pair
+        if [ -n "$(find "$dest" -name "jackson-databind-$1.jar")" ]; then
+          find "$dest" -name "jackson-databind-$1.jar" -exec cp "$3" {} \;
+        else
+          [ -n "$(find "$dest" -name "jackson-databind-$2.jar")" ] || { echo "neither databind $1 nor $2 in the dist; it moved"; exit 1; }
+        fi
+      done
       rm -f "$jd2" "$jd3"
       # (2b) jsoup 1.15.3 -> 1.23.1 in opensearch-reports-scheduler (CVE-2026-71497).
       #      Standalone plugin jar, so a content swap keeping the filename (same
@@ -103,9 +109,12 @@ pipeline:
       js=$(mktemp -d)
       curl -fsSL -o "$js/jsoup.jar" "$MC/org/jsoup/jsoup/1.23.1/jsoup-1.23.1.jar"
       echo "8b15e2b28eeb1e0a88a9b7dab4dc0c23524491c56959785dea22f7846897b668  $js/jsoup.jar" | sha256sum -c -
-      found=$(find "$dest" -name 'jsoup-1.15.3.jar' | wc -l)
-      [ "$found" -gt 0 ] || { echo "❌ jsoup-1.15.3.jar not found -- the dist's jsoup version moved"; exit 1; }
-      find "$dest" -name 'jsoup-1.15.3.jar' -exec cp "$js/jsoup.jar" {} \;
+      # 3.9.0 ships jsoup 1.23.1 itself; same rule as the jackson swap above.
+      if [ -n "$(find "$dest" -name 'jsoup-1.15.3.jar')" ]; then
+        find "$dest" -name 'jsoup-1.15.3.jar' -exec cp "$js/jsoup.jar" {} \;
+      else
+        [ -n "$(find "$dest" -name 'jsoup-1.23.1.jar')" ] || { echo "neither jsoup 1.15.3 nor 1.23.1 in the dist; it moved"; exit 1; }
+      fi
       rm -rf "$js"
       echo "jsoup: replaced $found copy/copies with 1.23.1 content"
 
@@ -153,20 +162,29 @@ pipeline:
 
       # Rename rather than content-swap: unlike the jackson jars these carry the version in
       # paths the classloader logs, and an honest filename makes `find` verifiable below.
+      # The glob matches every version of the library; only copies OLDER than the fixed
+      # version are replaced, so a dist that already ships the fix (or newer: 3.9.0 has
+      # httpclient5 5.6.4 and netty 4.2.18) is left alone rather than downgraded. A glob
+      # with no match at all still stops the build: the library moved.
       swapjar() {  # <glob> <new-basename> <src>
-        local n=0
+        local n=0 kept=0 want v
+        want="$(echo "$2" | grep -oE '[0-9]+(\.[0-9]+)+')"
         while IFS= read -r j; do
+          v="$(basename "$j" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)"
+          if [ "$(printf '%s\n%s\n' "$v" "$want" | sort -V | head -1)" = "$want" ]; then
+            kept=$((kept+1)); continue
+          fi
           cp "$3" "$(dirname "$j")/$2"; rm -f "$j"; n=$((n+1))
         done < <(find "$dest" -name "$1")
-        test "$n" -gt 0 || { echo "FATAL: no jar matched $1 -- the dist's version moved"; exit 1; }
-        echo "  $1 -> $2 ($n copy/copies)"
+        test "$((n + kept))" -gt 0 || { echo "FATAL: no jar matched $1 -- the dist moved"; exit 1; }
+        echo "  $1 -> $2 ($n replaced, $kept already at or above it)"
       }
-      swapjar 'httpclient5-5.6.1.jar'      httpclient5-5.6.3.jar      "$hc"
-      swapjar 'httpcore5-5.4.jar'          httpcore5-5.4.3.jar        "$hcore"
-      swapjar 'httpcore5-h2-5.4.jar'       httpcore5-h2-5.4.3.jar     "$hch2"
-      swapjar 'httpcore5-reactive-5.4.jar' httpcore5-reactive-5.4.3.jar "$hcre"
+      swapjar 'httpclient5-[0-9]*.jar'        httpclient5-5.6.3.jar      "$hc"
+      swapjar 'httpcore5-[0-9]*.jar'          httpcore5-5.4.3.jar        "$hcore"
+      swapjar 'httpcore5-h2-[0-9]*.jar'       httpcore5-h2-5.4.3.jar     "$hch2"
+      swapjar 'httpcore5-reactive-[0-9]*.jar' httpcore5-reactive-5.4.3.jar "$hcre"
       swapjar 'netty-codec-http-4.2.*.Final.jar' netty-codec-http-4.2.17.Final.jar "$nch"
-      swapjar 'log4j-api-2.25.4.jar'       log4j-api-2.25.5.jar       "$l4j"
+      swapjar 'log4j-api-2.[0-9]*.jar'        log4j-api-2.25.5.jar       "$l4j"
       rm -f "$hch2" "$hcre" "$nch" "$l4j"   # $hc/$hcore are reused by block (2d)
 
       # opensearch-ml bundles jline 3.21.0 (CVE-2026-77420/77421/77422, fix 3.30.15 on the 3.x
@@ -181,7 +199,7 @@ pipeline:
         "org/fusesource/jansi jansi 2.4.3 ec168cf31c4c3849348dfff7a04e90170615f7784f1255ee6747b98a854c04c5"; do
         set -- $pair; g=$1; a=$2; v=$3; sha=$4
         t=$(mktemp); curl -fsSL -o "$t" "$MC/$g/$a/$v/$a-$v.jar"; echo "$sha  $t" | sha256sum -c -
-        case "$a" in jansi) old='jansi-2.4.0.jar' ;; *) old="$a-3.21.0.jar" ;; esac
+        case "$a" in jansi) old='jansi-[0-9]*.jar' ;; *) old="$a-[0-9]*.jar" ;; esac
         swapjar "$old" "$a-$v.jar" "$t"; rm -f "$t"
       done
       # Nothing may be left behind at an old version, or the classloader sees both.
@@ -291,7 +309,8 @@ pipeline:
               assert p in data, f"{spi}: {p} missing -- shading layout changed"
               return dict(l.split("=", 1) for l in data[p].decode().split() if "=" in l)["version"]
           have = {a: ver(a) for a in FIX}
-          if have == FIX:
+          vt = lambda v: tuple(int(x) for x in v.split("."))
+          if all(vt(have[a]) >= vt(FIX[a]) for a in FIX):   # 3.9.0 shades 5.4.3 / 5.6.4 itself
               print(f"  {spi.split('/')[-1]}: already at the fixed versions")
               continue
           assert have == PRISTINE, (f"{spi}: shaded httpcomponents is {have}, expected pristine "
@@ -439,7 +458,15 @@ pipeline:
           < <(find "$dest" -name "$1-4.2.16.Final.jar")
         # a find that matches nothing must fail the build: a silent no-op would ship the
         # unswapped jar (the codec-http line in the previous hop hid exactly this way).
-        [ "$n" -gt 0 ] || { echo "FATAL: no $1-4.2.16.Final.jar in the dist -- the bundled netty line moved, re-triage block (4)"; exit 1; }
+        # 3.9.0 bundles 4.2.18 itself: with no 4.2.16 copy, every copy of the artifact must
+        # already be at 4.2.17 or newer, or the netty line moved and needs re-triage.
+        if [ "$n" -eq 0 ]; then
+          local have
+          have="$(find "$dest" -name "$1-4.2.*.Final.jar" | sed -E "s|.*/$1-(4\.2\.[0-9]+)\.Final\.jar|\1|" | sort -V | head -1)"
+          [ -n "$have" ] && [ "$(printf '%s\n4.2.17\n' "$have" | sort -V | head -1)" = 4.2.17 ] \
+            || { echo "FATAL: no $1 at 4.2.16 or at 4.2.17+ in the dist (lowest: ${have:-none}); re-triage block (4)"; exit 1; }
+          echo "  $1: dist already at $have or newer"
+        fi
       }
       nettyswap netty-buffer                        0d249178ec0204b35a6ad3e5ac8a6c2ecb3eb496c6cdae40b8eca4fa3cb6a0c7
       nettyswap netty-codec                         ac76f972446a2f72818441f746d0e73c58519a4687bf680d2b687d7dc5e28e2e
@@ -464,7 +491,13 @@ pipeline:
         echo "$2  $nd/$f" | sha256sum -c -
         local n=0
         while IFS= read -r j; do cp "$nd/$f" "$j"; n=$((n+1)); done < <(find "$dest" -name "$o")
-        [ "$n" -gt 0 ] || { echo "FATAL: no $o in the dist -- the bundled netty line moved, re-triage block (4)"; exit 1; }
+        if [ "$n" -eq 0 ]; then   # 3.9.0 bundles 4.2.18: accept 4.2.17 or newer, as nettyswap does
+          local have
+          have="$(find "$dest" -name "netty-codec-native-quic-4.2.*.Final$1.jar" | sed -E "s|.*/netty-codec-native-quic-(4\.2\.[0-9]+)\.Final.*|\1|" | sort -V | head -1)"
+          [ -n "$have" ] && [ "$(printf '%s\n4.2.17\n' "$have" | sort -V | head -1)" = 4.2.17 ] \
+            || { echo "FATAL: no $o and no 4.2.17+ copy in the dist (lowest: ${have:-none}); re-triage block (4)"; exit 1; }
+          echo "  netty-codec-native-quic$1: dist already at $have or newer"
+        fi
       }
       nettyquic ""               cf81b35ddcd712b3e6470962459e3b0be5bef45628c9aeac029ba26de574ce8a
       nettyquic -linux-aarch_64  350ba4c87cb8d2066d895f511605e1479da2c25e2bf5c2cf5dcb4cd34fcaae75

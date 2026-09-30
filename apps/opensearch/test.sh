@@ -96,14 +96,15 @@ curl -fsS -XPOST 'http://127.0.0.1:9200/_plugins/_notifications/configs' \
     "config": { "name": "smoke", "description": "smoke test webhook",
                 "config_type": "webhook", "is_enabled": true,
                 "webhook": { "url": "http://localhost:9200/hooksink/_doc/1" } } }' >/dev/null
-# The canned test message is plain text, so the sink (this node) answers 400 Bad Request.
-# That reason phrase travelling back through the shaded client IS the assertion.
+# The canned test message is plain text, so the sink (this node) refuses it: 400 Bad
+# Request on 3.8, 406 Not Acceptable on 3.9. Either reason phrase travelling back through
+# the shaded client IS the assertion.
 wh="$(curl -sS -XPOST 'http://127.0.0.1:9200/_plugins/_notifications/feature/test/smoke-webhook' 2>&1 || true)"
 case "$wh" in
   *NoClassDefFoundError*|*ClassNotFoundException*|*VerifyError*|*NoSuchMethodError*)
     echo "the shaded httpclient5 failed to link -- the relocation in melange block (2d) is broken"
     echo "$wh" | head -5; docker logs "$NAME" 2>&1 | tail -30; exit 1 ;;
-  *'Failed: Bad Request'*)
+  *'Failed: Bad Request'*|*'Failed: Not Acceptable'*)
     echo "  the sink's HTTP answer came back through the shaded client" ;;
   *)
     echo "webhook delivery gave an unexpected result -- check the shaded httpclient5 first"
