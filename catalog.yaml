@@ -2325,7 +2325,7 @@ catalog:
 
   - name: concourse
     category: CI/CD & registry
-    summary: Concourse CI, built from the release tag with its web UI compiled and embedded in the one Go binary, the containerd, grpc and otel modules floated to their fixed releases. Nonroot, read-only rootfs for the web node (ATC and TSA) against an external PostgreSQL. The worker runtime (containerd, runc, CNI and the built-in resource types) is not in this image yet, so it runs the web node only.
+    summary: Concourse CI, built from the release tag with its web UI compiled and embedded in the one Go binary, the containerd, grpc and otel modules floated to their fixed releases. The web node (ATC and TSA) runs nonroot on a read-only rootfs against an external PostgreSQL; the worker runs privileged on Wolfi's containerd, runc and CNI plugins. The built-in resource types (git, registry-image, time, s3) are not bundled yet, so pipelines declare them as custom resource_types.
     source: https://github.com/concourse/concourse
     upstream: https://concourse-ci.org
     license: Apache-2.0

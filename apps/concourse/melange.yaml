@@ -12,6 +12,14 @@ package:
     runtime:
       - ca-certificates-bundle
       - tzdata
+      # the worker's containerd runtime; the web node never execs these
+      - containerd-2
+      - runc
+      - iptables
+      - cni-plugins-bridge
+      - cni-plugins-host-local
+      - cni-plugins-firewall
+      - cni-plugins-loopback
 
 environment:
   contents:
@@ -72,15 +80,20 @@ pipeline:
       need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
       if [ -n "$need" ]; then go get $need; fi
       go mod tidy
+      # concourse finds its assets (init, resource-types) relative to its own path, so it
+      # lives under /usr/local/concourse/bin; /usr/bin/concourse is a symlink, which
+      # os.Executable resolves.
+      B="${{targets.destdir}}/usr/local/concourse/bin"
+      install -d "$B" "${{targets.destdir}}/usr/bin"
       go build -trimpath -ldflags "-s -w -X github.com/concourse/concourse.Version=${{package.version}}" \
-        -o "${{targets.destdir}}/usr/bin/concourse" ./cmd/concourse
-      bad="$(go version -m "${{targets.destdir}}/usr/bin/concourse" \
+        -o "$B/concourse" ./cmd/concourse
+      ln -s /usr/local/concourse/bin/concourse "${{targets.destdir}}/usr/bin/concourse"
+      bad="$(go version -m "$B/concourse" \
         | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor concourse)"
       [ -z "$bad" ] || { echo "0-CVE float did not reach concourse:"; echo "$bad"; exit 1; }
       # PID 1 inside worker containers: a static C program, so it runs in any rootfs
-      install -d "${{targets.destdir}}/usr/local/concourse/bin"
-      gcc -O2 -static -o "${{targets.destdir}}/usr/local/concourse/bin/init" cmd/init/init.c
-      "${{targets.destdir}}/usr/bin/concourse" --version | grep -qx "${{package.version}}"
+      gcc -O2 -static -o "$B/init" cmd/init/init.c
+      "$B/concourse" --version | grep -qx "${{package.version}}"
 
 test:
   pipeline:
