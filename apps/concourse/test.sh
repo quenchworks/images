@@ -54,7 +54,7 @@ grep -q '"name":"main"' <<<"$teams" || fail "the main team is not visible to its
 docker run -d --name "$T-worker" --network "$NET" --privileged --user 0 --tmpfs /tmp -v "$KEYS:/keys:ro" \
   -e CONCOURSE_TSA_HOST="$T:2222" -e CONCOURSE_TSA_PUBLIC_KEY=/keys/tsa_host_key.pub \
   -e CONCOURSE_TSA_WORKER_PRIVATE_KEY=/keys/worker_key -e CONCOURSE_RUNTIME=containerd \
-  -e CONCOURSE_WORK_DIR=/tmp/worker -e CONCOURSE_CONTAINERD_CNI_PLUGINS_DIR=/usr/bin \
+  -e CONCOURSE_WORK_DIR=/tmp/worker \
   -e CONCOURSE_CONTAINERD_DNS_SERVER=8.8.8.8 \
   "$IMAGE" worker >/dev/null
 AUTH="Authorization: Bearer $(sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p' <<<"$tok")"

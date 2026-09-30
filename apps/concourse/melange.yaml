@@ -16,10 +16,6 @@ package:
       - containerd-2
       - runc
       - iptables
-      - cni-plugins-bridge
-      - cni-plugins-host-local
-      - cni-plugins-firewall
-      - cni-plugins-loopback
 
 environment:
   contents:
@@ -37,6 +33,7 @@ environment:
       - nodejs-24
       - corepack
       - git
+      - curl                   # fetches the CNI plugins source
 
 pipeline:
   - uses: fetch
@@ -94,6 +91,28 @@ pipeline:
       # PID 1 inside worker containers: a static C program, so it runs in any rootfs
       gcc -O2 -static -o "$B/init" cmd/init/init.c
       "$B/concourse" --version | grep -qx "${{package.version}}"
+
+  # The worker's CNI plugins, built from source: Wolfi's cni-plugins 1.9.1-r14 links
+  # golang.org/x/sys v0.35.0 (CVE-2026-39824, fixed 0.44.0) and v1.9.1 is the newest upstream.
+  # They go in /usr/local/concourse/bin, the directory the worker searches by default.
+  - name: Build the CNI plugins the worker uses (bridge, host-local, firewall, loopback)
+    runs: |
+      set -eu
+      export CGO_ENABLED=0 GOFLAGS=-mod=mod GO111MODULE=on GOTOOLCHAIN=local
+      mkdir -p /tmp/cni && cd /tmp/cni
+      curl -fsSL -o cni.tgz https://github.com/containernetworking/plugins/archive/refs/tags/v1.9.1.tar.gz
+      echo "34bd82d47e981940751619c9cc44c095bb90bfcaf8d71865cbb822c37690a764  cni.tgz" | sha256sum -c -
+      tar -xzf cni.tgz --strip-components=1
+      go get golang.org/x/sys@v0.47.0 && go mod tidy
+      B="${{targets.destdir}}/usr/local/concourse/bin"
+      for p in main/bridge ipam/host-local meta/firewall main/loopback; do
+        go build -trimpath -ldflags "-s -w -X github.com/containernetworking/plugins/pkg/utils/buildversion.BuildVersion=v1.9.1" \
+          -o "$B/$(basename $p)" "./plugins/$p"
+      done
+      for b in bridge host-local firewall loopback; do
+        v="$(go version -m "$B/$b" | awk '$2 == "golang.org/x/sys" { print $3 }')"
+        [ "$v" = v0.47.0 ] || { echo "$b links golang.org/x/sys $v, not v0.47.0"; exit 1; }
+      done
 
 test:
   pipeline:
