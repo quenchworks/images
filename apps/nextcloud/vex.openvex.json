@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/nextcloud/2026-09-30",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-09-30T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-84308"
+      },
+      "products": [
+        {
+          "@id": "pkg:composer/phpseclib/phpseclib@2.0.55"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "PROVEN false-positive, measured 2026-09-30 on the published nextcloud 34.0.4 image. CVE-2026-84308 (GHSA-q97c-8qh3-fpc6) is a timing leak in phpseclib's pure-PHP X25519 scalar multiplication: the advisory names phpseclib/Math/PrimeField/Integer.php, phpseclib/Crypt/EC/BaseCurves/Montgomery.php, and the Crypt/EC/Formats/Keys/MontgomeryPrivate.php and PKCS8.php key paths. Elliptic-curve support only exists from phpseclib 3.0. Nextcloud 34 requires phpseclib ^2.0.55 (nextcloud/3rdparty v34.0.4 composer.json), and the image ships phpseclib 2.0.55 under var/www/html/3rdparty/phpseclib/phpseclib/phpseclib. Verified on the exported image filesystem: its Crypt directory holds only AES, Base, Blowfish, DES, Hash, Random, RC2, RC4, Rijndael, RSA, TripleDES and Twofish, and `find` for Montgomery*.php, any Crypt/EC path or any PrimeField path returns 0 matches. The vulnerable code is not in the image. The advisory's fixed versions are 3.0.57 and 4.0.1 only: no 2.0.x release fixes it because 2.0.x never had the code. Nextcloud 35 moves to phpseclib ^3.0.55, where this statement stops applying and the real fix is required."
+    }
+  ]
+}

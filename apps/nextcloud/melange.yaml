@@ -193,6 +193,11 @@ pipeline:
       export COMPOSER_ALLOW_SUPERUSER=1
       export COMPOSER_HOME=/tmp/composer-home
       export COMPOSER_NO_INTERACTION=1
+      # Composer refuses to resolve packages with a published advisory. phpseclib 2.0.55
+      # carries PKSA-12sz-bcny-pk4m (CVE-2026-84308), whose vulnerable X25519 code exists
+      # only in phpseclib 3.x; see apps/nextcloud/vex.openvex.json. Ignore that one
+      # advisory, in this build's private COMPOSER_HOME, not blocking as a whole.
+      composer config -g --json audit.ignore '{"PKSA-12sz-bcny-pk4m": "CVE-2026-84308 names phpseclib 3.x EC code absent from 2.0.55; see vex.openvex.json"}'
 
       # --- 3rdparty/ (vendor-dir = the tree itself) --------------------------
       cd nextcloud/3rdparty
