@@ -16,6 +16,10 @@ package:
       - containerd-2
       - runc
       - iptables
+      # baggageclaim runs `tar -C /dev/fd/3 --numeric-owner -xz` to import a resource
+      # type's rootfs.tgz, and GNU tar runs gzip for -z
+      - gnutar
+      - gzip
 
 environment:
   contents:

@@ -71,4 +71,21 @@ echo "worker registered and running: $(sed -n 's/.*"platform":"\([a-z]*\)".*/\1/
 for rt in registry-image time; do
   grep -q "\"type\":\"$rt\"" <<<"$w" || fail "the worker does not advertise the $rt resource type"
 done
-echo "smoke test passed (concourse ${WANT:-?}, uid $user, API, embedded UI, local login, main team, worker running with registry-image and time)"
+# Run a real check: the worker imports the time type's rootfs.tgz into a volume and runs
+# /opt/resource/check in a container. Registration alone never exercises either.
+pipeline='resources: [{name: tick, type: time, source: {interval: 1m}}]
+jobs: [{name: noop, plan: [{get: tick}]}]'
+curl -fsS -X PUT -H "$AUTH" -H 'Content-Type: application/x-yaml' --data-binary "$pipeline" \
+  "$B/api/v1/teams/main/pipelines/smoke/config" >/dev/null || fail "setting the smoke pipeline failed"
+curl -fsS -X PUT -H "$AUTH" "$B/api/v1/teams/main/pipelines/smoke/unpause" >/dev/null
+chk="$(curl -fsS -X POST -H "$AUTH" -H 'Content-Type: application/json' -d '{}' \
+  "$B/api/v1/teams/main/pipelines/smoke/resources/tick/check")"
+bid="$(sed -n 's/^{"id":\([0-9]*\).*/\1/p' <<<"$chk")"
+[ -n "$bid" ] || fail "the check did not start: $chk"
+st=""
+for _ in $(seq 1 60); do
+  st="$(curl -fsS -H "$AUTH" "$B/api/v1/builds/$bid" | sed -n 's/.*"status":"\([a-z]*\)".*/\1/p')"
+  case "$st" in started|pending|"") sleep 2 ;; *) break ;; esac
+done
+[ "$st" = succeeded ] || { docker logs "$T-worker" 2>&1 | grep -i error | tail -10; fail "the time check did not succeed (status: ${st:-none})"; }
+echo "smoke test passed (concourse ${WANT:-?}, uid $user, API, embedded UI, local login, main team, worker running with registry-image and time, a time check ran in a worker container)"
