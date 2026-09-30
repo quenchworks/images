@@ -33,7 +33,8 @@ environment:
       - nodejs-24
       - corepack
       - git
-      - curl                   # fetches the CNI plugins source
+      - curl                   # fetches the CNI plugins and resource type sources
+      - tzdata                 # copied into the resource type rootfs
 
 pipeline:
   - uses: fetch
@@ -114,8 +115,58 @@ pipeline:
         [ "$v" = v0.47.0 ] || { echo "$b links golang.org/x/sys $v, not v0.47.0"; exit 1; }
       done
 
+  # The worker advertises every directory under resource-types/ that has a
+  # resource_metadata.json and runs <dir>/rootfs.tgz as that type's container image. Without
+  # registry-image no task image can be fetched at all, so it is bundled here. Upstream's
+  # rootfs is wolfi-base plus ca-certificates and tzdata with the three static binaries in
+  # /opt/resource; this builds the same from the release tag.
+  # Trivy does not look inside rootfs.tgz, so the same binaries also ship unpacked in
+  # resource-bin/ (outside resource-types/, where every entry must be a type) for the scan.
+  - name: Build the registry-image resource type
+    runs: |
+      set -eu
+      export CGO_ENABLED=0 GOFLAGS=-mod=mod GOTOOLCHAIN=local
+      V=1.18.0
+      mkdir -p /tmp/rir && cd /tmp/rir
+      curl -fsSL -o src.tgz https://github.com/concourse/registry-image-resource/archive/refs/tags/v$V.tar.gz
+      echo "df42c61a2d4b82c8183d448213cf4adfa23c4bf88d862fbdbceb3f016fe281ec  src.tgz" | sha256sum -c -
+      tar -xzf src.tgz --strip-components=1
+      # v1.18.0 pins x/crypto v0.54.0 (CVE-2026-56854/-56855/-78662) and x/mod v0.39.0
+      # (CVE-2026-56864/-56865)
+      go get golang.org/x/crypto@v0.56.0 golang.org/x/mod@v0.40.0 && go mod tidy
+      S="${{targets.destdir}}/usr/local/concourse/resource-bin/registry-image"
+      install -d "$S"
+      for c in check in out; do
+        go build -trimpath -ldflags "-s -w" -o "$S/$c" "./cmd/$c"
+      done
+      for c in check in out; do
+        m="$(go version -m "$S/$c")"
+        for want in "golang.org/x/crypto v0.56.0" "golang.org/x/mod v0.40.0"; do
+          mod="${want% *}"; ver="${want#* }"
+          got="$(awk -v m="$mod" '$1 == "dep" && $2 == m { print $3 }' <<<"$m")"
+          [ -z "$got" ] || [ "$got" = "$ver" ] || { echo "$c links $mod $got, not $ver"; exit 1; }
+        done
+      done
+      R=/tmp/rir-rootfs
+      install -d "$R/opt/resource" "$R/etc/ssl/certs" "$R/usr/share" "$R/root"
+      install -d -m 1777 "$R/tmp"
+      cp "$S/check" "$S/in" "$S/out" "$R/opt/resource/"
+      cp /etc/ssl/certs/ca-certificates.crt "$R/etc/ssl/certs/"
+      cp -a /usr/share/zoneinfo "$R/usr/share/"
+      printf 'root:x:0:0:root:/root:/sbin/nologin\n' > "$R/etc/passwd"
+      printf 'root:x:0:\n' > "$R/etc/group"
+      T="${{targets.destdir}}/usr/local/concourse/resource-types/registry-image"
+      install -d "$T"
+      tar -C "$R" -czf "$T/rootfs.tgz" .
+      printf '{"type":"registry-image","version":"%s","privileged":false,"unique_version_history":false}\n' "$V" \
+        > "$T/resource_metadata.json"
+      list="$(tar -tzf "$T/rootfs.tgz")"
+      grep -qx './opt/resource/check' <<<"$list"
+
 test:
   pipeline:
     - runs: |
         concourse --version
         test -x /usr/local/concourse/bin/init
+        test -s /usr/local/concourse/resource-types/registry-image/rootfs.tgz
+        grep -q '"type":"registry-image"' /usr/local/concourse/resource-types/registry-image/resource_metadata.json
