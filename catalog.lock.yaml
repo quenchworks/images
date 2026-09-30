@@ -5806,8 +5806,8 @@ apps:
     summary: Concourse CI, built from the release tag with its web UI compiled and embedded in the one
       Go binary, the containerd, grpc and otel modules floated to their fixed releases. The web node (ATC
       and TSA) runs nonroot on a read-only rootfs against an external PostgreSQL; the worker runs privileged
-      on Wolfi's containerd, runc and CNI plugins. The built-in resource types (git, registry-image, time,
-      s3) are not bundled yet, so pipelines declare them as custom resource_types.
+      on Wolfi's containerd and runc with the CNI plugins built from source, and bundles the registry-image
+      and time resource types built from their tags. The git resource type is its own image, concourse-git-resource.
     source: https://github.com/concourse/concourse
     upstream: https://concourse-ci.org
     license: Apache-2.0
@@ -5818,9 +5818,29 @@ apps:
     - arm64
     versions:
     - version: 8.3.1
-      digest: sha256:e9e45a4cb62b9e35a75ababf08264822ff2851076a0d66ab60f370a95f729719
-      published: '2026-09-30T08:59:11Z'
-      size: 88.2 MB
+      digest: sha256:95a57115944a083c1a05c491353d10cf65a5d328af18930a76161bfe090b3b40
+      published: '2026-09-30T12:53:30Z'
+      size: 122.3 MB
+      layers: 1
+  concourse-git-resource:
+    image: ghcr.io/quenchworks/images/concourse-git-resource
+    category: CI/CD & registry
+    summary: Concourse's git resource type, the upstream check/in/out scripts on Wolfi git, git-crypt,
+      gnupg and openssh, with git-lfs and proxytunnel built from source. Load it in a pipeline with resource_types
+      (type registry-image); the worker bundles registry-image and time. Image only, no chart.
+    source: https://github.com/concourse/git-resource
+    upstream: https://concourse-ci.org
+    license: Apache-2.0
+    tier: standard
+    status: built
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 1.23.0
+      digest: sha256:8c4c7f6d3dd29f4fbd6533a9f354e0bd26570b9c2417902604ad079352398d84
+      published: '2026-09-30T13:02:47Z'
+      size: 44.1 MB
       layers: 1
   drupal:
     image: ghcr.io/quenchworks/images/drupal
