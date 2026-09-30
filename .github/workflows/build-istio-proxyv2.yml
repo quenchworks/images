@@ -1,15 +1,12 @@
 name: build-istio-proxyv2
 
-# BLOCKED (see apps/istio-proxyv2/build.conf): there is no melange-buildable
-# recipe today -- Istio's data plane is pilot-agent (a normal Go build) PLUS
-# Istio's own patched Envoy, built from the separate istio/proxy repo with
-# Bazel/clang, which has no equivalent in melange's fetch-and-compile model.
-# `prep` reads BLOCKED=1 and skips `build`/`merge` entirely, so this file has
-# no melange.yaml/apko.yaml to drive yet. It exists only so every apps/<slug>
-# has its matching .github/workflows/build-<slug>.yml, same as every other
-# blocked app (gitness, coolify-helper, dotnet, ...), ready to fill in if a
-# build path is ever found. IMAGE-ONLY: no chart of its own (consumed by a
-# future istio-gateway chart), so no charts-repo dispatch either.
+# From-source build (Istio proxy: pilot-agent from source, Istio Envoy from the Wolfi
+# istio-envoy apk). IMAGE-ONLY: no chart of its own, so no charts-repo dispatch.
+# build.conf is the SINGLE SOURCE OF TRUTH: prep emits the latest 3 stable
+# versions (full X.Y.Z, as-is). The build matrix fans them x both NATIVE arches
+# (amd64 + arm64, no QEMU). Recipes render via build.conf render() (__VER__ +
+# per-version __SHA256__ source-tarball pin). Per-version merge job assembles the
+# multi-arch index, signs + attests it.
 on:
   workflow_dispatch:
 permissions:
@@ -28,6 +25,7 @@ jobs:
     outputs:
       vers: ${{ steps.v.outputs.vers }}
       blocked: ${{ steps.v.outputs.blocked }}
+      latest: ${{ steps.v.outputs.latest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: v
@@ -39,6 +37,7 @@ jobs:
           latest3=("${VERSIONS[@]:start}")
           echo "building: ${latest3[*]}"
           echo "vers=$(printf '%s\n' "${latest3[@]}" | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
+          echo "latest=${latest3[${#latest3[@]}-1]}" >> "$GITHUB_OUTPUT"
 
   build:
     needs: prep
@@ -108,17 +107,25 @@ jobs:
           severity: CRITICAL,HIGH,MEDIUM,LOW
           scanners: vuln
 
+      # A green 0-CVE scan says nothing about whether the image RUNS. Publishing
+      # straight from the scan is how a build that could not start at all reached
+      # GHCR (elasticsearch 9.5.1: modules/apm removed, ES refused to boot, scan
+      # green). Boot the image and run its own smoke test BEFORE publishing.
+      #
+      # The second argument is the expected version; every test.sh takes it as an
+      # optional $2 and the ones that ignore it are unaffected.
       - name: Boot test the single-arch image (must run before publish)
-        # Runs even when the scan gate failed. This app is walled behind zlib
-        # CVE-2026-85091, which has no fix anywhere, so the gate stays red and
-        # with the default success() condition the boot test never runs at all.
-        # Every recipe change would then land with no evidence the image still
-        # boots. This cannot leak a publish: the GHCR login and publish steps
-        # keep their default success() condition, so a red gate still skips both.
-        if: ${{ !cancelled() }}
         run: |
+          # Take the tag from `docker load` rather than reconstructing it: apko
+          # appends the arch to the tag it was given, so a tar built as
+          # `:scan-amd64` loads as `:scan-amd64-amd64`. Reconstructing that
+          # suffix by hand is what broke the first cut of this step.
+          # Keep the load output: the previous version piped it straight into sed, so a
+          # failure printed "no image" and threw away the only evidence of WHY.
           out="$(docker load < image.tar 2>&1)" || true
           printf '%s\n' "$out"
+          # Two forms exist. A tagged tar prints "Loaded image: repo:tag"; an untagged one
+          # prints "Loaded image ID: sha256:...", and that id is a perfectly good ref.
           img="$(printf '%s\n' "$out" | sed -n -e 's/^Loaded image: //p' -e 's/^Loaded image ID: //p' | head -1)"
           if [ -z "$img" ]; then
             echo "FATAL: docker load produced no usable image ref (output above)"
@@ -193,3 +200,4 @@ jobs:
           subject-digest: ${{ steps.merge.outputs.digest }}
           push-to-registry: true
           create-storage-record: false
+

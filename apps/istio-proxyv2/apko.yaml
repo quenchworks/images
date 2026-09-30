@@ -1,0 +1,43 @@
+# Assembles the istio-proxyv2 image: pilot-agent (from source) plus Istio's Envoy (Wolfi
+# istio-envoy apk), laid out like upstream's Dockerfile.proxyv2. The default user is the
+# catalog's nonroot 1001; Istio's sidecar injector and gateway charts set runAsUser 1337
+# themselves, which the iptables redirect keys on.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-istio-proxyv2@local
+
+accounts:
+  groups:
+    - groupname: istio-proxy
+      gid: 1001
+  users:
+    - username: istio-proxy
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  # Upstream sets this so pilot-agent reports the Envoy build it runs with.
+  ISTIO_META_ISTIO_PROXY_SHA: __PROXY_SHA__
+
+entrypoint:
+  command: /usr/local/bin/pilot-agent
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-istio-proxyv2"
+  org.opencontainers.image.licenses: "Apache-2.0"

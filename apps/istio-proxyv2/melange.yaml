@@ -1,0 +1,81 @@
+# Builds pilot-agent (Istio's sidecar agent) from the istio/istio source, the same module
+# and flags as istiod, and pairs it with Istio's Envoy from the Wolfi istio-envoy apk at the
+# same release. The layout matches upstream's Dockerfile.proxyv2: both binaries in
+# /usr/local/bin and the bootstrap template at /var/lib/istio/envoy/envoy_bootstrap_tmpl.json.
+package:
+  name: quench-istio-proxyv2
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Istio proxy (pilot-agent from source + Istio Envoy), on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      # `~` pins the upstream version and allows any Wolfi revision of it.
+      - istio-envoy-__LINE__~__VER__
+      - istio-envoy-__LINE__-compat~__VER__
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/istio/istio/archive/refs/tags/${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      # The Envoy apk is only right if it was built from the proxy commit this tag pins.
+      grep -A3 '"PROXY_REPO_SHA"' istio.deps | grep -q '"lastStableSHA": "__PROXY_SHA__"' || {
+        echo "istio.deps at ${{package.version}} does not pin proxy __PROXY_SHA__:"; grep -A3 PROXY_REPO_SHA istio.deps; exit 1; }
+      export CGO_ENABLED=0
+      export GOTOOLCHAIN=auto
+      export GOFLAGS=-mod=mod
+      # The same module floor set as apps/istiod (one istio.io/istio module; see the
+      # comments there for each entry). FLOOR is a floor, not a pin: float only what is
+      # below it, then assert the shipped binary carries nothing below it.
+      FLOOR="golang.org/x/text@v0.41.0 google.golang.org/grpc@v1.83.2 golang.org/x/crypto@v0.56.0 github.com/google/cel-go@v0.29.0 github.com/prometheus/prometheus@v0.311.3 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      go list -m -e $MODS
+      need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
+      go mod tidy
+
+      go build -trimpath \
+        -tags vtprotobuf,disable_pgv \
+        -ldflags "-s -w -X istio.io/istio/pkg/version.buildVersion=${{package.version}}" \
+        -o "${{targets.destdir}}/usr/local/bin/pilot-agent" ./pilot/cmd/pilot-agent
+
+      # The float is only real if it reached the BINARY (the => line catches a
+      # replace-shadowed float). Fail the build rather than ship it.
+      bad="$(go version -m "${{targets.destdir}}/usr/local/bin/pilot-agent" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor pilot-agent)"
+      [ -z "$bad" ] || {
+        echo "0-CVE float did not reach the binary:"
+        echo "$bad"
+        exit 1
+      }
+
+      install -D -m 0644 tools/packaging/common/envoy_bootstrap.json \
+        "${{targets.destdir}}/var/lib/istio/envoy/envoy_bootstrap_tmpl.json"
