@@ -1,0 +1,37 @@
+# Assembles the kube-vip image: nonroot by default; the chart adds NET_ADMIN and NET_RAW
+# (it binds virtual IPs and answers ARP) and runs it on the host network.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-kube-vip@local
+
+accounts:
+  groups:
+    - groupname: kube-vip
+      gid: 1001
+  users:
+    - username: kube-vip
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/kube-vip
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-kube-vip"
+  org.opencontainers.image.licenses: "Apache-2.0"
