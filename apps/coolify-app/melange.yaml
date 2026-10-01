@@ -202,12 +202,15 @@ pipeline:
       #   symfony/routing         7.4.12 -> >=7.4.13  (CVE-2026-48784)                   [transitive]
       #   mtdowling/jmespath.php  2.8.0  -> >=2.9.1   (CVE-2026-54133)                    [transitive]
       #   web-auth/webauthn-lib   5.3.3  -> >=5.3.5   (GHSA-gq4g-fpc9-vjfq)               [transitive]
+      #   league/commonmark       2.10.1 -> >=2.10.2  (2026-10-01 advisory)               [transitive]
       # --with-all-dependencies lets the transitive symfony/* + psr7 + jmespath + webauthn move to fixes.
       composer update --no-dev --no-interaction --no-plugins --no-scripts --prefer-dist \
         --with-all-dependencies \
         guzzlehttp/guzzle guzzlehttp/psr7 laravel/framework phpseclib/phpseclib \
-        symfony/http-foundation symfony/routing mtdowling/jmespath.php web-auth/webauthn-lib
+        symfony/http-foundation symfony/routing mtdowling/jmespath.php web-auth/webauthn-lib \
+        league/commonmark
       test -f vendor/autoload.php
+      php -r 'require "vendor/autoload.php"; $v = Composer\InstalledVersions::getVersion("league/commonmark"); echo "commonmark $v\n"; exit(version_compare($v, "2.10.2", ">=") ? 0 : 1);'
 
   - name: Build the Vite frontend assets (Node 24)
     runs: |
