@@ -149,6 +149,7 @@ pipeline:
         // scoped overrides below still cover every transitive copy per major.
         if (p.dependencies && p.dependencies.nanoid) p.dependencies.nanoid="3.3.18";
         p.overrides=Object.assign(p.overrides||{},{
+          "axios":"1.20.0",
           "brace-expansion":"5.0.12",
           "fast-xml-parser":"5.7.0",
           "ip-address":"10.7.1",
@@ -356,7 +357,13 @@ pipeline:
       uv venv --python "$(command -v python3.13)" .venv
       # Installs the runner's pinned deps (urllib3, websockets) + the sentry extra + the
       # project itself (the `src` package) into the venv, non-editable. Mirrors upstream.
+      # urllib3 2.7.0 (CVE-2026-97687 and more, fixed 2.8.0) is pinned exactly in pyproject:
+      # move the pin and re-lock urllib3 alone, so every other locked version stays put.
+      grep -q '"urllib3==2.7.0"' pyproject.toml || { echo "urllib3 pin moved; review this bump"; exit 1; }
+      sed -i 's/"urllib3==2.7.0"/"urllib3==2.8.0"/' pyproject.toml
+      uv lock --upgrade-package urllib3
       uv sync --frozen --no-dev --all-extras --no-editable
+      .venv/bin/python -c "import urllib3; assert urllib3.__version__ == '2.8.0', urllib3.__version__"
       # Prune caches/bytecode that bloat the image.
       find . -type d -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
       rm -rf .venv/share 2>/dev/null || true
