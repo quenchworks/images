@@ -35,6 +35,13 @@ pipeline:
       install -d "$home/bin"
       cp -r conf lib webapps LICENSE NOTICE activemq-all-*.jar "$home/"
       cp bin/activemq.jar "$home/bin/"
+      # jackson-databind 2.22.2 carries CVE-2026-91776/-91777; swap in the same-line fix,
+      # and fail if the dist stops shipping the jar this replaces.
+      old="$home/lib/jackson-databind-2.22.2.jar"
+      test -f "$old"
+      wget -q -O "$home/lib/jackson-databind-2.22.3.jar" "https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-databind/2.22.3/jackson-databind-2.22.3.jar"
+      echo "556db5439e206114346043f68d200497dc96a0bca62a360a81784092ebd0e0a9  $home/lib/jackson-databind-2.22.3.jar" | sha256sum -c -
+      rm -f "$old"
       chmod -R a+rX "$home"
 
 test:

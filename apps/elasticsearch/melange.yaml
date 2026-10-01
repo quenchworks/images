@@ -193,8 +193,15 @@ pipeline:
       #     2.21.5 (patch, same minor -- NOT the 2.18.9 used above, which would be a
       #     downgrade here). Only databind is flagged; core/annotations/dataformat at
       #     2.21.4 are clean, and 2.21.5 databind is compatible with 2.21.4 core.
-      getj "$MC/com/fasterxml/jackson/core/jackson-databind/2.21.5/jackson-databind-2.21.5.jar" jackson-databind-2.21.5.jar 507418c0fafd38b2b2cfb704521630da613a8e4cc8381195a6f418017883e2c0
-      find "$dest/modules" -name 'jackson-databind-2.21.4.jar' -exec sh -c 'cp "$1" "$(dirname "$2")/jackson-databind-2.21.5.jar"; rm -f "$2"' _ "$DL/jackson-databind-2.21.5.jar" {} \;
+      #     9.5.4 ships 2.21.6 itself, which carries CVE-2026-91776/-91777 (fixed 2.21.7), so
+      #     the swap matches any 2.21.x below 2.21.7 rather than one exact old version.
+      getj "$MC/com/fasterxml/jackson/core/jackson-databind/2.21.7/jackson-databind-2.21.7.jar" jackson-databind-2.21.7.jar 1290c2795e93e8a6861a6c4d9ff0d844d32f5ea178362cb2721edf5561e828b1
+      n=0
+      for f in $(find "$dest/modules" -name 'jackson-databind-2.21.*.jar' ! -name 'jackson-databind-2.21.7.jar'); do
+        cp "$DL/jackson-databind-2.21.7.jar" "$(dirname "$f")/jackson-databind-2.21.7.jar"; rm -f "$f"; n=$((n+1))
+      done
+      [ "$n" -gt 0 ] || [ -n "$(find "$dest/modules" -name 'jackson-databind-2.21.7.jar')" ] \
+        || { echo "FATAL: no jackson-databind 2.21.x in modules; the dist moved, re-audit"; exit 1; }
 
       # --- (b3) NEW in 9.5.0: jsoup 1.21.2 -> 1.23.1 (ingest-attachment).
       #     CVE-2026-71497. Built for JDK 17, and ES bundles a newer JDK, so it loads.
