@@ -50,6 +50,12 @@ pipeline:
       # databricks-jdbc ships with jackson-databind 2.18.10 or later.
       ls "$drivers"/databricks-jdbc-*.jar >/dev/null || { echo "FATAL: no databricks-jdbc to drop; re-audit"; exit 1; }
       rm -f "$drivers"/databricks-jdbc-*.jar
+      # Couchbase is left out the same way: core-io 3.12.3, the newest, shades jackson-databind
+      # 2.21.6 under com/couchbase/client/core/deps/ (fixed in 2.21.7). The plugin jar goes
+      # with the driver so Flyway never loads a database type whose classes are missing. Add
+      # both back once core-io ships with jackson-databind 2.21.7 or later.
+      ls "$drivers"/couchbase/core-io-*.jar "$dest"/lib/flyway/flyway-database-nc-couchbase-*.jar >/dev/null || { echo "FATAL: no couchbase driver to drop; re-audit"; exit 1; }
+      rm -rf "$drivers/couchbase" "$dest"/lib/flyway/flyway-database-nc-couchbase-*.jar
       swap mssql-jdbc-12.10.2.jre11.jar com/microsoft/sqlserver/mssql-jdbc/13.6.0.jre11/mssql-jdbc-13.6.0.jre11.jar 4c566e4022c4dcf1489aeb639fe49a0f6ffae3d796fdc2f56b5b8882d4c3bf5a
       chmod -R a+rX "$dest"
 
