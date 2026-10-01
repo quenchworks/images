@@ -1,0 +1,48 @@
+# Installs the Apache Tika server release under /opt/tika: the zip's server jar, lib/
+# (its manifest Class-Path) and plugins/.
+package:
+  name: quench-tika
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Apache Tika server on Wolfi openjdk-21-jre"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-21-jre
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - openjdk-21-jre
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://archive.apache.org/dist/tika/${{package.version}}/tika-server-standard-${{package.version}}.zip
+      expected-sha512: __SHA512__
+      extract: false
+  - runs: |
+      set -eu
+      d="${{targets.destdir}}/opt/tika"
+      install -d "$d"
+      unzip -q "tika-server-standard-${{package.version}}.zip" -d unpacked
+      cp -a unpacked/tika-server-standard-${{package.version}}.jar unpacked/lib unpacked/plugins \
+        unpacked/LICENSE unpacked/NOTICE "$d/"
+      # one stable path for the entrypoint; the 4.x Class-Path resolves next to it
+      ln -s "tika-server-standard-${{package.version}}.jar" "$d/tika-server.jar"
+      chmod -R a+rX "$d"
+      # the server has no --version: read the release out of the jar itself
+      unzip -p "$d/tika-server.jar" META-INF/maven/org.apache.tika/tika-server-standard/pom.properties \
+        | grep -qx "version=${{package.version}}"
+
+test:
+  pipeline:
+    - runs: |
+        test -e /opt/tika/tika-server.jar
