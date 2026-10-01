@@ -1,0 +1,55 @@
+# Builds ko from the release tag tarball, as upstream's .goreleaser.yml.
+package:
+  name: quench-ko
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened ko, built from source"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - go            # ko runs `go build`
+      - git           # module fetches
+      - busybox       # git needs /bin/sh
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/ko-build/ko/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      export CGO_ENABLED=0 GOFLAGS=-mod=mod GOTOOLCHAIN=local
+      # 0-CVE float (docs/go-module-float.md), a floor: raise a module only where the
+      # line links an older one.
+      for want in golang.org/x/crypto@v0.56.0 golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0 \
+                  golang.org/x/mod@v0.40.0 google.golang.org/grpc@v1.83.2 github.com/sigstore/sigstore-go@v1.2.1 \
+                  github.com/sigstore/cosign/v2@v2.6.2; do
+        m="${want%@*}"; w="${want#*@}"
+        have="$(go list -m -f '{{.Version}}' "$m" 2>/dev/null || true)"
+        [ -n "$have" ] || continue
+        [ "$(printf '%s\n%s\n' "$have" "$w" | sort -V | head -1)" = "$w" ] || go get "$want"
+      done
+      go mod tidy
+      go build -trimpath -ldflags "-s -w -X github.com/google/ko/pkg/commands.Version=${{package.version}}" \
+        -o "${{targets.destdir}}/usr/bin/ko" .
+      "${{targets.destdir}}/usr/bin/ko" version | grep -qx "${{package.version}}"
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/ko" | awk '$1 == "dep" && ($2 == "golang.org/x/crypto" && $3 < "v0.56.0" || $2 == "golang.org/x/net" && $3 < "v0.58.0" || $2 == "golang.org/x/text" && $3 < "v0.41.0" || $2 == "golang.org/x/mod" && $3 < "v0.40.0") { print $2, $3 }')"
+      [ -z "$bad" ] || { echo "float did not reach the binary: $bad"; exit 1; }
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/bin/ko
