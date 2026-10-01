@@ -48,7 +48,7 @@ pipeline:
       # net/jpountz/**),
       # so we overlay the patched upstream classes (+ their META-INF/maven pom.properties
       # that Trivy reads for the version) and repackage. Not relocated => swappable.
-      #   * jackson-core 2.21.2 -> 2.21.5, jackson-databind -> 2.21.6 (CVE-2026-54512..54518, 2026-68497;
+      #   * jackson-core 2.21.2 -> 2.21.5, jackson-databind -> 2.21.7 (CVE-2026-54512..54518, 2026-68497, 2026-91776/-91777;
       #     2.21.5 required for -54515; core bumped in lockstep to match databind ABI)
       #   * org.apache.shiro:shiro-* 2.1.0 -> 2.2.1 IN LOCKSTEP across the 9 bundled
       #     org.apache.shiro modules (CVE-2026-49268 LDAP injection, CVE-2026-43827
@@ -79,7 +79,7 @@ pipeline:
       getj() { curl -fsSL -o "$DL/$2" "$1"; echo "$3  $DL/$2" | sha256sum -c -; }
 
       # --- jackson (databind + core) 2.21.5: overlay class trees + maven metadata ---
-      getj "$MC/com/fasterxml/jackson/core/jackson-databind/2.21.6/jackson-databind-2.21.6.jar" jackson-databind-2.21.6.jar 62134a98de12d0a421cd2f5b9854c8e63f10f524b0341e66cfd31a4326f6a329
+      getj "$MC/com/fasterxml/jackson/core/jackson-databind/2.21.7/jackson-databind-2.21.7.jar" jackson-databind-2.21.7.jar 1290c2795e93e8a6861a6c4d9ff0d844d32f5ea178362cb2721edf5561e828b1
       getj "$MC/com/fasterxml/jackson/core/jackson-core/2.21.5/jackson-core-2.21.5.jar" jackson-core-2.21.5.jar b64b5874162b503a0e58a8f7758266e8dd9f91bf49e3a59ae0b5f47589a231b7
       # MULTI-RELEASE: these jars also ship per-JDK overrides under META-INF/versions/<n>/.
       # On Java 21 a versioned entry WINS over the base one for the same class name, so
@@ -91,7 +91,7 @@ pipeline:
       # so with `set -e` a future release that stops shipping the versioned classes below
       # fails the build loudly instead of silently reverting to a base-tree-only overlay.
       ( cd "$ST/jackson" \
-          && unzip -qo "$DL/jackson-databind-2.21.6.jar" 'com/fasterxml/jackson/databind/*' 'META-INF/maven/com.fasterxml.jackson.core/jackson-databind/*' \
+          && unzip -qo "$DL/jackson-databind-2.21.7.jar" 'com/fasterxml/jackson/databind/*' 'META-INF/maven/com.fasterxml.jackson.core/jackson-databind/*' \
           && unzip -qo "$DL/jackson-core-2.21.5.jar"     'com/fasterxml/jackson/core/*'     'META-INF/versions/*/com/fasterxml/jackson/core/*'     'META-INF/maven/com.fasterxml.jackson.core/jackson-core/*' )
 
       # --- log4j-api 2.26.0 -> 2.26.1 and jsoup 1.22.1 -> 1.23.1 (both SHADED in graylog.jar,

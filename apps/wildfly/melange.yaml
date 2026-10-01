@@ -72,10 +72,10 @@ pipeline:
         echo "a module.xml still names a 1.48.0 jar" >&2; exit 1
       fi
 
-  - name: Swap jackson-databind 2.21.5 to 2.21.6
+  - name: Swap jackson-databind 2.21.5 to 2.21.7
     runs: |
       set -eu
-      # CVE-2026-68497 (HIGH), -19032 and -83557 (MEDIUM), fixed in 2.21.6 on the same
+      # CVE-2026-68497 (HIGH), -19032 and -83557 (MEDIUM), fixed in 2.21.6 (and CVE-2026-91776/-91777 in 2.21.7) on the same
       # line. JBoss Modules loads the jar by the filename in module.xml, so the swap
       # renames the jar AND rewrites its resource-root, as the OpenTelemetry swap does.
       # core stays at 2.21.5 (a patch mix within one Jackson minor). The sha256 is from a
@@ -84,11 +84,11 @@ pipeline:
       [ "$(printf '%s\n' "$old" | grep -c .)" = 1 ] || { echo "expected one jackson-databind-2.21.5.jar, found: $old" >&2; exit 1; }
       dir="$(dirname "$old")"
       grep -q 'path="jackson-databind-2.21.5.jar"' "$dir/module.xml" || { echo "module.xml in $dir does not name jackson-databind-2.21.5.jar" >&2; exit 1; }
-      curl -fsSL -o "$dir/jackson-databind-2.21.6.jar" https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-databind/2.21.6/jackson-databind-2.21.6.jar
-      echo "62134a98de12d0a421cd2f5b9854c8e63f10f524b0341e66cfd31a4326f6a329  $dir/jackson-databind-2.21.6.jar" | sha256sum -c -
+      curl -fsSL -o "$dir/jackson-databind-2.21.7.jar" https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-databind/2.21.7/jackson-databind-2.21.7.jar
+      echo "1290c2795e93e8a6861a6c4d9ff0d844d32f5ea178362cb2721edf5561e828b1  $dir/jackson-databind-2.21.7.jar" | sha256sum -c -
       rm -f "$old"
-      sed -i 's|path="jackson-databind-2.21.5.jar"|path="jackson-databind-2.21.6.jar"|' "$dir/module.xml"
-      if find modules -name 'jackson-databind-*.jar' ! -name 'jackson-databind-2.21.6.jar' | grep -q .; then
+      sed -i 's|path="jackson-databind-2.21.5.jar"|path="jackson-databind-2.21.7.jar"|' "$dir/module.xml"
+      if find modules -name 'jackson-databind-*.jar' ! -name 'jackson-databind-2.21.7.jar' | grep -q .; then
         echo "another jackson-databind jar is shipped:" >&2; find modules -name 'jackson-databind-*.jar' >&2; exit 1
       fi
 
