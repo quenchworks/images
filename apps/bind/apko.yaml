@@ -1,0 +1,39 @@
+# Assembles the bind image: Wolfi's pinned bind apk plus quench-bind's default config,
+# nonroot uid 1001, named in the foreground on port 5353.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - bind=__REL__
+    - bind-libs=__REL__   # libisc etc.; bind does not depend on it
+    - quench-bind@local
+
+accounts:
+  groups:
+    - groupname: named
+      gid: 1001
+  users:
+    - username: named
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/named -g -c /etc/quench-bind/named.conf
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-bind"
+  org.opencontainers.image.licenses: "MPL-2.0"
