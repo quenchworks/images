@@ -37,7 +37,14 @@ pipeline:
   - runs: |
       set -eu
       export NEXT_TELEMETRY_DISABLED=1
-      pnpm install --frozen-lockfile
+      # next 16.3.3 (GHSA-vcvr-r3jv-pc5j, CRITICAL RCE in next/og, fixed 16.3.6) is in
+      # upstream's lockfile. A pnpm override moves only next, so the build compiles with the
+      # same next it ships; every other package keeps its locked version.
+      # pnpm 10+ reads overrides from pnpm-workspace.yaml, not package.json.
+      ! grep -q '^overrides:' pnpm-workspace.yaml
+      printf '\noverrides:\n  next: 16.3.6\n' >> pnpm-workspace.yaml
+      pnpm install --no-frozen-lockfile
+      test "$(node -p 'require("next/package.json").version')" = 16.3.6
       pnpm run build
       app="${{targets.destdir}}/usr/share/homepage"
       install -d "$app/.next" "$app/src"
@@ -54,12 +61,12 @@ pipeline:
       # upstream's frozen lockfile, so the traced copies are swapped in place for the fixed
       # same-line releases (the lockfile is not editable under --frozen-lockfile). Node fetches
       # them because the build env has no curl.
-      swap_pnpm() {  # <name> <version> <sha256>
-        node -e 'fetch(process.argv[1]).then(r=>r.arrayBuffer()).then(b=>require("fs").writeFileSync("/tmp/p.tgz",Buffer.from(b)))' "https://registry.npmjs.org/$1/-/$1-$2.tgz"
+      swap_pnpm() {  # <name> <version> <sha256>; scoped names are stored as @scope+name
+        node -e 'fetch(process.argv[1]).then(r=>r.arrayBuffer()).then(b=>require("fs").writeFileSync("/tmp/p.tgz",Buffer.from(b)))' "https://registry.npmjs.org/$1/-/${1##*/}-$2.tgz"
         echo "$3  /tmp/p.tgz" | sha256sum -c -
         rm -rf /tmp/pk && mkdir /tmp/pk && tar -xzf /tmp/p.tgz -C /tmp/pk
         n=0
-        for d in "$app"/node_modules/.pnpm/"$1"@*/node_modules/"$1"; do
+        for d in "$app"/node_modules/.pnpm/"${1/\//+}"@*/node_modules/"$1"; do
           test -d "$d" || continue
           rm -rf "$d" && mkdir "$d" && cp -a /tmp/pk/package/. "$d/" && n=$((n+1))
         done
@@ -67,5 +74,7 @@ pipeline:
       }
       swap_pnpm ip-address 10.7.1 7f99ac7abda701afe1fd1e36de462236fb4d1eb8c595d7ae0267bba7d8ee55f8
       swap_pnpm undici 8.10.2 740638ae32d78d2646a6727950e365fa26b6fa87913fa096e60ed4afeb4634aa
+      # @grpc/grpc-js 1.14.4 (CVE-2026-101916 HIGH, -101915 LOW), fixed 1.14.5
+      swap_pnpm @grpc/grpc-js 1.14.5 7619fe0a86a59de7ff47f12cb7416d024d51a1356a260a50b72df6fd0ed34b54
       test -f "$app/server.js"
       grep -q "\"version\": \"${{package.version}}\"" "$app/package.json"
