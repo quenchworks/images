@@ -88,6 +88,8 @@ pipeline:
       #   tornado          6.5.5      -> 6.5.7+   (HIGH auth-header leak / gzip bomb)
       #   aiosmtplib       5.1.0      -> 5.1.1+   (MEDIUM SMTP command injection CR/LF, CVE-2026-53533)
       #   sqlparse         <0.5.5     -> 0.5.5+
+      #   urllib3          2.7.0      -> 2.8.0+   (HIGH CVE-2026-97687 and one more, 2026-10-01)
+      #   PyJWT            2.14.0     -> 2.15.0+  (MEDIUM CVE-2026-101918, 2026-10-01)
       /opt/airflow-venv/bin/pip install --no-cache-dir --upgrade \
         "cryptography>=48.0.1" \
         "sqlparse>=0.5.5" \
@@ -95,7 +97,16 @@ pipeline:
         "python-multipart>=0.0.31" \
         "starlette>=1.3.1" \
         "tornado>=6.5.7" \
-        "aiosmtplib>=5.1.1"
+        "aiosmtplib>=5.1.1" \
+        "urllib3>=2.8.0" \
+        "PyJWT>=2.15.0"
+      # the floors must take effect, not just read right
+      /opt/airflow-venv/bin/python -c "
+      import importlib.metadata as m
+      for n, want in (('urllib3', (2, 8, 0)), ('PyJWT', (2, 15, 0))):
+          got = tuple(int(x) for x in m.version(n).split('.')[:3])
+          assert got >= want, (n, got)
+      "
       # --- native packages: Wolfi's, or rebuilt from source ----------------------
       # The providers require psycopg2-binary by name, so it stays that distribution at
       # the same version, compiled from its sdist against Wolfi's libpq (no .libs). grpcio,
@@ -157,6 +168,11 @@ pipeline:
         "$VENV/bin/python" -c "from pip._vendor import msgpack; assert msgpack.__version__=='1.2.1', msgpack.__version__; print('vendored msgpack ->', msgpack.__version__)"
       # Fail the build if the bumps broke Airflow's declared dependency graph.
       /opt/airflow-venv/bin/pip check
+      # pip is a build tool here and vendors its own urllib3 (2.7.0 in pip 26.2.1, the newest
+      # pip; CVE-2026-97687 and two more, patched by pip so it cannot be swapped for stock
+      # 2.8.0). Nothing in the image runs pip, and the rootfs is read-only, so it goes.
+      /opt/airflow-venv/bin/python -m pip uninstall -y pip
+      test ! -e /opt/airflow-venv/bin/pip
 
       # airflow version must work without a DB; assert it matches the build version.
       # (The chart's kind gate runs the full DB-backed boot with a bundled Postgres.)
