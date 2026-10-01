@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/dive/2026-10-01",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-10-01T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-33997"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/docker/docker@v28.5.2%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "CVE-2026-33997 is a privilege-validation bypass in the Moby daemon's plugin installation. dive (main package .) links only the API types and the client from the module: github.com/docker/docker/api, api/types/* and client, plus github.com/moby/moby/api/types/plugin (types only). Checked with `go list -deps .` at v0.13.1 with docker v28.5.2: no daemon, plugin manager or API server package is in the build, and dive never calls the client's plugin endpoints. The build fails if a daemon, plugin or api/server package is ever linked. The fix (29.3.1) exists only under the github.com/moby/moby module path, so the +incompatible module cannot be floated to it."
+    }
+  ]
+}
