@@ -5,9 +5,9 @@
 # sidecarlogresults, workingdirinit). Output is a signed APK in Quenchworks' own
 # repo -- no upstream distro binaries. Image-only (no chart).
 #
-# GOTOOLCHAIN=local pins the build to Wolfi's go-1.26 toolchain (hermetic, no
-# network toolchain download). Upstream go.mod pins a patch (go 1.26.4) that can
-# lead Wolfi's go-1.26 (a slightly older patch); the go directive is lowered to the
+# GOTOOLCHAIN=local pins the build to Wolfi's go-1.27 toolchain (hermetic, no
+# network toolchain download). Upstream go.mod pins a patch (go 1.27.0) that can
+# lead Wolfi's go-1.27 (a slightly older patch); the go directive is lowered to the
 # installed toolchain's patch so `local` mode accepts it (patch-compatible source).
 package:
   name: quench-tekton
@@ -29,7 +29,7 @@ environment:
     packages:
       - busybox
       - ca-certificates-bundle
-      - go-1.26
+      - go-1.27
 
 pipeline:
   - uses: fetch
@@ -41,10 +41,10 @@ pipeline:
       export CGO_ENABLED=0
       export GOFLAGS=-mod=vendor
       export GOTOOLCHAIN=local
-      # Align the go directive to the installed Wolfi go-1.26 patch so GOTOOLCHAIN=local
+      # Align the go directive to the installed Wolfi go-1.27 patch so GOTOOLCHAIN=local
       # does not try to fetch a newer toolchain. Patch-level, source stays compatible.
       installed="$(go env GOVERSION | sed 's/^go//')"
-      sed -i -E "s/^go 1\.26\.[0-9]+$/go ${installed}/" go.mod
+      sed -i -E "s/^go 1\.27\.[0-9]+$/go ${installed}/" go.mod
       # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
       #   golang.org/x/text        CVE-2026-56852 infinite loop
       #   golang.org/x/net         CVE-2026-46600 dnsmessage panic
@@ -53,7 +53,7 @@ pipeline:
       #                            directly by the when-expression validators
       # Vendor mode cannot `go get`, and the build must see the bump, so re-vendor
       # when anything moved. Skip `go mod tidy` -- it would re-raise the go directive
-      # above Wolfi's go-1.26 patch and break GOTOOLCHAIN=local. `go get` +
+      # above Wolfi's go-1.27 patch and break GOTOOLCHAIN=local. `go get` +
       # `go mod vendor` is surgical: MVS raises only what is asked for, leaving the
       # rest of the pinned vendored graph intact.
       #
