@@ -40,4 +40,13 @@ pipeline:
       (cd lz4 && zip -q -r ../metabase.jar net META-INF/maven/at.yawk.lz4)
       v="$(unzip -p metabase.jar META-INF/maven/at.yawk.lz4/lz4-java/pom.properties | sed -n 's/^version=//p')"
       [ "$v" = "__LZ4_VER__" ] || { echo "lz4-java is $v after the swap"; exit 1; }
+      # jackson-databind is unshaded in the uberjar; same in-place class swap.
+      curl -fsSL -o databind.jar "https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-databind/__DATABIND_VER__/jackson-databind-__DATABIND_VER__.jar"
+      echo "__DATABIND_SHA256__  databind.jar" | sha256sum -c -
+      v="$(unzip -p metabase.jar META-INF/maven/com.fasterxml.jackson.core/jackson-databind/pom.properties | sed -n 's/^version=//p')"
+      [ -n "$v" ] || { echo "no jackson-databind in the uberjar; re-audit"; exit 1; }
+      mkdir databind && unzip -q databind.jar 'com/fasterxml/jackson/databind/*' 'META-INF/maven/com.fasterxml.jackson.core/jackson-databind/*' -d databind
+      (cd databind && zip -q -r ../metabase.jar com META-INF/maven/com.fasterxml.jackson.core)
+      v="$(unzip -p metabase.jar META-INF/maven/com.fasterxml.jackson.core/jackson-databind/pom.properties | sed -n 's/^version=//p')"
+      [ "$v" = "__DATABIND_VER__" ] || { echo "jackson-databind is $v after the swap"; exit 1; }
       install -Dm644 metabase.jar "${{targets.destdir}}/usr/share/metabase/metabase.jar"
