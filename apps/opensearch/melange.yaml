@@ -81,22 +81,22 @@ pipeline:
       #     the tools.jackson 3.x line moves databind+core -> 3.1.5 (3.1.4 no longer clears
       #     the wave). All are same-line drop-ins, content replaced in place (filename kept).
       # Sep-2026 update: 3.8.0's dist now ships databind 2.22.1 and tools.jackson 3.2.1, which
-      # carry CVE-2026-68497/-19032/-83557. Databind alone moves, to 2.22.2 and 3.2.2.
+      # carry CVE-2026-68497/-19032/-83557 and -91776/-91777. Databind alone moves, to 2.22.3 and 3.2.3.
       MC="https://repo1.maven.org/maven2"
       jd2=$(mktemp); jd3=$(mktemp)
-      curl -fsSL -o "$jd2" "$MC/com/fasterxml/jackson/core/jackson-databind/2.22.2/jackson-databind-2.22.2.jar"
-      echo "d0da14c12b16b5d54719aa172d83b542ff4abeb8b0fb7db476fde8ceece760ca  $jd2" | sha256sum -c -
-      curl -fsSL -o "$jd3" "$MC/tools/jackson/core/jackson-databind/3.2.2/jackson-databind-3.2.2.jar"
-      echo "d27509f990d990fc779a01f3f612005ff6c67dc3bb0a720f5f4d9b2f5c713401  $jd3" | sha256sum -c -
-      # 3.9.0 ships 2.22.2 and 3.2.2 itself; swap only a vulnerable copy, and otherwise
-      # require the fixed one, so a dist that moved elsewhere still fails here.
-      for pair in "2.22.1 2.22.2 $jd2" "3.2.1 3.2.2 $jd3"; do
-        set -- $pair
-        if [ -n "$(find "$dest" -name "jackson-databind-$1.jar")" ]; then
-          find "$dest" -name "jackson-databind-$1.jar" -exec cp "$3" {} \;
-        else
-          [ -n "$(find "$dest" -name "jackson-databind-$2.jar")" ] || { echo "neither databind $1 nor $2 in the dist; it moved"; exit 1; }
-        fi
+      curl -fsSL -o "$jd2" "$MC/com/fasterxml/jackson/core/jackson-databind/2.22.3/jackson-databind-2.22.3.jar"
+      echo "556db5439e206114346043f68d200497dc96a0bca62a360a81784092ebd0e0a9  $jd2" | sha256sum -c -
+      curl -fsSL -o "$jd3" "$MC/tools/jackson/core/jackson-databind/3.2.3/jackson-databind-3.2.3.jar"
+      echo "235b72436af983857e44efa42449f4f0a2c571e69d6c5d9dd1253ae7d192dcf2  $jd3" | sha256sum -c -
+      # Swap every vulnerable copy in place (3.8.0 ships 2.22.1/3.2.1, 3.9.0 ships 2.22.2/3.2.2,
+      # all of them carrying CVE-2026-91776/-91777); with none present, require the fixed one,
+      # so a dist that moved elsewhere still fails here.
+      for line in "2.22.3 $jd2 2.22.1 2.22.2" "3.2.3 $jd3 3.2.1 3.2.2"; do
+        set -- $line; fixed=$1 jar=$2; shift 2; n=0
+        for old in "$@"; do
+          for f in $(find "$dest" -name "jackson-databind-$old.jar"); do cp "$jar" "$f"; n=$((n+1)); done
+        done
+        [ "$n" -gt 0 ] || [ -n "$(find "$dest" -name "jackson-databind-$fixed.jar")" ] || { echo "no databind $* or $fixed in the dist; it moved"; exit 1; }
       done
       rm -f "$jd2" "$jd3"
       # (2b) jsoup 1.15.3 -> 1.23.1 in opensearch-reports-scheduler (CVE-2026-71497).
