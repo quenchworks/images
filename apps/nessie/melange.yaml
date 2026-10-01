@@ -21,6 +21,7 @@ environment:
     packages:
       - busybox
       - ca-certificates-bundle
+      - zip
 
 pipeline:
   - uses: fetch
@@ -30,8 +31,26 @@ pipeline:
       extract: false
   - runs: |
       set -eu
-      install -Dm644 nessie-quarkus-${{package.version}}-runner.jar \
-        "${{targets.destdir}}/usr/lib/nessie/nessie-quarkus-runner.jar"
+      # The runner is an uber-jar holding both jackson-databind lines unshaded: 2.22.2 and
+      # tools.jackson 3.2.2 carry CVE-2026-91776/-91777 (fixed 2.22.3 and 3.2.3). Their
+      # classes and Maven metadata are zipped over the old entries, and each version is
+      # asserted after. The patches add no packages. Shas from Maven Central, 2026-10-01.
+      jar=nessie-quarkus-${{package.version}}-runner.jar
+      M=https://repo1.maven.org/maven2
+      dswap() { # <group path> <group id> <version> <sha256> <class prefix>
+        rm -rf /tmp/ds && mkdir /tmp/ds
+        wget -q -O /tmp/ds.jar "$M/$1/jackson-databind/$3/jackson-databind-$3.jar"
+        echo "$4  /tmp/ds.jar" | sha256sum -c -
+        old="$(unzip -p "$jar" "META-INF/maven/$2/jackson-databind/pom.properties" | sed -n 's/^version=//p')"
+        [ -n "$old" ] || { echo "no $2 jackson-databind in the runner; re-audit"; exit 1; }
+        unzip -q /tmp/ds.jar "$5/*" "META-INF/maven/$2/jackson-databind/*" -d /tmp/ds
+        (cd /tmp/ds && zip -q -r "$OLDPWD/$jar" .)
+        got="$(unzip -p "$jar" "META-INF/maven/$2/jackson-databind/pom.properties" | sed -n 's/^version=//p')"
+        [ "$got" = "$3" ] || { echo "$2 jackson-databind is $got after the swap"; exit 1; }
+      }
+      dswap com/fasterxml/jackson/core com.fasterxml.jackson.core 2.22.3 556db5439e206114346043f68d200497dc96a0bca62a360a81784092ebd0e0a9 com/fasterxml/jackson/databind
+      dswap tools/jackson/core tools.jackson.core 3.2.3 235b72436af983857e44efa42449f4f0a2c571e69d6c5d9dd1253ae7d192dcf2 tools/jackson/databind
+      install -Dm644 "$jar" "${{targets.destdir}}/usr/lib/nessie/nessie-quarkus-runner.jar"
 
 test:
   pipeline:
