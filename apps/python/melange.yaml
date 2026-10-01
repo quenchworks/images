@@ -1,5 +1,5 @@
 # pip-manifest shim: makes pip's bundled manifests tell the truth about pip's
-# own vendored tree. It changes NO code -- only metadata that is already wrong.
+# own vendored tree, and re-vendors urllib3 at its fixed release (see CODE below).
 #
 # WHY THIS EXISTS (all four rows MEASURED against py3.14-pip-base-26.2.1-r1 on
 # 2026-09-16; the 3.12 / 3.13 builds of the same pip release match):
@@ -36,6 +36,17 @@
 # itself, so the download, the file swap, the pyc regeneration and the
 # vendor.txt msgpack rewrite are all gone. Only the manifest half remains.
 #
+# CODE, since 2026-10-01: urllib3. pip 26.2.1, the newest pip, vendors urllib3
+# 2.7.0 (CVE-2026-97687 and more, fixed in 2.8.0), and pip main has not moved.
+# This package re-vendors 2.8.0 the way Wolfi's pip build lays it out: the PyPI
+# wheel plus pip's three urllib3 patches from the 26.2.1 tag (Wolfi does not run
+# pip's pip._vendor import rewrite), then unchecked-hash bytecode, since Wolfi's
+# pyc never compares itself against the source beside it. Before writing 2.8.0
+# the same recipe runs on the 2.7.0 wheel and must reproduce the installed .py
+# files byte for byte, so a pip or Wolfi that changes how it vendors fails the
+# build instead of shipping a half-vendored urllib3. The manifests and the seed wheel
+# are re-labelled from the re-vendored _version.py, never from a typed number.
+#
 # RETIREMENT CONDITION -- delete this file, drop quench-pip-vendor-fix from
 # apko.yaml, and strip the melange steps from the workflow when ALL of these
 # are true of the pip Wolfi packages:
@@ -43,15 +54,16 @@
 #   * pip/_vendor/bom.cdx.json lists no setuptools component AND its msgpack
 #     version equals the one in pip/_vendor/msgpack/__init__.py;
 #   * the py<ver>-pip-base SPDX lists no setuptools package;
-#   * the venv seed wheel's vendor.txt carries no `setuptools==` line.
+#   * the venv seed wheel's vendor.txt carries no `setuptools==` line;
+#   * pip itself vendors urllib3 2.8.0 or newer (the re-vendor step fails then).
 # Every one of those is asserted below, so you do not have to check by hand:
 # the day any of them stops needing a fix, the build FAILS and names it. A step
 # that finds nothing to do is never allowed to pass quietly.
 package:
   name: quench-pip-vendor-fix
-  version: 2.0.0
+  version: 2.1.0
   epoch: 0
-  description: "Drops pip's phantom vendored setuptools 70.3.0 and re-labels its stale CycloneDX msgpack entry"
+  description: "Re-vendors pip's urllib3 at 2.8.0, drops its phantom vendored setuptools 70.3.0 and re-labels its stale CycloneDX msgpack entry"
   copyright:
     - license: Apache-2.0
   dependencies:
@@ -76,8 +88,34 @@ environment:
       - busybox
       - python-__VER__
       - py__VER__-pip
+      - patch
 
 pipeline:
+  - uses: fetch
+    with:
+      uri: https://files.pythonhosted.org/packages/7f/3e/5db95bcf282c52709639744ca2a8b149baccf648e39c8cc87553df9eae0c/urllib3-2.7.0-py3-none-any.whl
+      expected-sha256: 9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897
+      extract: false
+  - uses: fetch
+    with:
+      uri: https://files.pythonhosted.org/packages/92/9d/c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/urllib3-2.8.0-py3-none-any.whl
+      expected-sha256: 0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3
+      extract: false
+  - uses: fetch
+    with:
+      uri: https://raw.githubusercontent.com/pypa/pip/26.2.1/tools/vendoring/patches/urllib3.patch
+      expected-sha256: ac960bc57e4cdb4e8495e4ec442daba1eb4e50998ff6f125ed3c33afa729e197
+      extract: false
+  - uses: fetch
+    with:
+      uri: https://raw.githubusercontent.com/pypa/pip/26.2.1/tools/vendoring/patches/urllib3-disable-brotli.patch
+      expected-sha256: 28c5c54c565b95c0c3583c91a00b62eeedf5d807e4aba32a2f5c2518afc9d9ef
+      extract: false
+  - uses: fetch
+    with:
+      uri: https://raw.githubusercontent.com/pypa/pip/26.2.1/tools/vendoring/patches/urllib3-fix-emscripten-import.patch
+      expected-sha256: 6d6174dde794ab5f8754d6c8bc6b6d59e045d1b9b48685fc5a4aee06a01a9eeb
+      extract: false
   - name: Verify the shim is still needed
     runs: |
       set -e
@@ -108,6 +146,59 @@ pipeline:
         exit 1
       fi
 
+  - name: Re-vendor urllib3 2.8.0 into pip
+    runs: |
+      set -e
+      export DESTDIR="${{targets.destdir}}"
+      SP=/usr/lib/python__VER__/site-packages
+      export SP
+      python3 - <<'PYEOF'
+      import filecmp, os, pathlib, re, shutil, subprocess, tempfile, zipfile
+
+      sp = pathlib.Path(os.environ["SP"])
+      installed = sp / "pip/_vendor/urllib3"
+      have = re.search(r"__version__ = version = '([^']+)'", (installed / "_version.py").read_text()).group(1)
+      if tuple(int(x) for x in have.split(".")[:3]) >= (2, 8, 0):
+          raise SystemExit(f"pip now vendors urllib3 {have}: delete the re-vendor step and its fetches")
+      patches = ["urllib3.patch", "urllib3-disable-brotli.patch", "urllib3-fix-emscripten-import.patch"]
+
+      def vendor(wheel):
+          # wheel contents plus pip's patches, as Wolfi's py-pip build ships them
+          root = pathlib.Path(tempfile.mkdtemp())
+          v = root / "src/pip/_vendor"
+          v.mkdir(parents=True)
+          zipfile.ZipFile(wheel).extractall(v)
+          for p in patches:
+              subprocess.run(["patch", "-p1", "-s", "--no-backup-if-mismatch", "-i", os.path.abspath(p)], cwd=root, check=True)
+          return v / "urllib3"
+
+      # The importable code only: Wolfi's tree keeps a contrib/pyopenssl.py.orig
+      # left over from its own patch run, which never imports.
+      def sources(d):
+          return sorted(str(f.relative_to(d)) for f in d.rglob("*.py") if "__pycache__" not in f.parts)
+
+      # Proof the recipe is pip's: on 2.7.0 it must give exactly the tree pip shipped.
+      ref = vendor("urllib3-2.7.0-py3-none-any.whl")
+      assert have == "2.7.0", f"installed pip vendors urllib3 {have}; refresh the 2.7.0 reproduction wheel"
+      assert sources(ref) == sources(installed), "file set differs from pip's vendored urllib3"
+      bad = [f for f in sources(ref) if not filecmp.cmp(ref / f, installed / f, shallow=False)]
+      assert not bad, f"recipe does not reproduce pip's urllib3: {bad}"
+
+      new = vendor("urllib3-2.8.0-py3-none-any.whl")
+      assert sources(new) == sources(installed), "2.8.0 adds or drops files; stale copies would stay behind"
+      dest = pathlib.Path(os.environ["DESTDIR"]) / str(installed).lstrip("/")
+      shutil.copytree(new, dest)
+      print(f"re-vendored pip urllib3 {have} -> 2.8.0 at {installed}")
+      PYEOF
+      python3 -m compileall -q --invalidation-mode unchecked-hash -s "$DESTDIR" -p / "$DESTDIR$SP/pip/_vendor/urllib3"
+      # Smoke-test the result inside a copy of the installed pip.
+      t=$(mktemp -d)
+      cp -a "$SP/pip" "$t/"
+      cp -a "$DESTDIR$SP/pip/_vendor/urllib3/." "$t/pip/_vendor/urllib3/"
+      PYTHONPATH="$t" python3 -c "import pip._vendor.urllib3 as u, pip._vendor.requests; assert u.__version__ == '2.8.0', u.__version__; assert u.__file__.startswith('$t/'), u.__file__; print('pip imports urllib3', u.__version__)"
+      PYTHONPATH="$t" python3 -m pip --version
+      rm -rf "$t"
+
   - name: Drop the phantom setuptools line from vendor.txt
     runs: |
       set -e
@@ -116,7 +207,10 @@ pipeline:
       install -d "$DEST"
       # Derived from the pip actually present in the build environment, so this
       # never carries a stale copy of some other pip release's manifest.
-      sed '/^setuptools==/d' "$SP/pip/_vendor/vendor.txt" > "$DEST/vendor.txt"
+      U3=$(sed -n "s/^__version__ = version = '\(.*\)'$/\1/p" "$DEST/urllib3/_version.py")
+      test -n "$U3" || { echo "cannot read the re-vendored urllib3 version"; exit 1; }
+      sed -e '/^setuptools==/d' -e "s/^\( *\)urllib3==.*/\1urllib3==$U3/" "$SP/pip/_vendor/vendor.txt" > "$DEST/vendor.txt"
+      grep -qx " *urllib3==$U3" "$DEST/vendor.txt" || { echo "vendor.txt urllib3 line not rewritten"; exit 1; }
       chmod 0644 "$DEST/vendor.txt"
 
       ! grep -q '^setuptools==' "$DEST/vendor.txt" || { echo "setuptools line still present"; exit 1; }
@@ -155,6 +249,11 @@ pipeline:
       assert m, "cannot read the vendored msgpack version from __init__.py"
       msgpack_real = m.group(1)
       print(f"vendored msgpack sources are {msgpack_real}")
+      # urllib3 is re-vendored by this package, so its version comes from the
+      # tree this package installs.
+      u3 = destdir / f"usr/lib/python{minor}/site-packages/pip/_vendor/urllib3/_version.py"
+      real = {"msgpack": msgpack_real,
+              "urllib3": re.search(r"__version__ = version = '([^']+)'", u3.read_text()).group(1)}
 
       # --- pip's own CycloneDX -------------------------------------------
       cdx_rel = f"usr/lib/python{minor}/site-packages/pip/_vendor/bom.cdx.json"
@@ -167,27 +266,28 @@ pipeline:
       dropped_refs = {c.get("bom-ref") for c in stale} | {c.get("purl") for c in stale}
       dropped_refs.discard(None)
 
-      kept, relabelled = [], 0
+      kept, renamed = [], {}
       for c in comps:
           if c.get("name") == "setuptools":
               continue  # not vendored on disk; proven by the earlier assertion
-          if c.get("name") == "msgpack" and c.get("version") != msgpack_real:
-              c["version"] = msgpack_real
-              c["purl"] = f"pkg:pypi/msgpack@{msgpack_real}"
-              c["bom-ref"] = f"pkg:pypi/msgpack@{msgpack_real}"
-              relabelled += 1
+          v = real.get(c.get("name"))
+          if v and c.get("version") != v:
+              renamed[c.get("bom-ref")] = f"pkg:pypi/{c['name']}@{v}"
+              c["version"] = v
+              c["purl"] = c["bom-ref"] = f"pkg:pypi/{c['name']}@{v}"
           kept.append(c)
       cdx["components"] = kept
+      assert any(c.get("name") == "urllib3" and c.get("version") == real["urllib3"] for c in kept), "CycloneDX lost urllib3"
 
       if "dependencies" in cdx:
           cdx["dependencies"] = [d for d in cdx["dependencies"]
                                  if d.get("ref") not in dropped_refs]
           for d in cdx["dependencies"]:
+              d["ref"] = renamed.get(d.get("ref"), d.get("ref"))
               if "dependsOn" in d:
-                  d["dependsOn"] = [r for r in d["dependsOn"] if r not in dropped_refs]
+                  d["dependsOn"] = [renamed.get(r, r) for r in d["dependsOn"] if r not in dropped_refs]
       out(cdx_rel).write_text(json.dumps(cdx, indent=2) + "\n")
-      print(f"CycloneDX: dropped {len(stale)} phantom setuptools, "
-            f"re-labelled {relabelled} stale msgpack entry to {msgpack_real}")
+      print(f"CycloneDX: dropped {len(stale)} phantom setuptools, re-labelled {renamed}")
 
       # --- Wolfi's SPDX for the pip package ------------------------------
       spdx_src = glob.glob(f"/var/lib/db/sbom/py{minor}-pip-base-*.spdx.json")
@@ -200,11 +300,12 @@ pipeline:
           if p.get("name") == "setuptools":
               drop_ids.add(p.get("SPDXID"))
               continue
-          if p.get("name") == "msgpack" and p.get("versionInfo") != msgpack_real:
-              p["versionInfo"] = msgpack_real
+          v = real.get(p.get("name"))
+          if v and p.get("versionInfo") != v:
+              p["versionInfo"] = v
               for ref in p.get("externalRefs", []):
                   if ref.get("referenceType") == "purl":
-                      ref["referenceLocator"] = f"pkg:pypi/msgpack@{msgpack_real}"
+                      ref["referenceLocator"] = f"pkg:pypi/{p['name']}@{v}"
               spdx_relabelled += 1
           kept_pkgs.append(p)
       assert drop_ids, ("the pip-base SPDX no longer lists setuptools -- see the "
@@ -222,7 +323,7 @@ pipeline:
       out(f"var/lib/db/sbom/{os.path.basename(spdx_src)}").write_text(
           json.dumps(spdx, indent=2) + "\n")
       print(f"SPDX: dropped {len(drop_ids)} phantom setuptools, "
-            f"re-labelled {spdx_relabelled} msgpack entry")
+            f"re-labelled {spdx_relabelled} msgpack/urllib3 entries")
       PYEOF
 
   # `python -m venv` seeds the new environment from a bundled pip wheel, and
@@ -259,12 +360,25 @@ pipeline:
           assert m, "cannot read the seed wheel's vendored msgpack version"
           msgpack_real = m.group(1)
 
+          # The wheel vendors the same urllib3 2.7.0 as the installed pip: replace
+          # it file for file with the tree the re-vendor step installed.
+          u3dir = glob.glob(os.environ["DESTDIR"] + "/usr/lib/python*/site-packages/pip/_vendor/urllib3")
+          assert len(u3dir) == 1, u3dir
+          u3dir = pathlib.Path(u3dir[0])
+          u3_real = re.search(r"__version__ = version = '([^']+)'", (u3dir / "_version.py").read_text()).group(1)
+          u3_files = {f"pip/_vendor/urllib3/{f.relative_to(u3dir)}": f.read_bytes()
+                      for f in u3dir.rglob("*.py") if "__pycache__" not in f.parts}
+          wheel_u3 = {n for n in names if n.startswith("pip/_vendor/urllib3/") and n.endswith(".py")}
+          assert set(u3_files) == wheel_u3, f"seed wheel urllib3 file set differs: {set(u3_files) ^ wheel_u3}"
+          fixed.update(u3_files)
+
           vendor_txt = zin.read("pip/_vendor/vendor.txt").decode()
           assert "\nsetuptools==" in "\n" + vendor_txt, (
               "the seed wheel's vendor.txt no longer pins a phantom setuptools -- "
               "see the RETIREMENT CONDITION in the header")
           fixed["pip/_vendor/vendor.txt"] = "".join(
-              l for l in vendor_txt.splitlines(keepends=True)
+              l[:len(l) - len(l.lstrip())] + f"urllib3=={u3_real}\n" if l.lstrip().startswith("urllib3==") else l
+              for l in vendor_txt.splitlines(keepends=True)
               if not l.startswith("setuptools==")
           ).encode()
 
@@ -274,22 +388,24 @@ pipeline:
               stale = [c for c in cdx.get("components", []) if c.get("name") == "setuptools"]
               dropped = {c.get("bom-ref") for c in stale} | {c.get("purl") for c in stale}
               dropped.discard(None)
-              kept = []
+              kept, renamed = [], {}
               for c in cdx.get("components", []):
                   if c.get("name") == "setuptools":
                       continue
-                  if c.get("name") == "msgpack" and c.get("version") != msgpack_real:
-                      c["version"] = msgpack_real
-                      c["purl"] = f"pkg:pypi/msgpack@{msgpack_real}"
-                      c["bom-ref"] = f"pkg:pypi/msgpack@{msgpack_real}"
+                  v = {"msgpack": msgpack_real, "urllib3": u3_real}.get(c.get("name"))
+                  if v and c.get("version") != v:
+                      renamed[c.get("bom-ref")] = f"pkg:pypi/{c['name']}@{v}"
+                      c["version"] = v
+                      c["purl"] = c["bom-ref"] = f"pkg:pypi/{c['name']}@{v}"
                   kept.append(c)
               cdx["components"] = kept
               if "dependencies" in cdx:
                   cdx["dependencies"] = [d for d in cdx["dependencies"]
                                          if d.get("ref") not in dropped]
                   for d in cdx["dependencies"]:
+                      d["ref"] = renamed.get(d.get("ref"), d.get("ref"))
                       if "dependsOn" in d:
-                          d["dependsOn"] = [r for r in d["dependsOn"] if r not in dropped]
+                          d["dependsOn"] = [renamed.get(r, r) for r in d["dependsOn"] if r not in dropped]
               fixed["pip/_vendor/bom.cdx.json"] = (json.dumps(cdx, indent=2) + "\n").encode()
 
           record_name = next(n for n in names if n.endswith(".dist-info/RECORD"))
@@ -316,5 +432,7 @@ pipeline:
 
       with zipfile.ZipFile(dest) as z:
           assert b"\nsetuptools==" not in b"\n" + z.read("pip/_vendor/vendor.txt")
+          assert f"urllib3=={u3_real}".encode() in z.read("pip/_vendor/vendor.txt")
+          assert z.read("pip/_vendor/urllib3/_version.py") == (u3dir / "_version.py").read_bytes()
       print(f"rewrote seed wheel -> {dest}")
       PYEOF
