@@ -36,15 +36,19 @@ paths:
     uid: 0
     gid: 0
     permissions: 0o755
+  # A symlink entry without permissions makes apko chmod its TARGET to 0000.
   - path: /binaries/kube-apiserver
     type: symlink
     source: /usr/bin/kube-apiserver
+    permissions: 0o755
   - path: /binaries/kube-controller-manager
     type: symlink
     source: /usr/bin/kube-controller-manager
+    permissions: 0o755
   - path: /binaries/kine
     type: symlink
     source: /usr/bin/kine
+    permissions: 0o755
 
 entrypoint:
   command: /vcluster start

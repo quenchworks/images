@@ -19,4 +19,12 @@ if [ -n "$WANT" ] && [ "$ver" != "$WANT" ]; then echo "expected $WANT"; exit 1; 
 docker run --rm --entrypoint /vcluster "$IMAGE" start --help >/dev/null \
   || { echo "vcluster start --help failed"; exit 1; }
 
-echo "smoke test passed ($ver, nonroot user: $user)"
+# the control plane the syncer execs from fixed paths, built from source in melange.yaml
+for b in kube-apiserver kube-controller-manager; do
+  kv="$(docker run --rm --entrypoint "/binaries/$b" "$IMAGE" --version)"
+  [ "$kv" = "Kubernetes v1.36.4" ] || { echo "/binaries/$b reports '$kv'"; exit 1; }
+done
+docker run --rm --entrypoint /binaries/kine "$IMAGE" --version >/dev/null \
+  || { echo "/binaries/kine failed"; exit 1; }
+
+echo "smoke test passed ($ver, kube v1.36.4, nonroot user: $user)"
