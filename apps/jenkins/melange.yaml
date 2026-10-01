@@ -2,8 +2,8 @@
 # upstream noarch jenkins.war (prebuilt) on a hardened Wolfi JRE, which is the CVE
 # surface the Trivy gate scans. No compilation -- fetch the war, drop it under
 # /usr/share/jenkins, and create a writable nonroot JENKINS_HOME.
-# Weekly (get.jenkins.io/war/), not LTS (war-stable/): CVE-2026-53441 is fixed
-# only in weekly >= 2.568 and no LTS release ships the fix.
+# __WARPATH__ is war-stable/ for an LTS (2.580.1, the first LTS past the CVE-2026-53441
+# fix in 2.568) and war/ for the weekly 2.572 the chart still pins.
 package:
   name: quench-jenkins
   version: __VER__
@@ -31,7 +31,7 @@ pipeline:
   - uses: fetch
     with:
       # The war is architecture-independent: same artifact on amd64/arm64.
-      uri: https://get.jenkins.io/war/${{package.version}}/jenkins.war
+      uri: https://get.jenkins.io/__WARPATH__/${{package.version}}/jenkins.war
       expected-sha256: "__SHA256__"
       extract: false       # a bare noarch .war, not an archive: keep it as-is
   - runs: |
