@@ -2,7 +2,8 @@
 # The syncer runs the virtual cluster's control plane as child processes. It execs
 # them from fixed paths (pkg/constants: /binaries/kube-apiserver,
 # /binaries/kube-controller-manager, /binaries/kine; kine has no override, and an
-# apiServer.command override drops every default flag), so the Wolfi binaries are
+# apiServer.command override drops every default flag), so the binaries (kine from
+# Wolfi, the control plane built from source in melange.yaml) are
 # symlinked there instead of copied in by an initContainer. Kubernetes 1.36 is
 # upstream's default distro version for every shipped line. State (the kine
 # SQLite store, certs) lives under /data, which the chart mounts.
@@ -17,8 +18,6 @@ contents:
     - wolfi-baselayout
     - ca-certificates-bundle
     - quench-vcluster@local
-    - kube-apiserver-1.36
-    - kube-controller-manager-1.36
     - kine
 
 accounts:
@@ -39,10 +38,10 @@ paths:
     permissions: 0o755
   - path: /binaries/kube-apiserver
     type: symlink
-    source: /usr/bin/kube-apiserver-1.36
+    source: /usr/bin/kube-apiserver
   - path: /binaries/kube-controller-manager
     type: symlink
-    source: /usr/bin/kube-controller-manager-1.36
+    source: /usr/bin/kube-controller-manager
   - path: /binaries/kine
     type: symlink
     source: /usr/bin/kine

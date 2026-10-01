@@ -33,6 +33,16 @@ pipeline:
     with:
       uri: https://github.com/loft-sh/vcluster/archive/refs/tags/v${{package.version}}.tar.gz
       expected-sha256: __SHA256__
+  # kube-apiserver and kube-controller-manager 1.36.4, built here instead of taken from
+  # Wolfi: its 1.36 recipe left the public repo and the advisory's fixed 1.36.4-r10
+  # (otlptrace CVE-2026-81870) never reached the index, which tops out at r8. vcluster
+  # 0.37 supports Kubernetes up to 1.36, so Wolfi's 1.37 is no substitute.
+  - runs: mkdir -p kubernetes
+  - uses: fetch
+    with:
+      uri: https://github.com/kubernetes/kubernetes/archive/refs/tags/v1.36.4.tar.gz
+      expected-sha256: 86a216801ddba7098a50c6f3b3fe5fbc28ba34ea5b1daa66d81c2d5307c301ac
+      directory: kubernetes
   - runs: |
       set -eu
       export CGO_ENABLED=0
@@ -82,3 +92,20 @@ pipeline:
       [ -z "$bad" ] || { echo "0-CVE float did not reach vcluster:"; echo "$bad"; exit 1; }
       "${{targets.destdir}}/usr/bin/vcluster" version | grep -qx "${{package.version}}"
       ln -s usr/bin/vcluster "${{targets.destdir}}/vcluster"
+
+      # The control plane, floated with the same set. The root go.mod replaces every
+      # staging module with its ./staging path, so module mode needs no workspace.
+      cd kubernetes
+      export GOWORK=off
+      need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor kubernetes | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
+      # what hack/lib/version.sh stamps, for the v1.36.4 tag commit
+      KV="-X k8s.io/component-base/version.gitVersion=v1.36.4 -X k8s.io/component-base/version.gitMajor=1 -X k8s.io/component-base/version.gitMinor=36 -X k8s.io/component-base/version.gitCommit=bb826b1d48562f110659e64e8ec444327433db95 -X k8s.io/component-base/version.gitTreeState=clean -X k8s.io/component-base/version.buildDate=2026-08-20T03:06:27Z"
+      KV="$KV $(echo "$KV" | sed 's|k8s.io/component-base/version|k8s.io/client-go/pkg/version|g')"
+      for b in kube-apiserver kube-controller-manager; do
+        go build -trimpath -ldflags "-s -w $KV" -o "${{targets.destdir}}/usr/bin/$b" ./cmd/$b
+        bad="$(go version -m "${{targets.destdir}}/usr/bin/$b" \
+          | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor $b)"
+        [ -z "$bad" ] || { echo "0-CVE float did not reach $b:"; echo "$bad"; exit 1; }
+        "${{targets.destdir}}/usr/bin/$b" --version | grep -qx 'Kubernetes v1.36.4'
+      done
