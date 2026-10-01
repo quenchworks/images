@@ -93,7 +93,9 @@ pipeline:
       # CARET ^6.24.0, which the shipped lockfile already satisfies at the flagged 6.27.0 --
       # so the stale copy survived every install. Dropped here; the exact-target
       # 'undici@<6.28.0': 6.28.0 below covers that edge and forces the re-resolution.
-      drops=("tar@<7.5.21:", "undici@<6.24.0:")
+      # Ghost's own axios entry (axios@<1.15.2: ^1.15.2) is a caret the lockfile already
+      # satisfies at the flagged 1.18.1, so it is superseded by the exact pin below too.
+      drops=("tar@<7.5.21:", "undici@<6.24.0:", "axios@<1.15.2:")
       add=[
         "  babel-traverse: 'npm:@babel/traverse@7.23.2'",  # CVE-2023-45133 rename fix
         "  'mppx@<0.8.2': 0.8.2",                # CVE-2026-63627/63628, new in Ghost 6.65.0's
@@ -105,8 +107,9 @@ pipeline:
         "  'brace-expansion@<5.0.12': 5.0.12",     # CVE-2026-14257, then CVE-2026-69152 which
                                                  # landed ON 5.0.8 -- the version pinned to fix
                                                  # the first. See the interop step below.
-        "  'dompurify@<3.4.13': 3.4.13",         # GHSA-c2j3-45gr-mqc4, then a further advisory
-                                                 # ON 3.4.12 (the version pinned to fix it)
+        "  'axios@<1.20.0': 1.20.0",             # 2026-10-01 advisory on 1.18.1 (fixed 0.34.0 / 1.20.0)
+        "  'dompurify@<3.4.16': 3.4.16",         # GHSA-c2j3-45gr-mqc4, a further advisory ON
+                                                 # 3.4.12, then another on 3.4.13 (fixed 3.4.16)
         "  'esbuild@<0.28.1': 0.28.1",           # GHSA-g7r4-m6w7-qqqr
         "  'fast-uri@<3.1.8': 3.1.8",            # CVE-2026-86472 (3.1.8), CVE-2026-84292/84394 (3.1.7); before that CVE-2026-13676/16221 fixed at 3.1.5, then FOUR
                                                  # more advisories (CVE-2026-75899/75931/75975/
@@ -246,7 +249,7 @@ pipeline:
           if m:
               have.setdefault(m.group(1).replace("+", "/"), set()).add(m.group(2))
       # (package, version that must NOT survive) for every exact-version override above
-      banned = [("undici", "6.27.0"), ("undici", "6.28.0"), ("undici", "7.28.0"), ("undici", "7.29.0"), ("undici", "8.10.0"), ("fast-uri", "3.1.6")]
+      banned = [("undici", "6.27.0"), ("undici", "6.28.0"), ("undici", "7.28.0"), ("undici", "7.29.0"), ("undici", "8.10.0"), ("fast-uri", "3.1.6"), ("axios", "1.18.1"), ("dompurify", "3.4.13")]
       bad = [f"{p}@{v}" for p, v in banned if v in have.get(p, ())]
       if bad:
           print("FATAL: override did not apply, these resolved versions survived:", ", ".join(bad))

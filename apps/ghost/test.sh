@@ -41,8 +41,11 @@ echo "GET / -> $code"
 # the booted server must actually be Ghost: its admin redirect / X-Powered-By or the
 # homepage markup carries the Ghost signature.
 hdrs="$(curl -fsSI http://127.0.0.1:2368/ghost/ 2>/dev/null || true)"
-echo "$hdrs" | grep -qi 'ghost' \
-  || curl -fsS http://127.0.0.1:2368/ 2>/dev/null | grep -qi 'ghost' \
+# here-strings, not pipes: grep -q exits on the first match and, under pipefail, the
+# SIGPIPE it sends curl (body past 64K) fails a page that matched.
+body="$(curl -fsS http://127.0.0.1:2368/ 2>/dev/null || true)"
+grep -qi 'ghost' <<<"$hdrs" \
+  || grep -qi 'ghost' <<<"$body" \
   || { echo "served page does not look like Ghost"; docker logs "$NAME" | tail -20; exit 1; }
 
 # must run as the nonroot ghost user (uid 1001)
