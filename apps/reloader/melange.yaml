@@ -1,0 +1,47 @@
+# Builds Reloader from the release tag. v1.4.22 pins golang.org/x/mod v0.37.0
+# (CVE-2026-56864/-56865, fixed in 0.40.0); the float asserts the binary links 0.40.0 when
+# it links x/mod at all.
+package:
+  name: quench-reloader
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Stakater Reloader, built from source"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/stakater/Reloader/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      export CGO_ENABLED=0 GOFLAGS=-mod=mod GOTOOLCHAIN=auto
+      go get golang.org/x/mod@v0.40.0 && go mod tidy
+      go build -trimpath \
+        -ldflags "-s -w -X github.com/stakater/Reloader/pkg/common.Version=${{package.version}} -X github.com/stakater/Reloader/pkg/common.Edition=oss" \
+        -o "${{targets.destdir}}/usr/bin/reloader" .
+      m="$(go version -m "${{targets.destdir}}/usr/bin/reloader")"
+      got="$(awk '$1 == "dep" && $2 == "golang.org/x/mod" { print $3 }' <<<"$m")"
+      [ -z "$got" ] || [ "$got" = v0.40.0 ] || { echo "reloader links golang.org/x/mod $got, not v0.40.0"; exit 1; }
+      # The version is only published into a ConfigMap at runtime; check the stamp here.
+      grep -aq "${{package.version}}" "${{targets.destdir}}/usr/bin/reloader"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/bin/reloader
