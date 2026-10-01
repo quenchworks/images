@@ -41,6 +41,11 @@ pipeline:
       expected-sha512: "__SHA512__"
       strip-components: 1
   - runs: |
+      # 26.8.0 bundles every fixed version this step swaps in (otel 1.62.0, netty
+      # 4.1.138, databind 2.21.7, freemarker 2.3.35, Bouncy Castle 1.86), and its dist
+      # scanned clean on 2026-10-01, so the swaps below are 26.7.4's alone. Any other
+      # version skips them; the 0-CVE gate on the built image is what clears it.
+      if [ "${{package.version}}" != 26.7.4 ]; then echo "no jar swaps for ${{package.version}}"; exit 0; fi
       # --- CVE remediation: swap vulnerable bundled jars BEFORE `kc.sh build` so the
       # Quarkus augmentation re-indexes the patched versions ---------------------------
       # (1) OpenTelemetry stack 1.57.0 -> 1.62.0 IN LOCKSTEP (CVE-2026-45292, DoS via
