@@ -56,11 +56,13 @@ pipeline:
       # jwt.get_unverified_header and jwt.InvalidTokenError (checked in the 2.1.2 wheel,
       # tokens/client_ext.py, core/utils/io.py, interface/cli.py). So the fix is pinned
       # exactly, and the SDK's installed requirement is widened to what was verified.
-      "$VENV/bin/pip" install --no-cache-dir "PyJWT==2.14.0"
+      # 2.15.0 (a further advisory on 2.14.0) wraps RecursionError in DecodeError and
+      # changes only PyJWKClient caching, which the SDK does not use.
+      "$VENV/bin/pip" install --no-cache-dir "PyJWT==2.15.0"
       md="$(ls -d "$VENV"/lib/python3.13/site-packages/label_studio_sdk-*.dist-info)/METADATA"
       grep -q '^Requires-Dist: pyjwt (>=2.13.0,<2.14.0)$\|^Requires-Dist: pyjwt<2.14.0,>=2.13.0$' "$md"
-      sed -i 's/^Requires-Dist: pyjwt (>=2.13.0,<2.14.0)$/Requires-Dist: pyjwt (>=2.13.0,<2.15.0)/; s/^Requires-Dist: pyjwt<2.14.0,>=2.13.0$/Requires-Dist: pyjwt<2.15.0,>=2.13.0/' "$md"
-      "$VENV/bin/python" -c "import importlib.metadata as m; v = m.version('PyJWT'); assert v == '2.14.0', v; print('PyJWT', v)"
+      sed -i 's/^Requires-Dist: pyjwt (>=2.13.0,<2.14.0)$/Requires-Dist: pyjwt (>=2.13.0,<2.16.0)/; s/^Requires-Dist: pyjwt<2.14.0,>=2.13.0$/Requires-Dist: pyjwt<2.16.0,>=2.13.0/' "$md"
+      "$VENV/bin/python" -c "import importlib.metadata as m; v = m.version('PyJWT'); assert v == '2.15.0', v; print('PyJWT', v)"
       # the only broken requirement left is the opencv wheel removed on purpose above
       "$VENV/bin/pip" check | grep -v 'requires opencv-python-headless, which is not installed' | grep . && exit 1 || true
       # core/version.py asks git for the version through shell=True and catches
