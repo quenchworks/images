@@ -39,7 +39,13 @@ for i in $(seq 1 90); do
 done
 echo "  /health: UP"
 
-ver="$(curl -fsS "$API/version" | sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p')"
+# /health can turn UP a moment before the API port serves (curl 52 seen once), so poll.
+ver=""
+for i in $(seq 1 30); do
+  ver="$(curl -fsS "$API/version" 2>/dev/null | sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p')" || true
+  [ -n "$ver" ] && break
+  sleep 2
+done
 echo "reported version: $ver"
 [ -n "$ver" ] || { echo "no version"; exit 1; }
 [ -z "$WANT" ] || [ "$ver" = "$WANT" ] || { echo "expected $WANT"; exit 1; }

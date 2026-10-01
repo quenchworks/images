@@ -44,6 +44,11 @@ pipeline:
       mv "/tmp/nifi/nifi-$V" "${{targets.destdir}}/opt/nifi"
       home="${{targets.destdir}}/opt/nifi"
       rm -f "$home"/bin/*.cmd
+      # jackson-databind 2.22.2 in the bootstrap classpath carries CVE-2026-91776/-91777;
+      # 2.22.3 is the same-line fix. (Copies inside .nar files are not scanned by Trivy.)
+      rm "$home/lib/bootstrap/jackson-databind-2.22.2.jar"
+      curl -fsSL -o "$home/lib/bootstrap/jackson-databind-2.22.3.jar" https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-databind/2.22.3/jackson-databind-2.22.3.jar
+      echo "556db5439e206114346043f68d200497dc96a0bca62a360a81784092ebd0e0a9  $home/lib/bootstrap/jackson-databind-2.22.3.jar" | sha256sum -c -
 
       test -f "$home/lib/nifi-hazelcast-services-nar-$V.nar"
       rm -f "$home/lib/nifi-hazelcast-services-nar-$V.nar"

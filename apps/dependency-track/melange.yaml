@@ -45,6 +45,10 @@ pipeline:
       wget -q -O "$app/lib/freemarker-2.3.35.jar" https://repo1.maven.org/maven2/org/freemarker/freemarker/2.3.35/freemarker-2.3.35.jar
       echo "0fac87dddd78f1223139e8ef88e819c7f483c0a3835cdf5982ad5e4576d1d896  $app/lib/freemarker-2.3.35.jar" | sha256sum -c -
       test "$(ls "$app"/lib/freemarker-*.jar | wc -l)" = 1
+      # jackson-databind 2.22.2 carries CVE-2026-91776/-91777; 2.22.3 is the same-line fix.
+      rm "$app/lib/jackson-databind-2.22.2.jar"
+      wget -q -O "$app/lib/jackson-databind-2.22.3.jar" https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-databind/2.22.3/jackson-databind-2.22.3.jar
+      echo "556db5439e206114346043f68d200497dc96a0bca62a360a81784092ebd0e0a9  $app/lib/jackson-databind-2.22.3.jar" | sha256sum -c -
       chmod -R a+rX "$app"
 
 test:
