@@ -11,15 +11,22 @@ user="$(docker inspect "$IMAGE" --format '{{.Config.User}}')"
 [ "$user" = "1001" ] || { echo "expected user 1001, got '$user'"; exit 1; }
 
 docker run -d --name "$NAME" -p 127.0.0.1:14000:4000 "$IMAGE" >/dev/null
+# With no master key, 1.103 starts with an open API; 1.104+ refuses to start
+# (UnsafeMasterKeyError). Either is correct for its line; anything else fails.
 ok=0
 for _ in $(seq 1 90); do
   if curl -fsS http://127.0.0.1:14000/health/liveliness >/dev/null 2>&1; then ok=1; break; fi
+  if [ "$(docker inspect -f '{{.State.Running}}' "$NAME")" = false ]; then
+    logs="$(docker logs "$NAME" 2>&1)"
+    grep -q 'UnsafeMasterKeyError' <<<"$logs" || { echo "proxy exited without a master key, but not by refusing:"; tail -40 <<<"$logs"; exit 1; }
+    ok=2; break
+  fi
   sleep 1
 done
-[ "$ok" = 1 ] || { echo "proxy never answered /health/liveliness"; docker logs "$NAME" 2>&1 | tail -40; exit 1; }
+[ "$ok" != 0 ] || { echo "proxy never answered /health/liveliness"; docker logs "$NAME" 2>&1 | tail -40; exit 1; }
 
-# no master key is set here, so the API is open and lists no models
-curl -fsS http://127.0.0.1:14000/v1/models >/dev/null \
+# where it starts with no master key, the API is open and lists no models
+[ "$ok" = 2 ] || curl -fsS http://127.0.0.1:14000/v1/models >/dev/null \
   || { echo "/v1/models did not answer"; docker logs "$NAME" 2>&1 | tail -20; exit 1; }
 
 # with a master key, a request without it must be rejected with 401, not a 500 (the
