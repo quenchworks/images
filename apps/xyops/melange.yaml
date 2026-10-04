@@ -68,6 +68,8 @@ pipeline:
         const fs = require("fs"), p = JSON.parse(fs.readFileSync("package.json"));
         p.overrides = p.overrides || {};
         if ((p.dependencies || {}).nodemailer) p.dependencies.nodemailer = "10.0.12"; else p.overrides.nodemailer = "10.0.12";
+        // basic-ftp 5.3.1 (transitive) carries GHSA-c475-qrg2-pj4r, fixed only on 6.x (2026-10-04).
+        p.overrides["basic-ftp"] = "6.2.1";
         fs.writeFileSync("package.json", JSON.stringify(p, null, 2));
       '
       npm install --omit=dev --no-audit --no-fund

@@ -103,6 +103,14 @@ pipeline:
       patch_pkg "$dest/node_modules"            ip-address  https://registry.npmjs.org/ip-address/-/ip-address-10.7.1.tgz   7f99ac7abda701afe1fd1e36de462236fb4d1eb8c595d7ae0267bba7d8ee55f8
       patch_pkg "$dest/lib/vscode/node_modules" undici      https://registry.npmjs.org/undici/-/undici-7.29.1.tgz           93b3abe22a9d2858938b5f3829a9fd8952392348ffed9057662ae846e2e46d54
       patch_pkg "$dest/node_modules"            body-parser https://registry.npmjs.org/body-parser/-/body-parser-2.3.0.tgz 031d7f6c5142e31be91d36a43f541f02a505943e3b871aa44ef5fb6939be258e
+      # basic-ftp 5.3.1 -> 6.2.1 (GHSA-c475-qrg2-pj4r, 2026-10-04; fixed only on 6.x, whose one
+      # break is no separate transfer hosts by default). Every copy, wherever the proxy agent sits.
+      n=0
+      for d in $(find "$dest" -type d -path '*/node_modules/basic-ftp'); do
+        patch_pkg "$(dirname "$d")" basic-ftp https://registry.npmjs.org/basic-ftp/-/basic-ftp-6.2.1.tgz ce98b3508df1292431a7f591747385ceef971b55030aea32c976a3715dbe455e
+        n=$((n+1))
+      done
+      [ "$n" -gt 0 ] || { echo "no basic-ftp in the tree; drop this patch"; exit 1; }
 
       # GHSA-wx77-rp39-c6vg (ReDoS in the `markdown` npm package, fixed: null) is
       # a name-collision false positive, same shape as the npm-extension FP above:
