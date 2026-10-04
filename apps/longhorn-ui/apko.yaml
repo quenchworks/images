@@ -1,0 +1,50 @@
+# Assembles the longhorn-ui image: upstream's layout (bundle in /web/dist, start-nginx.sh renders
+# /etc/nginx/nginx.conf.template into /var/config) and upstream's uid 499.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-longhorn-ui@local
+
+accounts:
+  groups:
+    - groupname: longhorn-ui
+      gid: 499
+  users:
+    - username: longhorn-ui
+      uid: 499
+      gid: 499
+  run-as: 499
+
+paths:
+  - path: /var/config
+    type: directory
+    uid: 499
+    gid: 499
+    permissions: 0o755
+
+environment:
+  LONGHORN_MANAGER_IP: http://localhost:9500
+  LONGHORN_UI_PORT: "8000"
+
+entrypoint:
+  command: /usr/local/bin/start-nginx.sh
+
+work-dir: /web
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-longhorn-ui"
+  org.opencontainers.image.licenses: "Apache-2.0"

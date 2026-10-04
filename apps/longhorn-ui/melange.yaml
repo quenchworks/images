@@ -1,0 +1,89 @@
+# Builds the Longhorn UI bundle from the release tag tarball with the vulnerable bundled npm
+# packages moved to fixed versions, and installs upstream's nginx launcher and template.
+package:
+  name: quench-longhorn-ui
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Longhorn UI (webpack bundle on nginx), built from source"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - bash
+      - busybox
+      - gettext   # envsubst
+      - iproute2  # ip -6, for the IPv6 listen check
+      - nginx
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - gettext
+      - nodejs-20
+      - npm
+      - python3
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/longhorn/longhorn-ui/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - name: bundle with fixed npm packages
+    runs: |
+      set -eu
+      # Only the bundle ships, so the scanner never sees these packages; they are fixed anyway.
+      # Each stays on its consumer's major (immutable 3 for draft-js). follow-redirects 1.16.1
+      # is inside npm's release cooldown, so 1.16.0. NOT fixed: decode-uri-component 0.2.2
+      # (query-string 6 require()s it; the only fixed release, 0.5.0, is ESM-only and would
+      # break at runtime in the browser, not at build time) and @babel/runtime 7.0.0-beta.46
+      # under dva/dva-core (they import beta-only core-js/* helper paths that 7.x removed; the
+      # advisory is about the _wrapRegExp helper, which dva-core does not import; every other
+      # copy is already 7.28.x).
+      node -e '
+        const fs = require("fs"); const p = JSON.parse(fs.readFileSync("package.json"));
+        p.dependencies.axios = "1.20.0";
+        p.overrides = Object.assign(p.overrides || {}, {
+          "d3-color": "3.1.0", "follow-redirects": "1.16.0",
+          "form-data": "4.0.6", "immutable": "3.8.4", "lodash": "4.18.0", "lodash-es": "4.18.0" });
+        fs.writeFileSync("package.json", JSON.stringify(p, null, 2));'
+      npm install --no-audit --no-fund
+      # Every copy must be the forced version (a stray nested copy is an inert pin).
+      node -e '
+        const l = require("./package-lock.json").packages;
+        const want = { axios: "1.20.0", "d3-color": "3.1.0",
+          "follow-redirects": "1.16.0", "form-data": "4.0.6", immutable: "3.8.4",
+          lodash: "4.18.0", "lodash-es": "4.18.0" };
+        let bad = 0;
+        for (const [k, v] of Object.entries(l)) {
+          const n = k.split("node_modules/").pop();
+          if (want[n] && !v.dev && v.version !== want[n]) { console.log("still", n, v.version, k); bad = 1; }
+        }
+        process.exit(bad);'
+      sed -i "s/\${VERSION}/v${{package.version}}/" src/utils/config.js
+      npm run build
+      grep -rq "v${{package.version}}" dist
+      d="${{targets.destdir}}"
+      install -d "$d/web" "$d/etc/nginx" "$d/usr/local/bin" "$d/var/config"
+      cp -a dist "$d/web/"
+      # Upstream's template plus pid, logs and temp files under /var/config, the one directory
+      # upstream makes writable for uid 499 (Wolfi's compiled-in paths are root-owned).
+      sed -e 's|^events { worker_connections 1024; }|pid /var/config/nginx.pid;\nerror_log /dev/stderr notice;\nevents { worker_connections 1024; }|' \
+          -e 's|^http {|http {\n    access_log /dev/stdout;\n    client_body_temp_path /var/config/client_body_temp;\n    proxy_temp_path /var/config/proxy_temp;\n    fastcgi_temp_path /var/config/fastcgi_temp;\n    uwsgi_temp_path /var/config/uwsgi_temp;\n    scgi_temp_path /var/config/scgi_temp;|' \
+          nginx.conf.template > "$d/etc/nginx/nginx.conf.template"
+      grep -q 'pid /var/config/nginx.pid' "$d/etc/nginx/nginx.conf.template"
+      install -m755 scripts/start-nginx.sh "$d/usr/local/bin/start-nginx.sh"
+
+test:
+  pipeline:
+    - runs: |
+        set -eu
+        test -f /web/dist/index.html
+        test -x /usr/local/bin/start-nginx.sh
+        command -v envsubst
