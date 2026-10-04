@@ -1,0 +1,43 @@
+# Assembles the longhorn-engine image. Root by default like upstream: the engine-image
+# DaemonSet runs it privileged and copies the static longhorn binary to the host.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-longhorn-engine@local
+
+accounts:
+  groups:
+    - groupname: longhorn
+      gid: 1001
+  users:
+    - username: longhorn
+      uid: 1001
+      gid: 1001
+  run-as: 0
+
+environment:
+  PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Upstream runs ENTRYPOINT ["/tini", "--"] with CMD longhorn; Wolfi's tini lives in /usr/bin.
+entrypoint:
+  command: /usr/bin/tini --
+
+cmd: longhorn
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-longhorn-engine"
+  org.opencontainers.image.licenses: "Apache-2.0 AND LGPL-3.0-or-later AND GPL-2.0-only AND BSD-2-Clause"
