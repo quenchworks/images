@@ -48,7 +48,7 @@ pipeline:
       # net/jpountz/**),
       # so we overlay the patched upstream classes (+ their META-INF/maven pom.properties
       # that Trivy reads for the version) and repackage. Not relocated => swappable.
-      #   * jackson-core 2.21.2 -> 2.21.5, jackson-databind -> 2.21.7 (CVE-2026-54512..54518, 2026-68497, 2026-91776/-91777;
+      #   * jackson-core 2.21.2 -> 2.21.7, jackson-databind -> 2.21.7 (CVE-2026-54512..54518, 2026-68497, 2026-91776/-91777;
       #     2.21.5 required for -54515; core bumped in lockstep to match databind ABI)
       #   * org.apache.shiro:shiro-* 2.1.0 -> 2.2.1 IN LOCKSTEP across the 9 bundled
       #     org.apache.shiro modules (CVE-2026-49268 LDAP injection, CVE-2026-43827
@@ -80,7 +80,7 @@ pipeline:
 
       # --- jackson (databind + core) 2.21.5: overlay class trees + maven metadata ---
       getj "$MC/com/fasterxml/jackson/core/jackson-databind/2.21.7/jackson-databind-2.21.7.jar" jackson-databind-2.21.7.jar 1290c2795e93e8a6861a6c4d9ff0d844d32f5ea178362cb2721edf5561e828b1
-      getj "$MC/com/fasterxml/jackson/core/jackson-core/2.21.5/jackson-core-2.21.5.jar" jackson-core-2.21.5.jar b64b5874162b503a0e58a8f7758266e8dd9f91bf49e3a59ae0b5f47589a231b7
+      getj "$MC/com/fasterxml/jackson/core/jackson-core/2.21.7/jackson-core-2.21.7.jar" jackson-core-2.21.7.jar 8c5623b98f32d5f7e1287ff61ed50e08ab7b11381e991fff89327faabba42261
       # MULTI-RELEASE: these jars also ship per-JDK overrides under META-INF/versions/<n>/.
       # On Java 21 a versioned entry WINS over the base one for the same class name, so
       # overlaying only the base tree would leave the old bytecode as the code that
@@ -92,7 +92,7 @@ pipeline:
       # fails the build loudly instead of silently reverting to a base-tree-only overlay.
       ( cd "$ST/jackson" \
           && unzip -qo "$DL/jackson-databind-2.21.7.jar" 'com/fasterxml/jackson/databind/*' 'META-INF/maven/com.fasterxml.jackson.core/jackson-databind/*' \
-          && unzip -qo "$DL/jackson-core-2.21.5.jar"     'com/fasterxml/jackson/core/*'     'META-INF/versions/*/com/fasterxml/jackson/core/*'     'META-INF/maven/com.fasterxml.jackson.core/jackson-core/*' )
+          && unzip -qo "$DL/jackson-core-2.21.7.jar"     'com/fasterxml/jackson/core/*'     'META-INF/versions/*/com/fasterxml/jackson/core/*'     'META-INF/maven/com.fasterxml.jackson.core/jackson-core/*' )
 
       # --- log4j-api 2.26.0 -> 2.26.1 and jsoup 1.22.1 -> 1.23.1 (both SHADED in graylog.jar,
       #     so they need the same class+pom.properties overlay rather than a file swap) ---
@@ -220,8 +220,8 @@ pipeline:
         rm -f "$w/com/rabbitmq/client/impl/SocketFrameHandler\$1.class" \
               "$w/com/fasterxml/jackson/databind/jsontype/BasicPolymorphicTypeValidator\$Builder\$7.class" \
               "$w/org/jsoup/parser/HtmlTreeBuilderState\$25.class"
-        # jackson-core shades fastdoubleparser under a version-stamped package, so 2.21.5
-        # brings v2_21_5 and the bundled v2_21_2 tree would be left behind unreferenced.
+        # jackson-core shades fastdoubleparser under a version-stamped package, so 2.21.7
+        # brings v2_21_7 and the bundled v2_21_2 tree would be left behind unreferenced.
         rm -rf "$w/com/fasterxml/jackson/core/internal/shaded/fdp/v2_21_2" \
                "$w"/META-INF/versions/*/com/fasterxml/jackson/core/internal/shaded/fdp/v2_21_2
         # httpcomponents is the one MINOR bump here, so a class-level overlay is not enough:
