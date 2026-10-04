@@ -5242,6 +5242,53 @@ apps:
       published: '2026-10-04T22:17:18Z'
       size: 46.4 MB
       layers: 1
+  longhorn-engine:
+    image: ghcr.io/quenchworks/images/longhorn-engine
+    category: Storage & platform
+    summary: The Longhorn v1 data engine image, built from source. It carries the static longhorn binary
+      (with libqcow) that the engine-image DaemonSet installs on each node, tgt with Longhorn's backing
+      store, sg_raw and longhorn-instance-manager, at the native commits Longhorn pins per release. Drop-in
+      for upstream's image, runs as root like upstream.
+    source: https://github.com/longhorn/longhorn-engine
+    upstream: https://longhorn.io
+    license: Apache-2.0
+    tier: standard
+    status: built
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 1.13.0
+      digest: sha256:a6b628ba137f4678c8ef19d0ffeb74449381720ab8ee76a69cb488e1a3e58aef
+      published: '2026-10-04T23:02:21Z'
+      size: 74.3 MB
+      layers: 1
+    - version: 1.11.3
+      digest: sha256:4d85c0becca9dea31449112882f9ec862c75be0edff0fade598568d496597ab6
+      published: '2026-10-04T23:02:19Z'
+      size: 73.7 MB
+      layers: 1
+    - version: 1.12.1
+      digest: sha256:e197549a5d82db36625d8444e064f19c1d58dc61873bf6fcf2ece56a69cb1501
+      published: '2026-10-04T23:02:17Z'
+      size: 74.2 MB
+      layers: 1
+  longhorn-instance-manager:
+    image: ghcr.io/quenchworks/images/longhorn-instance-manager
+    category: Storage & platform
+    summary: Longhorn's instance manager, which runs engine and replica processes on each node, built
+      from source with tgt, liblonghorn, libqcow and sg_raw at the commits Longhorn pins per release.
+      V1 data engine only (the default); the SPDK-based v2 engine is not built into this image yet. Drop-in
+      for upstream's image, runs as root like upstream.
+    source: https://github.com/longhorn/longhorn-instance-manager
+    upstream: https://longhorn.io
+    license: Apache-2.0
+    tier: standard
+    status: built
+    arches:
+    - amd64
+    - arm64
+    versions: []
   longhorn-manager:
     image: ghcr.io/quenchworks/images/longhorn-manager
     category: Storage & platform
@@ -5272,6 +5319,36 @@ apps:
       digest: sha256:ad92083d8d7fdb037097817ed3f63de41ec73e4fe8d11b7ea0b4c86a0efe9939
       published: '2026-10-04T22:12:11Z'
       size: 62.3 MB
+      layers: 1
+  longhorn-share-manager:
+    image: ghcr.io/quenchworks/images/longhorn-share-manager
+    category: Storage & platform
+    summary: Longhorn's share manager, which serves ReadWriteMany volumes over NFSv4. The Go daemon and
+      Longhorn's nfs-ganesha fork (with its longhorn recovery backend) are built from source at the commits
+      Longhorn pins per release. Drop-in for upstream's image, runs as root like upstream.
+    source: https://github.com/longhorn/longhorn-share-manager
+    upstream: https://longhorn.io
+    license: Apache-2.0
+    tier: standard
+    status: built
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 1.11.3
+      digest: sha256:8dd74a3628eee4a6671db28530d2d05ae2ea77918703fb45dac80ab07bc7232e
+      published: '2026-10-04T23:01:06Z'
+      size: 40.7 MB
+      layers: 1
+    - version: 1.13.0
+      digest: sha256:419f09bc87e86ddd2085ffa0b9a68ca1238fb3bd2961deadfa180e766725dd04
+      published: '2026-10-04T23:01:02Z'
+      size: 41.0 MB
+      layers: 1
+    - version: 1.12.1
+      digest: sha256:db380f6fd9738ad0e08c51e3469eabca0cd24b9460bddba2bb59666f74d71698
+      published: '2026-10-04T23:01:01Z'
+      size: 40.8 MB
       layers: 1
   rclone:
     image: ghcr.io/quenchworks/images/rclone
@@ -6526,8 +6603,8 @@ apps:
     - version: 4.1.4
       digest: sha256:0c3cbbe8ff144acc71fb75e90fc8df8fca24822199320627499e8b8ee98d627a
       published: '2026-09-18T13:27:16Z'
-      size: 103.3 MB
-      layers: 1
+      size: null
+      layers: null
     - version: 3.7.18
       digest: sha256:21ee2a679f596a18aa54c11f9eb77d9b7d63bdc8f506444199cf61742be08747
       published: '2026-09-18T13:27:15Z'
