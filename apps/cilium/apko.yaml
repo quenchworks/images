@@ -1,0 +1,52 @@
+# The Cilium agent image: our package plus Wolfi's runtime tools (clang/llc for the BPF programs,
+# bpftool, iproute2, iptables, ipset, kmod, bash for the init scripts). Nonroot by default like
+# every catalog image; a Cilium install runs the agent as root with its network capabilities,
+# as upstream's chart does.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-cilium@local
+
+accounts:
+  groups:
+    - groupname: cilium
+      gid: 1001
+  users:
+    - username: cilium
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  HUBBLE_SERVER: unix:///var/run/cilium/hubble.sock
+  INITSYSTEM: SYSTEMD
+
+work-dir: /home/cilium
+
+entrypoint:
+  command: /usr/bin/cilium-dbg
+
+paths:
+  - path: /home/cilium
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-cilium"
+  org.opencontainers.image.licenses: "Apache-2.0"
