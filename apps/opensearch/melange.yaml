@@ -82,23 +82,25 @@ pipeline:
       #     the wave). All are same-line drop-ins, content replaced in place (filename kept).
       # Sep-2026 update: 3.8.0's dist now ships databind 2.22.1 and tools.jackson 3.2.1, which
       # carry CVE-2026-68497/-19032/-83557 and -91776/-91777. Databind alone moves, to 2.22.3 and 3.2.3.
+      # Oct-2026 update: jackson-core 2.22.1/2.22.2 and tools core 3.2.1/3.2.2 carry
+      # CVE-2026-89407/-89425; core moves with databind, same versions.
       MC="https://repo1.maven.org/maven2"
-      jd2=$(mktemp); jd3=$(mktemp)
-      curl -fsSL -o "$jd2" "$MC/com/fasterxml/jackson/core/jackson-databind/2.22.3/jackson-databind-2.22.3.jar"
-      echo "556db5439e206114346043f68d200497dc96a0bca62a360a81784092ebd0e0a9  $jd2" | sha256sum -c -
-      curl -fsSL -o "$jd3" "$MC/tools/jackson/core/jackson-databind/3.2.3/jackson-databind-3.2.3.jar"
-      echo "235b72436af983857e44efa42449f4f0a2c571e69d6c5d9dd1253ae7d192dcf2  $jd3" | sha256sum -c -
-      # Swap every vulnerable copy in place (3.8.0 ships 2.22.1/3.2.1, 3.9.0 ships 2.22.2/3.2.2,
-      # all of them carrying CVE-2026-91776/-91777); with none present, require the fixed one,
-      # so a dist that moved elsewhere still fails here.
-      for line in "2.22.3 $jd2 2.22.1 2.22.2" "3.2.3 $jd3 3.2.1 3.2.2"; do
-        set -- $line; fixed=$1 jar=$2; shift 2; n=0
+      # Swap every vulnerable copy in place (3.8.0 ships 2.22.1/3.2.1, 3.9.0 ships 2.22.2/3.2.2);
+      # with none present, require the fixed one, so a dist that moved elsewhere still fails here.
+      for line in "jackson-databind 2.22.3 com/fasterxml/jackson/core 556db5439e206114346043f68d200497dc96a0bca62a360a81784092ebd0e0a9 2.22.1 2.22.2" \
+                  "jackson-databind 3.2.3 tools/jackson/core 235b72436af983857e44efa42449f4f0a2c571e69d6c5d9dd1253ae7d192dcf2 3.2.1 3.2.2" \
+                  "jackson-core 2.22.3 com/fasterxml/jackson/core 8a501126a385b25841915d839508f8a66e2a0dbc8a6709d055ef3b3e852b094c 2.22.1 2.22.2" \
+                  "jackson-core 3.2.3 tools/jackson/core a0c17e7e665a5e95c82f5fb45c0fec2ae3dc556c80f0016452c9c84cd23f3817 3.2.1 3.2.2"; do
+        set -- $line; art=$1 fixed=$2 grp=$3 sha=$4; shift 4; n=0
+        jar=$(mktemp)
+        curl -fsSL -o "$jar" "$MC/$grp/$art/$fixed/$art-$fixed.jar"
+        echo "$sha  $jar" | sha256sum -c -
         for old in "$@"; do
-          for f in $(find "$dest" -name "jackson-databind-$old.jar"); do cp "$jar" "$f"; n=$((n+1)); done
+          for f in $(find "$dest" -name "$art-$old.jar"); do cp "$jar" "$f"; n=$((n+1)); done
         done
-        [ "$n" -gt 0 ] || [ -n "$(find "$dest" -name "jackson-databind-$fixed.jar")" ] || { echo "no databind $* or $fixed in the dist; it moved"; exit 1; }
+        rm -f "$jar"
+        [ "$n" -gt 0 ] || [ -n "$(find "$dest" -name "$art-$fixed.jar")" ] || { echo "no $art $* or $fixed in the dist; it moved"; exit 1; }
       done
-      rm -f "$jd2" "$jd3"
       # (2b) jsoup 1.15.3 -> 1.23.1 in opensearch-reports-scheduler (CVE-2026-71497).
       #      Standalone plugin jar, so a content swap keeping the filename (same
       #      convention as the jackson swaps above: the plugin classloader scans the dir
