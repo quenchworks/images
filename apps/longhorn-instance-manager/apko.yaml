@@ -1,0 +1,44 @@
+# Assembles the longhorn-instance-manager image. Root by default like upstream: the pod is
+# privileged, binds the host /dev, /sys and /lib/modules, and longhorn-manager sets its command.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-longhorn-instance-manager@local
+
+accounts:
+  groups:
+    - groupname: longhorn
+      gid: 1001
+  users:
+    - username: longhorn
+      uid: 1001
+      gid: 1001
+  run-as: 0
+
+environment:
+  PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Upstream runs ENTRYPOINT ["/tini", "--"]; Wolfi's tini lives in /usr/bin. Upstream's CMD names
+# longhorn, which this image does not carry; the default here is the v1 launcher.
+entrypoint:
+  command: /usr/bin/tini --
+
+cmd: instance-manager
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-longhorn-instance-manager"
+  org.opencontainers.image.licenses: "Apache-2.0 AND LGPL-3.0-or-later AND GPL-2.0-only AND BSD-2-Clause"
