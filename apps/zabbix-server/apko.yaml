@@ -1,0 +1,37 @@
+# Zabbix server runtime: our package on the Wolfi base, nonroot 1001, shell-free.
+# Listens on 10051 (trapper). Writable /tmp for the pid file and IPC sockets.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-zabbix-server@local
+
+accounts:
+  groups:
+    - groupname: zabbix
+      gid: 1001
+  users:
+    - username: zabbix
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/zabbix_server -f -c /etc/zabbix/zabbix_server.conf
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-zabbix-server"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"

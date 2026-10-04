@@ -1,0 +1,80 @@
+# Zabbix server from the official release tarball, PostgreSQL backend only. OpenSSL is 4.0
+# because libpq-18 and libcurl link it (2026-10); one OpenSSL per process.
+# The schema SQL ships under /usr/share/zabbix/database/postgresql: the server does not
+# create its own schema, so the chart (or an operator) loads it once before first start.
+# No SNMP: Wolfi net-snmp is built without MD5, and Zabbix uses usmHMACMD5AuthProtocol
+# unconditionally (checks_snmp.c), so SNMP items are not available in this image.
+package:
+  name: quench-zabbix-server
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Zabbix server (PostgreSQL), built from source on Wolfi"
+  copyright:
+    - license: AGPL-3.0-only
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - libpq-18
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - openssl-4.0-dev
+      - postgresql-18-dev
+      - libpq-18
+      - curl-dev
+      - libevent-dev
+      - pcre2-dev
+      - libxml2-dev
+      - zlib-dev
+      - pkgconf
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://cdn.zabbix.com/zabbix/sources/stable/__LINE__/zabbix-${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      ./configure \
+        --prefix=/usr \
+        --sysconfdir=/etc/zabbix \
+        --enable-server \
+        --with-postgresql \
+        --with-openssl \
+        --with-libcurl \
+        --with-libxml2 \
+        --with-libpcre2
+      make -j"$(nproc)"
+      d="${{targets.destdir}}"
+      install -Dm755 src/zabbix_server/zabbix_server "$d/usr/bin/zabbix_server"
+      install -d "$d/usr/share/zabbix/database/postgresql"
+      install -m644 database/postgresql/schema.sql database/postgresql/images.sql database/postgresql/data.sql \
+        "$d/usr/share/zabbix/database/postgresql/"
+      install -Dm644 COPYING "$d/usr/share/licenses/zabbix/COPYING"
+      # Bootable default for a shell-free, read-only image: logs to the console, pid and
+      # sockets under /tmp. DB settings and DBPassword come from files in zabbix_server.d,
+      # which the chart mounts (a Secret for the password).
+      install -d "$d/etc/zabbix/zabbix_server.d"
+      cat > "$d/etc/zabbix/zabbix_server.conf" <<'CONF'
+      LogType=console
+      PidFile=/tmp/zabbix_server.pid
+      SocketDir=/tmp
+      DBHost=localhost
+      DBName=zabbix
+      DBUser=zabbix
+      Include=/etc/zabbix/zabbix_server.d/*.conf
+      CONF
+
+test:
+  pipeline:
+    - runs: |
+        zabbix_server -V | head -1
+        test -s /usr/share/zabbix/database/postgresql/schema.sql
