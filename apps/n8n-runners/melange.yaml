@@ -27,8 +27,6 @@ package:
   copyright:
     - license: LicenseRef-n8n-Sustainable-Use-License-1.0
   dependencies:
-    replaces:
-      - npm-12                 # the package that owns npm; ships fixed ip-address and brace-expansion over its bundled copies (step 5)
     runtime:
       - nodejs-24              # JS runner + the launcher spawns node
       - python-3.13            # base interpreter the Python runner venv references
@@ -399,49 +397,6 @@ pipeline:
       chmod -R a+rX,go-w "$dest/opt/runners" "$dest/usr/bin/task-runner-launcher"
       # runners run with HOME=/home/runner and workdir there.
       install -d "$dest/home/runner"
-
-  # 5. npm's own bundled ip-address and brace-expansion (Wolfi npm-12 ships vulnerable copies,
-  #    and upstream npm 12.1.0 bundles the same). This package declares `replaces: npm-12`, so
-  #    apk lets its copies win over the npm package's. Same step as apps/node's overlay.
-  - runs: |
-      set -eu
-      D="${{targets.destdir}}"
-      NM="$D/usr/lib/node_modules/npm/node_modules"
-      mkdir -p "$D/var/lib/db/sbom"
-      # <package> <version> <sha256 of the registry tarball>. Each replaces the copy npm-12
-      # bundles, same major, so npm's own requires keep resolving.
-      #   ip-address 10.7.1: CVE-2026-101910/-101913 (10.5.1), then -101911/-101912 (10.7.1)
-      #   brace-expansion 5.0.12: CVE-2026-102276/-102278/-102277 landed on 5.0.9 to 5.0.11
-      FIXES="ip-address 10.7.1 7f99ac7abda701afe1fd1e36de462236fb4d1eb8c595d7ae0267bba7d8ee55f8
-      brace-expansion 5.0.12 ef8448ec78f20b692f04fa6d01f39b5ab34c66404bea3429f5a39c6c9e0be8b4"
-      echo "$FIXES" | while read -r name ver sha; do
-        node -e 'fetch(process.argv[1]).then(r=>r.arrayBuffer()).then(b=>require("fs").writeFileSync("/tmp/pkg.tgz",Buffer.from(b)))' "https://registry.npmjs.org/$name/-/$name-$ver.tgz"
-        echo "$sha  /tmp/pkg.tgz" | sha256sum -c -
-        test -d "/usr/lib/node_modules/npm/node_modules/$name" || { echo "npm no longer bundles $name; drop it from FIXES"; exit 1; }
-        rm -rf /tmp/pkg && mkdir -p /tmp/pkg "$NM/$name"
-        tar -xzf /tmp/pkg.tgz -C /tmp/pkg
-        cp -a /tmp/pkg/package/. "$NM/$name/"
-        chmod -R a+rX,go-w "$NM/$name"
-        grep -q "\"version\": \"$ver\"" "$NM/$name/package.json"
-      done
-      src="$(ls /var/lib/db/sbom/npm-12-*.spdx.json)"
-      test "$(echo "$src" | wc -l)" = 1
-      FIXES="$FIXES" DESTDIR_="$D" SRC="$src" node -e '
-        const fs = require("fs"), path = require("path");
-        const want = Object.fromEntries(process.env.FIXES.trim().split("\n").map(l => l.trim().split(/\s+/).slice(0, 2)));
-        const doc = JSON.parse(fs.readFileSync(process.env.SRC, "utf8"));
-        const hit = {};
-        doc.packages = doc.packages.map(p => {
-          const v = want[p.name];
-          if (!v || p.versionInfo === v) return p;
-          hit[p.name] = (hit[p.name] || 0) + 1;
-          return JSON.parse(JSON.stringify(p).split(p.versionInfo).join(v));
-        });
-        for (const n of Object.keys(want))
-          if (!hit[n]) throw new Error("npm-12 SPDX lists no stale " + n + ": drop it from FIXES, or retire this package");
-        fs.writeFileSync(path.join(process.env.DESTDIR_, "var/lib/db/sbom", path.basename(process.env.SRC)), JSON.stringify(doc, null, 2) + "\n");
-        console.log("corrected " + JSON.stringify(hit) + " in " + path.basename(process.env.SRC));
-      '
 
 test:
   pipeline:
