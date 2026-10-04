@@ -29,7 +29,7 @@ environment:
       - json-c-dev
       - libxml2-dev
       - ncurses-dev
-      - openssl-dev
+      - openssl-4.0-dev  # curl-dev pulls it (2026-10); conflicts with openssl-dev
       - pcre2-dev
       - pkgconf
       - rust
@@ -44,6 +44,12 @@ pipeline:
   - runs: |
       set -eu
       export CARGO_NET_OFFLINE=true
+      # OpenSSL 4 made ASN1_TIME opaque, and cl_ASN1_GetTimeT() reads its fields. It has no
+      # caller; upstream deleted it for exactly this (Cisco-Talos/clamav 0097a6f9, #1731, after
+      # 1.5.4). Same deletion here: the function in crypto.c and its export in the map.
+      sed -i '/^struct tm \*cl_ASN1_GetTimeT(ASN1_TIME \*timeobj)$/,/^}$/d' libclamav/crypto.c
+      sed -i '/^ *cl_ASN1_GetTimeT;$/d' libclamav/libclamav.map
+      ! grep -q 'cl_ASN1_GetTimeT' libclamav/crypto.c libclamav/libclamav.map
       # curl-dev pulls ngtcp2-dev, which pulls openssl-hardened-dev. That package
       # is one file: a configuration.h defining OPENSSL_NO_DEPRECATED over the
       # normal one. The vendored Rust openssl crate then fails on DH_get0_key and
