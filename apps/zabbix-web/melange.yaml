@@ -204,6 +204,36 @@ pipeline:
         name="${prog%%|*}"; cmd="${prog#*|}"
         printf '[program:%s]\ncommand=%s\nautorestart=true\nstdout_logfile=/dev/stdout\nstdout_logfile_maxbytes=0\nstderr_logfile=/dev/stderr\nstderr_logfile_maxbytes=0\n' "$name" "$cmd" > "$d/etc/supervisor.d/$name.conf"
       done
+      # Schema loader for the chart's initContainer: the server image is shell-free, so the
+      # web image (php + pgsql) carries the same release's schema and loads it once.
+      init="$d/usr/share/zabbix-init"
+      install -d "$init"
+      install -m644 database/postgresql/schema.sql database/postgresql/images.sql database/postgresql/data.sql "$init/"
+      cat > "$init/init-db.php" <<'PHP'
+      <?php
+      // Loads schema.sql, images.sql and data.sql into an empty database; does nothing when
+      // the Zabbix `users` table already exists. Connection from the same ZBX_DB_* variables
+      // the frontend reads.
+      $e = fn($k, $d = '') => ($v = getenv($k)) === false ? $d : $v;
+      $conn = sprintf("host=%s port=%s dbname=%s user=%s password=%s connect_timeout=10",
+          $e('ZBX_DB_HOST', 'localhost'), $e('ZBX_DB_PORT', '5432') ?: '5432',
+          $e('ZBX_DB_NAME', 'zabbix'), $e('ZBX_DB_USER', 'zabbix'), $e('ZBX_DB_PASSWORD'));
+      for ($i = 0; !($db = @pg_connect($conn)); $i++) {
+          if ($i >= 60) { fwrite(STDERR, "cannot connect to the database\n"); exit(1); }
+          sleep(2);
+      }
+      if (pg_fetch_result(pg_query($db, "select to_regclass('public.users') is not null"), 0, 0) === 't') {
+          echo "zabbix schema present, nothing to load\n";
+          exit(0);
+      }
+      foreach (['schema', 'images', 'data'] as $f) {
+          if (!pg_query($db, file_get_contents(__DIR__ . "/$f.sql"))) {
+              fwrite(STDERR, "loading $f.sql failed: " . pg_last_error($db) . "\n");
+              exit(1);
+          }
+          echo "loaded $f.sql\n";
+      }
+      PHP
       grep -q "ZABBIX_VERSION',[[:space:]]*'${{package.version}}'" "$app/include/defines.inc.php"
 
 test:
@@ -212,6 +242,8 @@ test:
         set -eu
         test -f /usr/share/zabbix/index.php
         php -l /usr/share/zabbix/conf/zabbix.conf.php
+        php -l /usr/share/zabbix-init/init-db.php
+        test -s /usr/share/zabbix-init/schema.sql
         for ext in pgsql bcmath gettext sockets ldap mbstring gd xml xmlreader xmlwriter ctype session openssl; do
           php -m | grep -qi "^${ext}$" || { echo "missing PHP extension: $ext"; exit 1; }
         done

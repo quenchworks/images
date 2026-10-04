@@ -3,8 +3,8 @@ name: build-zabbix-web
 # symfony/yaml off its vulnerable pin). The image fronts php-fpm with quench-nginx, so each
 # build FIRST builds the nginx package from source into ./packages, then the zabbix-web
 # package. build.conf is the SINGLE SOURCE OF TRUTH: prep emits the last 3 VERSIONS entries
-# (6.0 LTS, 7.0 LTS, 7.4), each x both NATIVE arches. The boot test pulls the schema from the
-# published zabbix-server image of the same version, so build zabbix-server first.
+# (6.0 LTS, 7.0 LTS, 7.4), each x both NATIVE arches. The boot test loads the schema with the
+# image's own schema loader (/usr/share/zabbix-init/init-db.php), run twice.
 on:
   workflow_dispatch:
 permissions:

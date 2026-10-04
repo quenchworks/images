@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Smoke test for the Zabbix web image. Usage: test.sh <image-ref> <version>
-#   1. A real PostgreSQL (the catalog image) gets the schema from the published
-#      zabbix-server image of the same version.
+#   1. A real PostgreSQL (the catalog image) gets the schema from this image's own loader,
+#      run twice: the second run must find it and do nothing.
 #   2. The frontend starts against it as nonroot on a read-only rootfs.
 #   3. The JSON-RPC API logs in as the default Admin and reports the expected version,
 #      which proves nginx, php-fpm, the pgsql extension and the env-driven config.
@@ -9,10 +9,8 @@ set -euo pipefail
 IMAGE="${1:?usage: test.sh <image-ref> <version>}"
 WANT="${2:?usage: test.sh <image-ref> <version>}"
 PG_IMAGE="ghcr.io/quenchworks/images/postgresql:18.6"
-SERVER_IMAGE="ghcr.io/quenchworks/images/zabbix-server:$WANT"
 NET="zbxw-smoke-$$"; PG="zbxw-pg-$$"; WEB="zbxw-web-$$"; PW="smoke-$$"; PORT=18080
-TMP="$(mktemp -d)"
-cleanup() { docker rm -f "$WEB" "$PG" >/dev/null 2>&1 || true; docker network rm "$NET" >/dev/null 2>&1 || true; rm -rf "$TMP"; }
+cleanup() { docker rm -f "$WEB" "$PG" >/dev/null 2>&1 || true; docker network rm "$NET" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
 user="$(docker inspect "$IMAGE" --format '{{.Config.User}}')"
@@ -26,12 +24,12 @@ for i in $(seq 1 60); do
   [ "$i" = 60 ] && { echo "postgres did not become ready"; docker logs "$PG"; exit 1; }
   sleep 1
 done
-cid="$(docker create "$SERVER_IMAGE")"
-docker cp "$cid:/usr/share/zabbix/database/postgresql/." "$TMP/" >/dev/null
-docker rm "$cid" >/dev/null
-for f in schema images data; do
-  docker exec -i -e PGPASSWORD="$PW" "$PG" psql -h /var/run/postgresql -U postgres -d zabbix -q -v ON_ERROR_STOP=1 <"$TMP/$f.sql" >/dev/null
-done
+# The image's own loader creates the schema (as the chart's initContainer does); a second
+# run must find it and change nothing.
+init() { docker run --rm --network "$NET" -e ZBX_DB_HOST="$PG" -e ZBX_DB_USER=postgres -e ZBX_DB_PASSWORD="$PW" \
+  --entrypoint /usr/bin/php "$IMAGE" /usr/share/zabbix-init/init-db.php; }
+out="$(init)"; echo "$out"; grep -q 'loaded data.sql' <<<"$out" || { echo "loader did not load the schema"; exit 1; }
+out="$(init)"; echo "$out"; grep -q 'nothing to load' <<<"$out" || { echo "loader is not idempotent"; exit 1; }
 
 docker run -d --name "$WEB" --network "$NET" --read-only --tmpfs /tmp:uid=1001,gid=1001,mode=1777 \
   -e ZBX_DB_HOST="$PG" -e ZBX_DB_USER=postgres -e ZBX_DB_PASSWORD="$PW" \
