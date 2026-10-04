@@ -115,12 +115,16 @@ pipeline:
       swap jackson-databind-2.22.2.jar jackson-databind-2.22.3.jar \
         $m/com/fasterxml/jackson/core/jackson-databind/2.22.3/jackson-databind-2.22.3.jar \
         556db5439e206114346043f68d200497dc96a0bca62a360a81784092ebd0e0a9
+      # jackson-core 2.22.2 carries CVE-2026-89407/-89425 (2026-10-04); 2.22.3 is the same-line fix.
+      swap jackson-core-2.22.2.jar jackson-core-2.22.3.jar \
+        $m/com/fasterxml/jackson/core/jackson-core/2.22.3/jackson-core-2.22.3.jar \
+        8a501126a385b25841915d839508f8a66e2a0dbc8a6709d055ef3b3e852b094c
       swap jansi-2.4.0.jar jansi-2.4.3.jar \
         $m/org/fusesource/jansi/jansi/2.4.3/jansi-2.4.3.jar \
         ec168cf31c4c3849348dfff7a04e90170615f7784f1255ee6747b98a854c04c5
       # parquet-jackson 1.18.1, the newest release, SHADES jackson-databind 2.22.2 under
       # shaded/parquet/, out of reach of a jar swap. It is rebuilt from the apache-parquet-1.18.1
-      # source with only -Djackson-databind.version=2.22.3. At the stock 2.22.2 the same build
+      # source with only -Djackson-databind.version=2.22.3 and -Djackson.version=2.22.3 (core). At the stock 2.22.2 the same build
       # reproduces every class of the published jar byte for byte (only MANIFEST.MF differs,
       # checked 2026-10-01), so the databind classes are the one thing that moves.
       test -f "$lib/parquet-jackson-1.18.1.jar" || { echo "parquet-jackson 1.18.1 is not in this dist, re-check"; exit 1; }
@@ -132,10 +136,13 @@ pipeline:
         && JAVA_HOME=/usr/lib/jvm/java-21-openjdk mvn -B -ntp -q -Dmaven.repo.local="$pq/m2" \
              -pl parquet-jackson -am package -DskipTests -Drat.skip -Dspotless.check.skip \
              -Dspotless.apply.skip -Djapicmp.skip -Denforcer.skip -Dmaven.javadoc.skip \
-             -Dmaven.source.skip -Dmaven.buildNumber.skip -Djackson-databind.version=2.22.3)
+             -Dmaven.source.skip -Dmaven.buildNumber.skip -Djackson-databind.version=2.22.3 \
+             -Djackson.version=2.22.3)
       pj="$pq/parquet-java-apache-parquet-1.18.1/parquet-jackson/target/parquet-jackson-1.18.1.jar"
       props="$(unzip -p "$pj" META-INF/maven/com.fasterxml.jackson.core/jackson-databind/pom.properties)"
       echo "$props" | grep -qx 'version=2.22.3' || { echo "rebuilt parquet-jackson does not shade databind 2.22.3"; exit 1; }
+      props="$(unzip -p "$pj" META-INF/maven/com.fasterxml.jackson.core/jackson-core/pom.properties)"
+      echo "$props" | grep -qx 'version=2.22.3' || { echo "rebuilt parquet-jackson does not shade core 2.22.3"; exit 1; }
       install -m0644 "$pj" "$lib/parquet-jackson-1.18.1.jar"
       rm -rf "$pq"
       chmod a+r "$lib"/jline-*.jar "$lib"/jansi-*.jar
