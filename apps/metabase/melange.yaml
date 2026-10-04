@@ -49,4 +49,13 @@ pipeline:
       (cd databind && zip -q -r ../metabase.jar com META-INF/maven/com.fasterxml.jackson.core)
       v="$(unzip -p metabase.jar META-INF/maven/com.fasterxml.jackson.core/jackson-databind/pom.properties | sed -n 's/^version=//p')"
       [ "$v" = "__DATABIND_VER__" ] || { echo "jackson-databind is $v after the swap"; exit 1; }
+      # jackson-core likewise; it is multi-release, so the META-INF/versions classes go too.
+      curl -fsSL -o core.jar "https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-core/__CORE_VER__/jackson-core-__CORE_VER__.jar"
+      echo "__CORE_SHA256__  core.jar" | sha256sum -c -
+      v="$(unzip -p metabase.jar META-INF/maven/com.fasterxml.jackson.core/jackson-core/pom.properties | sed -n 's/^version=//p')"
+      [ -n "$v" ] || { echo "no jackson-core in the uberjar; re-audit"; exit 1; }
+      mkdir core && unzip -q core.jar 'com/fasterxml/jackson/core/*' 'META-INF/versions/*/com/fasterxml/jackson/core/*' 'META-INF/maven/com.fasterxml.jackson.core/jackson-core/*' -d core
+      (cd core && zip -q -r ../metabase.jar com META-INF)
+      v="$(unzip -p metabase.jar META-INF/maven/com.fasterxml.jackson.core/jackson-core/pom.properties | sed -n 's/^version=//p')"
+      [ "$v" = "__CORE_VER__" ] || { echo "jackson-core is $v after the swap"; exit 1; }
       install -Dm644 metabase.jar "${{targets.destdir}}/usr/share/metabase/metabase.jar"
