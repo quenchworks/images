@@ -1,0 +1,89 @@
+# Zabbix web runtime: quench-nginx + php-fpm 8.3 under supervisord, nonroot 1001, port 8080.
+# Writable /tmp for sessions, the fpm and supervisor sockets and pid files.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - busybox
+    - supervisor
+    - quench-nginx@local
+    - quench-zabbix-web@local
+    - php-8.3
+    - php-8.3-fpm
+    - php-8.3-fpm-config
+    - php-8.3-config
+    - php-8.3-pgsql
+    - php-8.3-pgsql-config
+    - php-8.3-bcmath
+    - php-8.3-bcmath-config
+    - php-8.3-gettext
+    - php-8.3-gettext-config
+    - php-8.3-sockets
+    - php-8.3-sockets-config
+    - php-8.3-ldap
+    - php-8.3-ldap-config
+    - php-8.3-mbstring
+    - php-8.3-mbstring-config
+    - php-8.3-gd
+    - php-8.3-gd-config
+    - php-8.3-xml
+    - php-8.3-xml-config
+    - php-8.3-xmlreader
+    - php-8.3-xmlreader-config
+    - php-8.3-xmlwriter
+    - php-8.3-xmlwriter-config
+    - php-8.3-ctype
+    - php-8.3-ctype-config
+    - php-8.3-openssl
+    - php-8.3-openssl-config
+    - php-8.3-curl
+    - php-8.3-curl-config
+    - php-8.3-fileinfo
+    - php-8.3-fileinfo-config
+    - php-8.3-dom
+    - php-8.3-dom-config
+    - php-8.3-simplexml
+    - php-8.3-simplexml-config
+    - php-8.3-opcache
+    - php-8.3-opcache-config
+    - php-8.3-iconv
+    - php-8.3-iconv-config
+
+accounts:
+  groups:
+    - groupname: zabbix
+      gid: 1001
+  users:
+    - username: zabbix
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/supervisord -c /etc/zabbix-web/supervisord.conf
+
+work-dir: /usr/share/zabbix
+
+paths:
+  - path: /tmp
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o1777
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-zabbix-web"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"

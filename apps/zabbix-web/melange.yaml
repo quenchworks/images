@@ -1,0 +1,218 @@
+# The Zabbix web frontend: ui/ from the official release tarball, served by quench-nginx and
+# php-fpm 8.3 under supervisord (the phpmyadmin layout), PostgreSQL only.
+# symfony/yaml: every line pins v5.1.3 (CVE-2026-45133/45304/45305); composer moves it to
+# ^5.4.52, the same major, and the build asserts the installed version.
+package:
+  name: quench-zabbix-web
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Zabbix web frontend (PostgreSQL) on Wolfi php-fpm + nginx"
+  copyright:
+    - license: AGPL-3.0-only
+  dependencies:
+    runtime:
+      - php-8.3
+      - php-8.3-fpm
+      - php-8.3-fpm-config
+      - php-8.3-config
+      - php-8.3-pgsql
+      - php-8.3-pgsql-config
+      - php-8.3-bcmath
+      - php-8.3-bcmath-config
+      - php-8.3-gettext
+      - php-8.3-gettext-config
+      - php-8.3-sockets
+      - php-8.3-sockets-config
+      - php-8.3-ldap
+      - php-8.3-ldap-config
+      - php-8.3-mbstring
+      - php-8.3-mbstring-config
+      - php-8.3-gd
+      - php-8.3-gd-config
+      - php-8.3-xml
+      - php-8.3-xml-config
+      - php-8.3-xmlreader
+      - php-8.3-xmlreader-config
+      - php-8.3-xmlwriter
+      - php-8.3-xmlwriter-config
+      - php-8.3-ctype
+      - php-8.3-ctype-config
+      - php-8.3-openssl
+      - php-8.3-openssl-config
+      - php-8.3-curl
+      - php-8.3-curl-config
+      - php-8.3-fileinfo
+      - php-8.3-fileinfo-config
+      - php-8.3-dom
+      - php-8.3-dom-config
+      - php-8.3-simplexml
+      - php-8.3-simplexml-config
+      - php-8.3-opcache
+      - php-8.3-opcache-config
+      - php-8.3-iconv
+      - php-8.3-iconv-config
+      - supervisor
+      - busybox
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - composer
+      - php-8.3
+      - php-8.3-phar
+      - php-8.3-openssl
+      - php-8.3-mbstring
+      - php-8.3-curl
+      - php-8.3-zip
+      - php-8.3-iconv
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://cdn.zabbix.com/zabbix/sources/stable/__LINE__/zabbix-${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - name: Move symfony/yaml off the vulnerable 5.1.3 pin
+    runs: |
+      set -eu
+      export COMPOSER_HOME=/tmp/composer COMPOSER_ALLOW_SUPERUSER=1
+      composer require -d ui 'symfony/yaml:^5.4.52' --update-no-dev --update-with-dependencies \
+        --no-scripts --no-audit --no-progress --no-interaction --ignore-platform-reqs
+      php -r '$i=json_decode(file_get_contents("ui/vendor/composer/installed.json"),true);
+        foreach($i["packages"] as $p){ if($p["name"]==="symfony/yaml"){ echo "symfony/yaml ",$p["version"],"\n";
+          exit(version_compare(ltrim($p["version"],"v"),"5.4.52","<") ? 1 : 0); } } exit(1);'
+  - name: Install the frontend, config, nginx, php-fpm and supervisor wiring
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      app="$d/usr/share/zabbix"
+      install -d "$app"
+      cp -a ui/. "$app/"
+      rm -f "$app/conf/zabbix.conf.php.example"
+      install -Dm644 COPYING "$d/usr/share/licenses/zabbix/COPYING"
+      # Env-driven: the chart sets ZBX_DB_* (the password from a Secret). Keys a line
+      # does not read are ignored, so one file serves 6.0, 7.0 and 7.4.
+      cat > "$app/conf/zabbix.conf.php" <<'PHP'
+      <?php
+      $e = fn($k, $d = '') => ($v = getenv($k)) === false ? $d : $v;
+      $DB['TYPE']           = 'POSTGRESQL';
+      $DB['SERVER']         = $e('ZBX_DB_HOST', 'localhost');
+      $DB['PORT']           = $e('ZBX_DB_PORT', '0');
+      $DB['DATABASE']       = $e('ZBX_DB_NAME', 'zabbix');
+      $DB['USER']           = $e('ZBX_DB_USER', 'zabbix');
+      $DB['PASSWORD']       = $e('ZBX_DB_PASSWORD');
+      $DB['SCHEMA']         = '';
+      $DB['ENCRYPTION']     = false;
+      $DB['KEY_FILE']       = '';
+      $DB['CERT_FILE']      = '';
+      $DB['CA_FILE']        = '';
+      $DB['VERIFY_HOST']    = false;
+      $DB['CIPHER_LIST']    = '';
+      $DB['VAULT']          = '';
+      $DB['VAULT_URL']      = '';
+      $DB['VAULT_PREFIX']   = '';
+      $DB['VAULT_DB_PATH']  = '';
+      $DB['VAULT_TOKEN']    = '';
+      $DB['VAULT_CERT_FILE'] = '';
+      $DB['VAULT_KEY_FILE'] = '';
+      $DB['DOUBLE_IEEE754'] = true;
+      $ZBX_SERVER_NAME      = $e('ZBX_SERVER_NAME');
+      $IMAGE_FORMAT_DEFAULT = IMAGE_FORMAT_PNG;
+      PHP
+      chmod 644 "$app/conf/zabbix.conf.php"
+      install -d "$d/etc/nginx/conf.d"
+      cat > "$d/etc/nginx/conf.d/zabbix.conf" <<'NGX'
+      server {
+          listen 8080 default_server;
+          listen [::]:8080 default_server;
+          server_name _;
+          root /usr/share/zabbix;
+          index index.php;
+          client_max_body_size 16M;
+          access_log off;
+          location ~ /\. { return 403; }
+          location ~ ^/(app|conf|data|include|local|vendor)/ { return 403; }
+          location ~* ^/composer\.(json|lock)$ { return 403; }
+          location / { try_files $uri $uri/ =404; }
+          location ~ \.php$ {
+              try_files $uri =404;
+              include /etc/nginx/fastcgi_params;
+              fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+              fastcgi_index index.php;
+              fastcgi_pass 127.0.0.1:9000;
+              fastcgi_read_timeout 600;
+          }
+      }
+      NGX
+      install -d "$d/etc/php/php-fpm.d" "$d/etc/php/conf.d"
+      cat > "$d/etc/php/php-fpm.d/zzz-zabbix.conf" <<'FPM'
+      [global]
+      daemonize = no
+      error_log = /proc/self/fd/2
+      [www]
+      listen = 127.0.0.1:9000
+      catch_workers_output = yes
+      decorate_workers_output = no
+      clear_env = no
+      pm = dynamic
+      pm.max_children = 16
+      pm.start_servers = 2
+      pm.min_spare_servers = 1
+      pm.max_spare_servers = 4
+      FPM
+      # Zabbix's frontend setup check requires these minimums.
+      cat > "$d/etc/php/conf.d/zzz-zabbix.ini" <<'INI'
+      expose_php = Off
+      memory_limit = 256M
+      post_max_size = 16M
+      upload_max_filesize = 2M
+      max_execution_time = 300
+      max_input_time = 300
+      sys_temp_dir = /tmp
+      upload_tmp_dir = /tmp
+      session.save_path = /tmp
+      session.cookie_httponly = 1
+      display_errors = Off
+      log_errors = On
+      INI
+      install -d "$d/etc/zabbix-web" "$d/etc/supervisor.d"
+      cat > "$d/etc/zabbix-web/supervisord.conf" <<'SUP'
+      [supervisord]
+      nodaemon=true
+      logfile=/dev/stdout
+      logfile_maxbytes=0
+      pidfile=/tmp/supervisord.pid
+
+      [unix_http_server]
+      file=/tmp/supervisor.sock
+
+      [supervisorctl]
+      serverurl=unix:///tmp/supervisor.sock
+
+      [rpcinterface:supervisor]
+      supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+
+      [include]
+      files = /etc/supervisor.d/*.conf
+      SUP
+      for prog in "php-fpm|/usr/bin/php-fpm --nodaemonize --fpm-config /etc/php/php-fpm.conf" "nginx|/usr/bin/nginx -g \"daemon off;\""; do
+        name="${prog%%|*}"; cmd="${prog#*|}"
+        printf '[program:%s]\ncommand=%s\nautorestart=true\nstdout_logfile=/dev/stdout\nstdout_logfile_maxbytes=0\nstderr_logfile=/dev/stderr\nstderr_logfile_maxbytes=0\n' "$name" "$cmd" > "$d/etc/supervisor.d/$name.conf"
+      done
+      grep -q "ZABBIX_VERSION',[[:space:]]*'${{package.version}}'" "$app/include/defines.inc.php"
+
+test:
+  pipeline:
+    - runs: |
+        set -eu
+        test -f /usr/share/zabbix/index.php
+        php -l /usr/share/zabbix/conf/zabbix.conf.php
+        for ext in pgsql bcmath gettext sockets ldap mbstring gd xml xmlreader xmlwriter ctype session openssl; do
+          php -m | grep -qi "^${ext}$" || { echo "missing PHP extension: $ext"; exit 1; }
+        done
+        command -v php-fpm && command -v nginx && command -v supervisord
