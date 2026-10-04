@@ -12,6 +12,8 @@ artifact rather than copying a neighbouring entry:
     COMMIT               the git commit a tag points at
     PIN                  the exact Wolfi apk revision (name=ver-rN)
 
+It refuses a version list that leaves out the line a same-named chart pins.
+
 It does NOT touch anything it cannot derive. Maps it does not understand are
 left alone and reported, so an app with a bespoke pin (kong's OPENRESTY,
 n8n-runners' JSSHA, dotnet's TFM, ...) fails loudly here instead of silently
@@ -210,11 +212,35 @@ def wolfi_pin(pkg: str, version: str) -> str | None:
     return best[0] if best else None
 
 
+def chart_line_dropped(app: str, versions: list[str]) -> str | None:
+    """The chart's appVersion when no new version is on its major.minor line.
+
+    VERSIONS drives the lock, and a chart may only be re-pinned on its own line, so
+    a bump that leaves that line out strands the chart (rqlite, ollama and
+    victorialogs on 2026-10-04: bump.py was given only the new line).
+    """
+    chart = ROOT.parent / "charts" / "quench" / app / "Chart.yaml"
+    if not chart.exists():
+        return None
+    m = re.search(r'^appVersion:\s*"?v?([0-9][^"\s]*)"?\s*$', chart.read_text(), re.M)
+    if not m:
+        return None
+    line = ".".join(m.group(1).split(".")[:2]) + "."
+    if any(v.lstrip("v").startswith(line) for v in versions):
+        return None
+    return m.group(1)
+
+
 def main() -> int:
     if len(sys.argv) < 3:
         print(__doc__)
         return 2
     app, versions = sys.argv[1], sys.argv[2:]
+    pinned = chart_line_dropped(app, versions)
+    if pinned:
+        print(f"!! {app}: the chart pins {pinned} and no version given is on its line; "
+              f"pass {pinned} (or a newer patch of it) too, or move the chart first")
+        return 4
     conf = ROOT / "apps" / app / "build.conf"
     text = conf.read_text()
 
