@@ -5212,6 +5212,52 @@ apps:
       published: '2026-10-04T13:33:32Z'
       size: 9.5 MB
       layers: 1
+  backing-image-manager:
+    image: ghcr.io/quenchworks/images/backing-image-manager
+    category: Storage & platform
+    summary: Longhorn's backing image server, built from the longhorn/backing-image-manager source with
+      qemu-img, losetup and the filesystem tools it calls. longhorn-manager starts it on each node; drop-in
+      for upstream's image, runs as root like upstream.
+    source: https://github.com/longhorn/backing-image-manager
+    upstream: https://longhorn.io
+    license: Apache-2.0
+    tier: standard
+    status: built
+    arches:
+    - amd64
+    - arm64
+    versions: []
+  longhorn-manager:
+    image: ghcr.io/quenchworks/images/longhorn-manager
+    category: Storage & platform
+    summary: The Longhorn manager (control plane DaemonSet, CSI driver and REST API) built from the longhorn/longhorn-manager
+      source, with the launch-manager and nsmounter scripts and the host tools upstream ships (nfs, cifs,
+      e2fsprogs, xfsprogs, nsenter). Drop-in for upstream's manager image under upstream's Longhorn chart;
+      runs as root like upstream.
+    source: https://github.com/longhorn/longhorn-manager
+    upstream: https://longhorn.io
+    license: Apache-2.0
+    tier: standard
+    status: built
+    arches:
+    - amd64
+    - arm64
+    versions:
+    - version: 1.12.1
+      digest: sha256:795825ed0ea8518ab3eff267ea5b2cc515af422415908a9c48660fc107a2d3f8
+      published: '2026-10-04T22:12:13Z'
+      size: 62.8 MB
+      layers: 1
+    - version: 1.13.0
+      digest: sha256:937d3373913d79d0db7975b36d75953879af8897234eedc66bc9b45616bfe290
+      published: '2026-10-04T22:12:12Z'
+      size: 63.0 MB
+      layers: 1
+    - version: 1.11.3
+      digest: sha256:ad92083d8d7fdb037097817ed3f63de41ec73e4fe8d11b7ea0b4c86a0efe9939
+      published: '2026-10-04T22:12:11Z'
+      size: 62.3 MB
+      layers: 1
   rclone:
     image: ghcr.io/quenchworks/images/rclone
     category: Storage & platform
