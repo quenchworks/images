@@ -41,11 +41,11 @@ pipeline:
       expected-sha512: "__SHA512__"
       strip-components: 1
   - runs: |
-      # 26.8.0 bundles every fixed version this step swaps in (otel 1.62.0, netty
-      # 4.1.138, databind 2.21.7, freemarker 2.3.35, Bouncy Castle 1.86), and its dist
-      # scanned clean on 2026-10-01, so the swaps below are 26.7.4's alone. Any other
-      # version skips them; the 0-CVE gate on the built image is what clears it.
-      if [ "${{package.version}}" != 26.7.4 ]; then echo "no jar swaps for ${{package.version}}"; exit 0; fi
+      # 26.7.5 bundles every fix the 26.7.4 swaps carried except OpenTelemetry (still 1.57.0;
+      # netty 4.1.138, databind/core 2.21.7, freemarker 2.3.35, Bouncy Castle 1.86 ship
+      # upstream), so only the otel set below remains. 26.8.0 bundles otel 1.62.0 itself
+      # and skips the step; the 0-CVE gate on the built image clears every version.
+      if [ "${{package.version}}" != 26.7.5 ]; then echo "no jar swaps for ${{package.version}}"; exit 0; fi
       # --- CVE remediation: swap vulnerable bundled jars BEFORE `kc.sh build` so the
       # Quarkus augmentation re-indexes the patched versions ---------------------------
       # (1) OpenTelemetry stack 1.57.0 -> 1.62.0 IN LOCKSTEP (CVE-2026-45292, DoS via
@@ -55,16 +55,6 @@ pipeline:
       #     instrumentation-2.23.0 and semconv-1.37.0 lines use only stable OTel APIs and
       #     are not flagged, so they stay. Quarkus 3.33's quarkus-opentelemetry extension
       #     re-augments against the bumped set below.
-      # (2) netty family 4.1.136 -> 4.1.137.Final IN LOCKSTEP -- all 17 io.netty.* jars
-      #     under lib/lib/main/. The nightly scan flags io.netty:netty-handler (fix:
-      #     4.2.17.Final / 4.1.137.Final), and netty modules must move as ONE set: a
-      #     lone handler beside 4.1.136 siblings mixes two builds of one library.
-      #     Within the 4.1 patch line the hop is ABI-compatible (the codec-http swap
-      #     has cleared the gate since 26.7.1). A version bump does NOT fix this:
-      #     upstream 26.7.3 builds on the SAME quarkus 3.33.3.1 BOM, which still pins
-      #     netty 4.1.136.Final. Trivy reads the fixed version from each jar's internal
-      #     pom.properties. The separate netty-tcnative-classes 2.0.78 line is not
-      #     flagged and stays.
       #
       # 26.7.2 SHIPS THE REST ALREADY. The swaps 26.7.1 needed for jackson-core/databind
       # (2.21.5), micrometer-core (1.16.6), netty-codec/-haproxy/-http2/-dns (4.1.136),
@@ -104,50 +94,6 @@ pipeline:
       swap "$OT/opentelemetry-sdk-logs/1.62.0/opentelemetry-sdk-logs-1.62.0.jar" io.opentelemetry.opentelemetry-sdk-logs-1.57.0.jar 51c94329bc8e335ed79027d29d49c075c11b91b39e48679edf590e784a392406
       swap "$OT/opentelemetry-sdk-metrics/1.62.0/opentelemetry-sdk-metrics-1.62.0.jar" io.opentelemetry.opentelemetry-sdk-metrics-1.57.0.jar 50b057fbf063f6801f623212f4b51b6a3fefc77837314a1316b2f54894c8b5d4
       swap "$OT/opentelemetry-sdk-trace/1.62.0/opentelemetry-sdk-trace-1.62.0.jar" io.opentelemetry.opentelemetry-sdk-trace-1.57.0.jar fb6c0953b229a6da1db813135ae11a621bf9da56b7356c1e93049ed4b088c232
-      # The swaps overwrite each bundled jar IN PLACE, keeping its upstream
-      # 4.1.136.Final FILENAME (the quarkus app-model pins exact filenames and
-      # `kc.sh build` pre-flights their existence); a missing target hard-fails via
-      # swap() -- upstream renaming a jar must break the build, never silently skip.
-      # freemarker 2.3.32 -> 2.3.35: CVE-2026-84939 (CRITICAL), same 2.3 line.
-      swap "https://repo1.maven.org/maven2/org/freemarker/freemarker/2.3.35/freemarker-2.3.35.jar" org.freemarker.freemarker-2.3.32.jar 0fac87dddd78f1223139e8ef88e819c7f483c0a3835cdf5982ad5e4576d1d896
-      # jackson-databind 2.21.5 -> 2.21.7: CVE-2026-68497 and -91776/-91777 (HIGH), -19032 and -83557 (MEDIUM),
-      # same 2.21 line. Upstream bundles 2.21.5, so this overwrites that jar in place, keeping
-      # its FILENAME for the app-model.
-      swap "https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-databind/2.21.7/jackson-databind-2.21.7.jar" com.fasterxml.jackson.core.jackson-databind-2.21.5.jar 1290c2795e93e8a6861a6c4d9ff0d844d32f5ea178362cb2721edf5561e828b1
-      # jackson-core 2.21.5 -> 2.21.7: CVE-2026-89407/-89425 (HIGH, 2026-10-04), same line, same in-place swap.
-      swap "https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-core/2.21.7/jackson-core-2.21.7.jar" com.fasterxml.jackson.core.jackson-core-2.21.5.jar 8c5623b98f32d5f7e1287ff61ed50e08ab7b11381e991fff89327faabba42261
-      NET="https://repo1.maven.org/maven2/io/netty"
-      swap "$NET/netty-buffer/4.1.137.Final/netty-buffer-4.1.137.Final.jar" io.netty.netty-buffer-4.1.136.Final.jar f474b14c7734f15e0540394cb6f39d67777b7581a42919e4ac89d253d4efd929
-      swap "$NET/netty-codec/4.1.137.Final/netty-codec-4.1.137.Final.jar" io.netty.netty-codec-4.1.136.Final.jar 9987b6a660b0a6b1f0d791485dae33180b3d1c63687c006fe6d3fd025e9e3798
-      swap "$NET/netty-codec-dns/4.1.137.Final/netty-codec-dns-4.1.137.Final.jar" io.netty.netty-codec-dns-4.1.136.Final.jar 2d9a33ce41bd9f6f607df95039e42518a1fca16f83c9bbfe72beb57df6e2489f
-      swap "$NET/netty-codec-haproxy/4.1.137.Final/netty-codec-haproxy-4.1.137.Final.jar" io.netty.netty-codec-haproxy-4.1.136.Final.jar 5ffa58b94c5ac48fb7e41843c18acf7a268e90b5b85423987829c9291ce3a5df
-      swap "$NET/netty-codec-http/4.1.137.Final/netty-codec-http-4.1.137.Final.jar" io.netty.netty-codec-http-4.1.136.Final.jar 0535bb5a736472bef5c948d15eb273c4ab9f796656fc7c5d6b982ad92bddbd49
-      swap "$NET/netty-codec-http2/4.1.137.Final/netty-codec-http2-4.1.137.Final.jar" io.netty.netty-codec-http2-4.1.136.Final.jar 576ddcfb51b78e86f145c9a52b60e500b1a1d5a257cafec8aa5416ffba044b49
-      swap "$NET/netty-codec-socks/4.1.137.Final/netty-codec-socks-4.1.137.Final.jar" io.netty.netty-codec-socks-4.1.136.Final.jar 4a6190e08988c058bfeef2b5965e71946439c771abf721c68f4039b4e7b023e8
-      swap "$NET/netty-common/4.1.137.Final/netty-common-4.1.137.Final.jar" io.netty.netty-common-4.1.136.Final.jar d31926b01adcc07af86f5e27b81b6d6c115df17d366e835d1fc3f5a1924e7e52
-      swap "$NET/netty-handler/4.1.137.Final/netty-handler-4.1.137.Final.jar" io.netty.netty-handler-4.1.136.Final.jar d0e4c6ee4779f59f6ab2fb5d388e4f57147c82270164b37945764bb9bda96a44
-      swap "$NET/netty-handler-proxy/4.1.137.Final/netty-handler-proxy-4.1.137.Final.jar" io.netty.netty-handler-proxy-4.1.136.Final.jar 843de10c4cef34cbc1a5344090f1b57db532fbebf141559862da675f6b656df4
-      swap "$NET/netty-resolver/4.1.137.Final/netty-resolver-4.1.137.Final.jar" io.netty.netty-resolver-4.1.136.Final.jar b4cf2aeedd9fc7c8c439bbfe574f63cfe5b83392e88bbc07ca0e8424b7cff955
-      swap "$NET/netty-resolver-dns/4.1.137.Final/netty-resolver-dns-4.1.137.Final.jar" io.netty.netty-resolver-dns-4.1.136.Final.jar 898d63ca62ed68ff46543c5344f969424b417f1e8d082fe2bb0181ba10144194
-      swap "$NET/netty-transport/4.1.137.Final/netty-transport-4.1.137.Final.jar" io.netty.netty-transport-4.1.136.Final.jar 6251adc2a2921572382732a2db188d4f4f2251fd6ebb49c5d44bbf33d6bfb1a7
-      swap "$NET/netty-transport-classes-epoll/4.1.137.Final/netty-transport-classes-epoll-4.1.137.Final.jar" io.netty.netty-transport-classes-epoll-4.1.136.Final.jar 55049554b799dc8e53bf234fffa36e001f7b5b65c32994b9bd59fc6356f1c52f
-      swap "$NET/netty-transport-native-unix-common/4.1.137.Final/netty-transport-native-unix-common-4.1.137.Final.jar" io.netty.netty-transport-native-unix-common-4.1.136.Final.jar 8056e7637f9948f953314894cf995ab664711b66c73c4cd5b593ae84f0b1048c
-      swap "$NET/netty-transport-native-epoll/4.1.137.Final/netty-transport-native-epoll-4.1.137.Final-linux-x86_64.jar" io.netty.netty-transport-native-epoll-4.1.136.Final-linux-x86_64.jar 185db6053e0e9573d36fa4eb6567b26139afaa4daa7bf5a068e661568304542b
-      swap "$NET/netty-transport-native-epoll/4.1.137.Final/netty-transport-native-epoll-4.1.137.Final-linux-aarch_64.jar" io.netty.netty-transport-native-epoll-4.1.136.Final-linux-aarch_64.jar 82fb63a2dc90c0bddb81e04065a1c06fb4c5be722ad5d64b46491daf8b6f9a01
-      # (3) Bouncy Castle 1.84 -> 1.85 IN LOCKSTEP (prov + pkix + util). CVE-2026-8763
-      #     (CRITICAL) and CVE-2026-13506 (HIGH, DoS via lazy ASN.1 sequence parsing)
-      #     are both fixed in 1.85; only bcprov carries findings, but BC ships prov/
-      #     pkix/util as one build and pkix/util link against prov internals, so a lone
-      #     bcprov 1.85 beside 1.84 siblings mixes two builds of one library.
-      #     BC jars carry NO META-INF/maven pom.properties, so Trivy identifies them by
-      #     the jar's sha1 against Maven Central, NOT by the filename -- verified locally:
-      #     the 1.85 content under the kept 1.84 filename reports
-      #     `org.bouncycastle:bcprov-jdk18on 1.85` with zero findings. The keep-the-name
-      #     rule is still required by the Quarkus app-model, which pins the filename.
-      BC="https://repo1.maven.org/maven2/org/bouncycastle"
-      swap "$BC/bcprov-jdk18on/1.85/bcprov-jdk18on-1.85.jar" org.bouncycastle.bcprov-jdk18on-1.84.jar 20af26bf6060bb8005cc2389916812c1e0e998dc48d2ced7131b89461b54cff7
-      swap "$BC/bcpkix-jdk18on/1.85/bcpkix-jdk18on-1.85.jar" org.bouncycastle.bcpkix-jdk18on-1.84.jar c9f82b2d4e99c4bbdfccf684e52cc06ea06a0b567bfd0d08f9c5a3f417055996
-      swap "$BC/bcutil-jdk18on/1.85/bcutil-jdk18on-1.85.jar" org.bouncycastle.bcutil-jdk18on-1.84.jar 590f55ed5d68529239898a4a5c4f730b6e37f45d1cfa3fbe51f8485abe32c42d
       cd ../../..
   - runs: |
       # Run the augmentation (`kc.sh build`) at IMAGE BUILD time so runtime is optimized
