@@ -35,7 +35,16 @@ class H(BaseHTTPRequestHandler):
         self.send_response(200); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
     do_GET = do_POST = do_PUT = do_DELETE = answer
     def log_message(self, *a): pass
-HTTPServer(("0.0.0.0", 9503), H).serve_forever()' >/dev/null
+srv = HTTPServer(("0.0.0.0", 9503), H)
+print("READY", flush=True)
+srv.serve_forever()' >/dev/null
+# ganesha calls the backend once at startup and exits on failure: start it only once the
+# stub is bound (a cold runner pulls python first).
+for i in $(seq 1 60); do
+  grep -q READY <<<"$(docker logs "$STUB" 2>&1)" && break
+  [ "$i" = 60 ] && { echo "recovery backend stub never started"; docker logs "$STUB" 2>&1 | tail; exit 1; }
+  sleep 1
+done
 
 docker run -d --name "$NAME" --network "$NET" --cap-add DAC_READ_SEARCH --cap-add SYS_RESOURCE \
   --tmpfs /export/vol:exec --entrypoint sh "$IMAGE" -c '
