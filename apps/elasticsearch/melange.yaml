@@ -180,10 +180,12 @@ pipeline:
       #     set; databind fix = 2.18.9 (for -54515 and CVE-2026-59889), core fix >= 2.18.6).
       #     Backward-compatible within 2.x. (ES <= 9.4.3 bundled 2.15.0 here; 9.4.4 ships
       #     2.18.8, which still carries the databind advisory -> same swap, newer source.)
-      getj "$MC/com/fasterxml/jackson/core/jackson-core/2.18.9/jackson-core-2.18.9.jar" jackson-core-2.18.9.jar e03144f48c8d5307da2894570b4972aab8c72f22440f8dcdb745be2485ce2024
+      #     Oct-2026: core moves on to 2.18.11 (CVE-2026-89407/-89425); databind and
+      #     annotations stay at 2.18.9, a patch mix within one minor.
+      getj "$MC/com/fasterxml/jackson/core/jackson-core/2.18.11/jackson-core-2.18.11.jar" jackson-core-2.18.11.jar 825fa72dfb9e2f8a642322f1390dbac22c30d15ebd6dc6b3772158821ee124eb
       getj "$MC/com/fasterxml/jackson/core/jackson-databind/2.18.9/jackson-databind-2.18.9.jar" jackson-databind-2.18.9.jar 71595a3f7ff58344ec0496a9f9ec9f623ef7b85b45402d88f1ca261f1bc4b42c
       getj "$MC/com/fasterxml/jackson/core/jackson-annotations/2.18.9/jackson-annotations-2.18.9.jar" jackson-annotations-2.18.9.jar 798c85b86e7420d0b4eb91e7b3e37d4bee673c61de37a616ba51a7539631e6b7
-      find "$dest/modules" -name 'jackson-core-2.18.8.jar'        -exec sh -c 'cp "$1" "$(dirname "$2")/jackson-core-2.18.9.jar";        rm -f "$2"' _ "$DL/jackson-core-2.18.9.jar" {} \;
+      find "$dest/modules" -name 'jackson-core-2.18.8.jar'        -exec sh -c 'cp "$1" "$(dirname "$2")/jackson-core-2.18.11.jar";       rm -f "$2"' _ "$DL/jackson-core-2.18.11.jar" {} \;
       find "$dest/modules" -name 'jackson-databind-2.18.8.jar'    -exec sh -c 'cp "$1" "$(dirname "$2")/jackson-databind-2.18.9.jar";    rm -f "$2"' _ "$DL/jackson-databind-2.18.9.jar" {} \;
       find "$dest/modules" -name 'jackson-annotations-2.18.8.jar' -exec sh -c 'cp "$1" "$(dirname "$2")/jackson-annotations-2.18.9.jar"; rm -f "$2"' _ "$DL/jackson-annotations-2.18.9.jar" {} \;
 
@@ -202,6 +204,14 @@ pipeline:
       done
       [ "$n" -gt 0 ] || [ -n "$(find "$dest/modules" -name 'jackson-databind-2.21.7.jar')" ] \
         || { echo "FATAL: no jackson-databind 2.21.x in modules; the dist moved, re-audit"; exit 1; }
+      # core on the same line: 2.21.6 carries CVE-2026-89407/-89425 (2026-10-04), fixed 2.21.7.
+      getj "$MC/com/fasterxml/jackson/core/jackson-core/2.21.7/jackson-core-2.21.7.jar" jackson-core-2.21.7.jar 8c5623b98f32d5f7e1287ff61ed50e08ab7b11381e991fff89327faabba42261
+      n=0
+      for f in $(find "$dest/modules" -name 'jackson-core-2.21.*.jar' ! -name 'jackson-core-2.21.7.jar'); do
+        cp "$DL/jackson-core-2.21.7.jar" "$(dirname "$f")/jackson-core-2.21.7.jar"; rm -f "$f"; n=$((n+1))
+      done
+      [ "$n" -gt 0 ] || [ -n "$(find "$dest/modules" -name 'jackson-core-2.21.7.jar')" ] \
+        || { echo "FATAL: no jackson-core 2.21.x in modules; the dist moved, re-audit"; exit 1; }
 
       # --- (b3) NEW in 9.5.0: jsoup 1.21.2 -> 1.23.1 (ingest-attachment).
       #     CVE-2026-71497. Built for JDK 17, and ES bundles a newer JDK, so it loads.
@@ -248,19 +258,27 @@ pipeline:
         echo "more than one reactor-netty-http jar in x-pack-inference"; exit 1; }
 
       # --- (f) SURGERY on Elastic's OWN core x-content uber-jar (un-droppable). It embeds
-      #     jackson-core 2.18.8 as an EXPLODED, UN-RELOCATED impl dir under IMPL-JARS/, read
-      #     by Elastic's EmbeddedImplClassLoader via a plain-text LISTING.TXT (no checksum /
-      #     per-class manifest). Rebuild that impl dir from jackson-core 2.18.9 and update
+      #     jackson-core as an EXPLODED, UN-RELOCATED impl dir under IMPL-JARS/, read by
+      #     Elastic's EmbeddedImplClassLoader via a plain-text LISTING.TXT (no checksum /
+      #     per-class manifest). Rebuild that impl dir from jackson-core 2.21.7 and update
       #     LISTING.TXT so the embedded loader finds the renamed dir. Two copies (server lib
-      #     + plugin-cli tool).
+      #     + plugin-cli tool). 9.5.4 embeds 2.21.6 (CVE-2026-89407/-89425); until 2026-10-04
+      #     this step still targeted the 2.18.8 of older dists and silently did nothing, so it
+      #     now reads the embedded version and fails on anything but a 2.21.x below the fix.
       xc_surgery() {
         jarp="$1"; w="$PW/xc"; rm -rf "$w"; mkdir -p "$w"
         ( cd "$w" && unzip -qo "$jarp" )
         imp="$w/IMPL-JARS/x-content"
-        rm -rf "$imp/jackson-core-2.18.8.jar"
-        mkdir -p "$imp/jackson-core-2.18.9.jar"
-        ( cd "$imp/jackson-core-2.18.9.jar" && unzip -qo "$DL/jackson-core-2.18.9.jar" )
-        sed -i 's/jackson-core-2\.18\.8\.jar/jackson-core-2.18.9.jar/' "$imp/LISTING.TXT"
+        old="$(cd "$imp" && ls -d jackson-core-*.jar)"
+        case "$old" in
+          jackson-core-2.21.[0-6].jar) ;;
+          *) echo "FATAL: x-content embeds $old, not a 2.21.x below 2.21.7; re-audit"; exit 1 ;;
+        esac
+        rm -rf "$imp/$old"
+        mkdir -p "$imp/jackson-core-2.21.7.jar"
+        ( cd "$imp/jackson-core-2.21.7.jar" && unzip -qo "$DL/jackson-core-2.21.7.jar" )
+        sed -i "s/^$old\$/jackson-core-2.21.7.jar/" "$imp/LISTING.TXT"
+        grep -qx 'jackson-core-2.21.7.jar' "$imp/LISTING.TXT" || { echo "FATAL: LISTING.TXT not rewritten"; exit 1; }
         rm -f "$jarp"; ( cd "$w" && zip -qrX "$jarp" . )
       }
       xc_surgery "$dest/lib/elasticsearch-x-content-${{package.version}}.jar"
