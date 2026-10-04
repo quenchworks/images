@@ -34,7 +34,7 @@ package:
       - runit                    # provides chpst used by the launcher's exec path
       - dumb-init                # ENTRYPOINT wrapper upstream uses (reaps zombies)
       # Native runtime libs the Python extensions + Go/Rust binaries link against.
-      - libpq-17                 # psycopg (Postgres driver)
+      - libpq-18                 # psycopg (Postgres driver); 18 links OpenSSL 4 like python, and talks to 13+ servers
       - libxml2                  # lxml / xmlsec
       - libxslt                  # lxml
       - xmlsec                   # python xmlsec (SAML signing)
@@ -89,8 +89,8 @@ environment:
       - xmlsec-dev       # python xmlsec
       - xmlsec-openssl   # libxmlsec1-openssl.so; without it the linker takes the non-PIC .a
       - krb5-dev         # gssapi + python-kadmin-rs (MIT krb5-dev provides kadm5; heimdal-dev conflicts with it in Wolfi)
-      - libpq-17
-      - postgresql-17-dev # libpq headers for psycopg[c]
+      - libpq-18
+      - postgresql-18-dev # libpq headers for psycopg[c]; 17-dev requires openssl-dev 3, which xmlsec-dev now excludes
       - zlib-dev
       - libmaxminddb-dev
 
