@@ -20,6 +20,9 @@ package:
       - iptables-nft
       - kmod
       - llvm-19-bpf
+      - nsenter      # upstream's mount-cgroup and sysctl init containers use --cgroup= / --mount=, which busybox lacks
+      - mount        # Wolfi's busybox has no mount applet; the mount-bpf-fs init container runs `mount -t bpf`
+      - umount
 
 environment:
   contents:

@@ -1,7 +1,8 @@
 # The Cilium agent image: our package plus Wolfi's runtime tools (clang/llc for the BPF programs,
-# bpftool, iproute2, iptables, ipset, kmod, bash for the init scripts). Nonroot by default like
-# every catalog image; a Cilium install runs the agent as root with its network capabilities,
-# as upstream's chart does.
+# bpftool, iproute2, iptables, ipset, kmod, bash for the init scripts).
+# ROOT by default, unlike other catalog images: upstream's chart sets capabilities but no user,
+# and its init containers write the CNI binaries, mounts and sysctls onto the host. With a 1001
+# default, mount-cgroup failed on "can't create /hostbin/cilium-mount" in kind (2026-10-04).
 contents:
   keyring:
     - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
@@ -22,7 +23,7 @@ accounts:
     - username: cilium
       uid: 1001
       gid: 1001
-  run-as: 1001
+  run-as: 0
 
 environment:
   HUBBLE_SERVER: unix:///var/run/cilium/hubble.sock

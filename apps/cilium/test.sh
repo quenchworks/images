@@ -7,10 +7,11 @@
 set -euo pipefail
 IMAGE="${1:?usage: test.sh <image-ref> [version]}"
 WANT="${2:-}"
-# The agent runs as root on the node (/var/lib/cilium is 0750 root, as upstream installs it).
-run() { docker run --rm --user 0 --entrypoint /bin/bash "$IMAGE" -c "$1"; }
+run() { docker run --rm --entrypoint /bin/bash "$IMAGE" -c "$1"; }
 user="$(docker inspect "$IMAGE" --format '{{.Config.User}}')"
-[ "$user" = "1001" ] || { echo "expected user 1001, got '$user'"; exit 1; }
+# Root by design: upstream's chart runs the agent and its host-writing init containers as the
+# image user (see apko.yaml).
+[ "$user" = "0" ] || { echo "expected user 0, got '$user'"; exit 1; }
 out="$(run 'cilium-agent --version; hubble version; cilium-dbg --help >/dev/null && echo cilium-dbg ok')"
 echo "$out"
 [ -z "$WANT" ] || grep -q "$WANT" <<<"$out" || { echo "expected version $WANT"; exit 1; }
