@@ -59,7 +59,13 @@ for i in $(seq 1 45); do
   sleep 1
 done
 echo "hub api: $api"
-docker logs "$NAME" 2>&1 | grep -q "Adding route for Hub" || { echo "hub did not register its route with the proxy"; exit 1; }
+# The hub serves its API before it logs the proxy route, so poll for the line.
+for i in $(seq 1 20); do
+  logs="$(docker logs "$NAME" 2>&1)"
+  grep -q "Adding route for Hub" <<<"$logs" && break
+  [ "$i" = 20 ] && { echo "hub did not register its route with the proxy"; tail -30 <<<"$logs"; exit 1; }
+  sleep 1
+done
 [ -z "$WANT" ] || grep -q "\"version\": *\"$WANT\"" <<<"$api" || { echo "hub API reports another version"; exit 1; }
 
 echo "smoke test passed (jupyterhub ${WANT:-?}: hub API, plugins; nonroot user: $user)"
