@@ -31,25 +31,31 @@ pipeline:
       extract: false
   - runs: |
       set -eu
-      # The runner is an uber-jar holding both jackson-databind lines unshaded: 2.22.2 and
-      # tools.jackson 3.2.2 carry CVE-2026-91776/-91777 (fixed 2.22.3 and 3.2.3). Their
-      # classes and Maven metadata are zipped over the old entries, and each version is
-      # asserted after. The patches add no packages. Shas from Maven Central, 2026-10-01.
+      # The runner is an uber-jar holding both jackson lines unshaded: databind 2.22.2 and
+      # tools.jackson 3.2.2 carry CVE-2026-91776/-91777, and core 2.22.2 and 3.2.2 carry
+      # CVE-2026-89407/-89425 (2026-10-04); all are fixed at 2.22.3 and 3.2.3. Their classes
+      # (core is multi-release, so its META-INF/versions copies too) and Maven metadata are
+      # zipped over the old entries, and each version is asserted after. The patches add no
+      # packages. Shas from Maven Central.
       jar=nessie-quarkus-${{package.version}}-runner.jar
       M=https://repo1.maven.org/maven2
-      dswap() { # <group path> <group id> <version> <sha256> <class prefix>
+      dswap() { # <artifact> <group path> <group id> <version> <sha256> <class prefix>
         rm -rf /tmp/ds && mkdir /tmp/ds
-        wget -q -O /tmp/ds.jar "$M/$1/jackson-databind/$3/jackson-databind-$3.jar"
-        echo "$4  /tmp/ds.jar" | sha256sum -c -
-        old="$(unzip -p "$jar" "META-INF/maven/$2/jackson-databind/pom.properties" | sed -n 's/^version=//p')"
-        [ -n "$old" ] || { echo "no $2 jackson-databind in the runner; re-audit"; exit 1; }
-        unzip -q /tmp/ds.jar "$5/*" "META-INF/maven/$2/jackson-databind/*" -d /tmp/ds
+        wget -q -O /tmp/ds.jar "$M/$2/$1/$4/$1-$4.jar"
+        echo "$5  /tmp/ds.jar" | sha256sum -c -
+        old="$(unzip -p "$jar" "META-INF/maven/$3/$1/pom.properties" | sed -n 's/^version=//p')"
+        [ -n "$old" ] || { echo "no $3 $1 in the runner; re-audit"; exit 1; }
+        pats="$6/* META-INF/maven/$3/$1/*"
+        unzip -l /tmp/ds.jar "META-INF/versions/*/$6/*" >/dev/null 2>&1 && pats="$pats META-INF/versions/*/$6/*"
+        unzip -q /tmp/ds.jar $pats -d /tmp/ds
         (cd /tmp/ds && zip -q -r "$OLDPWD/$jar" .)
-        got="$(unzip -p "$jar" "META-INF/maven/$2/jackson-databind/pom.properties" | sed -n 's/^version=//p')"
-        [ "$got" = "$3" ] || { echo "$2 jackson-databind is $got after the swap"; exit 1; }
+        got="$(unzip -p "$jar" "META-INF/maven/$3/$1/pom.properties" | sed -n 's/^version=//p')"
+        [ "$got" = "$4" ] || { echo "$3 $1 is $got after the swap"; exit 1; }
       }
-      dswap com/fasterxml/jackson/core com.fasterxml.jackson.core 2.22.3 556db5439e206114346043f68d200497dc96a0bca62a360a81784092ebd0e0a9 com/fasterxml/jackson/databind
-      dswap tools/jackson/core tools.jackson.core 3.2.3 235b72436af983857e44efa42449f4f0a2c571e69d6c5d9dd1253ae7d192dcf2 tools/jackson/databind
+      dswap jackson-databind com/fasterxml/jackson/core com.fasterxml.jackson.core 2.22.3 556db5439e206114346043f68d200497dc96a0bca62a360a81784092ebd0e0a9 com/fasterxml/jackson/databind
+      dswap jackson-databind tools/jackson/core tools.jackson.core 3.2.3 235b72436af983857e44efa42449f4f0a2c571e69d6c5d9dd1253ae7d192dcf2 tools/jackson/databind
+      dswap jackson-core com/fasterxml/jackson/core com.fasterxml.jackson.core 2.22.3 8a501126a385b25841915d839508f8a66e2a0dbc8a6709d055ef3b3e852b094c com/fasterxml/jackson/core
+      dswap jackson-core tools/jackson/core tools.jackson.core 3.2.3 a0c17e7e665a5e95c82f5fb45c0fec2ae3dc556c80f0016452c9c84cd23f3817 tools/jackson/core
       install -Dm644 "$jar" "${{targets.destdir}}/usr/lib/nessie/nessie-quarkus-runner.jar"
 
 test:
