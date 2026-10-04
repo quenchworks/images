@@ -49,6 +49,10 @@ pipeline:
       rm "$app/lib/jackson-databind-2.22.2.jar"
       wget -q -O "$app/lib/jackson-databind-2.22.3.jar" https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-databind/2.22.3/jackson-databind-2.22.3.jar
       echo "556db5439e206114346043f68d200497dc96a0bca62a360a81784092ebd0e0a9  $app/lib/jackson-databind-2.22.3.jar" | sha256sum -c -
+      # jackson-core 2.22.2 carries CVE-2026-89407/-89425 (2026-10-04); 2.22.3 is the same-line fix.
+      rm "$app/lib/jackson-core-2.22.2.jar"
+      wget -q -O "$app/lib/jackson-core-2.22.3.jar" https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-core/2.22.3/jackson-core-2.22.3.jar
+      echo "8a501126a385b25841915d839508f8a66e2a0dbc8a6709d055ef3b3e852b094c  $app/lib/jackson-core-2.22.3.jar" | sha256sum -c -
       chmod -R a+rX "$app"
 
 test:
