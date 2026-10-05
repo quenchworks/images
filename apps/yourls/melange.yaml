@@ -1,0 +1,290 @@
+# Packages YOURLS (the release tag tarball: PHP plus its vendored composer tree, which scans
+# clean at 1.10.6) as the docroot at /var/www/html, served by Wolfi php-fpm behind
+# QuenchWorks nginx under supervisord (the apps/phpmyadmin layout). user/config.php reads
+# its whole configuration from the environment, so the image boots with `-e YOURLS_DB_*`
+# and the chart sets it from values and Secrets.
+package:
+  name: quench-yourls
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened YOURLS (release tarball) on Wolfi php-fpm + nginx"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - php-8.3
+      - php-8.3-fpm
+      - php-8.3-fpm-config
+      - php-8.3-config
+      - php-8.3-opcache
+      - php-8.3-opcache-config
+      - php-8.3-mysqlnd
+      - php-8.3-mysqlnd-config
+      - php-8.3-pdo
+      - php-8.3-pdo-config
+      - php-8.3-pdo_mysql
+      - php-8.3-pdo_mysql-config
+      - php-8.3-mbstring
+      - php-8.3-mbstring-config
+      - php-8.3-iconv
+      - php-8.3-iconv-config
+      - php-8.3-openssl
+      - php-8.3-openssl-config
+      - php-8.3-curl
+      - php-8.3-curl-config
+      - php-8.3-ctype
+      - php-8.3-ctype-config
+      - php-8.3-fileinfo
+      - php-8.3-fileinfo-config
+      - php-8.3-xml
+      - php-8.3-xml-config
+      - php-8.3-dom
+      - php-8.3-dom-config
+      - supervisor
+      - busybox
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - php-8.3
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/YOURLS/YOURLS/archive/refs/tags/${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+      # keep the tarball's YOURLS-<ver>/ dir: the workspace root also holds melange-out
+      strip-components: "0"
+
+  - name: Install the YOURLS tree as the docroot at /var/www/html
+    runs: |
+      set -eu
+      app="${{targets.destdir}}/var/www/html"
+      install -d -m 0755 "$app"
+      cp -a "YOURLS-${{package.version}}/." "$app/"
+      # sample files are documentation, not content
+      rm -f "$app"/sample-*.txt "$app/user/config-sample.php"
+      test -f "$app/yourls-loader.php"
+      test -f "$app/includes/load-yourls.php"
+      test -d "$app/includes/vendor"
+      grep -q "YOURLS_VERSION', '${{package.version}}'" "$app/includes/version.php"
+
+  - name: Install the env-driven user/config.php
+    runs: |
+      set -eu
+      # YOURLS has no settings store: every option is a PHP constant in user/config.php. This
+      # one takes each from the environment (php-fpm runs with clear_env = no), with the
+      # defaults of YOURLS's own sample config, so `docker run -e YOURLS_DB_HOST=db ...`
+      # boots. YOURLS_USER/YOURLS_PASS define the single admin; the chart mounts more.
+      cat > "${{targets.destdir}}/var/www/html/user/config.php" <<'PHP'
+      <?php
+      $e = static function (string $k, string $d = ''): string { $v = getenv($k); return $v === false ? $d : $v; };
+      $b = static function (string $k, bool $d) use ($e): bool { return filter_var($e($k, $d ? 'true' : 'false'), FILTER_VALIDATE_BOOLEAN); };
+      define('YOURLS_DB_USER', $e('YOURLS_DB_USER', 'yourls'));
+      define('YOURLS_DB_PASS', $e('YOURLS_DB_PASS'));
+      define('YOURLS_DB_NAME', $e('YOURLS_DB_NAME', 'yourls'));
+      define('YOURLS_DB_HOST', $e('YOURLS_DB_HOST', 'localhost'));
+      define('YOURLS_DB_PREFIX', $e('YOURLS_DB_PREFIX', 'yourls_'));
+      define('YOURLS_SITE', rtrim($e('YOURLS_SITE', 'http://localhost:8080'), '/'));
+      define('YOURLS_LANG', $e('YOURLS_LANG'));
+      define('YOURLS_UNIQUE_URLS', $b('YOURLS_UNIQUE_URLS', true));
+      define('YOURLS_PRIVATE', $b('YOURLS_PRIVATE', true));
+      define('YOURLS_COOKIEKEY', $e('YOURLS_COOKIEKEY', ''));
+      define('YOURLS_URL_CONVERT', (int) $e('YOURLS_URL_CONVERT', '36'));
+      define('YOURLS_DEBUG', $b('YOURLS_DEBUG', false));
+      $yourls_user_passwords = [];
+      if ($e('YOURLS_USER') !== '') {
+          $yourls_user_passwords[$e('YOURLS_USER')] = $e('YOURLS_PASS');
+      }
+      // keywords that may never become short URLs; YOURLS_RESERVED is a comma-separated list
+      $yourls_reserved_URL = array_values(array_filter(array_map('trim', explode(',', $e('YOURLS_RESERVED')))));
+      PHP
+      php -l "${{targets.destdir}}/var/www/html/user/config.php"
+
+  - name: Install the nginx server block (FastCGI to php-fpm, :8080, /var/www/html)
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/etc/nginx/conf.d"
+      # Included by quench-nginx's own nginx.conf via /etc/nginx/conf.d/*.conf, which
+      # already handles the nonroot / read-only-rootfs plumbing (no `user` directive, pid
+      # + every *_temp_path under /tmp, logs to stdout/stderr). We only add the site: the
+      # default_server on 8080 (nonroot cannot bind <1024), superseding quench-nginx's
+      # placeholder server on the same port.
+      cat > "$destdir/etc/nginx/conf.d/yourls.conf" <<'EOF'
+      server {
+          listen 8080 default_server;
+          listen [::]:8080 default_server;
+          server_name _;
+
+          root /var/www/html;
+          index index.html index.php;
+          charset utf-8;
+
+                    client_max_body_size 8M;
+          access_log off;
+
+          location = /favicon.ico { log_not_found off; access_log off; }
+          location = /robots.txt  { log_not_found off; access_log off; }
+
+          # Never serve dotfiles or the dependency/lock metadata as content.
+          location ~ /\.                        { return 403; }
+          location ~* ^/(composer\.(json|lock)|readme\.html|sample-.*)$ { return 403; }
+
+          # PHP outside the front controllers is never requested directly.
+          location ~ ^/(includes|user)/ { return 403; }
+
+          # Short URLs and the stats pages ("keyword+") have no file: they go to the loader,
+          # which is what YOURLS's own .htaccess does.
+          location / {
+              try_files $uri $uri/ /yourls-loader.php$is_args$args;
+          }
+
+          location ~ \.php$ {
+              try_files $uri =404;
+              include        /etc/nginx/fastcgi_params;
+              fastcgi_split_path_info ^(.+\.php)(/.+)$;
+              fastcgi_param  SCRIPT_FILENAME $document_root$fastcgi_script_name;
+              fastcgi_param  PATH_INFO $fastcgi_path_info;
+              fastcgi_index  index.php;
+              fastcgi_pass   127.0.0.1:9000;
+              fastcgi_buffers 16 16k;
+              fastcgi_buffer_size 32k;
+              fastcgi_read_timeout 600;
+          }
+
+          # Long-cache the static assets shipped with the release.
+          location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff2?)$ {
+              expires max;
+              log_not_found off;
+              access_log off;
+          }
+      }
+      EOF
+
+  - name: Install the php-fpm pool + php.ini overrides (nonroot / read-only rootfs)
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/etc/php/php-fpm.d"
+      install -d "$destdir/etc/php/conf.d"
+
+      # Wolfi's pool sets user/group = nobody (a nonroot master cannot setuid workers, so
+      # those directives are ignored with a warning) and pins listen to [::]:9000. This
+      # zzz- override loads last: listen on 127.0.0.1:9000 (what the nginx block passes
+      # to), master in the foreground, worker output to stderr. clear_env = no is
+      # LOAD-BEARING: user/config.php reads its whole configuration via getenv().
+      cat > "$destdir/etc/php/php-fpm.d/zzz-yourls.conf" <<'EOF'
+      [global]
+      daemonize = no
+      error_log = /proc/self/fd/2
+
+      [www]
+      listen = 127.0.0.1:9000
+      catch_workers_output = yes
+      decorate_workers_output = no
+      clear_env = no
+      pm = dynamic
+      pm.max_children = 16
+      pm.start_servers = 2
+      pm.min_spare_servers = 1
+      pm.max_spare_servers = 4
+      access.log = /proc/self/fd/2
+      EOF
+
+      # Runtime PHP tuning: sessions and scratch under /tmp (the writable tmpfs on a
+      # read-only rootfs), errors to stderr, opcache on.
+      cat > "$destdir/etc/php/conf.d/zzz-yourls.ini" <<'EOF'
+      expose_php = Off
+      memory_limit = 256M
+      upload_max_filesize = 8M
+      post_max_size = 8M
+      max_execution_time = 60
+      max_input_time = 60
+            sys_temp_dir = /tmp
+      upload_tmp_dir = /tmp
+      session.save_path = /tmp
+      session.cookie_httponly = 1
+      session.use_strict_mode = 1
+      error_reporting = E_ALL & ~E_DEPRECATED & ~E_STRICT
+      display_errors = Off
+      log_errors = On
+      error_log = /proc/self/fd/2
+      date.timezone = UTC
+      opcache.enable = 1
+      opcache.enable_cli = 0
+      opcache.memory_consumption = 128
+      opcache.max_accelerated_files = 20000
+      opcache.revalidate_freq = 2
+      EOF
+
+  - name: Install the supervisord configuration (php-fpm + nginx)
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/etc/yourls"
+      install -d "$destdir/etc/supervisor.d"
+
+      # Main config at /etc/yourls/supervisord.conf, NOT /etc/supervisord.conf (owned
+      # by Wolfi's supervisor-config package -> apko file conflict). Nonroot-friendly:
+      # nodaemon, logs to stdout, pid + control socket under /tmp. supervisord parses the
+      # program commands itself, so the image needs no shell wrapper entrypoint.
+      cat > "$destdir/etc/yourls/supervisord.conf" <<'EOF'
+      [supervisord]
+      nodaemon=true
+      logfile=/dev/stdout
+      logfile_maxbytes=0
+      pidfile=/tmp/supervisord.pid
+
+      [unix_http_server]
+      file=/tmp/supervisor.sock
+
+      [supervisorctl]
+      serverurl=unix:///tmp/supervisor.sock
+
+      [rpcinterface:supervisor]
+      supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+
+      [include]
+      files = /etc/supervisor.d/*.conf
+      EOF
+
+      # php-fpm first (the FastCGI backend), then nginx (the web front).
+      cat > "$destdir/etc/supervisor.d/php-fpm.conf" <<'EOF'
+      [program:php-fpm]
+      command=/usr/bin/php-fpm --nodaemonize --fpm-config /etc/php/php-fpm.conf
+      autostart=true
+      autorestart=true
+      priority=10
+      stdout_logfile=/dev/stdout
+      stdout_logfile_maxbytes=0
+      stderr_logfile=/dev/stderr
+      stderr_logfile_maxbytes=0
+      EOF
+
+      cat > "$destdir/etc/supervisor.d/nginx.conf" <<'EOF'
+      [program:nginx]
+      command=/usr/bin/nginx -g "daemon off;"
+      autostart=true
+      autorestart=true
+      priority=20
+      stdout_logfile=/dev/stdout
+      stdout_logfile_maxbytes=0
+      stderr_logfile=/dev/stderr
+      stderr_logfile_maxbytes=0
+      EOF
+
+  - name: Sanity-check the assembled tree
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      test -f "$d/etc/nginx/conf.d/yourls.conf"
+      test -f "$d/etc/php/php-fpm.d/zzz-yourls.conf"
+      test -f "$d/etc/yourls/supervisord.conf"
+      for f in "$d"/var/www/html/*.php; do php -l "$f" >/dev/null; done

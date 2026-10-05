@@ -1,0 +1,81 @@
+# Assembles the YOURLS runtime image: the YOURLS tree (quench-yourls@local, the release
+# tarball with an env-driven user/config.php), QuenchWorks nginx (quench-nginx@local, built
+# from source) and php-8.3 FPM with pdo_mysql, all under supervisord. Minimal, nonroot
+# (uid/gid 1001), multi-arch, read-only-rootfs friendly. SBOM by apko. Serves 8080.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - busybox
+    - supervisor
+    - quench-nginx@local
+    - quench-yourls@local
+    - php-8.3
+    - php-8.3-fpm
+    - php-8.3-fpm-config
+    - php-8.3-config
+    - php-8.3-opcache
+    - php-8.3-opcache-config
+    - php-8.3-mysqlnd
+    - php-8.3-mysqlnd-config
+    - php-8.3-pdo
+    - php-8.3-pdo-config
+    - php-8.3-pdo_mysql
+    - php-8.3-pdo_mysql-config
+    - php-8.3-mbstring
+    - php-8.3-mbstring-config
+    - php-8.3-iconv
+    - php-8.3-iconv-config
+    - php-8.3-openssl
+    - php-8.3-openssl-config
+    - php-8.3-curl
+    - php-8.3-curl-config
+    - php-8.3-ctype
+    - php-8.3-ctype-config
+    - php-8.3-fileinfo
+    - php-8.3-fileinfo-config
+    - php-8.3-xml
+    - php-8.3-xml-config
+    - php-8.3-dom
+    - php-8.3-dom-config
+
+accounts:
+  groups:
+    - groupname: yourls
+      gid: 1001
+  users:
+    - username: yourls
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# supervisord (PID 1) starts php-fpm then nginx; it parses the program commands itself.
+entrypoint:
+  command: /usr/bin/supervisord -c /etc/yourls/supervisord.conf
+
+work-dir: /var/www/html
+
+paths:
+  # supervisord pid/sock, nginx pid + temp dirs, PHP sessions
+  - path: /tmp
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o1777
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-yourls"
+  org.opencontainers.image.licenses: "MIT"
