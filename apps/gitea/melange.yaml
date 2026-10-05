@@ -79,8 +79,17 @@ pipeline:
       # fixed in 0.39.0 (safe patch bump within the module graph).
       # go-git/v5 5.19.1 -> 5.19.2: CVE-2026-71556 (HIGH) + CVE-2026-71557. Third app
       # to need this advisory this round (trivy on v5, pulumi on the v6 alpha line).
-      go get github.com/go-git/go-git/v5@v5.19.2
-      go get golang.org/x/text@v0.41.0 golang.org/x/net@v0.58.0 golang.org/x/crypto@v0.56.0 golang.org/x/sys@v0.47.0 google.golang.org/grpc@v1.83.2 golang.org/x/mod@v0.40.0 golang.org/x/image@v0.45.0
+      # FLOORS, not pins (docs/go-module-float.md): raise only where go.mod is below; these two
+      # lines were bare `go get` pins and downgraded the build (2026-10-05 scan).
+      FLOOR="github.com/go-git/go-git/v5@v5.19.2 golang.org/x/text@v0.41.0 golang.org/x/net@v0.58.0 golang.org/x/crypto@v0.56.0 golang.org/x/sys@v0.47.0 google.golang.org/grpc@v1.83.2 golang.org/x/mod@v0.40.0 golang.org/x/image@v0.45.0"
+      need=""
+      for mv in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${mv%@*}" 2>/dev/null)"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        [ "$(printf '%s\n%s\n' "$have" "${mv#*@}" | sort -V | head -1)" = "${mv#*@}" ] || need="$need $mv"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
       # gitea.com/gitea/runner v1.0.8 (1.27 line) carries CVE-2026-73802 (CRITICAL, job
       # container.options passing host namespaces); the fix is an untagged commit, so pin it.
       # Only where the line links an older runner; 28.x no longer imports the module.
