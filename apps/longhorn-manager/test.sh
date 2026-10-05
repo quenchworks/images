@@ -12,7 +12,11 @@ WANT="${2:-}"
 user="$(docker inspect "$IMAGE" --format '{{.Config.User}}')"
 [ "$user" = "0" ] || [ -z "$user" ] || { echo "expected root (upstream's chart sets no user), got '$user'"; exit 1; }
 
-ver="$(docker run --rm --entrypoint longhorn-manager "$IMAGE" --version)"
+# The chart's CSI plugin passes only args (`longhorn-manager -d csi ...`): they must replace
+# the image's default command, so the image must have no ENTRYPOINT.
+ep="$(docker inspect "$IMAGE" --format '{{json .Config.Entrypoint}}')"
+[ "$ep" = null ] || [ "$ep" = '[]' ] || { echo "image has an ENTRYPOINT ($ep); args-only containers would break"; exit 1; }
+ver="$(docker run --rm "$IMAGE" longhorn-manager --version)"
 echo "$ver"
 [ -z "$WANT" ] || grep -q "v$WANT" <<<"$ver" || { echo "expected v$WANT"; exit 1; }
 

@@ -36,5 +36,9 @@ for i in $(seq 1 40); do
 done
 docker exec "$NAME" tgtadm --lld iscsi --mode target --op show >/dev/null || { echo "tgtd is not answering"; docker logs "$NAME" 2>&1 | tail -20; exit 1; }
 docker exec "$NAME" sg_raw -V >/dev/null 2>&1 || { echo "sg_raw missing"; exit 1; }
+# The process manager probes engine and replica processes with this exact path.
+docker exec "$NAME" /usr/local/bin/grpc_health_probe -addr localhost:8500 >/dev/null 2>&1 \
+  || docker exec "$NAME" /usr/local/bin/grpc_health_probe -version >/dev/null \
+  || { echo "/usr/local/bin/grpc_health_probe is missing or broken"; exit 1; }
 
 echo "smoke test passed (longhorn-instance-manager ${WANT:-?}: v1 launcher, liveness probe on 8500-8503, tgtd; user ${user:-0})"

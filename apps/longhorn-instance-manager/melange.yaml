@@ -96,6 +96,10 @@ pipeline:
       (cd _tgt && make -j"$(nproc)" programs && install -m755 usr/tgtd usr/tgtadm usr/tgtimg "$d/" && install -m755 scripts/tgt-setup-lun "$d/")
       (cd _sg3 && ./autogen.sh >/dev/null && ./configure --prefix=/usr --disable-shared >/dev/null && make -j"$(nproc)" -C lib >/dev/null && make -C src sg_raw >/dev/null && install -m755 src/sg_raw "$d/")
       for f in package/*; do case "$f" in */Dockerfile) ;; *) install -m755 "$f" "$d/" ;; esac; done
+      # The process manager execs the probe by absolute path (pkg/util GRPCHealthProbe =
+      # /usr/local/bin/grpc_health_probe) to see each engine and replica come up; Wolfi installs
+      # it in /usr/bin. Without this every replica is killed after 60 s (found under the chart).
+      ln -s /usr/bin/grpc_health_probe "$d/grpc_health_probe"
       test -x "$d/instance-manager"
       # Mount point for the launcher's `mount --rbind /host/lib/modules /lib/modules`.
       install -d "${{targets.destdir}}/usr/lib/modules"
