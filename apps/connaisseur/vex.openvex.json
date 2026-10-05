@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/connaisseur/2026-10-05",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-10-05T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-33997"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/docker/docker@v28.5.2%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "CVE-2026-33997 is a privilege-validation bypass in the Moby daemon's plugin installation. connaisseur (./cmd/connaisseur) imports only github.com/docker/docker/registry and api/types/registry, in internal/validator/notaryv1/notaryserver/client.go:20-21 and simple_cred_store.go:7, to authenticate against Notary v1 registries. Checked with `go list -deps ./cmd/connaisseur` at v3.11.1, v3.12.0 and v3.13.0: no daemon, plugin manager or API server package is in the build. The build fails if one is ever linked. The fix (29.3.1) exists only under the github.com/moby/moby module path, so the +incompatible module cannot be floated to it."
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+# Assembles the Connaisseur runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Same layout as upstream's image: /app/bin/connaisseur as the entrypoint, serving HTTPS on
+# 5000 (/health, /ready, /metrics, /mutate) with the certificate from /app/certs and the
+# config from /app/config/config.yaml and /app/alerts/config.yaml (the chart mounts them).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-connaisseur@local
+
+accounts:
+  groups:
+    - groupname: connaisseur
+      gid: 1001
+  users:
+    - username: connaisseur
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+work-dir: /app
+
+entrypoint:
+  command: /app/bin/connaisseur
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-connaisseur"
+  org.opencontainers.image.licenses: "Apache-2.0"
