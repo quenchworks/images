@@ -50,6 +50,7 @@ SHAPES = {
     "PIN": re.compile(r"[\w.+~-]+-r\d+"),
     "PKG": re.compile(r"[a-z][\w.+-]*"),
     "SRC_SHA": re.compile(r"[0-9a-f]{64}"),
+    "COMMITS": HEX40,
 }
 
 
@@ -70,6 +71,22 @@ def uri_for_placeholder(app: str, version: str, ph: str) -> str | None:
             u = m.group(1).replace("${{package.version}}", version).replace("__VER__", version)
             return None if "${" in u or "__" in u else u
     return None
+
+
+def placeholder_of(conf_text: str) -> dict[str, str]:
+    """map name -> the placeholder render() substitutes it into (s|__X__|${MAP[$1]}|)."""
+    out: dict[str, str] = {}
+    for ph, m in re.findall(r"__(\w+)__[|/]\$\{(\w+)\[\$1\]\}", conf_text):
+        out.setdefault(m, ph)
+    return out
+
+
+def placeholder_algo(app: str, ph: str) -> str | None:
+    """sha256 or sha512 when melange.yaml pairs `__ph__` with a fetch uri, else None."""
+    mel = ROOT / "apps" / app / "melange.yaml"
+    m = re.search(r'uri:\s*"?\S+?"?\s*\n\s*expected-(sha256|sha512):\s*__%s__' % re.escape(ph),
+                  mel.read_text() if mel.exists() else "")
+    return m.group(1) if m else None
 
 
 def pin_pkg_names(conf_text: str, version: str, mel_text: str = "") -> list[str]:
@@ -245,8 +262,12 @@ def main() -> int:
     text = conf.read_text()
 
     maps = re.findall(r"declare -A (\w+)=\(", text)
-    known = {"SHA256", "SHA512", "SHA_AMD", "SHA_ARM", "COMMIT", "PIN", "PKG", "SRC_SHA"}
-    unknown = [m for m in maps if m not in known]
+    known = {"SHA256", "SHA512", "SHA_AMD", "SHA_ARM", "COMMIT", "COMMITS", "PIN", "PKG", "SRC_SHA"}
+    # Any other map is still derivable when render() puts it in a placeholder that the
+    # recipe pairs with a fetch uri (podman's SHA, uptime-kuma's DIST_SHA256): hash that uri.
+    phs = placeholder_of(text)
+    generic = {m: phs[m] for m in maps if m not in known and m in phs and placeholder_algo(app, phs[m])}
+    unknown = [m for m in maps if m not in known and m not in generic]
     if unknown:
         print(f"!! {app}: unhandled map(s) {unknown} -- bump by hand")
         return 3
@@ -295,7 +316,13 @@ def main() -> int:
                 mtext = melp.read_text() if melp.exists() else ""
                 algo = "sha512" if "sha512sum -c" in mtext else "sha256"
                 entries[m][v] = fetch_sha(picked, algo)
-            elif m == "COMMIT":
+            elif m in generic:
+                u = uri_for_placeholder(app, v, generic[m])
+                if not u:
+                    print(f"!! {app}: no resolvable uri for __{generic[m]}__ at {v} (it needs another map's value) -- bump by hand")
+                    return 3
+                entries[m][v] = fetch_sha(u, placeholder_algo(app, generic[m]))
+            elif m in ("COMMIT", "COMMITS"):
                 c = tag_commit(app, v)
                 if not c:
                     print(f"!! {app}: could not resolve tag->commit for {v}")
@@ -340,7 +367,8 @@ def main() -> int:
 
     for m in maps:
         for v, val in entries[m].items():
-            if not SHAPES[m].fullmatch(val):
+            shape = SHAPES.get(m) or (re.compile(r"[0-9a-f]{128}") if placeholder_algo(app, generic[m]) == "sha512" else re.compile(r"[0-9a-f]{64}"))
+            if not shape.fullmatch(val):
                 print(f"!! {app}: refusing to write {m}[{v}]={val[:60]!r} -- wrong shape")
                 return 3
 
