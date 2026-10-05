@@ -30,9 +30,10 @@ for i in $(seq 1 30); do
   sleep 1
 done
 
-# create the tables (install.php needs no login before the first install)
-page="$(curl -fsS -d install=1 http://127.0.0.1:8080/admin/install.php)"
-grep -qi "tables.*created\|installed" <<<"$page" || { echo "install failed"; sed -n 1,40p <<<"$page"; exit 1; }
+# create the tables with the bundled CLI installer, then check it is idempotent
+docker exec "$APP" yourls-install
+again="$(docker exec "$APP" yourls-install)"
+grep -q "already installed" <<<"$again" || { echo "second run did not detect the install: $again"; exit 1; }
 
 out="$(curl -fsS 'http://127.0.0.1:8080/yourls-api.php' --data-urlencode 'url=https://quench-works.com/smoke' \
   -d action=shorturl -d keyword=qwsmoke -d format=json -d username=admin -d password="$ADMIN_PW")"

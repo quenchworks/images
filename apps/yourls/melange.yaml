@@ -107,6 +107,40 @@ pipeline:
       PHP
       php -l "${{targets.destdir}}/var/www/html/user/config.php"
 
+  - name: Install yourls-install, the non-interactive installer
+    runs: |
+      set -eu
+      # Creates the tables the way admin/install.php does, from the CLI, so a chart can run
+      # it as an init container. It waits for the database, and does nothing when YOURLS is
+      # already installed, so restarts and upgrades never reinstall.
+      install -d "${{targets.destdir}}/usr/local/bin"
+      cat > "${{targets.destdir}}/usr/local/bin/yourls-install" <<'PHP'
+      #!/usr/bin/env php
+      <?php
+      $env = static fn (string $k, string $d = '') => getenv($k) === false ? $d : getenv($k);
+      $dsn = sprintf('mysql:host=%s;dbname=%s', $env('YOURLS_DB_HOST', 'localhost'), $env('YOURLS_DB_NAME', 'yourls'));
+      $deadline = time() + (int) $env('YOURLS_DB_WAIT', '300');
+      for (;;) {
+          try {
+              new PDO($dsn, $env('YOURLS_DB_USER', 'yourls'), $env('YOURLS_DB_PASS'));
+              break;
+          } catch (PDOException $e) {
+              if (time() >= $deadline) { fwrite(STDERR, "database not reachable: {$e->getMessage()}\n"); exit(1); }
+              fwrite(STDERR, "waiting for the database...\n");
+              sleep(3);
+          }
+      }
+      define('YOURLS_ADMIN', true);
+      define('YOURLS_INSTALLING', true);
+      require '/var/www/html/includes/load-yourls.php';
+      if (yourls_is_installed()) { echo "YOURLS is already installed\n"; exit(0); }
+      $r = yourls_create_sql_tables();
+      if (!empty($r['error'])) { fwrite(STDERR, implode("\n", $r['error']) . "\n"); exit(1); }
+      echo implode("\n", array_map('strip_tags', $r['success'] ?? [])), "\n";
+      PHP
+      chmod 0755 "${{targets.destdir}}/usr/local/bin/yourls-install"
+      php -l "${{targets.destdir}}/usr/local/bin/yourls-install"
+
   - name: Install the nginx server block (FastCGI to php-fpm, :8080, /var/www/html)
     runs: |
       set -eu
