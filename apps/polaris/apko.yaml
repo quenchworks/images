@@ -1,0 +1,39 @@
+# Assembles the Polaris runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# The entrypoint is the polaris binary: `dashboard` serves the web UI and /results.json on
+# 8080 (in-cluster, or offline over YAML with --audit-path), `audit` prints a report, and
+# `webhook` runs the admission controller. The chart passes the subcommand as args.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-polaris@local
+
+accounts:
+  groups:
+    - groupname: polaris
+      gid: 1001
+  users:
+    - username: polaris
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/polaris
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-polaris"
+  org.opencontainers.image.licenses: "Apache-2.0"
