@@ -31,13 +31,28 @@ pipeline:
   - runs: |
       set -eu
       export CGO_ENABLED=0 GOFLAGS=-mod=mod GOTOOLCHAIN=auto
-      go get golang.org/x/mod@v0.40.0 && go mod tidy
+      # 0-CVE FLOORS, not pins (docs/go-module-float.md): raise a module only where go.mod has it
+      # below the floor; a module absent from the graph is skipped. Bare `go get` pins downgraded
+      # newer upstream releases (found 2026-10-05).
+      FLOOR="golang.org/x/mod@v0.40.0"
+      # Go semver order (a release outranks its prereleases); busybox sort -V does not.
+      vlt() { awk -v a="${1#v}" -v b="${2#v}" 'function pp(s,  p){sub(/\+.*/,"",s);p=index(s,"-");if(p){C=substr(s,1,p-1);P=substr(s,p+1)}else{C=s;P=""}} function cmp(x,y,  i,n,m,X,Y){n=split(x,X,".");m=split(y,Y,".");for(i=1;i<=n&&i<=m;i++){if(X[i]==Y[i])continue;if(X[i]~/^[0-9]+$/&&Y[i]~/^[0-9]+$/)return (X[i]+0<Y[i]+0)?-1:1;if(X[i]~/^[0-9]+$/)return -1;if(Y[i]~/^[0-9]+$/)return 1;return (X[i]<Y[i])?-1:1}return (n<m)?-1:(n>m)?1:0} BEGIN{pp(a);ca=C;pa=P;pp(b);cb=C;pb=P;c=cmp(ca,cb);if(c==0){if(pa==pb)c=0;else if(pa=="")c=1;else if(pb=="")c=-1;else c=cmp(pa,pb)}exit !(c<0)}'; }
+      need=""
+      for mv in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${mv%@*}" 2>/dev/null)"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        vlt "$have" "${mv#*@}" && need="$need $mv"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
+      go mod tidy
       go build -trimpath \
         -ldflags "-s -w -X github.com/stakater/Reloader/pkg/common.Version=${{package.version}} -X github.com/stakater/Reloader/pkg/common.Edition=oss" \
         -o "${{targets.destdir}}/usr/bin/reloader" .
       m="$(go version -m "${{targets.destdir}}/usr/bin/reloader")"
       got="$(awk '$1 == "dep" && $2 == "golang.org/x/mod" { print $3 }' <<<"$m")"
-      [ -z "$got" ] || [ "$got" = v0.40.0 ] || { echo "reloader links golang.org/x/mod $got, not v0.40.0"; exit 1; }
+      # at least the floor: a newer reloader that requires a higher x/mod is fine
+      [ -z "$got" ] || ! vlt "$got" v0.40.0 || { echo "reloader links golang.org/x/mod $got, below v0.40.0"; exit 1; }
       # The version is only published into a ConfigMap at runtime; check the stamp here.
       grep -aq "${{package.version}}" "${{targets.destdir}}/usr/bin/reloader"
 
