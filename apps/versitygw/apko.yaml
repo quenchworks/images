@@ -1,0 +1,48 @@
+# Assembles the Versity S3 Gateway runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# The default command serves the posix backend from /data on :7070 with GET /health.
+# Root credentials come from ROOT_ACCESS_KEY / ROOT_SECRET_KEY; the gateway refuses to start
+# without them. The chart mounts a volume at /data and overrides the args as needed.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-versitygw@local
+
+accounts:
+  groups:
+    - groupname: versitygw
+      gid: 1001
+  users:
+    - username: versitygw
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /usr/bin/versitygw
+
+cmd: --health /health posix /data
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-versitygw"
+  org.opencontainers.image.licenses: "Apache-2.0"
