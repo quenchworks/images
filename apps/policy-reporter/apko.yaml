@@ -1,0 +1,41 @@
+# Policy Reporter runtime image: minimal, nonroot, multi-arch, upstream layout (/app). The
+# chart supplies the flags; `run` alone starts it with REST and metrics off.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-policy-reporter@local
+
+accounts:
+  groups:
+    - groupname: policy-reporter
+      gid: 1001
+  users:
+    - username: policy-reporter
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+work-dir: /app
+
+entrypoint:
+  command: /app/policyreporter
+
+cmd: run
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-policy-reporter"
+  org.opencontainers.image.licenses: "MIT"
