@@ -1,0 +1,58 @@
+# Assembles the Tailscale runtime image. Minimal, nonroot, multi-arch, SBOM by apko. Same
+# layout as upstream's image: containerboot is the entrypoint and runs tailscaled and
+# tailscale from /usr/local/bin, configured by TS_* env vars. Nonroot means userspace
+# networking (TS_USERSPACE=true, containerboot's default); kernel TUN mode needs root and
+# NET_ADMIN, which this image does not grant. State goes to /var/lib/tailscale.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-tailscale@local
+
+accounts:
+  groups:
+    - groupname: tailscale
+      gid: 1001
+  users:
+    - username: tailscale
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  - path: /var/lib/tailscale
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /tmp/tailscale
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  TS_STATE_DIR: /var/lib/tailscale
+  TS_SOCKET: /tmp/tailscale/tailscaled.sock
+  TS_USERSPACE: "true"
+  PATH: /usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+entrypoint:
+  command: /usr/local/bin/containerboot
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-tailscale"
+  org.opencontainers.image.licenses: "BSD-3-Clause"
