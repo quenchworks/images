@@ -38,12 +38,20 @@ pipeline:
       export GOFLAGS=-mod=mod
       export GO111MODULE=on
       export GOTOOLCHAIN=local   # use the installed go, don't fetch go.mod's toolchain
-      # Trivy flags x/net, x/crypto/ssh and x/oauth2 in the binary's module graph.
-      # Bump to the newest released versions (well past every advisory's fixed
-      # version), then `replace` to force every transitive use to the fix too.
-      go get golang.org/x/net@v0.58.0 golang.org/x/sys@v0.47.0 google.golang.org/grpc@v1.83.2 golang.org/x/text@v0.41.0 golang.org/x/crypto@v0.56.0 golang.org/x/oauth2@v0.36.0
-      go mod edit -replace golang.org/x/net=golang.org/x/net@v0.58.0
-      go mod edit -replace golang.org/x/crypto=golang.org/x/crypto@v0.56.0
+      # Trivy flags x/net, x/crypto/ssh and x/oauth2 in the binary's module graph. FLOORS, not
+      # pins (docs/go-module-float.md): raise only where go.mod is below. Minimal version
+      # selection already gives every importer the highest required version, so no `replace`
+      # is needed to reach transitive uses. Until 2026-10-05 this forced x/net 0.58.0 and
+      # x/crypto 0.56.0 by replace, which downgraded 7.15.5 (it requires 0.59.0 and 0.57.0).
+      FLOOR="golang.org/x/net@v0.58.0 golang.org/x/sys@v0.47.0 google.golang.org/grpc@v1.83.2 golang.org/x/text@v0.41.0 golang.org/x/crypto@v0.56.0 golang.org/x/oauth2@v0.36.0"
+      need=""
+      for mv in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${mv%@*}" 2>/dev/null)"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        [ "$(printf '%s\n%s\n' "$have" "${mv#*@}" | sort -V | head -1)" = "${mv#*@}" ] || need="$need $mv"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
       go mod tidy || true
   - runs: |
       export CGO_ENABLED=0
