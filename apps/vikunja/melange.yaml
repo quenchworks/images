@@ -105,10 +105,18 @@ pipeline:
       #   github.com/labstack/echo/v5 tag v5.3.1 >= old pin v5.2.0 (CVE-2026-55677)
       #   github.com/Azure/go-ntlmssp tag v0.1.1 == old pin v0.1.1 (CVE-2026-32952)
       # Re-check every bump: `go get M@V` is EXACT, not a floor.
-      go get golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0
-      go get golang.org/x/crypto@v0.56.0
-      go get golang.org/x/image@v0.45.0
-      go get golang.org/x/mod@v0.40.0
+      # 0-CVE FLOORS, not pins (docs/go-module-float.md): raise a module only where go.mod has it
+      # below the floor; a module absent from the graph is skipped. Bare `go get` pins downgraded
+      # newer upstream releases (found 2026-10-05).
+      FLOOR="golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0 golang.org/x/crypto@v0.56.0 golang.org/x/image@v0.45.0 golang.org/x/mod@v0.40.0"
+      need=""
+      for mv in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${mv%@*}" 2>/dev/null)"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        [ "$(printf '%s\n%s\n' "$have" "${mv#*@}" | sort -V | head -1)" = "${mv#*@}" ] || need="$need $mv"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
       go mod tidy
       # Assert the floats reached the resolved graph (a silent downgrade would pass the
       # build and fail only at scan time).
@@ -117,7 +125,8 @@ pipeline:
                   golang.org/x/mod@v0.40.0; do
         m="${want%@*}"; v="${want#*@}"
         got="$(go list -m -f '{{.Version}}' "$m")"
-        [ "$got" = "$v" ] || { echo "FLOAT LOST: $m resolved $got, wanted $v" >&2; exit 1; }
+        # At least the floor: a newer release than the floor is the point of a floor.
+        [ "$(printf '%s\n%s\n' "$got" "$v" | sort -V | head -1)" = "$v" ] || { echo "FLOAT LOST: $m resolved $got, wanted >= $v" >&2; exit 1; }
       done
       # Mirror upstream's release ldflags/tags so `vikunja version` reports the real
       # release. netgo+osusergo keep DNS/os-user pure-Go; sqlite stays CGO (mattn).
