@@ -54,18 +54,18 @@ pipeline:
       # local path, which shadows no floated module.
       # Same finding the controller carried: otel/sdk alone leaves the otlp exporters
       # behind, and the gate read otlptrace at v1.40.0 here (CVE-2026-81870).
-      go get \
-        golang.org/x/net@v0.58.0 \
-        golang.org/x/crypto@v0.56.0 \
-        golang.org/x/text@v0.41.0 \
-        google.golang.org/grpc@v1.83.2 \
-        github.com/go-jose/go-jose/v4@v4.1.4 \
-        github.com/Azure/go-ntlmssp@v0.1.1 \
-        go.opentelemetry.io/otel/sdk@v1.45.0 \
-        go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 \
-        go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0 \
-        go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0 \
-        github.com/google/cel-go@v0.29.2
+      # 0-CVE FLOORS, not pins (docs/go-module-float.md): raise a module only where go.mod has it
+      # below the floor; a module absent from the graph is skipped. Bare `go get` pins downgraded
+      # newer upstream releases (found 2026-10-05).
+      FLOOR="golang.org/x/net@v0.58.0 golang.org/x/crypto@v0.56.0 golang.org/x/text@v0.41.0 google.golang.org/grpc@v1.83.2 github.com/go-jose/go-jose/v4@v4.1.4 github.com/Azure/go-ntlmssp@v0.1.1 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0 github.com/google/cel-go@v0.29.2"
+      need=""
+      for mv in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${mv%@*}" 2>/dev/null)"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        [ "$(printf '%s\n%s\n' "$have" "${mv#*@}" | sort -V | head -1)" = "${mv#*@}" ] || need="$need $mv"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
       go mod tidy || true
       go build -trimpath \
         -ldflags "-s -w -X github.com/cert-manager/cert-manager/pkg/util.AppVersion=v${{package.version}}" \

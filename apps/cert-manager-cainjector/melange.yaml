@@ -47,15 +47,18 @@ pipeline:
       # so for them the new floor is still a genuine raise.
       # The only `replace` in cmd/<target>/go.mod is the parent cert-manager => ../../
       # local path, which shadows no floated module.
-      go get \
-        golang.org/x/net@v0.58.0 \
-        software.sslmate.com/src/go-pkcs12@v0.7.3 \
-        golang.org/x/text@v0.41.0 \
-        golang.org/x/crypto@v0.56.0 \
-        google.golang.org/grpc@v1.83.2 \
-        github.com/go-jose/go-jose/v4@v4.1.4 \
-        github.com/Azure/go-ntlmssp@v0.1.1 \
-        go.opentelemetry.io/otel/sdk@v1.45.0
+      # 0-CVE FLOORS, not pins (docs/go-module-float.md): raise a module only where go.mod has it
+      # below the floor; a module absent from the graph is skipped. Bare `go get` pins downgraded
+      # newer upstream releases (found 2026-10-05).
+      FLOOR="golang.org/x/net@v0.58.0 software.sslmate.com/src/go-pkcs12@v0.7.3 golang.org/x/text@v0.41.0 golang.org/x/crypto@v0.56.0 google.golang.org/grpc@v1.83.2 github.com/go-jose/go-jose/v4@v4.1.4 github.com/Azure/go-ntlmssp@v0.1.1 go.opentelemetry.io/otel/sdk@v1.45.0"
+      need=""
+      for mv in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${mv%@*}" 2>/dev/null)"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        [ "$(printf '%s\n%s\n' "$have" "${mv#*@}" | sort -V | head -1)" = "${mv#*@}" ] || need="$need $mv"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
       go mod tidy || true
       go build -trimpath \
         -ldflags "-s -w -X github.com/cert-manager/cert-manager/pkg/util.AppVersion=v${{package.version}}" \
