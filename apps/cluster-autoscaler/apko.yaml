@@ -1,0 +1,43 @@
+# Assembles the Cluster Autoscaler runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# Same layout as upstream's image (binary at /cluster-autoscaler, CMD only, no ENTRYPOINT),
+# so upstream's chart can run it unchanged; /usr/bin/cluster-autoscaler is the same binary.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-cluster-autoscaler@local
+
+accounts:
+  groups:
+    - groupname: cluster-autoscaler
+      gid: 1001
+  users:
+    - username: cluster-autoscaler
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  - path: /cluster-autoscaler
+    type: symlink
+    source: /usr/bin/cluster-autoscaler
+    permissions: 0o755
+
+cmd: /cluster-autoscaler
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-cluster-autoscaler"
+  org.opencontainers.image.licenses: "Apache-2.0"
