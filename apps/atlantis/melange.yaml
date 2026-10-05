@@ -78,7 +78,19 @@ pipeline:
       export GOFLAGS=-mod=mod
       # 0-CVE gate: float the flagged Go modules to their fixed releases before
       # building (x/net CVE-2026-46600, x/text CVE-2026-56852), then tidy.
-      go get golang.org/x/net@v0.58.0 golang.org/x/sys@v0.47.0 google.golang.org/grpc@v1.83.2 golang.org/x/crypto@v0.56.0 golang.org/x/text@v0.41.0 golang.org/x/mod@v0.40.0 && go mod tidy
+      # 0-CVE FLOORS, not pins (docs/go-module-float.md): raise a module only where go.mod has it
+      # below the floor; a module absent from the graph is skipped. Bare `go get` pins downgraded
+      # newer upstream releases (found 2026-10-05).
+      FLOOR="golang.org/x/net@v0.58.0 golang.org/x/sys@v0.47.0 google.golang.org/grpc@v1.83.2 golang.org/x/crypto@v0.56.0 golang.org/x/text@v0.41.0 golang.org/x/mod@v0.40.0"
+      need=""
+      for mv in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${mv%@*}" 2>/dev/null)"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        [ "$(printf '%s\n%s\n' "$have" "${mv#*@}" | sort -V | head -1)" = "${mv#*@}" ] || need="$need $mv"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
+      go mod tidy
       # Stamp version/commit/date into main.* exactly like upstream's goreleaser
       # (-X main.version / main.commit / main.date), so `atlantis version` prints
       # the pinned tag. We have no git metadata in a tarball build, so commit is
@@ -111,27 +123,23 @@ pipeline:
       # 0-CVE gate: minor/patch dep bumps (same major) to clear Trivy findings
       # in the tofu binary, then tidy. All leaf/transitive bumps -- no forks,
       # no major bumps, no `replace`.
-      go get github.com/Azure/go-ntlmssp@v0.1.1
-      go get github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream@v1.7.8
-      go get github.com/aws/aws-sdk-go-v2/service/s3@v1.97.3
-      go get go.opentelemetry.io/otel/sdk@v1.45.0
+      # 0-CVE FLOORS, not pins (docs/go-module-float.md): raise a module only where go.mod has it
+      # below the floor; a module absent from the graph is skipped. Bare `go get` pins downgraded
+      # newer upstream releases (found 2026-10-05).
+      FLOOR="github.com/Azure/go-ntlmssp@v0.1.1 github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream@v1.7.8 github.com/aws/aws-sdk-go-v2/service/s3@v1.97.3 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc@v1.45.0 go.opentelemetry.io/otel/log@v0.21.0 go.opentelemetry.io/otel/sdk/log@v0.21.0 go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc@v0.21.0 go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp@v0.21.0 go.opentelemetry.io/otel/exporters/stdout/stdoutlog@v0.21.0 golang.org/x/net@v0.58.0 golang.org/x/crypto@v0.56.0 golang.org/x/sys@v0.47.0 google.golang.org/grpc@v1.83.2 golang.org/x/text@v0.41.0 golang.org/x/mod@v0.40.0 oras.land/oras-go/v2@v2.6.2"
+      need=""
+      for mv in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${mv%@*}" 2>/dev/null)"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        [ "$(printf '%s\n%s\n' "$have" "${mv#*@}" | sort -V | head -1)" = "${mv#*@}" ] || need="$need $mv"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
       # This tofu sub-build is a copy of apps/opentofu, so it carries the same gap:
       # only the http sibling of each exporter was floated, leaving the grpc ones
       # behind. opentofu's own scan showed otlptracegrpc at v1.42.0 (CVE-2026-81870)
       # and otlploggrpc at v0.18.0 (CVE-2026-81871). Float the FAMILIES.
-      go get go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 \
-        go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0 \
-        go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0
-      go get go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp@v1.45.0 \
-        go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc@v1.45.0
       # 0.21.0 is the log-family version of the otel 1.45.0 release train.
-      go get go.opentelemetry.io/otel/log@v0.21.0 \
-        go.opentelemetry.io/otel/sdk/log@v0.21.0 \
-        go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc@v0.21.0 \
-        go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp@v0.21.0 \
-        go.opentelemetry.io/otel/exporters/stdout/stdoutlog@v0.21.0
-      go get golang.org/x/net@v0.58.0 golang.org/x/crypto@v0.56.0 golang.org/x/sys@v0.47.0 google.golang.org/grpc@v1.83.2 golang.org/x/text@v0.41.0 golang.org/x/mod@v0.40.0
-      go get oras.land/oras-go/v2@v2.6.2
       go mod tidy
       LDFLAGS="-s -w -X 'github.com/opentofu/opentofu/version.dev=no'"
       go build -trimpath -ldflags "${LDFLAGS}" \
