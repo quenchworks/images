@@ -1,0 +1,52 @@
+name: rebuild-drifted
+
+# Build workflows are dispatch-only, so a shipped image keeps a new advisory until someone
+# rebuilds it. Most drift is a stale image: Wolfi has already shipped the fixed package, and
+# a plain rebuild clears it. This reads the website's nightly scan (security-scan, 01:00
+# UTC) and dispatches build-<app>.yml for every app with a fixable finding. A rebuild that
+# does not clear it fails the 0-CVE gate and publishes nothing, so this cannot ship a worse
+# image; apps on a BLOCKED=1 hold are skipped by their own prep job.
+on:
+  schedule:
+    - cron: "17 3 * * *"   # after the nightly scan has pushed security.json
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Most apps to dispatch in one run"
+        default: "15"
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Dispatch rebuilds for images with fixable findings
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LIMIT: ${{ inputs.limit || '15' }}
+        run: |
+          set -euo pipefail
+          curl -fsS https://quench-works.com/api/v1/security.json -o security.json
+          # one app per line, most fixable findings first
+          jq -r '.images | to_entries | map(select((.value.fixable // 0) > 0))
+                 | sort_by(-.value.fixable) | .[] | "\(.key) \(.value.fixable)"' security.json > drifted.txt
+          echo "$(wc -l < drifted.txt) image(s) with fixable findings"
+          n=0
+          while read -r app fixable; do
+            [ "$n" -lt "$LIMIT" ] || { echo "limit $LIMIT reached; the rest wait for the next run"; break; }
+            wf=".github/workflows/build-${app}.yml"
+            if [ ! -f "$wf" ]; then echo "skip ${app}: no ${wf}"; continue; fi
+            if grep -q '^BLOCKED=1' "apps/${app}/build.conf" 2>/dev/null; then echo "skip ${app}: BLOCKED"; continue; fi
+            gh workflow run "build-${app}.yml" --repo "${GITHUB_REPOSITORY}" --ref main
+            echo "dispatched ${app} (${fixable} fixable)"
+            n=$((n + 1))
+          done < drifted.txt
+          {
+            echo "## rebuild-drifted"
+            echo "Dispatched ${n} rebuild(s) from the $(jq -r .source security.json)."
+            sed 's/^/- /' drifted.txt
+          } >> "$GITHUB_STEP_SUMMARY"
