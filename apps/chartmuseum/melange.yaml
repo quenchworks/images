@@ -39,25 +39,25 @@ pipeline:
       # containerd CVE-2026-53495 (CRI ExecSync goroutine leak, MEDIUM), fixed in
       # 1.7.35, and CVE-2026-53493 (MEDIUM, 2026-09-24) in 1.7.36; 0.16.6 requires
       # v1.7.33 indirect, no `replace` covers it.
-      go get github.com/containerd/containerd@v1.7.36
+      # 0-CVE FLOORS, not pins (docs/go-module-float.md): raise a module only where go.mod has it
+      # below the floor; a module absent from the graph is skipped. Bare `go get` pins downgraded
+      # newer upstream releases (found 2026-10-05).
+      FLOOR="github.com/containerd/containerd@v1.7.36 google.golang.org/grpc@v1.83.2 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0 golang.org/x/oauth2@v0.36.0 golang.org/x/crypto@v0.56.0 golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0 helm.sh/helm/v3@v3.20.2 oras.land/oras-go/v2@v2.6.2"
+      need=""
+      for mv in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${mv%@*}" 2>/dev/null)"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        [ "$(printf '%s\n%s\n' "$have" "${mv#*@}" | sort -V | head -1)" = "${mv#*@}" ] || need="$need $mv"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
       # grpc GHSA-hrxh-6v49-42gf (xDS RBAC + HTTP/2, HIGH): bump to v1.82.1. grpc@1.82.1
       # requires the otel@1.44.0 family + x/oauth2@0.36.0 (otel bumped 1.41.0 -> 1.43.0).
-      go get google.golang.org/grpc@v1.83.2
       # otel/sdk was MISSING from this float, so the published image still carried
       # CVE-2026-81870 on sdk v1.44.0 while the four exporters were already fixed.
-      go get go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0
-      go get go.opentelemetry.io/otel/sdk@v1.45.0
-      go get go.opentelemetry.io/otel/metric@v1.45.0
-      go get go.opentelemetry.io/otel/trace@v1.45.0
-      go get golang.org/x/oauth2@v0.36.0
-      go get golang.org/x/crypto@v0.56.0
-      go get golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0
-      go get helm.sh/helm/v3@v3.20.2
-      go get oras.land/oras-go/v2@v2.6.1
       go mod tidy
       # oras.land/oras-go/v2 2.6.1 -> 2.6.2: CVE-2026-50163 (HIGH), arbitrary file
       # access via crafted tarball hardlinks. Same advisory trivy hit this round.
-      go get oras.land/oras-go/v2@v2.6.2
       go mod tidy
       go build -trimpath \
         -ldflags "-s -w -X main.Version=${{package.version}}" \
