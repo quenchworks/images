@@ -85,7 +85,10 @@ pipeline:
         git clone --quiet --depth 1 --branch __SWAGGER__ https://github.com/go-swagger/go-swagger "$sw"
         cd "$sw"
         export GOFLAGS=-mod=mod GOTOOLCHAIN=local
-        go get golang.org/x/tools@v0.30.0
+        # A floor, not a pin: this go-swagger tag already requires x/tools 0.35.0, and the bare
+        # `go get` pulled it (and x/net, x/crypto, x/text) back to 0.30.0 (2026-10-05).
+        have="$(go list -m -f '{{.Version}}' golang.org/x/tools)"
+        [ "$(printf '%s\nv0.30.0\n' "$have" | sort -V | head -1)" = v0.30.0 ] || go get golang.org/x/tools@v0.30.0
         go mod tidy
         go build -o "${GOBIN}/swagger" ./cmd/swagger )
       rm -rf src/server/v2.0/models src/server/v2.0/restapi
@@ -318,20 +321,14 @@ pipeline:
       # CVE-2026-39882 (MEDIUM): the otel otlptrace + otlptracehttp exporters are
       # pinned at v1.34.0 in go.mod while the rest of the otel set is v1.43.0;
       # bump the two laggards to v1.43.0 (the fixed version) to clear the gate.
-      go get go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0
-      go get go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0
       # otel/sdk was NOT in this list and the published image carried it at 1.44.0
       # with CVE-2026-81870. sdk moves with the exporters, never after them.
-      go get go.opentelemetry.io/otel/sdk@v1.45.0
       # Three FIXABLE gobinary CVEs in harbor_core's Go module graph; clear them
       # with dep bumps (all leaf/patch/minor bumps -- plain `go get`, NO
       # `go mod tidy`, to avoid a full-module tidy walking generated dirs):
       #   helm.sh/helm/v3            v3.18.5  -> v3.20.2 (CVE-2026-35206)
       #   github.com/Azure/go-ntlmssp v0.0.0-20221128193559 -> v0.1.1
       #   github.com/gorilla/csrf    v1.7.2   -> v1.7.3
-      go get helm.sh/helm/v3@v3.20.2
-      go get github.com/Azure/go-ntlmssp@v0.1.1
-      go get github.com/gorilla/csrf@v1.7.3
       # Comprehensive 0-CVE gate: three FIXABLE transitive deps flagged (all
       # minor/patch, API-compatible, same major -- not a fork/force):
       #   golang.org/x/crypto        v0.49.0 -> v0.52.0 (CVE-2026-39827/28/29/30/
@@ -341,7 +338,18 @@ pipeline:
       #   go.mongodb.org/mongo-driver v1.17.6 -> v1.17.7 (CVE-2026-2303)
       #   golang.org/x/net           v0.55.0 -> v0.56.0 (CVE-2026-46600)
       #   golang.org/x/text          v0.37.0 -> v0.39.0 (CVE-2026-56852)
-      go get golang.org/x/crypto@v0.56.0 golang.org/x/net@v0.58.0 golang.org/x/sys@v0.47.0 google.golang.org/grpc@v1.83.2 golang.org/x/text@v0.41.0 go.mongodb.org/mongo-driver@v1.17.7
+      # All of the above as one FLOOR pass, not pins (docs/go-module-float.md): raise a module only
+      # where go.mod is below the floor, skip it when absent. The separate `go get` lines were
+      # pins and downgraded the build (2026-10-05 scan). Still no `go mod tidy`, as above.
+      FLOOR="go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 helm.sh/helm/v3@v3.20.2 github.com/Azure/go-ntlmssp@v0.1.1 github.com/gorilla/csrf@v1.7.3 golang.org/x/crypto@v0.56.0 golang.org/x/net@v0.58.0 golang.org/x/sys@v0.47.0 google.golang.org/grpc@v1.83.2 golang.org/x/text@v0.41.0 go.mongodb.org/mongo-driver@v1.17.7"
+      need=""
+      for mv in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${mv%@*}" 2>/dev/null)"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        [ "$(printf '%s\n%s\n' "$have" "${mv#*@}" | sort -V | head -1)" = "${mv#*@}" ] || need="$need $mv"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
       GITCOMMIT="v${{package.version}}"
       LDFLAGS="-w -s \
         -X github.com/goharbor/harbor/src/pkg/version.GitCommit=${GITCOMMIT} \
