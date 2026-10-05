@@ -1,0 +1,53 @@
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-mongo-express@local
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+      homedir: /home/nonroot
+  run-as: 1001
+
+# Upstream's image defaults: listen on every interface, MongoDB at the service name
+# "mongo". Basic auth is upstream's opt-in; the chart turns it on with a generated
+# password. 1.1 has no default session secret: set ME_CONFIG_SITE_SESSIONSECRET and
+# ME_CONFIG_SITE_COOKIESECRET or every page is a 500. Set ME_CONFIG_MONGODB_URL (or ME_CONFIG_MONGODB_URL_FILE) to point elsewhere.
+environment:
+  NODE_ENV: production
+  VCAP_APP_HOST: 0.0.0.0
+  PORT: "8081"
+  ME_CONFIG_MONGODB_URL: mongodb://mongo:27017
+  # list every database the user can see (upstream image default); false shows only the
+  # database named in the URL
+  ME_CONFIG_MONGODB_ENABLE_ADMIN: "true"
+
+work-dir: /usr/lib/mongo-express
+
+entrypoint:
+  command: /usr/bin/node
+
+cmd: app.js
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-mongo-express"
+  org.opencontainers.image.licenses: "MIT"

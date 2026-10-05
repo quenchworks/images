@@ -1,0 +1,72 @@
+# Packages Mongo Express onto Wolfi: the tagged source, its webpack UI bundle, and the
+# production dependencies with the 0-CVE pins below.
+package:
+  name: quench-mongo-express
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Mongo Express, the web admin UI for MongoDB, on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - nodejs-24
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - nodejs-24
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/mongo-express/mongo-express/archive/refs/tags/v__TAG__.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      # 0-CVE pins (measured 2026-10-05 against 1.1.0-rc-4). Direct deps move in
+      # dependencies; transitive ones go through yarn resolutions. cookie 0.4 -> 0.7 is
+      # csurf's; it only calls parse and serialize, which 0.7 keeps.
+      node -e '
+        const fs = require("fs");
+        const p = JSON.parse(fs.readFileSync("package.json"));
+        Object.assign(p.dependencies, { "@fastify/busboy": "3.2.1", "body-parser": "2.3.0", "morgan": "1.12.1" });
+        p.resolutions = {
+          "express/body-parser": "1.20.6", "path-to-regexp@~0.1.12": "0.1.13",
+          "qs": "6.16.0", "lodash": "4.18.0", "csurf/cookie": "0.7.2",
+        };
+        fs.writeFileSync("package.json", JSON.stringify(p, null, 2) + "\n");
+      '
+      export YARN_ENABLE_GLOBAL_CACHE=false YARN_ENABLE_TELEMETRY=0
+      yarn="node .yarn/releases/yarn-4.12.0.cjs"
+      $yarn install
+      $yarn build
+      $yarn workspaces focus --production
+      # every pin must be what actually got installed
+      node -e '
+        const want = { "body-parser": "2.3.0", "express/node_modules/body-parser": "1.20.6",
+          qs: "6.16.0", lodash: "4.18.0", cookie: "0.7.2", "path-to-regexp": "0.1.13",
+          morgan: "1.12.1", "@fastify/busboy": "3.2.1" };
+        for (const [k, v] of Object.entries(want)) {
+          const got = require("./node_modules/" + k + "/package.json").version;
+          if (got !== v) { console.error(k, "is", got, "not", v); process.exit(1); }
+        }
+        console.log("pins installed");
+      '
+      app="${{targets.destdir}}/usr/lib/mongo-express"
+      install -d "$app"
+      cp -a app.js config.default.js package.json build-assets.json build public lib node_modules "$app/"
+      rm -rf "$app/lib/scripts"
+      find "$app/node_modules" -type d \( -name test -o -name tests -o -name __tests__ \) -prune -exec rm -rf {} + || true
+
+test:
+  pipeline:
+    - runs: |
+        cd /usr/lib/mongo-express
+        node -e 'import("./config.default.js").then(() => console.log("config loads"))'
