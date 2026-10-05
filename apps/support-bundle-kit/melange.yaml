@@ -1,0 +1,78 @@
+# Builds support-bundle-kit from the release tag tarball and installs upstream's collector scripts.
+package:
+  name: quench-support-bundle-kit
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened support-bundle-kit (Longhorn and Harvester support bundles), built from source"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - bash
+      - busybox   # chroot, dmesg, uname, ps, mount, which, tar
+      - ca-certificates-bundle
+      - curl
+      - tini
+      - yq
+      - zip
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - go
+      - jq
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/rancher/support-bundle-kit/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      export CGO_ENABLED=0 GOTOOLCHAIN=local
+      # 0-CVE floors (docs/go-module-float.md), raised only where go.mod is below them; a
+      # module absent from the graph is skipped. Same set as the CSI sidecars.
+      FLOOR="golang.org/x/crypto@v0.56.0 golang.org/x/mod@v0.40.0 golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0 google.golang.org/grpc@v1.83.2 github.com/google/cel-go@v0.29.0 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0"
+      need=""
+      for mv in $FLOOR; do
+        have="$(GOFLAGS=-mod=mod go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${mv%@*}" 2>/dev/null)"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        [ "$(printf '%s\n%s\n' "$have" "${mv#*@}" | sort -V | head -1)" = "${mv#*@}" ] || need="$need $mv"
+      done
+      echo "raising:${need:- nothing}"
+      if [ -n "$need" ]; then
+        # 0.0.88/0.0.92 pin the otel family with replace directives at 1.43.0; go get alone would
+        # leave the replace in force and split the family, so move a replaced module's replace.
+        for mv in $need; do
+          if [ -n "$(go mod edit -json | jq -r --arg m "${mv%@*}" '.Replace[]? | select(.Old.Path == $m) | .Old.Path')" ]; then
+            go mod edit -replace="${mv%@*}=$mv"
+          fi
+        done
+        GOFLAGS=-mod=mod go get $need
+        GOFLAGS=-mod=mod go mod tidy
+        GOFLAGS=-mod=mod go mod vendor
+      fi
+      d="${{targets.destdir}}"
+      install -d "$d/usr/bin" "$d/usr/share/support-bundle-kit"
+      go build -trimpath -mod=vendor -ldflags "-s -w -X github.com/rancher/support-bundle-kit/cmd.AppVersion=v${{package.version}}" \
+        -o "$d/usr/bin/support-bundle-kit" .
+      grep -aq "v${{package.version}}" "$d/usr/bin/support-bundle-kit"
+      install -m755 package/entrypoint.sh hack/support-bundle-collector.sh hack/collector-* "$d/usr/bin/"
+      # Upstream ADDs hack/common to /tmp and the collectors `source /tmp/common`; melange will
+      # not package /tmp, so it lives under /usr/share and the collectors source it there.
+      install -m644 hack/common "$d/usr/share/support-bundle-kit/common"
+      sed -i 's|/tmp/common|/usr/share/support-bundle-kit/common|' "$d"/usr/bin/collector-*
+      ! grep -l '/tmp/common' "$d"/usr/bin/*
+
+test:
+  pipeline:
+    - runs: |
+        set -eu
+        support-bundle-kit --help >/dev/null
+        command -v yq zip collector-longhorn
