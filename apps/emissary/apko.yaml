@@ -1,0 +1,64 @@
+# Assembles the Emissary-ingress runtime image. Multi-arch, nonroot, SBOM by apko. Upstream's
+# layout: ENTRYPOINT busyambassador entrypoint, which runs diagd (Python) and envoy (Wolfi
+# envoy-1.37) found through /usr/local/bin; uid 8888 in group root with /ambassador group
+# writable, so the arbitrary-UID mode of upstream's chart also works. bash and busybox stand
+# in for the shell tools upstream copies in.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - bash
+    - busybox
+    - envoy-1.37
+    - quench-emissary@local
+
+accounts:
+  groups:
+    - groupname: ambassador
+      gid: 8888
+  users:
+    - username: ambassador
+      uid: 8888
+      gid: 0
+  run-as: 8888
+
+paths:
+  - path: /ambassador
+    type: directory
+    uid: 8888
+    gid: 0
+    permissions: 0o775
+  - path: /ambassador/sidecars
+    type: directory
+    uid: 8888
+    gid: 0
+    permissions: 0o775
+  - path: /tmp/ambassador
+    type: directory
+    uid: 8888
+    gid: 0
+    permissions: 0o775
+
+environment:
+  HOME: /tmp/ambassador
+  PATH: /usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+entrypoint:
+  command: /usr/local/bin/busyambassador entrypoint
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-emissary"
+  org.opencontainers.image.licenses: "Apache-2.0"
