@@ -5319,7 +5319,22 @@ apps:
     arches:
     - amd64
     - arm64
-    versions: []
+    versions:
+    - version: 1.13.0
+      digest: sha256:38dd5952d93b8b8fbf8e3ae604895cae25613eacbe791cc71334bc4e08693ba8
+      published: '2026-10-04T23:32:24Z'
+      size: 31.3 MB
+      layers: 1
+    - version: 1.12.1
+      digest: sha256:2d2d7db403c90039c7c4cdb05d1916931b73b8d18dd254366cd584ef998f4097
+      published: '2026-10-04T23:32:23Z'
+      size: 31.2 MB
+      layers: 1
+    - version: 1.11.3
+      digest: sha256:30203fa08b6106fb31b8ebe9d6ee24f48149f4df8412ab4e943a69e3465827dc
+      published: '2026-10-04T23:32:22Z'
+      size: 31.2 MB
+      layers: 1
   longhorn-manager:
     image: ghcr.io/quenchworks/images/longhorn-manager
     category: Storage & platform
@@ -5381,6 +5396,96 @@ apps:
       published: '2026-10-04T23:01:01Z'
       size: 40.8 MB
       layers: 1
+  csi-attacher:
+    image: ghcr.io/quenchworks/images/csi-attacher
+    category: Storage & platform
+    summary: The Kubernetes CSI external-attacher sidecar, which attaches and detaches CSI volumes through
+      VolumeAttachment objects. Built from source with the vulnerable modules floated, for any CSI driver
+      (Longhorn included). Image only, no chart; runs as root like upstream.
+    source: https://github.com/kubernetes-csi/external-attacher
+    upstream: https://kubernetes-csi.github.io/docs/
+    license: Apache-2.0
+    tier: standard
+    status: built
+    arches:
+    - amd64
+    - arm64
+    versions: []
+  csi-provisioner:
+    image: ghcr.io/quenchworks/images/csi-provisioner
+    category: Storage & platform
+    summary: The Kubernetes CSI external-provisioner sidecar, which creates and deletes CSI volumes for
+      PersistentVolumeClaims. Built from source with the vulnerable modules floated, for any CSI driver
+      (Longhorn included). Image only, no chart; runs as root like upstream.
+    source: https://github.com/kubernetes-csi/external-provisioner
+    upstream: https://kubernetes-csi.github.io/docs/
+    license: Apache-2.0
+    tier: standard
+    status: built
+    arches:
+    - amd64
+    - arm64
+    versions: []
+  csi-resizer:
+    image: ghcr.io/quenchworks/images/csi-resizer
+    category: Storage & platform
+    summary: The Kubernetes CSI external-resizer sidecar, which expands CSI volumes when a PersistentVolumeClaim
+      grows. Built from source with the vulnerable modules floated, for any CSI driver (Longhorn included).
+      Image only, no chart; runs as root like upstream.
+    source: https://github.com/kubernetes-csi/external-resizer
+    upstream: https://kubernetes-csi.github.io/docs/
+    license: Apache-2.0
+    tier: standard
+    status: built
+    arches:
+    - amd64
+    - arm64
+    versions: []
+  csi-snapshotter:
+    image: ghcr.io/quenchworks/images/csi-snapshotter
+    category: Storage & platform
+    summary: The Kubernetes CSI external-snapshotter sidecar, which creates and deletes CSI snapshots
+      for VolumeSnapshotContent objects. Built from source with the vulnerable modules floated, for any
+      CSI driver (Longhorn included). Image only, no chart; runs as root like upstream.
+    source: https://github.com/kubernetes-csi/external-snapshotter
+    upstream: https://kubernetes-csi.github.io/docs/
+    license: Apache-2.0
+    tier: standard
+    status: built
+    arches:
+    - amd64
+    - arm64
+    versions: []
+  csi-node-driver-registrar:
+    image: ghcr.io/quenchworks/images/csi-node-driver-registrar
+    category: Storage & platform
+    summary: The Kubernetes CSI node-driver-registrar sidecar, which registers a node CSI driver with
+      the kubelet (busybox included for driver preStop hooks). Built from source with the vulnerable modules
+      floated, for any CSI driver (Longhorn included). Image only, no chart; runs as root like upstream.
+    source: https://github.com/kubernetes-csi/node-driver-registrar
+    upstream: https://kubernetes-csi.github.io/docs/
+    license: Apache-2.0
+    tier: standard
+    status: built
+    arches:
+    - amd64
+    - arm64
+    versions: []
+  csi-livenessprobe:
+    image: ghcr.io/quenchworks/images/csi-livenessprobe
+    category: Storage & platform
+    summary: The Kubernetes CSI livenessprobe sidecar, which serves /healthz by probing a CSI driver socket.
+      Built from source with the vulnerable modules floated, for any CSI driver (Longhorn included). Image
+      only, no chart; runs as root like upstream.
+    source: https://github.com/kubernetes-csi/livenessprobe
+    upstream: https://kubernetes-csi.github.io/docs/
+    license: Apache-2.0
+    tier: standard
+    status: built
+    arches:
+    - amd64
+    - arm64
+    versions: []
   rclone:
     image: ghcr.io/quenchworks/images/rclone
     category: Storage & platform
@@ -7656,8 +7761,8 @@ apps:
     - version: 3.19.0
       digest: sha256:ecb7033b555343f8f9e8541a894462cfdd538e55c4db8f5833febdcb2c77eb81
       published: '2026-09-28T08:30:59Z'
-      size: null
-      layers: null
+      size: 31.5 MB
+      layers: 1
   apisix-ingress-controller:
     image: ghcr.io/quenchworks/images/apisix-ingress-controller
     category: Gateway
