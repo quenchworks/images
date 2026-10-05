@@ -49,10 +49,22 @@ pipeline:
       sed -i '/^func flushKernelSpec() {$/,/^}$/d; /^\t"github.com\/cilium\/ebpf\/btf"$/d' pkg/sensors/load_linux.go
       sed -i '/^func flushKernelSpec() {}$/d' pkg/sensors/load_windows.go
       ! grep -rn -e 'FlushKernelSpec' -e 'flushKernelSpec' --include='*.go' pkg cmd
-      go get github.com/cilium/ebpf@v0.22.0
+      # 0-CVE FLOORS, not pins (docs/go-module-float.md): raise a module only where go.mod has it
+      # below the floor; a module absent from the graph is skipped. Bare `go get` pins downgraded
+      # newer upstream releases (found 2026-10-05).
+      FLOOR="github.com/cilium/ebpf@v0.22.0 google.golang.org/grpc@v1.83.2"
+      # Go semver order (a release outranks its prereleases); busybox sort -V does not.
+      vlt() { awk -v a="${1#v}" -v b="${2#v}" 'function pp(s,  p){sub(/\+.*/,"",s);p=index(s,"-");if(p){C=substr(s,1,p-1);P=substr(s,p+1)}else{C=s;P=""}} function cmp(x,y,  i,n,m,X,Y){n=split(x,X,".");m=split(y,Y,".");for(i=1;i<=n&&i<=m;i++){if(X[i]==Y[i])continue;if(X[i]~/^[0-9]+$/&&Y[i]~/^[0-9]+$/)return (X[i]+0<Y[i]+0)?-1:1;if(X[i]~/^[0-9]+$/)return -1;if(Y[i]~/^[0-9]+$/)return 1;return (X[i]<Y[i])?-1:1}return (n<m)?-1:(n>m)?1:0} BEGIN{pp(a);ca=C;pa=P;pp(b);cb=C;pb=P;c=cmp(ca,cb);if(c==0){if(pa==pb)c=0;else if(pa=="")c=1;else if(pb=="")c=-1;else c=cmp(pa,pb)}exit !(c<0)}'; }
+      need=""
+      for mv in $FLOOR; do
+        have="$(GOFLAGS=-mod=mod go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${mv%@*}" 2>/dev/null)"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        vlt "$have" "${mv#*@}" && need="$need $mv"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
       # grpc v1.82.1 carries CVE-2026-84303/84304/84445; v1.83.2 is the
       # catalog's canonical grpc floor.
-      go get google.golang.org/grpc@v1.83.2
       go mod tidy
       go mod vendor
       grep -q 'github.com/cilium/ebpf v0.22.0' go.mod

@@ -37,12 +37,24 @@ pipeline:
       export GOFLAGS=-mod=mod
       # 0-CVE float: bundled github.com/DataDog/dd-trace-go/v2 v2.7.1 carries
       # CVE-2026-50274 (HIGH), fixed in v2.8.1. Bump the module and re-resolve.
-      go get github.com/DataDog/dd-trace-go/v2@v2.8.1
+      # 0-CVE FLOORS, not pins (docs/go-module-float.md): raise a module only where go.mod has it
+      # below the floor; a module absent from the graph is skipped. Bare `go get` pins downgraded
+      # newer upstream releases (found 2026-10-05).
+      FLOOR="github.com/DataDog/dd-trace-go/v2@v2.8.1 golang.org/x/mod@v0.40.0"
+      # Go semver order (a release outranks its prereleases); busybox sort -V does not.
+      vlt() { awk -v a="${1#v}" -v b="${2#v}" 'function pp(s,  p){sub(/\+.*/,"",s);p=index(s,"-");if(p){C=substr(s,1,p-1);P=substr(s,p+1)}else{C=s;P=""}} function cmp(x,y,  i,n,m,X,Y){n=split(x,X,".");m=split(y,Y,".");for(i=1;i<=n&&i<=m;i++){if(X[i]==Y[i])continue;if(X[i]~/^[0-9]+$/&&Y[i]~/^[0-9]+$/)return (X[i]+0<Y[i]+0)?-1:1;if(X[i]~/^[0-9]+$/)return -1;if(Y[i]~/^[0-9]+$/)return 1;return (X[i]<Y[i])?-1:1}return (n<m)?-1:(n>m)?1:0} BEGIN{pp(a);ca=C;pa=P;pp(b);cb=C;pb=P;c=cmp(ca,cb);if(c==0){if(pa==pb)c=0;else if(pa=="")c=1;else if(pb=="")c=-1;else c=cmp(pa,pb)}exit !(c<0)}'; }
+      need=""
+      for mv in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${mv%@*}" 2>/dev/null)"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        vlt "$have" "${mv#*@}" && need="$need $mv"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
       # golang.org/x/mod CVE-2026-56864/56865 (HIGH, malicious GOSUMDB/GOPROXY able to
       # forge module content). Arrives transitively -- there is no direct import -- so it
       # needs an explicit floor. v0.40.0, NOT the v0.37.0/v0.38.0 Trivy names as fixed:
       # those are themselves affected (see docs/go-module-float.md).
-      go get golang.org/x/mod@v0.40.0
       # grpc GHSA-hrxh-6v49-42gf (xDS RBAC + HTTP/2, HIGH): still needed, upstream pins
       # grpc v1.82.0. grpc@1.82.1 requires the otel family + x/oauth2@0.36.0, so keep
       # that cascade floated too.

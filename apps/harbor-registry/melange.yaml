@@ -149,19 +149,23 @@ pipeline:
       go get golang.org/x/sys@latest
       go get golang.org/x/oauth2@latest
       go get github.com/aws/aws-sdk-go@latest
-      go get github.com/gorilla/handlers@v1.5.2
-      go get github.com/prometheus/client_golang@v1.20.5
-      go get github.com/sirupsen/logrus@v1.9.3
-      go get github.com/bshuster-repo/logrus-logstash-hook@v1.0.0
+      # 0-CVE FLOORS, not pins (docs/go-module-float.md): raise a module only where go.mod has it
+      # below the floor; a module absent from the graph is skipped. Bare `go get` pins downgraded
+      # newer upstream releases (found 2026-10-05).
+      FLOOR="github.com/gorilla/handlers@v1.5.2 github.com/prometheus/client_golang@v1.20.5 github.com/sirupsen/logrus@v1.9.3 github.com/bshuster-repo/logrus-logstash-hook@v1.0.0 google.golang.org/grpc@v1.83.2 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0 gopkg.in/square/go-jose.v1@v1.1.1 github.com/Azure/go-autorest/autorest/adal@v0.9.24 github.com/golang-jwt/jwt/v4@v4.5.2"
+      # Go semver order (a release outranks its prereleases); busybox sort -V does not.
+      vlt() { awk -v a="${1#v}" -v b="${2#v}" 'function pp(s,  p){sub(/\+.*/,"",s);p=index(s,"-");if(p){C=substr(s,1,p-1);P=substr(s,p+1)}else{C=s;P=""}} function cmp(x,y,  i,n,m,X,Y){n=split(x,X,".");m=split(y,Y,".");for(i=1;i<=n&&i<=m;i++){if(X[i]==Y[i])continue;if(X[i]~/^[0-9]+$/&&Y[i]~/^[0-9]+$/)return (X[i]+0<Y[i]+0)?-1:1;if(X[i]~/^[0-9]+$/)return -1;if(Y[i]~/^[0-9]+$/)return 1;return (X[i]<Y[i])?-1:1}return (n<m)?-1:(n>m)?1:0} BEGIN{pp(a);ca=C;pa=P;pp(b);cb=C;pb=P;c=cmp(ca,cb);if(c==0){if(pa==pb)c=0;else if(pa=="")c=1;else if(pb=="")c=-1;else c=cmp(pa,pb)}exit !(c<0)}'; }
+      need=""
+      for mv in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${mv%@*}" 2>/dev/null)"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        vlt "$have" "${mv#*@}" && need="$need $mv"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
       # grpc@v1.82.1 clears GHSA-hrxh-6v49-42gf; pin its coherent otel cascade so
       # MVS resolves compatible versions (go mod tidy prunes any not imported).
       # oauth2 is already floated @latest above (>= 0.36.0).
-      go get google.golang.org/grpc@v1.83.2 \
-        go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0 \
-        go.opentelemetry.io/otel/sdk@v1.45.0 \
-        go.opentelemetry.io/otel/trace@v1.45.0 \
-        go.opentelemetry.io/otel/metric@v1.45.0
-      go get gopkg.in/square/go-jose.v1@v1.1.1
       # CVE-2020-26160 (HIGH): github.com/dgrijalva/jwt-go v3.2.0 is abandoned
       # upstream with no fixed release at that module path. It is pulled in
       # ONLY by github.com/Azure/go-autorest/autorest/adal (the old
@@ -186,13 +190,11 @@ pipeline:
       # Verified: `go build ./...` succeeds, `go list -m all | grep jwt` shows
       # only golang-jwt/jwt/v4, and dgrijalva is absent from go.mod/go.sum/
       # vendor and from the built binary's strings.
-      go get github.com/Azure/go-autorest/autorest/adal@v0.9.24
       # adal v0.9.24 lands on golang-jwt/jwt/v4 v4.5.0, which carries its own
       # CVE-2025-30204 (HIGH, excessive memory during header parsing; fixed in
       # 4.5.2) and CVE-2024-51744 (LOW, fixed in 4.5.1). Migrating off the
       # abandoned module is only half the job -- the replacement has to be
       # floated past its own advisories too.
-      go get github.com/golang-jwt/jwt/v4@v4.5.2
       go mod tidy
       go mod vendor
 

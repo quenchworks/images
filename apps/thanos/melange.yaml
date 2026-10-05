@@ -402,8 +402,20 @@ pipeline:
       # otel CVE-2026-81870 / CVE-2026-81871: the published image drifted onto these
       # after release. Every module listed is one this app's own go.mod carries; a
       # floor naming a module absent from the graph is rejected by some recipes.
-      go get github.com/prometheus/prometheus@v0.312.0 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/bridge/opentracing@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/sdk/metric@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0
-      go get github.com/prometheus-community/prom-label-proxy@v0.14.0
+      # 0-CVE FLOORS, not pins (docs/go-module-float.md): raise a module only where go.mod has it
+      # below the floor; a module absent from the graph is skipped. Bare `go get` pins downgraded
+      # newer upstream releases (found 2026-10-05).
+      FLOOR="github.com/prometheus/prometheus@v0.312.0 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/bridge/opentracing@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/sdk/metric@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0 github.com/prometheus-community/prom-label-proxy@v0.14.0 google.golang.org/grpc@v1.83.2 golang.org/x/text@v0.41.0 golang.org/x/crypto@v0.56.0 github.com/thanos-io/promql-engine@v0.0.0-20260713055003-6e924468ac44"
+      # Go semver order (a release outranks its prereleases); busybox sort -V does not.
+      vlt() { awk -v a="${1#v}" -v b="${2#v}" 'function pp(s,  p){sub(/\+.*/,"",s);p=index(s,"-");if(p){C=substr(s,1,p-1);P=substr(s,p+1)}else{C=s;P=""}} function cmp(x,y,  i,n,m,X,Y){n=split(x,X,".");m=split(y,Y,".");for(i=1;i<=n&&i<=m;i++){if(X[i]==Y[i])continue;if(X[i]~/^[0-9]+$/&&Y[i]~/^[0-9]+$/)return (X[i]+0<Y[i]+0)?-1:1;if(X[i]~/^[0-9]+$/)return -1;if(Y[i]~/^[0-9]+$/)return 1;return (X[i]<Y[i])?-1:1}return (n<m)?-1:(n>m)?1:0} BEGIN{pp(a);ca=C;pa=P;pp(b);cb=C;pb=P;c=cmp(ca,cb);if(c==0){if(pa==pb)c=0;else if(pa=="")c=1;else if(pb=="")c=-1;else c=cmp(pa,pb)}exit !(c<0)}'; }
+      need=""
+      for mv in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${mv%@*}" 2>/dev/null)"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        vlt "$have" "${mv#*@}" && need="$need $mv"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
 
       # --- house coherent float (docs/go-module-float.md). thanos 0.42.3 requires
       # grpc v1.81.1 and prometheus 0.312.0 requires v1.81.1 too, so MVS lands below
@@ -420,20 +432,14 @@ pipeline:
       # x/crypto added 2026-09-14: the gate flagged v0.55.0 (CVE-2026-56855,
       # CVE-2026-78662) in the published image; this line floated grpc and text but
       # not crypto, so crypto stayed at whatever the graph resolved.
-      go get google.golang.org/grpc@v1.83.2 golang.org/x/text@v0.41.0 golang.org/x/crypto@v0.56.0
-      go get github.com/thanos-io/promql-engine@v0.0.0-20260713055003-6e924468ac44
       # otel is NOT one module. The comment above was right that go.opentelemetry.io/otel
       # itself is pulled up to 1.44.0 by prometheus, but the otel repo publishes each
       # component as its OWN module with its OWN version, and bridge/opentracing stayed
       # at v1.36.0 -- carrying CVE-2026-45404 (MEDIUM), fixed in 1.45.0. Floating the
       # umbrella module does nothing for it; the bridge has to be named explicitly.
-      go get go.opentelemetry.io/otel/bridge/opentracing@v1.45.0
       # The same lesson one module over: prometheus pulls otel core up, but the otlp
       # EXPORTERS are their own modules and stayed at v1.44.0, carrying CVE-2026-81870
       # (LOW, gate-blocking). Float the otlptrace family; MVS lifts otel core with it.
-      go get go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 \
-        go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0 \
-        go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0
 
       # --- vendor + patch promql-engine (its latest commit still targets the old
       # prometheus promql API). Copy the fetched module out of the read-only cache,
