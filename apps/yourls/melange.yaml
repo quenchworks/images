@@ -118,7 +118,9 @@ pipeline:
       #!/usr/bin/env php
       <?php
       $env = static fn (string $k, string $d = '') => getenv($k) === false ? $d : getenv($k);
-      $dsn = sprintf('mysql:host=%s;dbname=%s', $env('YOURLS_DB_HOST', 'localhost'), $env('YOURLS_DB_NAME', 'yourls'));
+      // YOURLS_DB_HOST may carry a port ("db:3306"), as YOURLS itself accepts; PDO wants it apart
+      [$host, $port] = array_pad(explode(':', $env('YOURLS_DB_HOST', 'localhost'), 2), 2, '3306');
+      $dsn = sprintf('mysql:host=%s;port=%s;dbname=%s', $host, $port, $env('YOURLS_DB_NAME', 'yourls'));
       $deadline = time() + (int) $env('YOURLS_DB_WAIT', '300');
       for (;;) {
           try {

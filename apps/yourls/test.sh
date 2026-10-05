@@ -21,7 +21,7 @@ for i in $(seq 1 60); do
 done
 
 docker run -d --name "$APP" --network "$NET" -p 127.0.0.1:8080:8080 \
-  -e YOURLS_DB_HOST="$DB" -e YOURLS_DB_USER=yourls -e YOURLS_DB_PASS="$PW" \
+  -e YOURLS_DB_HOST="$DB:3306" -e YOURLS_DB_USER=yourls -e YOURLS_DB_PASS="$PW" \
   -e YOURLS_SITE=http://127.0.0.1:8080 -e YOURLS_COOKIEKEY="cookie-$$" \
   -e YOURLS_USER=admin -e YOURLS_PASS="$ADMIN_PW" "$IMAGE" >/dev/null
 for i in $(seq 1 30); do
