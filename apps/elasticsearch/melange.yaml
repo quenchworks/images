@@ -213,10 +213,17 @@ pipeline:
       [ "$n" -gt 0 ] || [ -n "$(find "$dest/modules" -name 'jackson-core-2.21.7.jar')" ] \
         || { echo "FATAL: no jackson-core 2.21.x in modules; the dist moved, re-audit"; exit 1; }
 
-      # --- (b3) NEW in 9.5.0: jsoup 1.21.2 -> 1.23.1 (ingest-attachment).
-      #     CVE-2026-71497. Built for JDK 17, and ES bundles a newer JDK, so it loads.
-      getj "$MC/org/jsoup/jsoup/1.23.1/jsoup-1.23.1.jar" jsoup-1.23.1.jar 8b15e2b28eeb1e0a88a9b7dab4dc0c23524491c56959785dea22f7846897b668
-      find "$dest/modules" -name 'jsoup-1.21.2.jar' -exec sh -c 'cp "$1" "$(dirname "$2")/jsoup-1.23.1.jar"; rm -f "$2"' _ "$DL/jsoup-1.23.1.jar" {} \;
+      # --- (b3) NEW in 9.5.0: jsoup -> 1.23.2 (ingest-attachment). CVE-2026-71497, then
+      #     CVE-2026-75140 (2026-10-06). Built for JDK 17, and ES bundles a newer JDK, so it
+      #     loads. Version-aware: every jsoup 1.x jar older than the fix is replaced.
+      getj "$MC/org/jsoup/jsoup/1.23.2/jsoup-1.23.2.jar" jsoup-1.23.2.jar e9d8c856856680427f096d156f02a414289985c930998fcb519ce5be39b42003
+      for j in $(find "$dest/modules" -name 'jsoup-1.*.jar'); do
+        v=$(basename "$j" .jar); v=${v#jsoup-}
+        [ "$v" = 1.23.2 ] && continue
+        [ "$(printf '%s\n1.23.2\n' "$v" | sort -V | head -1)" = "$v" ] || continue
+        cp "$DL/jsoup-1.23.2.jar" "$(dirname "$j")/jsoup-1.23.2.jar"; rm -f "$j"
+      done
+      [ -n "$(find "$dest/modules" -name 'jsoup-1.*.jar')" ] || { echo "no jsoup in modules; it moved"; exit 1; }
 
       # --- (b4) httpclient5 5.6.1 -> 5.6.3 and log4j-api 2.25.4 -> 2.25.5. Both are
       #     same-line patches, so they carry no API change. Note the httpclient5 bump is

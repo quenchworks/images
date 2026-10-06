@@ -101,24 +101,28 @@ pipeline:
         rm -f "$jar"
         [ "$n" -gt 0 ] || [ -n "$(find "$dest" -name "$art-$fixed.jar")" ] || { echo "no $art $* or $fixed in the dist; it moved"; exit 1; }
       done
-      # (2b) jsoup 1.15.3 -> 1.23.1 in opensearch-reports-scheduler (CVE-2026-71497).
+      # (2b) jsoup 1.15.3 -> 1.23.2 in opensearch-reports-scheduler (CVE-2026-71497).
       #      Standalone plugin jar, so a content swap keeping the filename (same
       #      convention as the jackson swaps above: the plugin classloader scans the dir
       #      and Trivy reads the jar's internal pom.properties). NOTE this is an 8-minor
       #      jump, unlike the 1.21.2 -> 1.23.1 hop the elasticsearch recipe needed --
       #      jsoup keeps 1.x source-compatible, and the boot + reports path is exercised
       #      by the smoke test, but re-check here first if reports ever misbehave.
+      #      2026-10-06: 1.23.2 (CVE-2026-75140, HIGH) also replaces the 1.23.1 that 3.9.0
+      #      ships. Version-aware: every jsoup 1.x jar older than the fix gets its content.
       js=$(mktemp -d)
-      curl -fsSL -o "$js/jsoup.jar" "$MC/org/jsoup/jsoup/1.23.1/jsoup-1.23.1.jar"
-      echo "8b15e2b28eeb1e0a88a9b7dab4dc0c23524491c56959785dea22f7846897b668  $js/jsoup.jar" | sha256sum -c -
-      # 3.9.0 ships jsoup 1.23.1 itself; same rule as the jackson swap above.
-      if [ -n "$(find "$dest" -name 'jsoup-1.15.3.jar')" ]; then
-        find "$dest" -name 'jsoup-1.15.3.jar' -exec cp "$js/jsoup.jar" {} \;
-      else
-        [ -n "$(find "$dest" -name 'jsoup-1.23.1.jar')" ] || { echo "neither jsoup 1.15.3 nor 1.23.1 in the dist; it moved"; exit 1; }
-      fi
+      curl -fsSL -o "$js/jsoup.jar" "$MC/org/jsoup/jsoup/1.23.2/jsoup-1.23.2.jar"
+      echo "e9d8c856856680427f096d156f02a414289985c930998fcb519ce5be39b42003  $js/jsoup.jar" | sha256sum -c -
+      jsn=0
+      for j in $(find "$dest" -name 'jsoup-1.*.jar'); do
+        v=$(basename "$j" .jar); v=${v#jsoup-}
+        [ "$v" = 1.23.2 ] && continue
+        [ "$(printf '%s\n1.23.2\n' "$v" | sort -V | head -1)" = "$v" ] || continue
+        cp "$js/jsoup.jar" "$j"; jsn=$((jsn+1))
+      done
+      [ -n "$(find "$dest" -name 'jsoup-1.*.jar')" ] || { echo "no jsoup in the dist; it moved"; exit 1; }
       rm -rf "$js"
-      echo "jsoup: replaced $found copy/copies with 1.23.1 content"
+      echo "jsoup: replaced $jsn copy/copies with 1.23.2 content"
 
       # --- (2c) httpcomponents5 + netty-codec-http + log4j-api -------------------------
       # HIGH findings on the published 3.7.0 image:
