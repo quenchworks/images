@@ -38,21 +38,24 @@ pipeline:
       app="${{targets.destdir}}/opt/dependency-track"
       install -d "$app"
       cp -r dependency-track-apiserver.jar lib "$app/"
-      # freemarker CVE-2026-84939 (path traversal via a malformed locale), fixed in
-      # 2.3.35; the dist ships 2.3.34. The sha256 is
-      # from a download whose sha1 matched Maven Central's.
-      rm "$app/lib/freemarker-2.3.34.jar"
-      wget -q -O "$app/lib/freemarker-2.3.35.jar" https://repo1.maven.org/maven2/org/freemarker/freemarker/2.3.35/freemarker-2.3.35.jar
-      echo "0fac87dddd78f1223139e8ef88e819c7f483c0a3835cdf5982ad5e4576d1d896  $app/lib/freemarker-2.3.35.jar" | sha256sum -c -
-      test "$(ls "$app"/lib/freemarker-*.jar | wc -l)" = 1
-      # jackson-databind 2.22.2 carries CVE-2026-91776/-91777; 2.22.3 is the same-line fix.
-      rm "$app/lib/jackson-databind-2.22.2.jar"
-      wget -q -O "$app/lib/jackson-databind-2.22.3.jar" https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-databind/2.22.3/jackson-databind-2.22.3.jar
-      echo "556db5439e206114346043f68d200497dc96a0bca62a360a81784092ebd0e0a9  $app/lib/jackson-databind-2.22.3.jar" | sha256sum -c -
-      # jackson-core 2.22.2 carries CVE-2026-89407/-89425 (2026-10-04); 2.22.3 is the same-line fix.
-      rm "$app/lib/jackson-core-2.22.2.jar"
-      wget -q -O "$app/lib/jackson-core-2.22.3.jar" https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-core/2.22.3/jackson-core-2.22.3.jar
-      echo "8a501126a385b25841915d839508f8a66e2a0dbc8a6709d055ef3b3e852b094c  $app/lib/jackson-core-2.22.3.jar" | sha256sum -c -
+      # Bundled jars below their CVE fix get the fixed release (sha256 from a download whose
+      # sha1 matched Maven Central's). Version-aware: a release that already ships the fix
+      # or newer keeps its copy; exactly one copy of each must be in lib/.
+      #   freemarker 2.3.35: CVE-2026-84939 (path traversal via a malformed locale)
+      #   jackson-databind 2.22.3: CVE-2026-91776/-91777
+      #   jackson-core 2.22.3: CVE-2026-89407/-89425 (2026-10-04)
+      swap() {  # <artifact> <fix version> <maven group path> <sha256>
+        old="$(ls "$app"/lib/"$1"-[0-9]*.jar 2>/dev/null || true)"
+        [ "$(printf '%s\n' "$old" | grep -c .)" = 1 ] || { echo "expected one $1 jar in lib/, got: $old"; exit 1; }
+        v="$(basename "$old" .jar)"; v="${v#"$1"-}"
+        [ "$(printf '%s\n%s\n' "$v" "$2" | sort -V | head -1)" = "$2" ] && { echo "$1 $v: at or past $2"; return 0; }
+        rm "$old"
+        wget -q -O "$app/lib/$1-$2.jar" "https://repo1.maven.org/maven2/$3/$1/$2/$1-$2.jar"
+        echo "$4  $app/lib/$1-$2.jar" | sha256sum -c -
+      }
+      swap freemarker 2.3.35 org/freemarker 0fac87dddd78f1223139e8ef88e819c7f483c0a3835cdf5982ad5e4576d1d896
+      swap jackson-databind 2.22.3 com/fasterxml/jackson/core 556db5439e206114346043f68d200497dc96a0bca62a360a81784092ebd0e0a9
+      swap jackson-core 2.22.3 com/fasterxml/jackson/core 8a501126a385b25841915d839508f8a66e2a0dbc8a6709d055ef3b3e852b094c
       chmod -R a+rX "$app"
 
 test:
