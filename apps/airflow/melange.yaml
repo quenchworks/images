@@ -90,6 +90,7 @@ pipeline:
       #   sqlparse         <0.5.5     -> 0.5.5+
       #   urllib3          2.7.0      -> 2.8.0+   (HIGH CVE-2026-97687 and one more, 2026-10-01)
       #   PyJWT            2.14.0     -> 2.15.0+  (MEDIUM CVE-2026-101918, 2026-10-01)
+      #   Mako             1.4.1      -> 1.4.2+   (MEDIUM CVE-2026-102991, 2026-10-06)
       /opt/airflow-venv/bin/pip install --no-cache-dir --upgrade \
         "cryptography>=48.0.1" \
         "sqlparse>=0.5.5" \
@@ -99,11 +100,12 @@ pipeline:
         "tornado>=6.5.7" \
         "aiosmtplib>=5.1.1" \
         "urllib3>=2.8.0" \
-        "PyJWT>=2.15.0"
+        "PyJWT>=2.15.0" \
+        "Mako>=1.4.2"
       # the floors must take effect, not just read right
       /opt/airflow-venv/bin/python -c "
       import importlib.metadata as m
-      for n, want in (('urllib3', (2, 8, 0)), ('PyJWT', (2, 15, 0))):
+      for n, want in (('urllib3', (2, 8, 0)), ('PyJWT', (2, 15, 0)), ('Mako', (1, 4, 2))):
           got = tuple(int(x) for x in m.version(n).split('.')[:3])
           assert got >= want, (n, got)
       "
