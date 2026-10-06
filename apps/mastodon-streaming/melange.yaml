@@ -40,18 +40,19 @@ pipeline:
       export COREPACK_HOME=/tmp/corepack COREPACK_ENABLE_DOWNLOAD_PROMPT=0 HOME=/tmp/home
       mkdir -p /tmp/corepack-bin "$HOME" && corepack enable --install-directory /tmp/corepack-bin
       export PATH="/tmp/corepack-bin:$PATH"
-      # qs 6.15.3 (CVE-2026-82417 and -82562) and undici 8.10.0 (CVE-2026-85024) sit in the
-      # production tree; resolutions move them within their line. The lockfile changes, so
+      # qs 6.15.3 (CVE-2026-82417 and -82562), undici 8.10.0 (CVE-2026-85024), proxy-addr 2.0.7
+      # (CVE-2026-90711) and source-map-js 1.2.1 (CVE-2026-93749) sit in the production tree;
+      # resolutions move them within their line (yarn, so npm 12's cooldown does not apply). The lockfile changes, so
       # immutable installs are off (GitHub Actions sets CI, which turns them on by default).
       node -e '
         const fs = require("fs"), p = JSON.parse(fs.readFileSync("package.json"));
-        p.resolutions = Object.assign(p.resolutions || {}, { qs: "6.16.0", undici: "8.10.2" });
+        p.resolutions = Object.assign(p.resolutions || {}, { qs: "6.16.0", undici: "8.10.2", "proxy-addr": "2.0.8", "source-map-js": "1.2.2" });
         fs.writeFileSync("package.json", JSON.stringify(p, null, 2) + "\n");
       '
       YARN_ENABLE_IMMUTABLE_INSTALLS=false yarn workspaces focus --production @mastodon/streaming
       node -e '
         const fs = require("fs"), path = require("path"), bad = [];
-        const floor = { qs: [6, 16, 0], undici: [8, 10, 2] };
+        const floor = { qs: [6, 16, 0], undici: [8, 10, 2], "proxy-addr": [2, 0, 8], "source-map-js": [1, 2, 2] };
         (function walk(d) {
           for (const e of fs.readdirSync(d, { withFileTypes: true })) {
             if (!e.isDirectory()) continue;
@@ -65,7 +66,7 @@ pipeline:
           }
         })("node_modules");
         if (bad.length) { console.error("below floor: " + bad.join(", ")); process.exit(1); }
-        console.log("qs and undici at or above their floors");
+        console.log("qs, undici, proxy-addr and source-map-js at or above their floors");
       '
       rm -rf .yarn/cache .yarn/install-state.gz
       node -e 'require("express"); require("ioredis"); require("pg"); console.log("deps load")'
