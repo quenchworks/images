@@ -36,8 +36,12 @@ accounts:
 # Boot the Quarkus fast-jar on the JRE. Quarkus system properties (-D...) MUST
 # precede -jar. Bind to 0.0.0.0 so the edge port is reachable; port 4566 is the
 # LocalStack-compatible edge port Floci listens on by default.
+# Listening on 0.0.0.0 inside the container needs floci.security.allow-unsafe-network-exposure
+# since 2.2.0 (Floci refuses a non-loopback address without it); upstream's images pass the
+# same two flags. build.conf render() adds it only from 2.2.0: older lines reject the unknown
+# property at startup (SRCFG00050). Who can reach the port is the chart's NetworkPolicy and Service.
 entrypoint:
-  command: /usr/lib/jvm/java-25-openjdk/bin/java --enable-native-access=ALL-UNNAMED -Dquarkus.http.host=0.0.0.0 -Dquarkus.http.port=4566 -jar /usr/share/floci/quarkus-app/quarkus-run.jar
+  command: /usr/lib/jvm/java-25-openjdk/bin/java --enable-native-access=ALL-UNNAMED -Dquarkus.http.host=0.0.0.0 __EXPOSE__-Dquarkus.http.port=4566 -jar /usr/share/floci/quarkus-app/quarkus-run.jar
 
 environment:
   # openjdk-25-jre installs under /usr/lib/jvm with no /usr/bin/java symlink, so
