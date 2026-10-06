@@ -142,7 +142,7 @@ pipeline:
           "nanoid@3":"3.3.18",            // transitive 3.3.8 flagged; scoped @3 so any 5.x
                                           // copy is not dragged DOWN across majors. Value
                                           // matches the direct-dep bump above (npm rule)
-          "vm2":"3.11.7",                 // 2026-10-04: 3.11.6 flagged (10 CRITICAL), 3.11.7 is the fix
+          "vm2":"3.12.2",                 // 2026-10-06: 3.11.7 flagged again (3.11.8 + 3.12.2 advisories, CRITICAL); 3.12.2 covers both
           "@azure/identity@3":"4.2.1",    // only the transitive 3.4.2 (direct is 4.13.0, safe)
           "@opentelemetry/core@<2.8.0":"2.11.0",  // CVE-2026-54285 (oversized-baggage-header DoS)
                                           // needs >= 2.8.0. The direct dep IS already 2.10.0 --
@@ -207,7 +207,7 @@ pipeline:
                                           // apostrophe anywhere -- one closes the quote and
                                           // melange fails to parse the pipeline.
           "semver@<5.7.2":"5.7.2",        // only the vulnerable 5.x (tree keeps its 6.x/7.x)
-          "stream-json":"3.5.0",          // CVE-2026-71429 (deeply-nested-input DoS). The
+          "stream-json":"3.6.0",          // CVE-2026-71429, then CVE-2026-104182/104183 (3.6.0) (deeply-nested-input DoS). The
                                           // advisory range is a bare < 3.5.0, so there is no
                                           // 2.x escape and 3.x -- an ESM-only API redesign --
                                           // is the only fix. Transitive via @n8n/backend-common
@@ -216,10 +216,16 @@ pipeline:
                                           // 3.x needs a consumer-side migration; see the
                                           // stream-json API step below, which rewrites the one
                                           // consumer and then PROVES it still parses.
+          "compression":"1.8.2",           // transitive via express (CVE-2026-87776 HIGH, 2026-10-06)
           "tar@6":"7.5.22",               // only the transitive 6.2.1 (direct bumped in dependencies)
           "tar@7":"7.5.22",               // n8n-nodes-base pins tar 7.5.17 EXACTLY, so this copy
                                           // cannot float (CVE-2026-59873 CRIT/59874 HIGH/59871 MED,
                                           // GHSA-r292-9mhp-454m MED needs >= 7.5.21)
+          "snowflake-sdk":"3.3.0",        // transitive via n8n-nodes-base (Snowflake node);
+                                          // CVE-2026-86597 (2026-10-06) fixes only at 3.3.0.
+                                          // 3.x breaks: Node >= 20 (nodejs-24 here) and two
+                                          // Column methods removed that always threw; the
+                                          // package test below loads it.
           "toml":"4.2.0",                 // transitive via the snowflake-sdk config-file parser
                                           // (CVE-2026-63376/77465). 3->4 is a major bump but
                                           // toml.parse() is unchanged; smoke-tested against
@@ -389,11 +395,11 @@ pipeline:
                       for r, dirs, _ in os.walk('node_modules')
                       if 'stream-json' in dirs and os.path.basename(r) == 'node_modules')
       found = [(p, json.load(open(p))['version']) for p in copies]
-      stale = [(p, v) for p, v in found if v != '3.5.0']
+      stale = [(p, v) for p, v in found if v != '3.6.0']
       assert not stale, "stream-json override missing or incompatible: %s" % stale
       # Absence is legitimate (a later n8n may drop the dep); the override is then a no-op.
       # What must fail is a copy that EXISTS and escaped the pin -- caught above.
-      print("stream-json: %d copy(ies) at 3.5.0" % len(found))
+      print("stream-json: %d copy(ies) at 3.6.0" % len(found))
 
       migrated = []
       for root, dirs, files in os.walk('node_modules'):
@@ -526,3 +532,5 @@ test:
         test -d /opt/n8n/dist
         # the CLI entry must be present and the sqlite3 native binding must have installed
         find /opt/n8n/node_modules -path '*sqlite3*/*.node' | grep -q .
+        # the Snowflake node's driver, moved 2.x -> 3.3.0 by override
+        cd /opt/n8n && node -e 'const s=require("snowflake-sdk"); const v=require("snowflake-sdk/package.json").version; if (v!=="3.3.0"||typeof s.createConnection!=="function") { console.error("snowflake-sdk", v); process.exit(1) } console.log("snowflake-sdk", v)'
