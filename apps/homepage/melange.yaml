@@ -38,11 +38,12 @@ pipeline:
       set -eu
       export NEXT_TELEMETRY_DISABLED=1
       # next 16.3.3 (GHSA-vcvr-r3jv-pc5j, CRITICAL RCE in next/og, fixed 16.3.6) is in
-      # upstream's lockfile. A pnpm override moves only next, so the build compiles with the
+      # upstream's lockfile. A pnpm override moves next (and source-map-js below), so the build compiles with the
       # same next it ships; every other package keeps its locked version.
       # pnpm 10+ reads overrides from pnpm-workspace.yaml, not package.json.
       ! grep -q '^overrides:' pnpm-workspace.yaml
-      printf '\noverrides:\n  next: 16.3.6\n' >> pnpm-workspace.yaml
+      # source-map-js 1.2.2: CVE-2026-93749 (2026-10-06; pnpm, so npm 12's cooldown does not apply)
+      printf '\noverrides:\n  next: 16.3.6\n  source-map-js: 1.2.2\n' >> pnpm-workspace.yaml
       pnpm install --no-frozen-lockfile
       test "$(node -p 'require("next/package.json").version')" = 16.3.6
       pnpm run build
