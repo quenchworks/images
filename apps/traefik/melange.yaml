@@ -78,9 +78,15 @@ pipeline:
       # byte, as master's pkg/observability/logs/otel.go). otellogrus v0.20.0 is the bridge
       # release built against otel 1.45.0 / log 0.21.0. The sha256 check fails the build if
       # a future release changes the file, so the port is re-checked rather than misapplied.
+      # 3.7.14 ships the port itself (log 0.21 in go.mod), so it applies only while the file
+      # still uses the old otellog value API; otherwise the file must already be on attribute.
       f=pkg/observability/logs/otel.go
-      sed -i -E 's/otellog\.(StringValue|IntValue|Int64Value|Float64Value|BoolValue|String|KeyValue|Value)\b/attribute.\1/g; s/otellog\.BytesValue/attribute.ByteSliceValue/g; s/^(\t+)Key:   k,$/\1Key:   attribute.Key(k),/; s#^(\totellog "go.opentelemetry.io/otel/log")$#\t"go.opentelemetry.io/otel/attribute"\n\1#' "$f"
-      echo "647df268064383b591e5c2f0f687a69a2276ed50bf465b37c4de5be9f61a181f  $f" | sha256sum -c -
+      if grep -q -E 'otellog\.(StringValue|BytesValue)' "$f"; then
+        sed -i -E 's/otellog\.(StringValue|IntValue|Int64Value|Float64Value|BoolValue|String|KeyValue|Value)\b/attribute.\1/g; s/otellog\.BytesValue/attribute.ByteSliceValue/g; s/^(\t+)Key:   k,$/\1Key:   attribute.Key(k),/; s#^(\totellog "go.opentelemetry.io/otel/log")$#\t"go.opentelemetry.io/otel/attribute"\n\1#' "$f"
+        echo "647df268064383b591e5c2f0f687a69a2276ed50bf465b37c4de5be9f61a181f  $f" | sha256sum -c -
+      else
+        grep -q '"go.opentelemetry.io/otel/attribute"' "$f" || { echo "$f: neither the old otellog API nor attribute; re-check the port"; exit 1; }
+      fi
       go mod tidy
       for m in go.opentelemetry.io/otel/sdk go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc; do
         echo "$m $(go list -m $m | awk '{print $2}')"
