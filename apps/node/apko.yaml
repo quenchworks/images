@@ -19,13 +19,16 @@
 contents:
   keyring:
     - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
   repositories:
     - https://packages.wolfi.dev/os
+    - "@local ./packages"
   packages:
     - wolfi-baselayout
     - ca-certificates-bundle
     - nodejs-__VERMAJOR__          # the pinned Node.js major line from Wolfi
     - npm                         # standalone npm; depends on cmd:node
+    - quench-node-npm-fix@local   # postcss-selector-parser 7.1.6 over npm's bundled 7.1.4 (see melange.yaml)
 
 accounts:
   groups:

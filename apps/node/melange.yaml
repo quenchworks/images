@@ -1,0 +1,77 @@
+# Overlay for the Wolfi npm package, whose bundled tree still carries a vulnerable
+# postcss-selector-parser (npm's `npm query` parser; version and CVE at FIXES below; upstream npm
+# 12.2.0, the newest, bundles the same one, so no npm release closes it yet). The node image is
+# otherwise pure Wolfi packages; this package ships only the fixed tree and Wolfi's npm SPDX with
+# that entry corrected (Trivy reads /var/lib/db/sbom as its own source, so a stale record keeps
+# the finding after the files are fixed). `replaces: npm-12` lets apk write over the files npm-12
+# owns. RETIRE an entry when a Wolfi npm ships it fixed: the SPDX step fails on an entry it finds
+# no stale copy of, and says so. (Brought back 2026-10-06; retired once before in d6f25352.)
+package:
+  name: quench-node-npm-fix
+  version: __VER__
+  epoch: 0
+  description: "fixed postcss-selector-parser over the copy bundled in Wolfi npm-12"
+  copyright:
+    - license: MIT
+  dependencies:
+    replaces:
+      - npm-12
+    runtime:
+      - npm
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - nodejs-__VERMAJOR__
+      - npm
+
+pipeline:
+  - runs: |
+      set -eu
+      D="${{targets.destdir}}"
+      NM="$D/usr/lib/node_modules/npm/node_modules"
+      mkdir -p "$D/var/lib/db/sbom"
+      # <package> <version> <sha256 of the registry tarball>. Each replaces the copy npm-12
+      # bundles, same major, so npm's own requires keep resolving.
+      #   postcss-selector-parser 7.1.6: CVE-2026-104844 on the bundled 7.1.4 (2026-10-06 scan)
+      FIXES="postcss-selector-parser 7.1.6 48c903f98c5591d8d26f16f389d5cb3435459474c645209a79f6241bf4b657b6"
+      echo "$FIXES" | while read -r name ver sha; do
+        node -e 'fetch(process.argv[1]).then(r=>r.arrayBuffer()).then(b=>require("fs").writeFileSync("/tmp/pkg.tgz",Buffer.from(b)))' "https://registry.npmjs.org/$name/-/$name-$ver.tgz"
+        echo "$sha  /tmp/pkg.tgz" | sha256sum -c -
+        test -d "/usr/lib/node_modules/npm/node_modules/$name" || { echo "npm no longer bundles $name; drop it from FIXES"; exit 1; }
+        rm -rf /tmp/pkg && mkdir -p /tmp/pkg "$NM/$name"
+        tar -xzf /tmp/pkg.tgz -C /tmp/pkg
+        cp -a /tmp/pkg/package/. "$NM/$name/"
+        chmod -R a+rX,go-w "$NM/$name"
+        grep -q "\"version\": \"$ver\"" "$NM/$name/package.json"
+      done
+      src="$(ls /var/lib/db/sbom/npm-12-*.spdx.json)"
+      test "$(echo "$src" | wc -l)" = 1
+      FIXES="$FIXES" DESTDIR_="$D" SRC="$src" node -e '
+        const fs = require("fs"), path = require("path");
+        const want = Object.fromEntries(process.env.FIXES.trim().split("\n").map(l => l.trim().split(/\s+/).slice(0, 2)));
+        const doc = JSON.parse(fs.readFileSync(process.env.SRC, "utf8"));
+        const hit = {};
+        doc.packages = doc.packages.map(p => {
+          const v = want[p.name];
+          if (!v || p.versionInfo === v) return p;
+          hit[p.name] = (hit[p.name] || 0) + 1;
+          return JSON.parse(JSON.stringify(p).split(p.versionInfo).join(v));
+        });
+        for (const n of Object.keys(want))
+          if (!hit[n]) throw new Error("npm-12 SPDX lists no stale " + n + ": drop it from FIXES, or retire this package");
+        fs.writeFileSync(path.join(process.env.DESTDIR_, "var/lib/db/sbom", path.basename(process.env.SRC)), JSON.stringify(doc, null, 2) + "\n");
+        console.log("corrected " + JSON.stringify(hit) + " in " + path.basename(process.env.SRC));
+      '
+
+test:
+  pipeline:
+    - runs: |
+        grep -q '"version": "7.1.6"' /usr/lib/node_modules/npm/node_modules/postcss-selector-parser/package.json
+        npm --version
