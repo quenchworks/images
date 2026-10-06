@@ -104,6 +104,26 @@ pipeline:
       fi
       # --locked still holds: the lockfile was updated on disk above, so the build
       # itself changes nothing and a drifting dependency graph still fails loudly.
+      # Cargo floor (2026-10-06 scan), the version-aware sibling of the --precise lines: raise
+      # every locked copy of <crate> on the floor's own minor line that sits below the floor
+      # (other lines are left alone), then assert none is left below it. Release versions
+      # only, so sort -V orders them correctly.
+      cfloor() {
+        line="${2%.*}"
+        locked() { awk -v n="$1" '$0=="name = \""n"\"" {getline; gsub(/version = |"/,""); print}' Cargo.lock; }
+        for v in $(locked "$1"); do
+          case "$v" in "$line".*) ;; *) continue ;; esac
+          [ "$v" = "$2" ] && continue
+          [ "$(printf '%s\n%s\n' "$v" "$2" | sort -V | head -1)" = "$v" ] || continue
+          cargo update -p "$1@$v" --precise "$2"
+        done
+        for v in $(locked "$1"); do
+          case "$v" in "$line".*) ;; *) continue ;; esac
+          [ "$(printf '%s\n%s\n' "$v" "$2" | sort -V | head -1)" = "$2" ] \
+            || { echo "$1 $v is still below the $2 floor"; exit 1; }
+        done
+      }
+      cfloor rustls 0.23.45            # GHSA-2mjx-qc3c-rqvc
       cargo auditable build --release --locked -p linkerd-policy-controller
 
       install -Dm755 target/release/linkerd-policy-controller \
