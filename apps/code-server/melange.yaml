@@ -103,6 +103,12 @@ pipeline:
       patch_pkg "$dest/node_modules"            ip-address  https://registry.npmjs.org/ip-address/-/ip-address-10.7.1.tgz   7f99ac7abda701afe1fd1e36de462236fb4d1eb8c595d7ae0267bba7d8ee55f8
       patch_pkg "$dest/lib/vscode/node_modules" undici      https://registry.npmjs.org/undici/-/undici-7.29.1.tgz           93b3abe22a9d2858938b5f3829a9fd8952392348ffed9057662ae846e2e46d54
       patch_pkg "$dest/node_modules"            body-parser https://registry.npmjs.org/body-parser/-/body-parser-2.3.0.tgz 031d7f6c5142e31be91d36a43f541f02a505943e3b871aa44ef5fb6939be258e
+      # compression 1.8.2 (CVE-2026-87776, HIGH) and katex 0.18.2 (CVE-2026-103923, LOW; same
+      # dual CJS/ESM entry points as the vendored 0.16.22), 2026-10-06 scan.
+      patch_pkg "$dest/node_modules"            compression https://registry.npmjs.org/compression/-/compression-1.8.2.tgz 15e46c301ad6468d3838cfc0dbfca3024220ef12f8a43b8156846691011537a6
+      # compression 1.8.2 newly depends on destroy 1.2.0 (no deps of its own), absent from the tree
+      patch_pkg "$dest/node_modules"            destroy     https://registry.npmjs.org/destroy/-/destroy-1.2.0.tgz         8dfd27e86cf54949a76ab5171df6c242d8b007d3ace136b67984fd64a171cfa8
+      patch_pkg "$dest/lib/vscode/node_modules" katex       https://registry.npmjs.org/katex/-/katex-0.18.2.tgz            a71df261a7080b53a4be44ea1b40e8e73e84cdd5d3311239310568e76437c018
       # basic-ftp 5.3.1 -> 6.2.1 (GHSA-c475-qrg2-pj4r, 2026-10-04; fixed only on 6.x, whose one
       # break is no separate transfer hosts by default). Every copy, wherever the proxy agent sits.
       n=0
