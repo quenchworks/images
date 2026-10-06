@@ -30,16 +30,17 @@ pipeline:
       expected-sha256: __SHA256__
   - runs: |
       set -eu
-      # 0-CVE pins (measured 2026-10-05 against 1.1.0-rc-4). Direct deps move in
+      # 0-CVE pins (measured 2026-10-05 against 1.1.0-rc-4; busboy 3.2.2 + proxy-addr 2.0.8 added
+      # 2026-10-06 for CVE-2026-74866 and CVE-2026-90711). Direct deps move in
       # dependencies; transitive ones go through yarn resolutions. cookie 0.4 -> 0.7 is
       # csurf's; it only calls parse and serialize, which 0.7 keeps.
       node -e '
         const fs = require("fs");
         const p = JSON.parse(fs.readFileSync("package.json"));
-        Object.assign(p.dependencies, { "@fastify/busboy": "3.2.1", "body-parser": "2.3.0", "morgan": "1.12.1" });
+        Object.assign(p.dependencies, { "@fastify/busboy": "3.2.2", "body-parser": "2.3.0", "morgan": "1.12.1" });
         p.resolutions = {
           "express/body-parser": "1.20.6", "path-to-regexp@~0.1.12": "0.1.13",
-          "qs": "6.16.0", "lodash": "4.18.0", "csurf/cookie": "0.7.2",
+          "qs": "6.16.0", "lodash": "4.18.0", "csurf/cookie": "0.7.2", "proxy-addr": "2.0.8",
         };
         fs.writeFileSync("package.json", JSON.stringify(p, null, 2) + "\n");
       '
@@ -52,7 +53,7 @@ pipeline:
       node -e '
         const want = { "body-parser": "2.3.0", "express/node_modules/body-parser": "1.20.6",
           qs: "6.16.0", lodash: "4.18.0", cookie: "0.7.2", "path-to-regexp": "0.1.13",
-          morgan: "1.12.1", "@fastify/busboy": "3.2.1" };
+          morgan: "1.12.1", "@fastify/busboy": "3.2.2" };
         for (const [k, v] of Object.entries(want)) {
           const got = require("./node_modules/" + k + "/package.json").version;
           if (got !== v) { console.error(k, "is", got, "not", v); process.exit(1); }
