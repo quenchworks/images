@@ -27,6 +27,8 @@ package:
   copyright:
     - license: LicenseRef-n8n-Sustainable-Use-License-1.0
   dependencies:
+    replaces:
+      - npm-12                 # the package that owns npm; ships a fixed postcss-selector-parser over its bundled copy (step 5)
     runtime:
       - nodejs-24              # JS runner + the launcher spawns node
       - python-3.13            # base interpreter the Python runner venv references
@@ -154,7 +156,7 @@ pipeline:
           "nanoid@3":"3.3.18",
           "nanoid@5":"5.1.6",
           "qs":"6.16.0",
-          "stream-json":"3.5.0",
+          "stream-json":"3.6.0",
           "tar":"7.5.22",
           "uuid":"11.1.1"
         });
@@ -232,7 +234,7 @@ pipeline:
                         for r, dirs, _ in os.walk('node_modules')
                         if name in dirs and os.path.basename(r) == 'node_modules')
 
-      for name, want in (('qs', '6.16.0'), ('stream-json', '3.5.0')):
+      for name, want in (('qs', '6.16.0'), ('stream-json', '3.6.0')):
           found = [(p, json.load(open(p))['version']) for p in copies(name)]
           stale = [(p, v) for p, v in found if v != want]
           assert not stale, "%s override missing or incompatible: %s" % (name, stale)
@@ -397,6 +399,47 @@ pipeline:
       chmod -R a+rX,go-w "$dest/opt/runners" "$dest/usr/bin/task-runner-launcher"
       # runners run with HOME=/home/runner and workdir there.
       install -d "$dest/home/runner"
+
+  # 5. npm's own bundled postcss-selector-parser (Wolfi npm-12 12.2.0-r1 ships 7.1.4, and
+  #    upstream npm 12.2.0, the newest, bundles the same; brought back 2026-10-06). This package declares `replaces: npm-12`, so
+  #    apk lets its copies win over the npm package's. Same step as apps/node's overlay.
+  - runs: |
+      set -eu
+      D="${{targets.destdir}}"
+      NM="$D/usr/lib/node_modules/npm/node_modules"
+      mkdir -p "$D/var/lib/db/sbom"
+      # <package> <version> <sha256 of the registry tarball>. Each replaces the copy npm-12
+      # bundles, same major, so npm's own requires keep resolving.
+      #   postcss-selector-parser 7.1.6: CVE-2026-104844 on the bundled 7.1.4
+      FIXES="postcss-selector-parser 7.1.6 48c903f98c5591d8d26f16f389d5cb3435459474c645209a79f6241bf4b657b6"
+      echo "$FIXES" | while read -r name ver sha; do
+        node -e 'fetch(process.argv[1]).then(r=>r.arrayBuffer()).then(b=>require("fs").writeFileSync("/tmp/pkg.tgz",Buffer.from(b)))' "https://registry.npmjs.org/$name/-/$name-$ver.tgz"
+        echo "$sha  /tmp/pkg.tgz" | sha256sum -c -
+        test -d "/usr/lib/node_modules/npm/node_modules/$name" || { echo "npm no longer bundles $name; drop it from FIXES"; exit 1; }
+        rm -rf /tmp/pkg && mkdir -p /tmp/pkg "$NM/$name"
+        tar -xzf /tmp/pkg.tgz -C /tmp/pkg
+        cp -a /tmp/pkg/package/. "$NM/$name/"
+        chmod -R a+rX,go-w "$NM/$name"
+        grep -q "\"version\": \"$ver\"" "$NM/$name/package.json"
+      done
+      src="$(ls /var/lib/db/sbom/npm-12-*.spdx.json)"
+      test "$(echo "$src" | wc -l)" = 1
+      FIXES="$FIXES" DESTDIR_="$D" SRC="$src" node -e '
+        const fs = require("fs"), path = require("path");
+        const want = Object.fromEntries(process.env.FIXES.trim().split("\n").map(l => l.trim().split(/\s+/).slice(0, 2)));
+        const doc = JSON.parse(fs.readFileSync(process.env.SRC, "utf8"));
+        const hit = {};
+        doc.packages = doc.packages.map(p => {
+          const v = want[p.name];
+          if (!v || p.versionInfo === v) return p;
+          hit[p.name] = (hit[p.name] || 0) + 1;
+          return JSON.parse(JSON.stringify(p).split(p.versionInfo).join(v));
+        });
+        for (const n of Object.keys(want))
+          if (!hit[n]) throw new Error("npm-12 SPDX lists no stale " + n + ": drop it from FIXES, or retire this package");
+        fs.writeFileSync(path.join(process.env.DESTDIR_, "var/lib/db/sbom", path.basename(process.env.SRC)), JSON.stringify(doc, null, 2) + "\n");
+        console.log("corrected " + JSON.stringify(hit) + " in " + path.basename(process.env.SRC));
+      '
 
 test:
   pipeline:
