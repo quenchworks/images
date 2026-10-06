@@ -21,9 +21,10 @@ environment:
       - build-base
       - busybox
       - ca-certificates-bundle
-      # go-1.26, not the newest go: the embedded trivy uses the experimental json/v2 API
-      # (json.SkipFunc) as it stands in Go 1.26, which Go 1.27 changed
-      - go-1.26
+      # Go per line (build.conf GO map): 0.34 embeds a trivy that uses the experimental
+      # json/v2 API (json.SkipFunc) as it stands in Go 1.26, which Go 1.27 changed; 0.35's
+      # go.mod requires go >= 1.27.
+      - go-__GO__
 
 pipeline:
   - uses: fetch
