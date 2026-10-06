@@ -117,6 +117,8 @@ pipeline:
                                           // agrees with this spec (same value), so it only
                                           // moves the TRANSITIVE 3.x copies.
           "ws":"8.21.0",                  // direct 8.20.1 < 8.21.0 (fix)
+          "compression":"1.8.2",          // direct 1.8.1 (CVE-2026-87776 HIGH, 2026-10-06); an
+                                          // override alone EOVERRIDEs against this edge
           "multer":"2.4.0"                // direct ^2.2.0; CVE-2026-77037/77078/82333 HIGH +
                                           // 77063 LOW need >= 2.3.0; 2.4.0 (newest 2.x, npm
                                           // latest) also carries the CVE-2026-88932 fix.
@@ -216,7 +218,7 @@ pipeline:
                                           // 3.x needs a consumer-side migration; see the
                                           // stream-json API step below, which rewrites the one
                                           // consumer and then PROVES it still parses.
-          "compression":"1.8.2",           // transitive via express (CVE-2026-87776 HIGH, 2026-10-06)
+          "compression":"1.8.2",          // transitive copies; same value as the direct bump above (npm rule)
           "tar@6":"7.5.22",               // only the transitive 6.2.1 (direct bumped in dependencies)
           "tar@7":"7.5.22",               // n8n-nodes-base pins tar 7.5.17 EXACTLY, so this copy
                                           // cannot float (CVE-2026-59873 CRIT/59874 HIGH/59871 MED,
