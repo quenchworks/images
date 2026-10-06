@@ -94,14 +94,16 @@ pipeline:
           && unzip -qo "$DL/jackson-databind-2.21.7.jar" 'com/fasterxml/jackson/databind/*' 'META-INF/maven/com.fasterxml.jackson.core/jackson-databind/*' \
           && unzip -qo "$DL/jackson-core-2.21.7.jar"     'com/fasterxml/jackson/core/*'     'META-INF/versions/*/com/fasterxml/jackson/core/*'     'META-INF/maven/com.fasterxml.jackson.core/jackson-core/*' )
 
-      # --- log4j-api 2.26.0 -> 2.26.1 and jsoup 1.22.1 -> 1.23.1 (both SHADED in graylog.jar,
+      # --- log4j-api 2.26.0 -> 2.26.1 and jsoup 1.22.1 -> 1.23.2 (both SHADED in graylog.jar,
       #     so they need the same class+pom.properties overlay rather than a file swap) ---
+      #     jsoup 1.23.2 is for CVE-2026-75140 (2026-10-06); against 1.22.1 it drops only
+      #     HtmlTreeBuilderState$25, which apply() deletes.
       getj "$MC/org/apache/logging/log4j/log4j-api/2.26.1/log4j-api-2.26.1.jar" log4j-api-2.26.1.jar f1810a4704ccce019d02bba029dc02a4f2ac0c997f647b465e7d409c1927f822
-      getj "$MC/org/jsoup/jsoup/1.23.1/jsoup-1.23.1.jar" jsoup-1.23.1.jar 8b15e2b28eeb1e0a88a9b7dab4dc0c23524491c56959785dea22f7846897b668
+      getj "$MC/org/jsoup/jsoup/1.23.2/jsoup-1.23.2.jar" jsoup-1.23.2.jar e9d8c856856680427f096d156f02a414289985c930998fcb519ce5be39b42003
       # log4j-api ships META-INF/versions/9/org/apache/logging/log4j/util/** and jsoup ships
       # META-INF/versions/11/org/jsoup/helper/** -- both live overrides on Java 21.
       ( cd "$ST/log4j" && unzip -qo "$DL/log4j-api-2.26.1.jar" 'org/apache/logging/log4j/*' 'META-INF/versions/*/org/apache/logging/log4j/*' 'META-INF/maven/org.apache.logging.log4j/log4j-api/*' )
-      ( cd "$ST/jsoup" && unzip -qo "$DL/jsoup-1.23.1.jar"     'org/jsoup/*'                'META-INF/versions/*/org/jsoup/*'                'META-INF/maven/org.jsoup/jsoup/*' )
+      ( cd "$ST/jsoup" && unzip -qo "$DL/jsoup-1.23.2.jar"     'org/jsoup/*'                'META-INF/versions/*/org/jsoup/*'                'META-INF/maven/org.jsoup/jsoup/*' )
 
       # --- shiro family 2.2.1 (all 9 bundled modules, in lockstep) ---
       for row in \
