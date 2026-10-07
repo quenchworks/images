@@ -1,0 +1,73 @@
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - ceph-20-base=__REL__
+    - ceph-20-common=__REL__
+    - ceph-20-mon=__REL__
+    - ceph-20-mgr=__REL__
+    - ceph-20-mgr-rook=__REL__
+    - ceph-20-mgr-dashboard=__REL__
+    - ceph-20-mgr-k8sevents=__REL__
+    - ceph-20-osd=__REL__
+    - ceph-20-mds=__REL__
+    - ceph-20-radosgw=__REL__
+    - ceph-20-mirror=__REL__
+    - ceph-20-exporter=__REL__
+    - ceph-20-immutable-object-cache=__REL__
+    - ceph-20-fuse=__REL__
+
+accounts:
+  groups:
+    - groupname: ceph
+      gid: 167
+  users:
+    - username: ceph
+      uid: 167
+      gid: 167
+      homedir: /var/lib/ceph
+  # root, like upstream's ceph image: Rook runs the daemons with --setuser ceph
+  # --setgroup ceph, and the OSD prepare step needs root for devices.
+  run-as: 0
+
+paths:
+  - path: /etc/ceph
+    type: directory
+    uid: 167
+    gid: 167
+    permissions: 0o755
+  - path: /var/lib/ceph
+    type: directory
+    uid: 167
+    gid: 167
+    permissions: 0o750
+  - path: /var/log/ceph
+    type: directory
+    uid: 167
+    gid: 167
+    permissions: 0o770
+  - path: /run/ceph
+    type: directory
+    uid: 167
+    gid: 167
+    permissions: 0o770
+
+entrypoint:
+  command: /usr/bin/ceph
+
+cmd: --version
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-ceph"
+  org.opencontainers.image.licenses: "LGPL-2.1"
