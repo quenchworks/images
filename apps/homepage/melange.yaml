@@ -42,8 +42,9 @@ pipeline:
       # same next it ships; every other package keeps its locked version.
       # pnpm 10+ reads overrides from pnpm-workspace.yaml, not package.json.
       ! grep -q '^overrides:' pnpm-workspace.yaml
-      # source-map-js 1.2.2: CVE-2026-93749 (2026-10-06; pnpm, so npm 12's cooldown does not apply)
-      printf '\noverrides:\n  next: 16.3.6\n  source-map-js: 1.2.2\n' >> pnpm-workspace.yaml
+      # source-map-js 1.2.2: CVE-2026-93749 (2026-10-06); sharp 0.35.5: GHSA-wq5f-xc86-pv6w
+      # (2026-10-07). pnpm installs, so npm 12's cooldown does not apply.
+      printf '\noverrides:\n  next: 16.3.6\n  source-map-js: 1.2.2\n  sharp: 0.35.5\n' >> pnpm-workspace.yaml
       pnpm install --no-frozen-lockfile
       test "$(node -p 'require("next/package.json").version')" = 16.3.6
       pnpm run build
