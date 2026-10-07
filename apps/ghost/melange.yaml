@@ -212,12 +212,17 @@ pipeline:
           if not done and ln=="overrides:":
               out.extend(add); done=True
       assert done, "overrides: block not found in pnpm-workspace.yaml"
-      assert dropped==set(drops), "expected Ghost overrides to supersede, missing: %s" % (set(drops)-dropped)
+      # 6.67 carries these three upstream overrides and 6.68 dropped them; ours (below) cover
+      # tar, undici and axios either way, so drop them where present instead of requiring them.
       # moment comes from the strict pnpm catalog (the override says 'catalog:'), so the
       # catalog entry itself moves: 2.30.1 carries CVE-2026-17495, fixed in 2.31.0.
-      n=sum(1 for i,ln in enumerate(out) if ln=="  moment: 2.30.1")
-      assert n==1, "expected one catalog entry 'moment: 2.30.1', found %d" % n
-      out=[("  moment: 2.31.0" if ln=="  moment: 2.30.1" else ln) for ln in out]
+      # 6.68 ships 2.31.0 itself: move an older entry, accept one at or past the fix.
+      import re
+      m=[ln for ln in out if re.fullmatch(r"  moment: \d+\.\d+\.\d+", ln)]
+      assert len(m)==1, "expected one versioned catalog entry for moment, found %s" % m
+      have=tuple(int(x) for x in m[0].split(": ")[1].split("."))
+      if have < (2,31,0):
+          out=[("  moment: 2.31.0" if ln==m[0] else ln) for ln in out]
       open(f,"w").write("\n".join(out)+"\n")
       PYEOF
       # pnpm 10.33 treats unapproved dependency build scripts as a HARD FAILURE
