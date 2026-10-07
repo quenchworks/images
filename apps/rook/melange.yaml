@@ -64,7 +64,8 @@ pipeline:
 
       cd s5cmd
       rm -rf vendor
-      FLOOR="$FLOOR golang.org/x/sys@v0.44.0"
+      # x/sys v0.44.0 closes the CVE; the floor is 0.47.0 because x/crypto v0.56.0 requires it
+      FLOOR="$FLOOR golang.org/x/sys@v0.47.0"
       floorpass
       xsys="$(go list -m -f '{{.Version}}' golang.org/x/sys)"
       vlt "$xsys" v0.44.0 && { echo "FATAL: s5cmd x/sys still $xsys"; exit 1; }
