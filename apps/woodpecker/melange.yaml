@@ -51,7 +51,7 @@ environment:
       - bash
       - ca-certificates-bundle
       - git
-      - go-1.26
+      - go-__GO__
       # UI toolchain: web/ is a Vite (Vue 3) app. package.json requires node >=20
       # and pnpm@11; pnpm is installed locally via npm below. Build-sandbox only.
       - nodejs-24
@@ -89,7 +89,7 @@ pipeline:
     runs: |
       set -eu
       export GOFLAGS=-mod=mod
-      export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's 1.26.0
+      export GOTOOLCHAIN=local      # use the installed go (GO map in build.conf), never fetch one
       export GO111MODULE=on
       # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
       #   golang.org/x/text    CVE-2026-56852 infinite loop on invalid input
