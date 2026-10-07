@@ -94,7 +94,8 @@ pipeline:
         cp -a npmpkg/package/. "$1/$2/"
       }
       patch_pkg "$dest/lib/vscode/node_modules" tar         https://registry.npmjs.org/tar/-/tar-7.5.21.tgz                bcedf25a21daecd1a18fb5e19ab855b7d79ec8ef1da175e8ba85cfc0ed0069d1
-      patch_pkg "$dest/lib/vscode/node_modules" shell-quote https://registry.npmjs.org/shell-quote/-/shell-quote-1.9.0.tgz 5d3b53eba647dee6d8c8465b57937e59798710eb728af66d5e21ab0977824d05
+      # shell-quote 1.11.0: CVE-2026-102422 (CRITICAL, 2026-10-07) on the 1.9.0 pin; no deps, CJS as before
+      patch_pkg "$dest/lib/vscode/node_modules" shell-quote https://registry.npmjs.org/shell-quote/-/shell-quote-1.11.0.tgz 028be526afacb2bf5c6c008a95d5435b5d205135f68bb48afd0bb947610393f1
       patch_pkg "$dest/node_modules"            js-yaml     https://registry.npmjs.org/js-yaml/-/js-yaml-4.3.2.tgz c7b241d2224cf9253ff53854aa4cee87da91bd889c4d0fa3a3ffd1041ecee5b1
       patch_pkg "$dest/node_modules"            qs          https://registry.npmjs.org/qs/-/qs-6.16.0.tgz                f7a1bfc96c3a0c1172f1f3ef3c280f5ce8054841922e715f0d686da62d7beba4
       # ip-address -> 10.7.1 and undici -> 7.29.1 (CVE-2026-101910/-101911/-101912/-101913, CVE-2026-85024), both vendored under
