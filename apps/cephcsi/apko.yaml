@@ -1,0 +1,41 @@
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-cephcsi@local
+    - ceph-20-common=__CEPH__
+    - ceph-20-fuse=__CEPH__
+    - kmod
+    - nvme-cli
+    - psmisc
+    - e2fsprogs
+    - xfsprogs
+    - cryptsetup
+    - attr
+    - mount
+    - blkid
+    - nfs-utils
+
+# Root, like upstream's image: the node plugin maps RBD devices and mounts on the host.
+accounts:
+  run-as: 0
+
+entrypoint:
+  command: /usr/local/bin/cephcsi
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-cephcsi"
+  org.opencontainers.image.licenses: "Apache-2.0"
