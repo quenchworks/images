@@ -1,0 +1,49 @@
+# Assembles the TomEE runtime image: hardened Wolfi JRE + the TomEE webprofile distribution.
+# Minimal, nonroot (uid 1001), multi-arch, SBOM by apko. TomEE listens on 8080.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - openjdk-21-jre
+    - busybox
+    - quench-tomee@local
+
+accounts:
+  groups:
+    - groupname: tomee
+      gid: 1001
+  users:
+    - username: tomee
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/docker-entrypoint.sh
+
+environment:
+  # openjdk-21-jre installs under /usr/lib/jvm with no /usr/bin/java symlink, so the
+  # entrypoint execs "$JAVA_HOME/bin/java" directly (same as kafka).
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  CATALINA_HOME: /opt/tomee
+  CATALINA_BASE: /opt/tomee
+  PATH: /usr/lib/jvm/java-21-openjdk/bin:/usr/bin:/opt/tomee/bin
+
+work-dir: /opt/tomee
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-tomee"
+  org.opencontainers.image.licenses: "Apache-2.0"
