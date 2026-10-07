@@ -269,7 +269,8 @@ pipeline:
       #     Elastic's EmbeddedImplClassLoader via a plain-text LISTING.TXT (no checksum /
       #     per-class manifest). Rebuild that impl dir from jackson-core 2.21.7 and update
       #     LISTING.TXT so the embedded loader finds the renamed dir. Two copies (server lib
-      #     + plugin-cli tool). 9.5.4 embeds 2.21.6 (CVE-2026-89407/-89425); until 2026-10-04
+      #     + plugin-cli tool). 9.5.4 embeds 2.21.6 (CVE-2026-89407/-89425), 9.5.5 the fixed
+      #     2.21.7 (left as is); until 2026-10-04
       #     this step still targeted the 2.18.8 of older dists and silently did nothing, so it
       #     now reads the embedded version and fails on anything but a 2.21.x below the fix.
       xc_surgery() {
@@ -279,7 +280,10 @@ pipeline:
         old="$(cd "$imp" && ls -d jackson-core-*.jar)"
         case "$old" in
           jackson-core-2.21.[0-6].jar) ;;
-          *) echo "FATAL: x-content embeds $old, not a 2.21.x below 2.21.7; re-audit"; exit 1 ;;
+          # 9.5.5 embeds the fix itself: leave the jar untouched
+          jackson-core-2.21.[7-9].jar|jackson-core-2.21.[1-9][0-9].jar)
+            echo "x-content already embeds $old (>= 2.21.7)"; rm -rf "$w"; return 0 ;;
+          *) echo "FATAL: x-content embeds $old, not a 2.21.x; re-audit"; exit 1 ;;
         esac
         rm -rf "$imp/$old"
         mkdir -p "$imp/jackson-core-2.21.7.jar"
