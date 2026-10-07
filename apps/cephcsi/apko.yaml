@@ -15,7 +15,15 @@ contents:
     - nvme-cli
     - psmisc
     - e2fsprogs
+    - e2fsprogs-extra   # resize2fs
     - xfsprogs
+    - xfsprogs-extra    # xfs_growfs
+    # Kubernetes mount-utils runs these on every stage: blockdev (read-only bit, size),
+    # fsck, findmnt, lsblk. The rook-ceph chart gate found blockdev missing.
+    - blockdev
+    - util-linux-misc
+    - findmnt
+    - lsblk
     - cryptsetup
     - attr
     - mount
