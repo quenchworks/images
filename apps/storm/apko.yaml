@@ -1,0 +1,50 @@
+# Assembles the Storm runtime image: hardened Wolfi JRE + the Storm distribution.
+# Nonroot (uid 1001), multi-arch. One image for every daemon: pass the storm command
+# (nimbus, supervisor, ui, logviewer, dev-zookeeper, version) as the container args.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - openjdk-21-jre
+    - bash
+    - busybox
+    - python-3.13-base
+    - python3-as-3.13
+    - quench-storm@local
+
+accounts:
+  groups:
+    - groupname: storm
+      gid: 1001
+  users:
+    - username: storm
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /opt/storm/bin/storm
+
+environment:
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  STORM_HOME: /opt/storm
+  PATH: /usr/lib/jvm/java-21-openjdk/bin:/usr/bin:/bin:/opt/storm/bin
+
+work-dir: /opt/storm
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-storm"
+  org.opencontainers.image.licenses: "Apache-2.0"

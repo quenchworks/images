@@ -1,0 +1,89 @@
+# Packages Apache Storm onto Wolfi: the upstream binary distribution on a hardened JRE.
+# bin/storm is bash and execs bin/storm.py, so the runtime carries bash and python3.
+package:
+  name: quench-storm
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Apache Storm, packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-21-jre
+      - bash
+      - busybox
+      - python-3.13-base
+      - python3-as-3.13
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://archive.apache.org/dist/storm/apache-storm-${{package.version}}/apache-storm-${{package.version}}.tar.gz
+      expected-sha256: "__SHA256__"
+      strip-components: 1
+  - runs: |
+      dest="${{targets.destdir}}/opt/storm"
+      install -d "$dest"
+      cp -r bin conf lib lib-common lib-webapp lib-worker lib-tools log4j2 public extlib extlib-daemon LICENSE NOTICE RELEASE "$dest/"
+      # Optional extras carry the unfixable findings: external/ (connectors; storm-autocreds
+      # bundles hbase-shaded-netty 4.1.131 and protobuf-java 2.5.0) and the Kafka offset
+      # monitor tool (lz4-java 1.10.2). Topologies bundle their own connectors.
+      rm -rf "$dest/lib-tools/storm-kafka-monitor"
+      rm -f "$dest"/bin/storm-kafka-monitor* "$dest"/bin/storm-autocreds-fetch "$dest"/bin/*.ps1
+      chmod -R a+rX "$dest"
+
+      # jackson-core and -databind below 2.22.3 (CVE-2026-89407/-89425, CVE-2026-91776/
+      # -91777). Replace every older 2.22.x copy, keep anything already newer, and fail if
+      # the library vanished (upstream moved: re-audit).
+      M=https://repo1.maven.org/maven2/com/fasterxml/jackson/core
+      fixjar() { # artifact version sha256
+        local a="$1" v="$2" sha="$3" n=0 f have
+        wget -q -O "/tmp/$a-$v.jar" "$M/$a/$v/$a-$v.jar"
+        echo "$sha  /tmp/$a-$v.jar" | sha256sum -c - >/dev/null
+        for f in $(find "$dest" -name "$a-2.*.jar"); do
+          n=$((n + 1))
+          have="${f##*/$a-}"; have="${have%.jar}"
+          [ "$have" = "$v" ] && continue
+          [ "$(printf '%s\n%s\n' "$have" "$v" | sort -V | head -1)" = "$have" ] || continue
+          rm -f "$f"; cp "/tmp/$a-$v.jar" "$(dirname "$f")/"
+          echo "swapped $f -> $v"
+        done
+        [ "$n" -gt 0 ] || { echo "FATAL: no $a jar in the dist"; exit 1; }
+      }
+      fixjar jackson-core 2.22.3 8a501126a385b25841915d839508f8a66e2a0dbc8a6709d055ef3b3e852b094c
+      fixjar jackson-databind 2.22.3 556db5439e206114346043f68d200497dc96a0bca62a360a81784092ebd0e0a9
+
+      # lib-webapp pins some Jetty 12.1 modules older than the copies the dist ships in
+      # lib/ (3.1.0: server, security, util at 12.1.9 vs 12.1.12; 12.1.9 is flagged).
+      # Take lib/'s newer copy of each module, so the UI runs one Jetty version.
+      for f in "$dest"/lib-webapp/jetty-*-12.*.jar; do
+        b="${f##*/}"; mod="${b%-12.*}"
+        new="$(ls "$dest"/lib/"$mod"-12.*.jar 2>/dev/null | sort -V | tail -1)"
+        [ -n "$new" ] || continue
+        [ "$(printf '%s\n%s\n' "${new##*/}" "$b" | sort -V | tail -1)" = "$b" ] && continue
+        rm -f "$f"; cp "$new" "$dest/lib-webapp/"; echo "jetty $b -> ${new##*/}"
+      done
+
+      # Writable state under /tmp so the rootfs can be read-only; storm.yaml overrides win.
+      cat >> "$dest/conf/storm.yaml" <<'EOS'
+
+      storm.local.dir: "/tmp/storm/data"
+      storm.log.dir: "/tmp/storm/logs"
+      EOS
+
+test:
+  pipeline:
+    - runs: |
+        test -x /opt/storm/bin/storm
+        ! ls /opt/storm/lib/jackson-databind-2.22.2.jar 2>/dev/null
+        ! ls /opt/storm/lib-webapp/jetty-server-12.1.9.jar 2>/dev/null
