@@ -10,7 +10,7 @@ NET="quench-storm-$$"
 cleanup() { docker rm -f "$NET-zk" "$NET-nimbus" "$NET-ui" >/dev/null 2>&1 || true; docker network rm "$NET" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
-ver="$(docker run --rm "$IMAGE" version 2>&1)"
+ver="$(docker run --rm "$IMAGE" version 2>&1)" || { echo "storm version failed:"; echo "$ver"; docker run --rm --entrypoint /bin/sh "$IMAGE" -c 'ls -l /usr/bin/python3* /usr/bin/env; command -v python3 bash java; head -1 /opt/storm/bin/storm.py' 2>&1; exit 1; }
 echo "$ver" | head -3
 [ -z "$WANT" ] || grep -q "^Storm $WANT" <<<"$ver" || { echo "expected Storm $WANT"; exit 1; }
 
