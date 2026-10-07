@@ -24,7 +24,7 @@ environment:
       - cmake
       - bison
       - ncurses-dev
-      - openssl-dev
+      - openssl-3.6-dev    # openssl-4.0-dev also provides openssl-dev, at a higher version, and galera's bundled asio does not build on OpenSSL 4
       - zlib-dev
       - libaio-dev
       - linux-headers
@@ -74,6 +74,10 @@ pipeline:
       # trim test/sql-bench/data baggage that the install drops in
       rm -rf "${{targets.destdir}}/usr/mysql-test" "${{targets.destdir}}/usr/mariadb-test" \
              "${{targets.destdir}}/usr/sql-bench" || true
+      # MariaDB Operator's Galera init Job runs upstream's entrypoint functions, which call
+      # mariadb-install-db from PATH; cmake installs it to /usr/scripts only.
+      test -x "${{targets.destdir}}/usr/scripts/mariadb-install-db"
+      ln -s ../scripts/mariadb-install-db "${{targets.destdir}}/usr/bin/mariadb-install-db"
       # Galera HA needs the wsrep SST donor tools; fail loudly if a MariaDB build
       # ever drops them. (galera_new_cluster is only a convenience wrapper and isn't
       # shipped on every line — e.g. 11.4 — and the chart bootstraps via

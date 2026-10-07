@@ -44,6 +44,13 @@ paths:
     uid: 1001
     gid: 1001
     permissions: 0o1777
+  # Empty, as in the official image: MariaDB Operator's Galera init Job runs upstream's
+  # entrypoint functions, which `ls` this directory under set -e and pipefail.
+  - path: /docker-entrypoint-initdb.d
+    type: directory
+    uid: 0
+    gid: 0
+    permissions: 0o755
 
 archs:
   - x86_64
