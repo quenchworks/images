@@ -1,8 +1,7 @@
 name: build-node
 
 # LANGUAGE-RUNTIMES track. Hardened OpenJDK (JDK) base images, assembled
-# straight from Wolfi's versioned `opennode-N-default-node` packages with apko --
-# one small melange overlay (apps/node/melange.yaml: postcss-selector-parser over npm-12). A MATRIX
+# straight from Wolfi's versioned `opennode-N-default-node` packages with apko. A MATRIX
 # fans out over the latest 3 LTS lines; each one runs a NATIVE per-arch apko
 # build (no QEMU), the hard 0-CVE Trivy gate, then a per-version merge job that
 # assembles + signs + attests the multi-arch index.
@@ -96,13 +95,7 @@ jobs:
           set -euo pipefail
           source build.conf
           prog="$(render '${{ matrix.ver }}')"
-          sed -e "$prog" melange.yaml > melange.rendered.yaml
           sed -e "$prog" apko.yaml    > apko.rendered.yaml
-
-      - name: Build the npm overlay package (native ${{ matrix.arch.name }})
-        run: |
-          melange keygen melange.rsa
-          melange build melange.rendered.yaml --arch ${{ matrix.arch.name }} --signing-key melange.rsa --out-dir ./packages
 
       - name: Assemble single-arch image for the scan gate
         run: apko build apko.rendered.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}
