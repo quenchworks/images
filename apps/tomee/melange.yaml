@@ -43,6 +43,8 @@ pipeline:
       ln -s /tmp/tomee/logs "$dest/logs"
       ln -s /tmp/tomee/temp "$dest/temp"
       ln -s /tmp/tomee/work "$dest/work"
+      # HostConfig creates conf/Catalina/localhost for context descriptors at startup
+      ln -s /tmp/tomee/Catalina "$dest/conf/Catalina"
 
       # Execs java directly with what `catalina.sh run` adds for TomEE: the
       # Tomcat module opens and the OpenEJB javaagent.
@@ -54,7 +56,7 @@ pipeline:
       CATALINA_HOME=/opt/tomee
       CATALINA_BASE="${CATALINA_BASE:-/opt/tomee}"
 
-      mkdir -p /tmp/tomee/logs /tmp/tomee/temp /tmp/tomee/work
+      mkdir -p /tmp/tomee/logs /tmp/tomee/temp /tmp/tomee/work /tmp/tomee/Catalina
 
       exec "$JAVA_HOME/bin/java" \
         "-javaagent:$CATALINA_HOME/lib/openejb-javaagent.jar" \
