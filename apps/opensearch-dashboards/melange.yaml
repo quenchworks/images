@@ -1,0 +1,114 @@
+# Packages OpenSearch Dashboards onto Wolfi: the official dist without its bundled Node.js,
+# run on Wolfi nodejs-22 so the runtime stays the scanned surface.
+package:
+  name: quench-opensearch-dashboards
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened OpenSearch Dashboards, packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - nodejs-22
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - curl
+      - ca-certificates-bundle
+      - nodejs-22
+
+pipeline:
+  # Per-arch dists: plugins and node_modules carry native modules per arch.
+  - runs: |
+      set -eu
+      case "$(uname -m)" in
+        x86_64)  osarch=x64;   sha=__SHA_AMD__ ;;
+        aarch64) osarch=arm64; sha=__SHA_ARM__ ;;
+        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+      esac
+      curl -fsSL -o osd.tar.gz "https://artifacts.opensearch.org/releases/bundle/opensearch-dashboards/${{package.version}}/opensearch-dashboards-${{package.version}}-linux-${osarch}.tar.gz"
+      echo "${sha}  osd.tar.gz" | sha512sum -c -
+      mkdir -p src && tar -xzf osd.tar.gz -C src --strip-components 1
+      dest="${{targets.destdir}}/usr/share/opensearch-dashboards"
+      install -d "$dest"
+      cp -a src/assets src/bin src/config src/data src/node_modules src/package.json src/plugins src/src \
+        src/LICENSE.txt src/NOTICE.txt "$dest/"
+
+      # securityDashboards needs the backend security plugin, which apps/opensearch drops;
+      # securityAnalyticsDashboards follows the dropped security-analytics plugin.
+      rm -rf "$dest/plugins/securityDashboards" "$dest/plugins/securityAnalyticsDashboards"
+
+      # Default config without the security plugin's keys (unknown keys fail the boot).
+      printf '%s\n' 'server.host: "0.0.0.0"' 'opensearch.hosts: ["http://opensearch:9200"]' \
+        > "$dest/config/opensearch_dashboards.yml"
+
+      # maplibre-gl 5.2.0 + its mapbox-gl alias (CVE-2026-85061, fixed only in 6.x, a new
+      # dependency tree): browser code, compiled into target/public; no server code loads it.
+      p="$dest/plugins/customImportMapDashboards"
+      if grep -rlE 'maplibre-gl|mapbox-gl' "$p/server" "$p/common"; then
+        echo "customImportMapDashboards server code now uses maplibre; revisit" >&2; exit 1
+      fi
+      rm -rf "$p/node_modules/maplibre-gl" "$p/node_modules/mapbox-gl"
+
+      fetchpkg() {  # <url> <sha256>: unpack into npmpkg/package
+        curl -fsSL -o pkg.tgz "$1"
+        echo "$2  pkg.tgz" | sha256sum -c -
+        rm -rf npmpkg && mkdir npmpkg && tar -xzf pkg.tgz -C npmpkg
+      }
+      # swap <name> <fixed> <url> <sha256> [prefix]: every node_modules/<name> copy older than
+      # <fixed> (only versions starting with <prefix> when given) gets the fixed release, keeping its nested
+      # node_modules. Fails when no copy is left to check, so a dropped package is noticed.
+      swap() {
+        fetchpkg "$3" "$4"
+        seen=0
+        for d in $(find "$dest" -type d -path "*/node_modules/$1"); do
+          [ -f "$d/package.json" ] || continue
+          v="$(node -p 'require(process.argv[1]).version' "$d/package.json")"
+          case "$v" in "${5:-}"*) ;; *) continue ;; esac
+          seen=$((seen+1))
+          [ "$v" != "$2" ] && [ "$(printf '%s\n%s\n' "$v" "$2" | sort -V | head -1)" = "$v" ] || continue
+          rm -rf nested; [ ! -d "$d/node_modules" ] || mv "$d/node_modules" nested
+          rm -rf "$d" && mkdir -p "$d" && cp -a npmpkg/package/. "$d/"
+          [ ! -d nested ] || mv nested "$d/node_modules"
+          echo "swapped $1 $v -> $2 in ${d#$dest/}"
+        done
+        [ "$seen" -gt 0 ] || { echo "no $1 ${5:-} copy left; drop this swap" >&2; exit 1; }
+      }
+      R=https://registry.npmjs.org
+      swap axios                1.20.0 $R/axios/-/axios-1.20.0.tgz                               5aa2dc9a5d6ced926e4b6ca8ef8e0253b118867e240db8650c49379e972c12ac 1.
+      swap brace-expansion      1.1.21 $R/brace-expansion/-/brace-expansion-1.1.21.tgz           d56cc19743e0521ebe46964412a5a4b247749036de7af3a9f78dd384f58fdb56 1.
+      swap brace-expansion      5.0.12 $R/brace-expansion/-/brace-expansion-5.0.12.tgz           ef8448ec78f20b692f04fa6d01f39b5ab34c66404bea3429f5a39c6c9e0be8b4 5.
+      swap decode-uri-component 0.5.0  $R/decode-uri-component/-/decode-uri-component-0.5.0.tgz f42d289f996e6c9f0e33d8f31de1fe9a7a077c612dca489cafdb2df4cbb6122f 0.4.
+      swap dompurify            3.4.16 $R/dompurify/-/dompurify-3.4.16.tgz                       d288ced25e6bda3e5fc76d1fc9bca899260cf886e005e84f232e686ada57f1b4 3.
+      swap fast-uri             3.1.8  $R/fast-uri/-/fast-uri-3.1.8.tgz                          86be033b406a7737c0521edc8fe3e15c7ac0cb6b5e509478cc9539a2efaa086c 3.
+      swap ip-address           10.7.1 $R/ip-address/-/ip-address-10.7.1.tgz                     7f99ac7abda701afe1fd1e36de462236fb4d1eb8c595d7ae0267bba7d8ee55f8 10.
+      swap joi                  18.2.9 $R/joi/-/joi-18.2.9.tgz                                   2f88b529b9c3040627f53ca91c9d45e33b73d9a286e4f4ca5c9170f8f284efef 18.
+      swap js-yaml              4.3.2  $R/js-yaml/-/js-yaml-4.3.2.tgz                            c7b241d2224cf9253ff53854aa4cee87da91bd889c4d0fa3a3ffd1041ecee5b1 4.
+      swap moment               2.31.0 $R/moment/-/moment-2.31.0.tgz                             efddf549c13aa7cf270f573d9c464978ab0810c0652673ae6af1189bb56ab3f8 2.
+      swap nanoid               5.1.16 $R/nanoid/-/nanoid-5.1.16.tgz                             d3fd9cbdc9e6c8f9617a92e6b06a308c56a62c744f748e393d10203866c1b3f8 5.
+      swap pbkdf2               3.1.7  $R/pbkdf2/-/pbkdf2-3.1.7.tgz                              ea4e99e34a01a2e64fe51cb5dbcca2d5a2a5701fd7764066d4f88b878de978bd 3.
+      swap source-map-js        1.2.2  $R/source-map-js/-/source-map-js-1.2.2.tgz                05c8cf8e7c3a6b56cada7668fe9342b10f4b625efc92aba9ba05b9e8fe4d71a3 1.
+      swap tar                  7.5.21 $R/tar/-/tar-7.5.21.tgz                                   bcedf25a21daecd1a18fb5e19ab855b7d79ec8ef1da175e8ba85cfc0ed0069d1 7.
+      swap @tootallnate/once    2.0.1  $R/@tootallnate/once/-/once-2.0.1.tgz                     22d30ea3fe3c960161800b64cc25d258623a565ba1de04c5e2d3adacf700557b 2.
+      # linkify-it 3.0.3 -> 5.0.2 (fixed only on 5.x; ansi-to-react, browser code): 5.x needs
+      # uc.micro ^2 where the tree holds 1.x, so nest 2.1.0 under each swapped copy.
+      swap linkify-it           5.0.2  $R/linkify-it/-/linkify-it-5.0.2.tgz                      f5169c5e5d837b5229180cb7214102d42f5c963f6932f284b608ef9549e927b4
+      fetchpkg $R/uc.micro/-/uc.micro-2.1.0.tgz a31660c690ddac370fe4b17fe6a3a73b8df094f99194ac90d0668d797dabf69b
+      for d in $(find "$dest" -type d -path '*/node_modules/linkify-it'); do
+        rm -rf "$d/node_modules/uc.micro" && mkdir -p "$d/node_modules/uc.micro"
+        cp -a npmpkg/package/. "$d/node_modules/uc.micro/"
+      done
+
+test:
+  pipeline:
+    - runs: |
+        test -f /usr/share/opensearch-dashboards/src/cli/dist.js
+        test ! -e /usr/share/opensearch-dashboards/node
+        node -p 'require("/usr/share/opensearch-dashboards/package.json").version'

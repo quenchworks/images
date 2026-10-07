@@ -1,0 +1,52 @@
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-opensearch-dashboards@local
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+      homedir: /home/nonroot
+  run-as: 1001
+
+# data/ holds the instance uuid; mount a volume there on a read-only root.
+paths:
+  - path: /usr/share/opensearch-dashboards/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+# What bin/opensearch-dashboards runs, minus its shell launcher. The default config
+# listens on every interface and points at http://opensearch:9200; mount
+# config/opensearch_dashboards.yml to change it.
+environment:
+  NODE_ENV: production
+
+work-dir: /usr/share/opensearch-dashboards
+
+entrypoint:
+  command: /usr/bin/node --no-warnings --max-http-header-size=65536 /usr/share/opensearch-dashboards/src/cli/dist
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-opensearch-dashboards"
+  org.opencontainers.image.licenses: "Apache-2.0"
