@@ -12,7 +12,7 @@ trap cleanup EXIT
 ver="$(docker run --rm "$IMAGE" --version | sed -n 's/^ceph version \([0-9.]*\).*/\1/p')"
 echo "ceph $ver"
 [ -z "$WANT" ] || [ "$ver" = "$WANT" ] || { echo "expected version $WANT"; exit 1; }
-for b in ceph-mon ceph-mgr ceph-osd ceph-mds radosgw rbd ceph-volume ceph-exporter; do
+for b in ceph-mon ceph-mgr ceph-osd ceph-mds radosgw rbd ceph-volume ceph-exporter ceph-bluestore-tool python3; do
   docker run --rm --entrypoint /bin/bash "$IMAGE" -c "command -v $b >/dev/null" || { echo "missing $b"; exit 1; }
 done
 echo "daemons and tools present"
