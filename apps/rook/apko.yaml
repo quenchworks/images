@@ -1,0 +1,70 @@
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - iproute2         # Multus networking
+    - s5cmd            # upstream ships it to talk to the object gateway
+    - quench-rook@local
+    - ceph-20-base=__CEPH__
+    - ceph-20-common=__CEPH__
+    - ceph-20-mon=__CEPH__
+    - ceph-20-mgr=__CEPH__
+    - ceph-20-mgr-rook=__CEPH__
+    - ceph-20-mgr-dashboard=__CEPH__
+    - ceph-20-mgr-k8sevents=__CEPH__
+    - ceph-20-osd=__CEPH__
+    - ceph-20-mds=__CEPH__
+    - ceph-20-radosgw=__CEPH__
+    - ceph-20-mirror=__CEPH__
+    - ceph-20-exporter=__CEPH__
+    - ceph-20-immutable-object-cache=__CEPH__
+    - ceph-20-fuse=__CEPH__
+
+accounts:
+  groups:
+    - groupname: ceph
+      gid: 167
+    - groupname: rook
+      gid: 2016
+  users:
+    - username: ceph
+      uid: 167
+      gid: 167
+      homedir: /var/lib/ceph
+    - username: rook
+      uid: 2016
+      gid: 2016
+      homedir: /var/lib/rook
+  run-as: 2016
+
+paths:
+  - path: /etc/ceph
+    type: directory
+    uid: 167
+    gid: 167
+    permissions: 0o755
+  - path: /var/lib/rook
+    type: directory
+    uid: 2016
+    gid: 2016
+    permissions: 0o755
+
+entrypoint:
+  command: /usr/local/bin/rook
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-rook"
+  org.opencontainers.image.licenses: "Apache-2.0"
