@@ -1,0 +1,58 @@
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - busybox          # frrcommon.sh and frr-reload shell out to grep, sed, ps
+    - frr-10.6=__REL__
+
+accounts:
+  groups:
+    - groupname: frr
+      gid: 1001
+    - groupname: frrvty
+      gid: 1002
+      members:
+        - frr
+  users:
+    - username: frr
+      uid: 1001
+      gid: 1001
+      homedir: /var/run/frr
+  # root, like upstream's image: zebra and watchfrr need raw sockets and NET_ADMIN, and the
+  # daemons switch to the frr user after start.
+  run-as: 0
+
+paths:
+  - path: /etc/frr
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o775
+  - path: /var/run/frr
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/tmp/frr
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /usr/lib/frr/docker-start
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-frr"
+  org.opencontainers.image.licenses: "GPL-2.0-only"
