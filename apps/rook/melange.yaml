@@ -27,6 +27,8 @@ pipeline:
       expected-sha256: __SHA256__
   # Wolfi's s5cmd (2.3.0-r25, newest) links golang.org/x/sys v0.20.0 (CVE-2026-39824);
   # build upstream's newest release here with the same floor pass instead.
+  # fetch extracts into `directory` but does not create it.
+  - runs: mkdir -p s5cmd
   - uses: fetch
     with:
       uri: https://github.com/peak/s5cmd/archive/refs/tags/v2.3.0.tar.gz
