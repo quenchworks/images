@@ -27,6 +27,10 @@ chmod 0755 "$d"; chmod 0644 "$d/deploy.yaml"
 scan="$(docker run --rm -e HOME=/tmp --tmpfs /tmp -v "$d:/work:ro" "$IMAGE" scan /work/deploy.yaml --format json 2>&1 || true)"
 echo "$scan" | tail -c 600
 grep -q '"controlID"' <<<"$scan" || { echo "kubescape scan produced no control results"; exit 1; }
+for b in ksserver downloader; do
+  rc=0; timeout 30 docker run --rm --entrypoint "/usr/bin/$b" "$IMAGE" --help >/dev/null 2>&1 || rc=$?
+  [ "$rc" -ne 126 ] && [ "$rc" -ne 127 ] || { echo "/usr/bin/$b did not execute"; exit 1; }
+done
 user="$(docker inspect "$IMAGE" --format '{{.Config.User}}')"
 [ "$user" = "1001" ] || { echo "expected user 1001, got '$user'"; exit 1; }
 echo "smoke test passed"

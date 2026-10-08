@@ -48,14 +48,20 @@ pipeline:
       mkdir -p "$B"
       # github.com/docker/docker v28.5.2+incompatible carries CVE-2026-33997 (the daemon's
       # plugin install); its fix exists only on the moby/moby path. Record which docker/docker
-      # packages the CLI links, and fail if any daemon, plugin or API server code is one.
-      go list -deps . | grep '^github.com/docker/docker/' || true
-      if go list -deps . | grep -E '^github.com/docker/docker/(daemon|plugin|api/server)'; then
-        echo "kubescape links Docker daemon code: CVE-2026-33997 applies"; exit 1
-      fi
-      go build -buildvcs=false -trimpath \
-        -ldflags "-s -w -X main.version=v${{package.version}} -X github.com/kubescape/backend/pkg/versioncheck.Client=release" \
-        -o "$B/kubescape" .
+      # and moby/moby packages each binary links, and fail on daemon, plugin, API server or
+      # authorization code (the VEX holds only while none is linked).
+      for p in . ./httphandler ./downloader; do
+        echo "docker/moby packages linked by $p:"; go list -deps "$p" | grep -E '^github.com/(docker/docker|moby/moby)/' || true
+        if go list -deps "$p" | grep -E '^github.com/(docker/docker|moby/moby)/(daemon|plugin|api/server|pkg/authorization)'; then
+          echo "$p links Docker daemon code: CVE-2026-33997 applies"; exit 1
+        fi
+      done
+      L="-s -w -X main.version=v${{package.version}} -X github.com/kubescape/backend/pkg/versioncheck.Client=release"
+      go build -buildvcs=false -trimpath -ldflags "$L" -o "$B/kubescape" .
+      # ksserver (the in-cluster scan service the Kubescape Operator runs) and downloader, as
+      # upstream's image ships them beside the CLI.
+      go build -buildvcs=false -trimpath -ldflags "$L" -o "$B/ksserver" ./httphandler
+      go build -buildvcs=false -trimpath -ldflags "-s -w" -o "$B/downloader" ./downloader
       v="$(go version -m "$B/kubescape" | awk '$2 == "golang.org/x/sys" { print $3 }')"
       [ -z "$v" ] || ! vlt "$v" v0.47.0 || { echo "FATAL: links golang.org/x/sys $v"; exit 1; }
 
@@ -63,3 +69,5 @@ test:
   pipeline:
     - runs: |
         test -x /usr/bin/kubescape
+        test -x /usr/bin/ksserver
+        test -x /usr/bin/downloader
