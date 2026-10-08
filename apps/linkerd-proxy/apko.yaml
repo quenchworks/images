@@ -41,8 +41,10 @@ accounts:
       gid: 1001
   run-as: 1001
 
+# ENTRYPOINT is linkerd2-proxy-identity like upstream: the injector sets no command, and it
+# writes the key/CSR before exec-ing /usr/lib/linkerd/linkerd2-proxy.
 entrypoint:
-  command: /usr/bin/linkerd2-proxy
+  command: /usr/lib/linkerd/linkerd2-proxy-identity
 
 archs:
   - x86_64

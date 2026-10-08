@@ -51,20 +51,21 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
   -keyout "$WORK/ca-key.pem" -out "$WORK/ca.pem" -subj "/CN=identity.linkerd.cluster.local" \
   >/dev/null 2>&1
 
-openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$WORK/key.pem" >/dev/null 2>&1
-openssl pkey -in "$WORK/key.pem" -outform DER -out "$WORK/identity/key.p8" >/dev/null 2>&1
-openssl req -new -key "$WORK/key.pem" -subj "/CN=$LOCAL_NAME" -outform DER \
-  -out "$WORK/identity/csr.der" >/dev/null 2>&1
+# The image entrypoint is linkerd2-proxy-identity, as upstream's: it writes key.p8 and csr.der
+# into the (writable, emptyDir-like) end-entity dir and then execs linkerd2-proxy. The dir starts
+# empty and must hold both files afterwards, written by the image.
+chmod 777 "$WORK/identity"
 echo "test-token" > "$WORK/token/linkerd-identity-token"
 
 echo "starting $IMAGE"
 docker run -d --name "$NAME" \
   -p 127.0.0.1:4191:4191 \
-  -v "$WORK/identity:/var/run/linkerd/identity/end-entity:ro" \
+  -v "$WORK/identity:/var/run/linkerd/identity/end-entity" \
   -v "$WORK/token:/var/run/secrets/tokens:ro" \
   -e LINKERD2_PROXY_ADMIN_LISTEN_ADDR=0.0.0.0:4191 \
   -e LINKERD2_PROXY_IDENTITY_TRUST_ANCHORS="$(cat "$WORK/ca.pem")" \
   -e LINKERD2_PROXY_IDENTITY_IDENTITY_LOCAL_NAME="$LOCAL_NAME" \
+  -e LINKERD2_PROXY_IDENTITY_LOCAL_NAME="$LOCAL_NAME" \
   -e LINKERD2_PROXY_IDENTITY_DIR=/var/run/linkerd/identity/end-entity \
   -e LINKERD2_PROXY_IDENTITY_TOKEN_FILE=/var/run/secrets/tokens/linkerd-identity-token \
   -e LINKERD2_PROXY_IDENTITY_SVC_ADDR=127.0.0.1:8080 \
@@ -72,6 +73,12 @@ docker run -d --name "$NAME" \
   -e LINKERD2_PROXY_DESTINATION_SVC_ADDR=127.0.0.1:8086 \
   -e LINKERD2_PROXY_DESTINATION_SVC_NAME=linkerd-destination.linkerd.serviceaccount.identity.linkerd.cluster.local \
   "$IMAGE" >/dev/null
+for i in $(seq 1 20); do [ -s "$WORK/identity/key.p8" ] && [ -s "$WORK/identity/csr.der" ] && break; sleep 1; done
+[ -s "$WORK/identity/key.p8" ] && [ -s "$WORK/identity/csr.der" ] \
+  || { echo "linkerd2-proxy-identity did not write key.p8 and csr.der"; ls -la "$WORK/identity"; docker logs "$NAME" 2>&1 | tail -20; exit 1; }
+openssl req -in "$WORK/identity/csr.der" -inform DER -noout -subject | grep -q "$LOCAL_NAME" \
+  || { echo "csr.der does not name $LOCAL_NAME"; exit 1; }
+echo "proxy-identity wrote key.p8 and a CSR for $LOCAL_NAME, then exec'd the proxy"
 
 echo "waiting to see whether the admin server (:4191) comes up, or the process exits cleanly"
 booted=""
