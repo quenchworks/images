@@ -159,8 +159,10 @@ pipeline:
       for ln in s.splitlines():
           # Upstream's own `fast-uri: ">=3.1.2"` floor is superseded by the exact
           # pin below; two selectors for one package is ambiguous.
-          if ln.startswith("  fast-uri:"):
-              dropped = True
+          # Same for axios and qs (upstream: ">=1.17.0", ">=6.14.2"); a second key for one
+          # package is a duplicated mapping key and pnpm refuses the file.
+          if ln.startswith(("  fast-uri:", "  axios:", "  qs:")):
+              dropped = dropped or ln.startswith("  fast-uri:")
               continue
           out.append(ln)
           if not added and ln == "overrides:":
