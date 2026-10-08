@@ -57,7 +57,7 @@ pipeline:
         "$F"
       # sed is silent when a pattern stops matching, and a leftover import would put
       # docker/docker straight back into the graph. Fail here instead.
-      ! grep -q 'github.com/docker/docker' "$F"
+      ! grep -q 'github.com/docker/docker' "$F" || exit 1
       export CGO_ENABLED=0
       export GOFLAGS=-mod=mod
       export GO111MODULE=on
