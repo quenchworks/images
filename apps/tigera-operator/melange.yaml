@@ -46,6 +46,16 @@ pipeline:
       B="${{targets.destdir}}/usr/bin"
       mkdir -p "$B"
       floorpass
+      # pkg/render/istio go:embeds the Istio charts the Makefile downloads (ISTIO_VERSION
+      # 1.29.2 in v1.42.2). Re-check the version and these sums when the operator moves.
+      for c in base:d91cb59b82612dd35949233613b015e7eb7bd787871368d7db9a85c45b82237b \
+               istiod:27a325a48cebad6dbdb0afea485b124b2d3fe618378e98edd5bd9b6805a270e7 \
+               cni:93a1bb04518059d8f74025367a7c37d2581c0705e2a47bd1cca447ab86633b34 \
+               ztunnel:6e19281c8f44e4b036f4eff01217f4420cd51e7705a1ecfd8703c03e8d2a2b2b; do
+        wget -q -O "pkg/render/istio/${c%%:*}.tgz" "https://istio-release.storage.googleapis.com/charts/${c%%:*}-1.29.2.tgz"
+        echo "${c#*:}  pkg/render/istio/${c%%:*}.tgz" | sha256sum -c -
+      done
+      grep -q '^ISTIO_VERSION ?= 1.29.2$' Makefile || { echo "FATAL: Makefile ISTIO_VERSION moved; update the charts"; exit 1; }
       go build -buildvcs=false -trimpath -tags osusergo,netgo \
         -ldflags "-s -w -X github.com/tigera/operator/version.VERSION=v${{package.version}}" -o "$B/operator" ./cmd/main.go
       for b in operator; do
