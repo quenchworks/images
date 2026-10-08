@@ -6,6 +6,10 @@ package:
   description: "Quenchworks calico-node Go binaries over Wolfi's Calico node package"
   copyright:
     - license: Apache-2.0
+  # Do not advertise cmd:calico-node: calico-node-__MINOR__ provides it too, and apk
+  # disqualifies a second provider; `replaces` lets our files win instead.
+  options:
+    no-commands: true
   dependencies:
     replaces:
       - calico-node-__MINOR__    # our calico-node, mountns and corrected SPDX win over its copies
