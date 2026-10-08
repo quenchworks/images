@@ -1,0 +1,32 @@
+# calico-cni image: the install-cni init container. It copies /opt/cni/bin onto the
+# host and writes the CNI config; root, like upstream (it writes host paths).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-calico-cni@local
+
+entrypoint:
+  command: /opt/cni/bin/install
+
+environment:
+  PATH: /opt/cni/bin:/usr/bin:/bin
+
+work-dir: /opt/cni/bin
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-calico-cni"
+  org.opencontainers.image.licenses: "Apache-2.0"
