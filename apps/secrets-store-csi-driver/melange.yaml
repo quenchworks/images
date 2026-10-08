@@ -1,0 +1,55 @@
+# Secrets Store CSI Driver (kubernetes-sigs), built from the release tag with the floor pass.
+package:
+  name: quench-secrets-store-csi-driver
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks Secrets Store CSI Driver (mounts external secrets as volumes)"
+  copyright:
+    - license: Apache-2.0
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go-1.27
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/kubernetes-sigs/secrets-store-csi-driver/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      export CGO_ENABLED=0 GOFLAGS=-mod=mod GOTOOLCHAIN=local GOWORK=off
+      # otel floats as one family (exporters/prometheus 0.67.0 is the 1.45.0 train).
+      FLOOR="golang.org/x/crypto@v0.56.0 golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0 golang.org/x/mod@v0.40.0 golang.org/x/sys@v0.47.0 google.golang.org/grpc@v1.83.2 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/sdk/metric@v1.45.0 go.opentelemetry.io/otel/exporters/prometheus@v0.67.0"
+      # Go semver order (a release outranks its prereleases); busybox sort -V does not.
+      vlt() { awk -v a="${1#v}" -v b="${2#v}" 'function pp(s,  p){sub(/\+.*/,"",s);p=index(s,"-");if(p){C=substr(s,1,p-1);P=substr(s,p+1)}else{C=s;P=""}} function cmp(x,y,  i,n,m,X,Y){n=split(x,X,".");m=split(y,Y,".");for(i=1;i<=n&&i<=m;i++){if(X[i]==Y[i])continue;if(X[i]~/^[0-9]+$/&&Y[i]~/^[0-9]+$/)return (X[i]+0<Y[i]+0)?-1:1;if(X[i]~/^[0-9]+$/)return -1;if(Y[i]~/^[0-9]+$/)return 1;return (X[i]<Y[i])?-1:1}return (n<m)?-1:(n>m)?1:0} BEGIN{pp(a);ca=C;pa=P;pp(b);cb=C;pb=P;c=cmp(ca,cb);if(c==0){if(pa==pb)c=0;else if(pa=="")c=1;else if(pb=="")c=-1;else c=cmp(pa,pb)}exit !(c<0)}'; }
+      # FLOORS, not pins: raise a module only where go.mod has it below the floor.
+      need=""
+      for mv in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${mv%@*}" 2>/dev/null)"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        vlt "$have" "${mv#*@}" && need="$need $mv"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
+      go mod tidy
+      B="${{targets.destdir}}/usr/bin"
+      mkdir -p "$B"
+      go build -buildvcs=false -trimpath \
+        -ldflags "-s -w -X sigs.k8s.io/secrets-store-csi-driver/pkg/version.BuildVersion=v${{package.version}}" \
+        -o "$B/secrets-store-csi" ./cmd/secrets-store-csi-driver
+      v="$(go version -m "$B/secrets-store-csi" | awk '$2 == "golang.org/x/sys" { print $3 }')"
+      [ -z "$v" ] || ! vlt "$v" v0.47.0 || { echo "FATAL: links golang.org/x/sys $v"; exit 1; }
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/bin/secrets-store-csi

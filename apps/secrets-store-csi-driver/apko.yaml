@@ -1,0 +1,29 @@
+# secrets-store-csi-driver image: the CSI node plugin. Root like upstream's: it mounts tmpfs
+# volumes into pod directories on the host, with util-linux mount as upstream ships.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - mount
+    - umount
+    - quench-secrets-store-csi-driver@local
+
+entrypoint:
+  command: /usr/bin/secrets-store-csi
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-secrets-store-csi-driver"
+  org.opencontainers.image.licenses: "Apache-2.0"
