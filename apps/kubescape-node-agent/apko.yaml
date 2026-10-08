@@ -21,6 +21,13 @@ accounts:
       gid: 1001
   run-as: 0
 
+environment:
+  HOME: /root
+
+# Upstream's layout: node-agent opens tracers.tar relative to WORKDIR /root, and ig reads
+# $HOME/.ig/config.yaml.
+work-dir: /root
+
 entrypoint:
   command: /usr/bin/node-agent
 

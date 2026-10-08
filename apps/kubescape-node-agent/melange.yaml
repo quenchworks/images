@@ -18,6 +18,11 @@ environment:
       - busybox
       - ca-certificates-bundle
       - go-1.27
+      - curl
+      - clang
+      - llvm
+      - libbpf-dev
+      - linux-headers
 
 pipeline:
   - uses: fetch
@@ -64,8 +69,61 @@ pipeline:
       v="$(go version -m "$B/node-agent" | awk '$2 == "golang.org/x/sys" { print $3 }')"
       [ -z "$v" ] || ! vlt "$v" v0.47.0 || { echo "FATAL: links golang.org/x/sys $v"; exit 1; }
 
+  - runs: |
+      set -eu
+      # tracers.tar: the Inspektor Gadget images node-agent loads at startup (upstream Makefile
+      # `gadgets` target + build/Dockerfile: /root/tracers.tar, /root/.ig/config.yaml, WORKDIR /root).
+      # Everything is built here from source instead of pulling ghcr.io/inspektor-gadget images:
+      # `ig` itself from the IG v0.48.1 tag (the version upstream installs), then every gadget with
+      # `ig image build --local` (Wolfi clang/llvm, libbpf and kernel headers; the Go WASM parts
+      # with this Go), then `ig image export`, exactly as upstream names and tags them.
+      export GOTOOLCHAIN=local GOWORK=off
+      IGV=v0.48.1
+      IGSHA=5b5b50305e24e06b16d5f40f06f5313a99c0aee8547536d41bd9e0d8dd02242f
+      W="$PWD/.igbuild"; mkdir -p "$W"
+      curl -fsSL -o "$W/ig.tgz" "https://github.com/inspektor-gadget/inspektor-gadget/archive/refs/tags/$IGV.tar.gz"
+      echo "$IGSHA  $W/ig.tgz" | sha256sum -c -
+      tar -xzf "$W/ig.tgz" -C "$W"
+      IG_SRC="$W/inspektor-gadget-${IGV#v}"
+      # ig keeps its image store at a fixed /var/lib/ig/oci-store, which the unprivileged build
+      # user cannot create; this ig is a build tool only (not shipped), so point it at the workspace.
+      grep -q '"/var/lib/ig/oci-store"' "$IG_SRC/pkg/oci/oci.go"
+      sed -i "s|\"/var/lib/ig/oci-store\"|\"$W/oci-store\"|" "$IG_SRC/pkg/oci/oci.go"
+      (cd "$IG_SRC" && CGO_ENABLED=0 GOFLAGS=-mod=mod GOTOOLCHAIN=local go build -trimpath -tags netgo \
+        -ldflags "-X github.com/inspektor-gadget/inspektor-gadget/internal/version.version=$IGV" \
+        -o "$W/ig" ./cmd/ig)
+      IG="$W/ig"
+      # Makefile.build expects the gadget headers under /usr/include/gadget (the builder image's
+      # layout); CLANG is the one overridable variable, and make expands its $* per arch target.
+      export CLANG="clang -I$IG_SRC/include -I$IG_SRC/include/gadget/\$*"
+      command -v llvm-strip >/dev/null || { s="$(ls /usr/lib/llvm*/bin/llvm-strip 2>/dev/null | head -1)"; [ -n "$s" ] || { echo "no llvm-strip"; exit 1; }; export LLVM_STRIP="$s"; }
+      build() {  # <source dir> <image ref>
+        echo "building gadget $2 from $1"
+        (cd "$1" && "$IG" image build --local -t "$2" .)
+      }
+      UPSTREAM="advise_seccomp trace_capabilities trace_dns trace_exec"
+      BUILT="trace_open"
+      KUBESCAPE="bpf exit fork hardlink http iouring_new iouring_old kmod network ptrace randomx ssh symlink unshare"
+      # The lists must match upstream's Makefile, or node-agent asks for an image tracers.tar lacks.
+      grep -q "^GADGETS=$UPSTREAM\$" Makefile && grep -q "^BUILT_GADGETS=$BUILT\$" Makefile \
+        && grep -q "^KUBESCAPE_GADGETS=$KUBESCAPE\$" Makefile && grep -q "^VERSION=$IGV\$" Makefile \
+        || { echo "upstream Makefile gadget lists changed; update this recipe"; grep -E '^(GADGETS|BUILT_GADGETS|KUBESCAPE_GADGETS|VERSION)=' Makefile; exit 1; }
+      refs=""
+      for g in $UPSTREAM; do build "$IG_SRC/gadgets/$g" "ghcr.io/inspektor-gadget/gadget/$g:$IGV"; refs="$refs ghcr.io/inspektor-gadget/gadget/$g:$IGV"; done
+      for g in $BUILT; do build "pkg/ebpf/gadgets/$g" "ghcr.io/inspektor-gadget/gadget/$g:$IGV"; refs="$refs ghcr.io/inspektor-gadget/gadget/$g:$IGV"; done
+      for g in $KUBESCAPE; do build "pkg/ebpf/gadgets/$g" "$g:latest"; refs="$refs $g:latest"; done
+      "$IG" image list
+      "$IG" image export $refs "$W/tracers.tar"
+      install -Dm644 "$W/tracers.tar" "${{targets.destdir}}/root/tracers.tar"
+      install -Dm644 configuration/ig-config.yaml "${{targets.destdir}}/root/.ig/config.yaml"
+      n="$(tar -tf "$W/tracers.tar" | grep -c '^blobs/sha256/' || true)"
+      echo "tracers.tar: $(du -h "$W/tracers.tar" | cut -f1), $n blobs"
+      [ "$n" -gt 0 ] || { echo "tracers.tar has no blobs"; exit 1; }
+
 test:
   pipeline:
     - runs: |
         test -x /usr/bin/node-agent
         test -x /usr/bin/sbom-scanner
+        test -s /root/tracers.tar
+        test -s /root/.ig/config.yaml
