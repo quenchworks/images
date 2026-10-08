@@ -1,0 +1,66 @@
+# Linkerd extension-init (Rust) from the linkerd/linkerd-extension-init release tag.
+package:
+  name: quench-linkerd-extension-init
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks Linkerd extension-init (namespace labelling for Linkerd extensions)"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - libgcc
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - cmake
+      - clang
+      - perl
+      - nasm
+      - pkgconf
+      - rust-1.90
+      - cargo-auditable
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/linkerd/linkerd-extension-init/archive/refs/tags/release/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      # Raise a crate on its own minor line only where Cargo.lock has it below the floor.
+      cfloor() {
+        line="${2%.*}"
+        locked() { awk -v n="$1" '$0=="name = \""n"\"" {getline; gsub(/version = |"/,""); print}' Cargo.lock; }
+        for v in $(locked "$1"); do
+          case "$v" in "$line".*) ;; *) continue ;; esac
+          [ "$v" = "$2" ] && continue
+          [ "$(printf '%s\n%s\n' "$v" "$2" | sort -V | head -1)" = "$v" ] || continue
+          cargo update -p "$1@$v" --precise "$2"
+        done
+        for v in $(locked "$1"); do
+          case "$v" in "$line".*) ;; *) continue ;; esac
+          [ "$(printf '%s\n%s\n' "$v" "$2" | sort -V | head -1)" = "$2" ] \
+            || { echo "$1 $v is still below the $2 floor"; exit 1; }
+        done
+      }
+      cfloor rustls 0.23.45   # GHSA-2mjx-qc3c-rqvc
+      cfloor rand 0.9.3       # GHSA-cq8v-f236-94qc
+      cargo auditable build --release --locked -p linkerd-extension-init
+      install -Dm755 target/release/linkerd-extension-init "${{targets.destdir}}/usr/bin/linkerd-extension-init"
+      install -Dm644 LICENSE "${{targets.destdir}}/usr/share/licenses/linkerd-extension-init/LICENSE"
+
+  - uses: strip
+
+test:
+  pipeline:
+    - runs: |
+        linkerd-extension-init --help | grep -q -- '--linkerd-namespace'

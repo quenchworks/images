@@ -1,0 +1,37 @@
+# linkerd-extension-init image: the viz chart's namespace-metadata Job passes only args, so the
+# binary is the ENTRYPOINT. uid/gid 2103 like the chart's defaultUID.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-linkerd-extension-init@local
+
+accounts:
+  groups:
+    - groupname: linkerd
+      gid: 2103
+  users:
+    - username: linkerd
+      uid: 2103
+      gid: 2103
+  run-as: 2103
+
+entrypoint:
+  command: /usr/bin/linkerd-extension-init
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-linkerd-extension-init"
+  org.opencontainers.image.licenses: "Apache-2.0"
