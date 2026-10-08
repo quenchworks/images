@@ -1,0 +1,57 @@
+# Strimzi Kafka runtime. Same contract as upstream's image: uid 1001, WORKDIR
+# /opt/kafka (kafka_run.sh sources ./set_kafka_jmx_options.sh relative to it),
+# no ENTRYPOINT (the operator passes /opt/kafka/kafka_run.sh and friends as args).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - openjdk-21-jre
+    - bash
+    - busybox
+    - tini
+    - gawk
+    - grep
+    - curl
+    - openssl
+    - quench-strimzi-kafka@local
+
+accounts:
+  groups:
+    - groupname: kafka
+      gid: 1001
+  users:
+    - username: kafka
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+cmd: /opt/kafka/kafka_run.sh
+
+environment:
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  PATH: /usr/lib/jvm/java-21-openjdk/bin:/usr/bin:/bin
+  KAFKA_HOME: /opt/kafka
+  KAFKA_VERSION: __KAFKA__
+  STRIMZI_VERSION: __VER__
+  KAFKA_EXPORTER_HOME: /opt/kafka-exporter
+  JMX_EXPORTER_HOME: /opt/prometheus-jmx-exporter
+  CRUISE_CONTROL_HOME: /opt/cruise-control
+
+work-dir: /opt/kafka
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-strimzi-kafka"
+  org.opencontainers.image.licenses: "Apache-2.0"

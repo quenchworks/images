@@ -1,0 +1,156 @@
+# Strimzi's Kafka image, assembled the way upstream's docker-images/kafka-based/
+# kafka/Dockerfile does, from pinned inputs:
+#   /opt/kafka                    Kafka dist + Strimzi run scripts + kafka-agent,
+#                                 tracing-agent + third-party libs (oauth, otel,
+#                                 metrics reporters, quotas, config providers)
+#   /opt/cruise-control           Cruise Control libs + its run scripts
+#   /opt/kafka-exporter           kafka_exporter (Go, from source) + run script
+#   /opt/prometheus-jmx-exporter  JMX exporter javaagent jar
+package:
+  name: quench-strimzi-kafka
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Strimzi Kafka __KAFKA__ image contents, packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-21-jre
+      - bash
+      - busybox
+      - tini        # kafka_run.sh execs /usr/bin/tini
+      - gawk        # dynamic_resources.sh / to_bytes.gawk
+      - grep        # kafka_readiness.sh uses grep -P
+      - curl        # kafka_readiness.sh probes the kafka-agent
+      - openssl     # cruise-control TLS prep scripts
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - bash
+      - curl
+      - ca-certificates-bundle
+      - openjdk-21
+      - openjdk-21-default-jvm
+      - maven-3.9
+      - yq
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/strimzi/strimzi-kafka-operator/archive/refs/tags/${{package.version}}.tar.gz
+      expected-sha256: "__SHA256__"
+  - runs: |
+      set -eux
+      export JAVA_HOME=/usr/lib/jvm/java-21-openjdk
+      export PATH="${JAVA_HOME}/bin:${PATH}"
+      export MAVEN_OPTS="-Dmaven.repo.local=$(pwd)/.m2repo -Duser.home=$(pwd)"
+      MVN="mvn -B -ntp -DskipTests -Dmaven.javadoc.skip=true -Dcheckstyle.skip -Dspotbugs.skip"
+      KHOME="${{targets.destdir}}/opt/kafka"
+      CC="${{targets.destdir}}/opt/cruise-control"
+      KEXP="${{targets.destdir}}/opt/kafka-exporter"
+      JMX="${{targets.destdir}}/opt/prometheus-jmx-exporter"
+      D=docker-images/kafka-based/kafka
+
+      # --- Kafka dist (CDN first, archive fallback, same sha256 either way) ---
+      f=kafka_2.13-__KAFKA__.tgz
+      for base in https://dlcdn.apache.org/kafka https://archive.apache.org/dist/kafka; do
+        curl -fsSL -o "/tmp/$f" "$base/__KAFKA__/$f" && break
+        rm -f "/tmp/$f"
+      done
+      echo "__KAFKA_SHA256__  /tmp/$f" | sha256sum -c -
+      install -d "$KHOME"
+      tar -xzf "/tmp/$f" -C "$KHOME" --strip-components=1
+      rm -rf "/tmp/$f" "$KHOME/bin/windows" "$KHOME/site-docs"
+      dest="$KHOME"
+      if [ "__KAFKA__" = "4.3.1" ]; then  # apps/kafka's 4.3.1 jar swap, verbatim
+      M=https://repo1.maven.org/maven2
+      swap() { # newfile sha256 url oldglob
+        local nf="$1" sha="$2" url="$3" oldglob="$4"
+        rm -f "$dest"/libs/$oldglob
+        curl -fsSL -o "$dest/libs/$nf" "$url"
+        echo "$sha  $dest/libs/$nf" | sha256sum -c - >/dev/null
+      }
+      swap jackson-core-2.21.7.jar 8c5623b98f32d5f7e1287ff61ed50e08ab7b11381e991fff89327faabba42261 "$M/com/fasterxml/jackson/core/jackson-core/2.21.7/jackson-core-2.21.7.jar" 'jackson-core-2.21.2.jar'
+      swap jackson-databind-2.21.7.jar 1290c2795e93e8a6861a6c4d9ff0d844d32f5ea178362cb2721edf5561e828b1 "$M/com/fasterxml/jackson/core/jackson-databind/2.21.7/jackson-databind-2.21.7.jar" 'jackson-databind-2.21.2.jar'
+      swap jackson-dataformat-csv-2.21.5.jar b278bd22805093e1b3e31c9ad7fa2773d3ac9e250da8cb566bd914334cc51a96 "$M/com/fasterxml/jackson/dataformat/jackson-dataformat-csv/2.21.5/jackson-dataformat-csv-2.21.5.jar" 'jackson-dataformat-csv-2.21.2.jar'
+      swap jackson-dataformat-yaml-2.21.5.jar c26143ac5503fd545bd5e9063f45a2499be89971559875e47cc868ef9359d10b "$M/com/fasterxml/jackson/dataformat/jackson-dataformat-yaml/2.21.5/jackson-dataformat-yaml-2.21.5.jar" 'jackson-dataformat-yaml-2.21.2.jar'
+      swap jackson-datatype-jdk8-2.21.5.jar c8b1a0d14ffb3f8f8a1f182856c8803a3ee1d7c1aeb68dfee08f22d934ce108f "$M/com/fasterxml/jackson/datatype/jackson-datatype-jdk8/2.21.5/jackson-datatype-jdk8-2.21.5.jar" 'jackson-datatype-jdk8-2.21.2.jar'
+      swap jackson-jakarta-rs-base-2.21.5.jar 07f11f2e46153b3e8d27bf6ff8f874b31bf781bf46bef69434355623a67cac5d "$M/com/fasterxml/jackson/jakarta/rs/jackson-jakarta-rs-base/2.21.5/jackson-jakarta-rs-base-2.21.5.jar" 'jackson-jakarta-rs-base-2.21.2.jar'
+      swap jackson-jakarta-rs-json-provider-2.21.5.jar c176333dd1edb820698fd3376e6f376919e3b6a208b37d112ce32192e9e787d6 "$M/com/fasterxml/jackson/jakarta/rs/jackson-jakarta-rs-json-provider/2.21.5/jackson-jakarta-rs-json-provider-2.21.5.jar" 'jackson-jakarta-rs-json-provider-2.21.2.jar'
+      swap jackson-module-blackbird-2.21.5.jar 6e1aac3aed140a3defec385083bba339d52eebb3f940582f03f64ad43ef3c433 "$M/com/fasterxml/jackson/module/jackson-module-blackbird/2.21.5/jackson-module-blackbird-2.21.5.jar" 'jackson-module-blackbird-2.21.2.jar'
+      swap jackson-module-jakarta-xmlbind-annotations-2.21.5.jar 5cb2cc2bf59faccf412ed6cba8588724b23c6145e5bda8d5ebee26db6d4dd12a "$M/com/fasterxml/jackson/module/jackson-module-jakarta-xmlbind-annotations/2.21.5/jackson-module-jakarta-xmlbind-annotations-2.21.5.jar" 'jackson-module-jakarta-xmlbind-annotations-2.21.2.jar'
+      swap lz4-java-1.11.1.jar e5e31b195fcc7e9c5da4b191af3b0082ee616c13f61cbd79409ffa65e4dd5c47 "$M/at/yawk/lz4/lz4-java/1.11.1/lz4-java-1.11.1.jar" 'lz4-java-1.10.2.jar'
+      # jline 4.2.1 (the first target) is itself flagged since 2026-09: CVE-2026-77420/77421/
+      # 77422 in the bundled reader/builtins, fixed in 4.3.1 on the 4.x line.
+      swap jline-4.3.1.jar c75761d4625467083c208563718fc37551af2a3468271a0758726b1f7f728d75 "$M/org/jline/jline/4.3.1/jline-4.3.1.jar" 'jline-3.30.4.jar'
+      swap jetty-security-12.0.36.jar e6fb70974291312c58ac84d8bf28c909d1800d1b3104020e7cd4db77391f9fb2 "$M/org/eclipse/jetty/jetty-security/12.0.36/jetty-security-12.0.36.jar" 'jetty-security-12.0.34.jar'
+      swap jetty-server-12.0.36.jar f0eb8d1e71d67d0f937c45752546cf479ba55ad3135cf600d3bf723f52cd53fe "$M/org/eclipse/jetty/jetty-server/12.0.36/jetty-server-12.0.36.jar" 'jetty-server-12.0.34.jar'
+      swap jetty-util-12.0.36.jar e16c145dd761168133d1505b6f7cf05343f5e3e3ff03333757c8a6312896ab48 "$M/org/eclipse/jetty/jetty-util/12.0.36/jetty-util-12.0.36.jar" 'jetty-util-12.0.34.jar'
+      swap log4j-api-2.25.5.jar 64777f73ea0b3104c04eb82befbdccc30a425a19e83ad06cb2f93aa303511863 "$M/org/apache/logging/log4j/log4j-api/2.25.5/log4j-api-2.25.5.jar" 'log4j-api-2.25.4.jar'
+      fi  # end 4.3.1-only jar swap
+
+      # --- Strimzi agents (built from the source tag) ---
+      $MVN install -pl kafka-agent,tracing-agent -am
+      for a in kafka-agent tracing-agent; do
+        unzip -qoj "docker-images/artifacts/binaries/$a-${{package.version}}-dist.zip" \
+          "lib/io.strimzi.$a-${{package.version}}.jar" -d /tmp/agents
+        mv "/tmp/agents/io.strimzi.$a-${{package.version}}.jar" "$KHOME/libs/$a-${{package.version}}.jar"
+      done
+
+      # --- third-party libs and Cruise Control, from Strimzi's own poms ---
+      # log4j floored to the 2.25.5 the Kafka swap above installs, so the
+      # layout-template jar does not lag the api jar.
+      $MVN -Dlog4j.version=2.25.5 dependency:copy-dependencies -f docker-images/artifacts/kafka-thirdparty-libs/4.3.x/pom.xml
+      cp docker-images/artifacts/kafka-thirdparty-libs/4.3.x/target/dependency/*.jar "$KHOME/libs/"
+      $MVN dependency:copy-dependencies -f docker-images/artifacts/kafka-thirdparty-libs/cc/pom.xml
+      install -d "$CC/libs"
+      cp docker-images/artifacts/kafka-thirdparty-libs/cc/target/dependency/*.jar "$CC/libs/"
+
+      # --- run scripts, as upstream COPYs them ---
+      cp -r "$D"/scripts/. "$KHOME/"
+      cp -r "$D"/cruise-control-scripts/. "$CC/"
+      install -d "$KEXP" "$KHOME/plugins"
+      cp -r "$D"/exporter-scripts/. "$KEXP/"
+      chmod 0755 "$KHOME"/*.sh "$CC"/*.sh "$KEXP"/*.sh
+
+      # --- JMX exporter javaagent ---
+      install -d "$JMX"
+      curl -fsSL -o "$JMX/jmx_prometheus_javaagent-__JMX__.jar" \
+        "https://github.com/prometheus/jmx_exporter/releases/download/__JMX__/jmx_prometheus_javaagent-__JMX__.jar"
+      echo "__JMX_SHA256__  $JMX/jmx_prometheus_javaagent-__JMX__.jar" | sha256sum -c -
+
+  - runs: |
+      # --- kafka_exporter from source, with apps/kafka-exporter's x/ floors ---
+      set -eu
+      KEXP="${{targets.destdir}}/opt/kafka-exporter"
+      curl -fsSL -o /tmp/kexp.tgz https://github.com/danielqsj/kafka_exporter/archive/refs/tags/v__KEXP__.tar.gz
+      echo "__KEXP_SHA256__  /tmp/kexp.tgz" | sha256sum -c -
+      mkdir -p /tmp/kexp && tar -xzf /tmp/kexp.tgz -C /tmp/kexp --strip-components=1
+      cd /tmp/kexp
+      export CGO_ENABLED=0 GOFLAGS=-mod=mod GOTOOLCHAIN=local
+      for want in golang.org/x/crypto@v0.56.0 golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0; do
+        m="${want%@*}"; w="${want#*@}"
+        have="$(go list -m -f '{{.Version}}' "$m" 2>/dev/null || true)"
+        [ -n "$have" ] || continue
+        [ "$(printf '%s\n%s\n' "$have" "$w" | sort -V | head -1)" = "$w" ] || go get "$want"
+      done
+      go mod tidy
+      V=github.com/prometheus/common/version
+      go build -trimpath -tags netgo \
+        -ldflags "-s -w -X $V.Version=__KEXP__ -X $V.Revision=v__KEXP__ -X $V.Branch=HEAD -X $V.BuildUser=quenchworks" \
+        -o "$KEXP/kafka_exporter" .
+      "$KEXP/kafka_exporter" --version 2>&1 | grep -q "version __KEXP__"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /opt/kafka/kafka_run.sh
+        test -x /opt/kafka-exporter/kafka_exporter
+        ls /opt/kafka/libs/kafka-agent-*.jar /opt/cruise-control/libs/cruise-control-*.jar
