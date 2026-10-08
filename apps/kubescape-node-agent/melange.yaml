@@ -19,9 +19,8 @@ environment:
       - ca-certificates-bundle
       - go-1.27
       - curl
-      - clang
-      - llvm
-      - libbpf-dev
+      - clang-18
+      - llvm-18
       - linux-headers
 
 pipeline:
@@ -93,10 +92,29 @@ pipeline:
         -ldflags "-X github.com/inspektor-gadget/inspektor-gadget/internal/version.version=$IGV" \
         -o "$W/ig" ./cmd/ig)
       IG="$W/ig"
+      # Match ig v0.48.1's gadget builder (Dockerfiles/gadget-builder.Dockerfile): clang/LLVM 18
+      # and libbpf v1.3.0 headers. Verifier complexity follows the compiler's output: built with
+      # clang 21, trace_exec and trace_open hit the 1M-instruction limit in kind (charts run
+      # 37777056908) while upstream's clang-18 builds load.
+      grep -q '^ARG CLANG_LLVM_VERSION=18$' "$IG_SRC/Dockerfiles/gadget-builder.Dockerfile"
+      grep -q '^ARG LIBBPF_VERSION=v1.3.0$' "$IG_SRC/Dockerfiles/gadget-builder.Dockerfile"
+      CL="$(command -v clang-18 || ls /usr/lib/llvm-18/bin/clang 2>/dev/null || true)"
+      ST="$(command -v llvm-strip-18 || ls /usr/lib/llvm-18/bin/llvm-strip 2>/dev/null || true)"
+      [ -n "$CL" ] && [ -n "$ST" ] || { echo "clang-18/llvm-strip-18 not found"; ls /usr/lib/llvm*/bin | head -50; exit 1; }
+      "$CL" --version | grep -q 'clang version 18\.' || { "$CL" --version; echo "not clang 18"; exit 1; }
+      curl -fsSL -o "$W/libbpf.tgz" https://github.com/libbpf/libbpf/archive/refs/tags/v1.3.0.tar.gz
+      echo "11db86acd627e468bc48b7258c1130aba41a12c4d364f78e184fd2f5a913d861  $W/libbpf.tgz" | sha256sum -c -
+      tar -xzf "$W/libbpf.tgz" -C "$W"
+      mkdir -p "$W/inc/bpf"
+      # the set libbpf's `make install_headers` installs
+      for h in bpf.h libbpf.h btf.h libbpf_common.h libbpf_legacy.h bpf_helpers.h bpf_helper_defs.h \
+               bpf_tracing.h bpf_endian.h bpf_core_read.h skel_internal.h libbpf_version.h usdt.bpf.h; do
+        cp "$W/libbpf-1.3.0/src/$h" "$W/inc/bpf/"
+      done
       # Makefile.build expects the gadget headers under /usr/include/gadget (the builder image's
       # layout); CLANG is the one overridable variable, and make expands its $* per arch target.
-      export CLANG="clang -I$IG_SRC/include -I$IG_SRC/include/gadget/\$*"
-      command -v llvm-strip >/dev/null || { s="$(ls /usr/lib/llvm*/bin/llvm-strip 2>/dev/null | head -1)"; [ -n "$s" ] || { echo "no llvm-strip"; exit 1; }; export LLVM_STRIP="$s"; }
+      export CLANG="$CL -I$W/inc -I$IG_SRC/include -I$IG_SRC/include/gadget/\$*"
+      export LLVM_STRIP="$ST"
       build() {  # <source dir> <image ref>
         echo "building gadget $2 from $1"
         (cd "$1" && "$IG" image build --local -t "$2" .)
