@@ -1,0 +1,33 @@
+# ztunnel image: /usr/local/bin/ztunnel as ENTRYPOINT (the chart passes only args: proxy ztunnel),
+# over iptables like upstream's iptables base. Root, like upstream.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - iptables
+    - quench-ztunnel@local
+
+entrypoint:
+  command: /usr/local/bin/ztunnel
+
+environment:
+  ISTIO_META_ISTIO_VERSION: "__VER__"
+
+work-dir: /
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-ztunnel"
+  org.opencontainers.image.licenses: "Apache-2.0"
