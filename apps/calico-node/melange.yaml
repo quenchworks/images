@@ -26,6 +26,7 @@ environment:
       - libbpf-dev
       - elfutils-dev
       - zlib-dev
+      - libpcap-dev          # gopacket/pcap
       - jq
       - calico-node-__MINOR__=__WOLFI__   # its SPDX is rewritten below
 
@@ -51,6 +52,14 @@ pipeline:
       echo "raising:${need:- nothing}"
       [ -z "$need" ] || go get $need
       go mod tidy
+
+      # felix includes libbpf's internal str_error.h (upstream builds libbpf from its own
+      # submodule); Wolfi's libbpf-dev ships only the public headers. Use the public
+      # libbpf_strerror instead and assert both edits took.
+      api=felix/bpf/libbpf/libbpf_api.h
+      sed -i 's|#include "str_error.h"|#define STRERR_BUFSIZE 128|' "$api"
+      sed -i 's|cp = libbpf_strerror_r(err, errmsg, sizeof(errmsg));|libbpf_strerror(err, errmsg, sizeof(errmsg)); cp = errmsg;|' "$api"
+      ! grep -q 'str_error.h\|libbpf_strerror_r' "$api" || { echo "FATAL: libbpf_api.h patch did not apply"; exit 1; }
 
       M=github.com/projectcalico/calico/node
       out="${{targets.destdir}}/usr/bin"
