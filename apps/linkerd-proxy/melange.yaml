@@ -55,6 +55,7 @@ environment:
       - busybox
       - ca-certificates-bundle
       - git
+      - curl
       - cmake
       - clang
       - perl
@@ -135,4 +136,43 @@ pipeline:
       install -d "${{targets.destdir}}/usr/bin"
       ln -s /usr/lib/linkerd/linkerd2-proxy "${{targets.destdir}}/usr/bin/linkerd2-proxy"
 
+  - runs: |
+      set -eu
+      # linkerd2-network-validator: with CNI on (no proxy-init), the injector adds a
+      # linkerd-network-validator init container that runs this binary from the proxy image.
+      # linkerd2's Dockerfile.proxy fetches validator/v0.1.9 (LINKERD_VALIDATOR_VERSION, the same on
+      # edge-26.7.2, 26.8.4 and 26.9.3) as a prebuilt; build that tag from source instead.
+      export RUSTFLAGS='--cfg tokio_unstable'
+      V="$PWD/.validator"; mkdir -p "$V"
+      curl -fsSL -o "$V/src.tgz" "https://github.com/linkerd/linkerd2-proxy-init/archive/refs/tags/validator/v0.1.9.tar.gz"
+      echo "f9d2fa777704dfa7b1b613abc0b4f0c25cc1869985d71983fb7ae19e30e77d3a  $V/src.tgz" | sha256sum -c -
+      tar -xzf "$V/src.tgz" -C "$V" --strip-components=1
+      cd "$V"
+      cfloor() {
+        line="${2%.*}"
+        locked() { awk -v n="$1" '$0=="name = \""n"\"" {getline; gsub(/version = |"/,""); print}' Cargo.lock; }
+        for v in $(locked "$1"); do
+          case "$v" in "$line".*) ;; *) continue ;; esac
+          [ "$v" = "$2" ] && continue
+          [ "$(printf '%s\n%s\n' "$v" "$2" | sort -V | head -1)" = "$v" ] || continue
+          cargo update -p "$1@$v" --precise "$2"
+        done
+        for v in $(locked "$1"); do
+          case "$v" in "$line".*) ;; *) continue ;; esac
+          [ "$(printf '%s\n%s\n' "$v" "$2" | sort -V | head -1)" = "$2" ] \
+            || { echo "$1 $v is still below the $2 floor"; exit 1; }
+        done
+      }
+      cfloor rustls 0.23.45   # GHSA-2mjx-qc3c-rqvc
+      cfloor rand 0.9.3       # GHSA-cq8v-f236-94qc
+      cargo auditable build --release --locked -p linkerd-network-validator
+      install -Dm755 target/release/linkerd-network-validator \
+        "${{targets.destdir}}/usr/lib/linkerd/linkerd2-network-validator"
+
   - uses: strip
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/lib/linkerd/linkerd2-proxy
+        test -x /usr/lib/linkerd/linkerd2-network-validator

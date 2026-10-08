@@ -31,6 +31,11 @@
 set -euo pipefail
 
 IMAGE="${1:?usage: test.sh <image-ref>}"
+
+# The CNI-mode injector runs linkerd2-network-validator from this image as an init container.
+vh="$(docker run --rm --entrypoint /usr/lib/linkerd/linkerd2-network-validator "$IMAGE" --help 2>&1)" || { echo "network validator did not run: $vh"; exit 1; }
+grep -q -- "--connect-addr" <<<"$vh" || { echo "network validator --help lacks --connect-addr: $vh"; exit 1; }
+echo "network validator: ok"
 NAME="quench-linkerd-proxy-smoke-$$"
 WORK="$(mktemp -d)"
 cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; rm -rf "$WORK"; }
