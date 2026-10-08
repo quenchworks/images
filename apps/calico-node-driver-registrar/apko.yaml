@@ -1,0 +1,36 @@
+# Assembles the csi-node-driver-registrar image: the binary at /csi-node-driver-registrar and root by default, as upstream.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-calico-node-driver-registrar@local
+
+accounts:
+  groups:
+    - groupname: csi
+      gid: 1001
+  users:
+    - username: csi
+      uid: 1001
+      gid: 1001
+  run-as: 0
+
+entrypoint:
+  command: /csi-node-driver-registrar
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-calico-node-driver-registrar"
+  org.opencontainers.image.licenses: "Apache-2.0"
