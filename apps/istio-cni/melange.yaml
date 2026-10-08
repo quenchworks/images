@@ -1,0 +1,95 @@
+# Builds Istio's CNI plugin (istio-cni) and node agent (install-cni) from the istio/istio tag,
+# with the same floor pass and tags as apps/istiod (one Go module, no CGO).
+package:
+  name: quench-istio-cni
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks Istio CNI plugin and install-cni node agent, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/istio/istio/archive/refs/tags/${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      export CGO_ENABLED=0
+      export GOTOOLCHAIN=auto
+      export GOFLAGS=-mod=mod
+      # 1.28.10 pins module versions that predate several advisories. The first
+      # pass floored only the two the aarch64 build surfaced; a full re-gate then
+      # showed three more, including a CRITICAL -- so the floor is now the whole
+      # set the gate actually reports, not just the first two it happened to name:
+      #   golang.org/x/text      CVE-2026-56852       (v0.38.0, floor v0.41.0)
+      #     -- v0.39.0 clears the CVE but x/crypto@v0.55.0 REQUIRES x/text
+      #     >= v0.41.0, and `go get` refuses the inconsistent pair outright:
+      #       go: golang.org/x/crypto@v0.55.0 requires golang.org/x/text@v0.41.0
+      #     A floor set has to be internally coherent, not just individually
+      #     above each advisory. v0.41.0 is what the other recipes float to.
+      #   google.golang.org/grpc GHSA-hrxh-6v49-42gf  (v1.81.1, floor v1.82.1)
+      #   golang.org/x/crypto    CVE-2026-56854 CRIT  (v0.53.0, floor v0.55.0)
+      #   github.com/google/cel-go GHSA-gcjh-h69q-9w9g (v0.28.1, floor v0.29.0)
+      #   prometheus/prometheus  CVE-2026-42151/42154 (v0.306.0, floor v0.311.3)
+      # 1.29.7/1.30.4 already resolve both above these floors natively, so the
+      # block is a no-op there and a real fix on 1.28.10.
+      # FLOOR is a FLOOR, not a pin: a bare `go get mod@vX` is a NO-OP under an
+      # upstream `replace` and a DOWNGRADE once upstream requires more than vX.
+      # Float only what is below the floor, then assert the shipped BINARY
+      # carries nothing below it.
+      # otel 1.45.0 is CVE-2026-81870 (LOW, exporter config logging can leak
+      # endpoint URLs). Only otel/sdk carries the advisory, but the otel modules
+      # release as a set and a floor set has to be internally coherent, so all
+      # four move together. 1.31.0 is the first istio line that resolves otel at
+      # all; 1.29.7 and 1.30.4 gate clean without these entries.
+      FLOOR="golang.org/x/text@v0.41.0 google.golang.org/grpc@v1.83.2 golang.org/x/crypto@v0.56.0 github.com/google/cel-go@v0.29.0 github.com/prometheus/prometheus@v0.311.3 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      go list -m -e $MODS
+      need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
+      go mod tidy
+
+      for c in istio-cni install-cni; do
+        go build -trimpath \
+          -tags vtprotobuf,disable_pgv \
+          -ldflags "-s -w -X istio.io/istio/pkg/version.buildVersion=${{package.version}}" \
+          -o "$c" ./cni/cmd/$c
+        # The float is only real if it reached the BINARY (dep and => lines at or above the floor).
+        bad="$(go version -m "$c" | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor "$c")"
+        [ -z "$bad" ] || { echo "0-CVE float did not reach $c:"; echo "$bad"; exit 1; }
+      done
+      install -Dm755 istio-cni "${{targets.destdir}}/opt/cni/bin/istio-cni"
+      install -Dm755 install-cni "${{targets.destdir}}/usr/local/bin/install-cni"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /opt/cni/bin/istio-cni
+        /usr/local/bin/install-cni version | grep -q '${{package.version}}'

@@ -1,0 +1,34 @@
+# istio-cni image (upstream install-cni): the install-cni DaemonSet copies /opt/cni/bin/istio-cni
+# onto the host and, in ambient mode, programs each pod's netns with iptables (legacy or nft,
+# whichever the node uses). Root, like upstream (it writes host paths). Upstream sets only CMD;
+# the istio-cni chart runs `install-cni` by name, so PATH keeps /usr/local/bin.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - iptables
+    - quench-istio-cni@local
+
+cmd: /usr/local/bin/install-cni
+
+environment:
+  PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/cni/bin
+
+work-dir: /opt/cni/bin
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-istio-cni"
+  org.opencontainers.image.licenses: "Apache-2.0"
