@@ -1,0 +1,75 @@
+# Builds the Strimzi operator from source: `mvn install` over the reactor (minus
+# systemtest) emits the cluster-operator, topic-operator, user-operator and
+# kafka-init -dist.zip assemblies, and this recipe unpacks them into upstream's
+# image layout (docker-images/operator/Dockerfile): /opt/strimzi/bin holds the
+# filtered *_run.sh scripts plus launch_java.sh, /opt/strimzi/lib the union of
+# the four runtime classpaths. The jars are noarch; the arch comes from the JRE.
+package:
+  name: quench-strimzi-operator
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Strimzi operator (cluster, topic, user operators and kafka-init), packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-21-jre   # maven.compiler.release=21 upstream; the scanned CVE surface
+      - bash             # every run script is bash
+      - busybox
+      - tini             # launch_java.sh execs /usr/bin/tini -w -e 143 -- java ...
+      - openssl          # certificate-issuer's OpenSslCertIssuer shells out to it
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - bash             # config-model-generator/build-config-models.sh
+      - ca-certificates-bundle
+      - openjdk-21
+      - openjdk-21-default-jvm
+      - maven-3.9
+      - yq               # tools/kafka-versions-tools.sh parses kafka-versions.yaml with it
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/strimzi/strimzi-kafka-operator/archive/refs/tags/${{package.version}}.tar.gz
+      expected-sha256: "__SHA256__"
+  - runs: |
+      set -eux
+      export JAVA_HOME=/usr/lib/jvm/java-21-openjdk
+      export PATH="${JAVA_HOME}/bin:${PATH}"
+      # Hermetic local repo. config-model-generator runs a NESTED mvn from its
+      # build script, which reads MAVEN_OPTS and MVN_ARGS too, and needs the
+      # reactor modules before it INSTALLED (hence install, not package).
+      export MAVEN_OPTS="-Dmaven.repo.local=$(pwd)/.m2repo -Duser.home=$(pwd)"
+      # --- QuenchWorks CVE floors (CLI properties beat the pom's own) ---------
+      #   bouncycastle 1.83 -> 1.85: CVE-2026-8763 (CRITICAL), CVE-2026-13506 (HIGH).
+      export MVN_ARGS="-B -ntp -DskipTests -Dmaven.javadoc.skip=true -Dcheckstyle.skip -Dspotbugs.skip -Dbouncycastle.version=1.85"
+      mvn $MVN_ARGS install -pl '!systemtest'
+
+      bin=docker-images/artifacts/binaries
+      dest="${{targets.destdir}}/opt/strimzi"
+      install -d "$dest/bin" "$dest/lib"
+      for c in cluster-operator topic-operator user-operator kafka-init; do
+        z="$bin/$c-${{package.version}}-dist.zip"
+        test -f "$z"
+        unzip -qo "$z" -d "$dest"
+      done
+      install -m 0755 docker-images/operator/scripts/launch_java.sh "$dest/bin/"
+      chmod 0755 "$dest"/bin/*.sh
+      for s in cluster_operator_run.sh topic_operator_run.sh user_operator_run.sh kafka_init_run.sh launch_java.sh; do
+        test -x "$dest/bin/$s"
+      done
+      # the filtered scripts must name a real classpath, not the raw @tokens@
+      if grep -l '@project\.' "$dest"/bin/*.sh; then echo "unfiltered run script"; exit 1; fi
+
+test:
+  pipeline:
+    - runs: |
+        test -x /opt/strimzi/bin/cluster_operator_run.sh
+        ls /opt/strimzi/lib/io.strimzi.cluster-operator-*.jar

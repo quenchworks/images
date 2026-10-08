@@ -1,0 +1,53 @@
+# Strimzi operator runtime: Wolfi JRE 21 + the operator tree under /opt/strimzi.
+# Matches upstream's image contract (docker-images/operator/Dockerfile): uid 1001,
+# WORKDIR /opt/strimzi (the run scripts use a relative lib/ classpath), and NO
+# ENTRYPOINT, because the operator Deployment and every container the cluster
+# operator creates (topic/user operator, kafka-init) pass the script as args.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - openjdk-21-jre
+    - bash
+    - busybox
+    - tini
+    - openssl
+    - cmd:getent     # cluster_operator_run.sh auto-detects the cluster DNS domain with getent
+    - quench-strimzi-operator@local
+
+accounts:
+  groups:
+    - groupname: strimzi
+      gid: 1001
+  users:
+    - username: strimzi
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+cmd: /opt/strimzi/bin/cluster_operator_run.sh
+
+environment:
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  PATH: /usr/lib/jvm/java-21-openjdk/bin:/usr/bin:/bin
+  STRIMZI_HOME: /opt/strimzi
+  STRIMZI_VERSION: __VER__
+
+work-dir: /opt/strimzi
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-strimzi-operator"
+  org.opencontainers.image.licenses: "Apache-2.0"
