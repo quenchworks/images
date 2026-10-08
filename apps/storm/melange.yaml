@@ -28,7 +28,10 @@ environment:
 pipeline:
   - uses: fetch
     with:
-      uri: https://archive.apache.org/dist/storm/apache-storm-${{package.version}}/apache-storm-${{package.version}}.tar.gz
+      # dlcdn, not archive.apache.org: archive throttled the 304M tarball to ~150K/s on the arm runner
+      # (run 37772952211 stalled 50+ min twice). dlcdn only keeps current releases; on a 404, go back to
+      # archive.apache.org. The sha256 pin is unchanged either way.
+      uri: https://dlcdn.apache.org/storm/apache-storm-${{package.version}}/apache-storm-${{package.version}}.tar.gz
       expected-sha256: "__SHA256__"
       strip-components: 1
   - runs: |
