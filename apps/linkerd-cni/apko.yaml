@@ -1,0 +1,30 @@
+# linkerd-cni image: install-cni copies /opt/cni/bin/linkerd-cni onto the host and writes the
+# CNI config; root, like upstream (it writes host paths). Upstream sets only CMD, so the chart's
+# repair-controller container can override the command.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - busybox
+    - ca-certificates-bundle
+    - quench-linkerd-cni@local
+
+cmd: /usr/bin/linkerd2-cni-install
+
+work-dir: /linkerd
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-linkerd-cni"
+  org.opencontainers.image.licenses: "Apache-2.0"
