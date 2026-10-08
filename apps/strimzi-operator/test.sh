@@ -21,9 +21,20 @@ user="$(docker inspect "$IMAGE" --format '{{.Config.User}}')"
 ep="$(docker inspect "$IMAGE" --format '{{json .Config.Entrypoint}}')"
 case "$ep" in null|'[]') ;; *) echo "expected no entrypoint, got $ep"; exit 1 ;; esac
 
+# The image env the upstream Deployment (060-Deployment-strimzi-cluster-operator.yaml)
+# sets; the operator refuses to start without its default image maps.
+K=q.example/kafka:x
+KMAP="$(printf '4.2.0=%s\n4.2.1=%s\n4.3.0=%s\n4.3.1=%s\n' $K $K $K $K)"
 echo "starting the cluster operator"
 docker run -d --name "$NAME" -p 127.0.0.1::8080 \
   -e STRIMZI_NAMESPACE=default -e STRIMZI_OPERATOR_NAMESPACE=default \
+  -e STRIMZI_KAFKA_IMAGES="$KMAP" -e STRIMZI_KAFKA_CONNECT_IMAGES="$KMAP" \
+  -e STRIMZI_KAFKA_MIRROR_MAKER_2_IMAGES="$KMAP" \
+  -e STRIMZI_DEFAULT_KAFKA_EXPORTER_IMAGE=$K -e STRIMZI_DEFAULT_CRUISE_CONTROL_IMAGE=$K \
+  -e STRIMZI_DEFAULT_TOPIC_OPERATOR_IMAGE=$K -e STRIMZI_DEFAULT_USER_OPERATOR_IMAGE=$K \
+  -e STRIMZI_DEFAULT_KAFKA_INIT_IMAGE=$K -e STRIMZI_DEFAULT_KAFKA_BRIDGE_IMAGE=$K \
+  -e STRIMZI_DEFAULT_KANIKO_EXECUTOR_IMAGE=$K -e STRIMZI_DEFAULT_BUILDAH_IMAGE=$K \
+  -e STRIMZI_DEFAULT_MAVEN_BUILDER=$K \
   -e KUBERNETES_SERVICE_HOST=192.0.2.1 -e KUBERNETES_SERVICE_PORT=443 \
   "$IMAGE" /opt/strimzi/bin/cluster_operator_run.sh >/dev/null
 port="$(docker port "$NAME" 8080/tcp | head -1 | sed 's/.*://')"
