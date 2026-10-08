@@ -1,0 +1,36 @@
+# Kubescape node-agent image (a Kubescape Operator component). Root like upstream's: an eBPF node agent.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-kubescape-node-agent@local
+
+accounts:
+  groups:
+    - groupname: node-agent
+      gid: 1001
+  users:
+    - username: node-agent
+      uid: 1001
+      gid: 1001
+  run-as: 0
+
+entrypoint:
+  command: /usr/bin/node-agent
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-kubescape-node-agent"
+  org.opencontainers.image.licenses: "Apache-2.0"
