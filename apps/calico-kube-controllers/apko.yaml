@@ -21,6 +21,35 @@ accounts:
       gid: 1001
   run-as: 1001
 
+# The Tigera operator runs kube-controllers as uid 999, gid 0: the status file its probes
+# read and the pprof files must be writable by that user, as in upstream's image.
+paths:
+  - path: /status
+    type: directory
+    uid: 999
+    gid: 0
+    permissions: 0o775
+  - path: /profiles
+    type: directory
+    uid: 999
+    gid: 0
+    permissions: 0o775
+  - path: /status/status.json
+    type: permissions
+    uid: 999
+    gid: 0
+    permissions: 0o664
+  - path: /profiles/mem.pprof
+    type: permissions
+    uid: 999
+    gid: 0
+    permissions: 0o664
+  - path: /profiles/cpu.pprof
+    type: permissions
+    uid: 999
+    gid: 0
+    permissions: 0o664
+
 entrypoint:
   command: /usr/bin/calico-kube-controllers
 

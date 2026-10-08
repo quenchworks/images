@@ -47,6 +47,36 @@ pipeline:
       B="${{targets.destdir}}/opt/cni/bin"
       mkdir -p "$B"
 
+      # Port of upstream 04415b7057 (on master and release-v3.32, in no 3.32 tag): under Go
+      # 1.26's map implementation encoding/json panics on uniquelabels' unique.Handle keys
+      # ("makeslice: len out of range") and json-iterator trips the concurrent map check.
+      # Typha crash-looped in the chart's kind gate. Marshal labels as map[string]string
+      # and drop the jsoniter wrapper for encoding/json, as upstream did.
+      cat > libcalico-go/lib/json/json.go <<'GO'
+      package json
+
+      import "encoding/json"
+
+      func Marshal(v any) ([]byte, error) { return json.Marshal(v) }
+
+      func Unmarshal(data []byte, v any) error { return json.Unmarshal(data, v) }
+      GO
+      ul=lib/std/uniquelabels/unique_labels.go
+      sed -i 's|return json.Marshal(i.m)|return json.Marshal(i.RecomputeOriginalMap())|' "$ul"
+      awk '/^func \(i \*Map\) UnmarshalJSON\(data \[\]byte\) error \{$/ {
+          print
+          print "\tvar sm map[string]string"
+          print "\tif err := json.Unmarshal(data, &sm); err != nil {\n\t\treturn err\n\t}"
+          print "\tif sm == nil {\n\t\ti.m = nil\n\t\treturn nil\n\t}"
+          print "\thm := make(handleMap, len(sm))"
+          print "\tfor k, v := range sm {\n\t\thm[uniquestr.Make(k)] = uniquestr.Make(v)\n\t}"
+          print "\ti.m = hm\n\treturn nil"
+          skip = 1; next }
+        skip && /^}$/ { skip = 0 }
+        !skip' "$ul" > "$ul.new" && mv "$ul.new" "$ul"
+      grep -q 'json.Marshal(i.RecomputeOriginalMap())' "$ul" && grep -q 'var sm map\[string\]string' "$ul" \
+        && ! grep -q jsoniter libcalico-go/lib/json/json.go || { echo "FATAL: Go 1.26 JSON port did not apply"; exit 1; }
+
       floorpass
       go build -buildvcs=false -trimpath -ldflags "-s -w -X main.VERSION=v${{package.version}} -X github.com/projectcalico/calico/pkg/buildinfo.Version=v${{package.version}}" \
         -o "$B/calico" ./cni-plugin/cmd/calico
