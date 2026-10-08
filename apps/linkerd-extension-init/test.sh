@@ -35,14 +35,21 @@ s = http.server.ThreadingHTTPServer(("127.0.0.1", 16444), H)
 c = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); c.load_cert_chain(sys.argv[1], sys.argv[2])
 s.socket = c.wrap_socket(s.socket, server_side=True); s.serve_forever()
 P
-openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 1 -subj /CN=fake-apiserver \
-  -addext "subjectAltName=IP:127.0.0.1" -keyout "$D/api.key" -out "$D/api.crt" 2>/dev/null
+# A CA plus a leaf cert: rustls/webpki rejects a self-signed CA cert served as the end entity
+# (CaUsedAsEndEntity, run 37806161800).
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 1 -subj /CN=fake-ca \
+  -keyout "$D/ca.key" -out "$D/ca.crt" 2>/dev/null
+openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj /CN=fake-apiserver \
+  -keyout "$D/api.key" -out "$D/api.csr" 2>/dev/null
+printf 'subjectAltName=IP:127.0.0.1\nbasicConstraints=CA:FALSE\nextendedKeyUsage=serverAuth\n' > "$D/ext.cnf"
+openssl x509 -req -in "$D/api.csr" -CA "$D/ca.crt" -CAkey "$D/ca.key" -CAcreateserial -days 1 \
+  -extfile "$D/ext.cnf" -out "$D/api.crt" 2>/dev/null
 python3 "$D/fakeapi.py" "$D/api.crt" "$D/api.key" "$D/patch.json" & FAKE=$!
 cat > "$D/kubeconfig" <<K
 apiVersion: v1
 kind: Config
 clusters:
-- cluster: {server: "https://127.0.0.1:16444", certificate-authority-data: "$(base64 -w0 < "$D/api.crt")"}
+- cluster: {server: "https://127.0.0.1:16444", certificate-authority-data: "$(base64 -w0 < "$D/ca.crt")"}
   name: fake
 contexts:
 - context: {cluster: fake, user: fake}
