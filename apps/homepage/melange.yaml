@@ -58,6 +58,12 @@ pipeline:
       # (vitest 4.1.10, CVE-2026-84373). Nothing at runtime imports it; the boot
       # test proves that.
       rm -rf "$app"/node_modules/.pnpm/vitest@* "$app"/node_modules/.pnpm/@vitest+*
+      # That rm leaves pnpm's hoisted links to the removed stores dangling (this assert was inert
+      # under set -e until c7834413, so nothing noticed). Show what is left, drop only links whose
+      # target is gone, and let the assert below catch any real vitest code still in the bundle.
+      left="$(find "$app/node_modules" -maxdepth 3 -name 'vitest*')"
+      [ -z "$left" ] || { echo "vitest entries left after removing the .pnpm stores:"; ls -ld $left; }
+      find "$app/node_modules" -maxdepth 3 -name 'vitest*' -type l ! -exec test -e {} \; -print -delete
       ! find "$app/node_modules" -maxdepth 3 -name 'vitest*' | grep -q . || exit 1
       # ip-address 10.5.0 (CVE-2026-101910 to -101913, fixed 10.7.1) and undici 8.10.0 (CVE-2026-85024) come from
       # upstream's frozen lockfile, so the traced copies are swapped in place for the fixed
