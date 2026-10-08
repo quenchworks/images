@@ -73,7 +73,8 @@ pipeline:
       # the version from VERSION, as upstream's release build does.
       export VERSION="${{package.version}}" IGNORE_DIRTY_TREE=1
       cargo auditable build --release --locked
-      install -Dm755 target/release/ztunnel "${{targets.destdir}}/usr/local/bin/ztunnel"
+      # .cargo/config.toml sets target-dir = "out/rust".
+      install -Dm755 out/rust/release/ztunnel "${{targets.destdir}}/usr/local/bin/ztunnel"
 
   - uses: strip
 
