@@ -1,0 +1,48 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/kubescape-operator/2026-10-08",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-10-08T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-33997"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/docker/docker@v28.5.2%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "CVE-2026-33997 is a privilege-validation bypass in the Moby daemon's plugin installation. Checked with `go list -deps .` in the CI build (images run 37736326583, both arches): the operator v0.2.172 links github.com/docker/docker/client, api and the api/types packages, and from github.com/moby/moby only pkg/stringid (a random ID helper); no daemon, plugin manager, api/server or pkg/authorization package of either module path. The build fails if one is ever linked. The fix (29.3.1) exists only under the new moby module path, so the +incompatible modules cannot be floated to it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-33997"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/moby/moby@v28.5.2%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "CVE-2026-33997 is a privilege-validation bypass in the Moby daemon's plugin installation. Checked with `go list -deps .` in the CI build (images run 37736326583, both arches): the operator v0.2.172 links github.com/docker/docker/client, api and the api/types packages, and from github.com/moby/moby only pkg/stringid (a random ID helper); no daemon, plugin manager, api/server or pkg/authorization package of either module path. The build fails if one is ever linked. The fix (29.3.1) exists only under the new moby module path, so the +incompatible modules cannot be floated to it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-34040"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/moby/moby@v28.5.2%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "CVE-2026-34040 is an authorization bypass in the Moby daemon's AuthZ plugin handling of API requests. Checked with `go list -deps .` in the CI build (images run 37736326583, both arches): the operator v0.2.172 links github.com/docker/docker/client, api and the api/types packages, and from github.com/moby/moby only pkg/stringid (a random ID helper); no daemon, plugin manager, api/server or pkg/authorization package of either module path. The build fails if one is ever linked. The fix (29.3.1) exists only under the new moby module path, so the +incompatible modules cannot be floated to it."
+    }
+  ]
+}
