@@ -1,0 +1,40 @@
+# linkerd-viz-metrics-api image: the viz chart passes only args, so the binary is the ENTRYPOINT.
+# uid/gid 2103 like the chart's defaultUID/defaultGID.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-linkerd-viz-metrics-api@local
+
+accounts:
+  groups:
+    - groupname: linkerd
+      gid: 2103
+  users:
+    - username: linkerd
+      uid: 2103
+      gid: 2103
+  run-as: 2103
+
+environment:
+  LINKERD_CONTAINER_VERSION_OVERRIDE: __VER__
+
+entrypoint:
+  command: /usr/bin/metrics-api
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-linkerd-viz-metrics-api"
+  org.opencontainers.image.licenses: "Apache-2.0"

@@ -1,0 +1,56 @@
+# Linkerd Viz tap (the tap API server, and with the injector argument the tap-injector webhook; the viz chart runs both from this image), from the linkerd/linkerd2 edge tag with the floor pass.
+package:
+  name: quench-linkerd-viz-tap
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks Linkerd Viz tap, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go-1.26
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/linkerd/linkerd2/archive/refs/tags/edge-${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      export CGO_ENABLED=0 GOFLAGS=-mod=mod GOTOOLCHAIN=local GOWORK=off
+      # One coherent set: x/crypto 0.56.0 and grpc 1.83.2 require x/text 0.41.0. x/mod, grpc,
+      # x/crypto and oras-go are go.mod scan findings on 26.7.2 and 26.8.4 (26.9.3 is already past).
+      FLOOR="golang.org/x/crypto@v0.56.0 golang.org/x/text@v0.41.0 golang.org/x/mod@v0.40.0 google.golang.org/grpc@v1.83.2 oras.land/oras-go/v2@v2.6.2 github.com/containerd/containerd@v1.7.35"
+      # Go semver order (a release outranks its prereleases); busybox sort -V does not.
+      vlt() { awk -v a="${1#v}" -v b="${2#v}" 'function pp(s,  p){sub(/\+.*/,"",s);p=index(s,"-");if(p){C=substr(s,1,p-1);P=substr(s,p+1)}else{C=s;P=""}} function cmp(x,y,  i,n,m,X,Y){n=split(x,X,".");m=split(y,Y,".");for(i=1;i<=n&&i<=m;i++){if(X[i]==Y[i])continue;if(X[i]~/^[0-9]+$/&&Y[i]~/^[0-9]+$/)return (X[i]+0<Y[i]+0)?-1:1;if(X[i]~/^[0-9]+$/)return -1;if(Y[i]~/^[0-9]+$/)return 1;return (X[i]<Y[i])?-1:1}return (n<m)?-1:(n>m)?1:0} BEGIN{pp(a);ca=C;pa=P;pp(b);cb=C;pb=P;c=cmp(ca,cb);if(c==0){if(pa==pb)c=0;else if(pa=="")c=1;else if(pb=="")c=-1;else c=cmp(pa,pb)}exit !(c<0)}'; }
+      # FLOORS, not pins: raise a module only where go.mod has it below the floor.
+      need=""
+      for mv in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${mv%@*}" 2>/dev/null)"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        vlt "$have" "${mv#*@}" && need="$need $mv"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
+      go mod tidy
+      go build -buildvcs=false -trimpath -tags prod -ldflags "-s -w" -o "${{targets.destdir}}/usr/bin/tap" ./viz/tap/cmd
+      install -Dm644 LICENSE "${{targets.destdir}}/linkerd/LICENSE"
+
+  - uses: strip
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/bin/tap
