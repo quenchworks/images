@@ -48,7 +48,7 @@ pipeline:
       sed -i '/^\tflushKernelSpec()$/d' pkg/sensors/load.go
       sed -i '/^func flushKernelSpec() {$/,/^}$/d; /^\t"github.com\/cilium\/ebpf\/btf"$/d' pkg/sensors/load_linux.go
       sed -i '/^func flushKernelSpec() {}$/d' pkg/sensors/load_windows.go
-      ! grep -rn -e 'FlushKernelSpec' -e 'flushKernelSpec' --include='*.go' pkg cmd
+      ! grep -rn -e 'FlushKernelSpec' -e 'flushKernelSpec' --include='*.go' pkg cmd || exit 1
       # 0-CVE FLOORS, not pins (docs/go-module-float.md): raise a module only where go.mod has it
       # below the floor; a module absent from the graph is skipped. Bare `go get` pins downgraded
       # newer upstream releases (found 2026-10-05).

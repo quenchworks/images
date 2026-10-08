@@ -279,7 +279,7 @@ test:
         # No DANGLING sourcemap reference (the map is deliberately not shipped).
         # Only the trailing comment line counts -- the bundle inlines
         # source-map-support, which mentions sourceMappingURL nine more times.
-        ! tail -1 /usr/share/adc/main.cjs | grep -q '^//# sourceMappingURL='
+        ! tail -1 /usr/share/adc/main.cjs | grep -q '^//# sourceMappingURL=' || exit 1
 
         # adc hardcodes its version in the source, so this is the real pin check.
         v="$(node /usr/share/adc/main.cjs -v)"
@@ -291,7 +291,7 @@ test:
         ADC_RUNNING_MODE=ingress node /usr/share/adc/main.cjs server --help > /tmp/srv.txt
         grep -q -- '--listen-status' /tmp/srv.txt
         grep -q -- '--listen ' /tmp/srv.txt
-        ! node /usr/share/adc/main.cjs server --help 2>/dev/null
+        ! node /usr/share/adc/main.cjs server --help 2>/dev/null || exit 1
 
         # And the plain CLI surface still works without the ingress gate.
         node /usr/share/adc/main.cjs --help | grep -q 'sync'

@@ -60,7 +60,7 @@ pipeline:
       # drop the rolling file appender entirely: even unreferenced, log4j builds it and
       # CrateDB tries to create logs/ under the read-only home
       sed -i '/^rootLogger.appenderRef.rolling/d; /^appender\.rolling\./d' "$home/config/log4j2.properties"
-      ! grep -q 'rolling' "$home/config/log4j2.properties"
+      ! grep -q 'rolling' "$home/config/log4j2.properties" || exit 1
       chmod -R a+rX "$home"
 
 test:

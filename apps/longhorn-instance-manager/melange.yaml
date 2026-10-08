@@ -128,7 +128,7 @@ pipeline:
       # Static as upstream builds it (netgo, external static link).
       go build -trimpath -tags netgo -ldflags "-s -w -X main.Version=v${{package.version}} -linkmode external -extldflags -static" \
         -o "$d/longhorn-instance-manager" .
-      ! readelf -d "$d/longhorn-instance-manager" | grep -q NEEDED
+      ! readelf -d "$d/longhorn-instance-manager" | grep -q NEEDED || exit 1
       grep -aq "v${{package.version}}" "$d/longhorn-instance-manager"
 
 test:

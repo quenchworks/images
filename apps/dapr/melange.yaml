@@ -74,7 +74,7 @@ pipeline:
       sed -i -e 's|chainUnaryInterceptors = append(chainUnaryInterceptors, otelgrpc.UnaryServerInterceptor(s.Cfg.ExperimentalTracerOptions...))|opts = append(opts, grpc.StatsHandler(otelgrpc.NewServerHandler(s.Cfg.ExperimentalTracerOptions...)))|' \
         -e '/chainStreamInterceptors = append(chainStreamInterceptors, otelgrpc.StreamServerInterceptor/d' "$F"
       grep -q 'grpc.StatsHandler(otelgrpc.NewServerHandler' "$F"
-      ! grep -q 'otelgrpc.UnaryServerInterceptor\|otelgrpc.StreamServerInterceptor' "$F"
+      ! grep -q 'otelgrpc.UnaryServerInterceptor\|otelgrpc.StreamServerInterceptor' "$F" || exit 1
       export GOFLAGS="-mod=vendor -buildvcs=false"
       V=${{package.version}}
       LD="-s -w -X github.com/dapr/dapr/pkg/buildinfo.version=$V -X github.com/dapr/dapr/pkg/buildinfo.gitversion=v$V -X github.com/dapr/kit/logger.DaprVersion=$V"
