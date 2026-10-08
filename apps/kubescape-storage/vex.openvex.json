@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/kubescape-storage/2026-10-08",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-10-08T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-33997"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/docker/docker@v28.5.2%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "CVE-2026-33997 is a privilege-validation bypass in the Moby daemon's plugin installation. Kubescape storage v0.0.348 links at most Docker API type definitions. Checked with `go list -deps` on all three binaries in the CI build (images run 37735425296, both arches): the storage server (.) linked no github.com/docker/docker package, and ./cmd/migration and ./cmd/cpexport each linked only api/types/filters, api/types/registry and api/types/versions, with no client, daemon, plugin manager or api/server package. The build fails if daemon, plugin or api/server code is ever linked. The fix (29.3.1) exists only under the github.com/moby/moby module path, so the +incompatible module cannot be floated to it."
+    }
+  ]
+}
