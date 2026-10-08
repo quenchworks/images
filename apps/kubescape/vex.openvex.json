@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/kubescape/2026-10-08",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-10-08T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-33997"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/docker/docker@v28.5.2%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "CVE-2026-33997 is a privilege-validation bypass in the Moby daemon's plugin installation. kubescape (the root package of kubescape/kubescape v4.0.15) links only Docker's client side. Checked with `go list -deps .` in the CI build (images run 37729575719, both arches), which listed github.com/docker/docker/client, api, the api/types/* packages, pkg/homedir and pkg/namesgenerator, and no daemon, plugin manager or api/server package. The build fails if one is ever linked. The fix (29.3.1) exists only under the github.com/moby/moby module path, so the +incompatible module cannot be floated to it."
+    }
+  ]
+}
