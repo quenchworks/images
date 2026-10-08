@@ -1,0 +1,30 @@
+# calico-node image: Wolfi's calico-node package (BIRD, BPF objects, runit services,
+# confd templates) with quench-calico-node's Go binaries over it. Root, like upstream:
+# the node agent programs the host's routes, iptables and BPF.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - kmod                       # felix loads ipip/vxlan/wireguard modules
+    - calico-node-__MINOR__=__WOLFI__
+    - quench-calico-node@local
+
+entrypoint:
+  command: /usr/bin/start_runit
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-calico-node"
+  org.opencontainers.image.licenses: "Apache-2.0"
