@@ -93,12 +93,22 @@ jobs:
       - name: Assemble single-arch image for the scan gate
         run: apko build apko.rendered.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}
 
+      - name: Install uv (for the VEX validator)
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Check VEX
+        working-directory: ${{ github.workspace }}
+        run: uv run scripts/check-vex.py calico-node
+
       - name: Scan, the hard 0-CVE gate (before publish)
         uses: aquasecurity/trivy-action@d2a0b60797ff03db6132bd4e2b293f9b37081297 # master 2026-09-26, v0.36.0+11, bundles trivy v0.71.2
         # detection-priority=comprehensive: scan every npm package under node_modules,
         # not only what the apk database claims. Do NOT drop this.
         env:
           TRIVY_DETECTION_PRIORITY: comprehensive
+          # Wolfi's advisories on the calico-node-3.32 package record name Go modules in the
+          # two binaries quench-calico-node replaces; see the file and melange.yaml's asserts.
+          # trivy-action has no `vex:` input; pass it through the TRIVY_VEX env.
+          TRIVY_VEX: apps/calico-node/vex.openvex.json
         with:
           input: apps/calico-node/image.tar
           format: table
