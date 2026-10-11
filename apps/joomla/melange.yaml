@@ -104,6 +104,36 @@ pipeline:
       fi
       grep -A1 '"name": "phpseclib/phpseclib"' "$vendor/composer/installed.json" | grep -q '"version": "3.0.57"'
 
+  # enshrined/svg-sanitize 0.22.0 (vendored by 5.4.9 and 6.1.4) has CVE-2026-107379/-107380/
+  # -107381, fixed in 1.0.0. Upstream calls 1.0.0 a semver relabel; 0.22.0...1.0.0 only
+  # modifies src/ files (no class added or removed) and leaves composer.json alone, so the
+  # composer classmap stays valid.
+  - uses: fetch
+    with:
+      uri: https://github.com/darylldoyle/svg-sanitizer/archive/refs/tags/1.0.0.tar.gz
+      expected-sha256: 56c8b5f54657ca5080987df3fc28f04b3ffce34f1bd1be80cbe783e3d520ddb6
+      extract: false
+
+  - name: Swap the vendored svg-sanitize up to 1.0.0 when it is older
+    runs: |
+      set -eu
+      vendor="${{targets.destdir}}/var/www/html/libraries/vendor"
+      have=$(grep -A1 '"name": "enshrined/svg-sanitize"' "$vendor/composer/installed.json" | sed -n 's/.*"version": "\([^"]*\)".*/\1/p')
+      test -n "$have"
+      if [ "$(printf '%s\n' "$have" 1.0.0 | sort -V | head -1)" = "$have" ] && [ "$have" != 1.0.0 ]; then
+        mkdir -p /tmp/svgsan
+        tar -xzf 1.0.0.tar.gz -C /tmp/svgsan --strip-components=1
+        test -d "$vendor/enshrined/svg-sanitize/src"
+        rm -rf "$vendor/enshrined/svg-sanitize/src"
+        cp -a /tmp/svgsan/src "$vendor/enshrined/svg-sanitize/src"
+        chmod -R u=rwX,go=rX "$vendor/enshrined/svg-sanitize/src"
+        diff -r /tmp/svgsan/src "$vendor/enshrined/svg-sanitize/src"
+        ref=f3300fcd1bbf67d205b52217c75d0f7d6a8c47ff
+        sed -i "/\"name\": \"enshrined\/svg-sanitize\"/,/\"type\": \"library\"/{s/\"$have\"/\"1.0.0\"/;s/\"$have.0\"/\"1.0.0.0\"/;s/[0-9a-f]\{40\}/$ref/g}" "$vendor/composer/installed.json"
+        sed -i "/'enshrined\/svg-sanitize' => array(/,/),/{s/'$have'/'1.0.0'/;s/'$have.0'/'1.0.0.0'/;s/[0-9a-f]\{40\}/$ref/}" "$vendor/composer/installed.php"
+      fi
+      grep -A1 '"name": "enshrined/svg-sanitize"' "$vendor/composer/installed.json" | grep -q '"version": "1.0.0"'
+
   - name: Install the nginx site config (FastCGI to php-fpm, port 8080, /var/www/html)
     runs: |
       set -eu

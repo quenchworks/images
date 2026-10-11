@@ -201,6 +201,7 @@ pipeline:
         "  'proxy-addr@<2.0.8': 2.0.8",          # CVE-2026-90711 CRITICAL (2026-10-06 scan)
         "  'compression@<1.8.2': 1.8.2",         # CVE-2026-87776 HIGH (2026-10-06 scan)
         "  'source-map-js@<1.2.2': 1.2.2",       # CVE-2026-93749 HIGH (2026-10-06 scan; pnpm, no npm-12 cooldown)
+        "  'handlebars@<4.7.10': 4.7.10",        # CVE-2026-106444/106445/106446 (2 CRITICAL); same deps, CJS
       ]
       out=[]
       done=False; dropped=set()
@@ -260,7 +261,7 @@ pipeline:
           if m:
               have.setdefault(m.group(1).replace("+", "/"), set()).add(m.group(2))
       # (package, version that must NOT survive) for every exact-version override above
-      banned = [("undici", "6.27.0"), ("undici", "6.28.0"), ("undici", "7.28.0"), ("undici", "7.29.0"), ("undici", "8.10.0"), ("fast-uri", "3.1.6"), ("axios", "1.18.1"), ("dompurify", "3.4.13")]
+      banned = [("undici", "6.27.0"), ("undici", "6.28.0"), ("undici", "7.28.0"), ("undici", "7.29.0"), ("undici", "8.10.0"), ("fast-uri", "3.1.6"), ("axios", "1.18.1"), ("dompurify", "3.4.13"), ("handlebars", "4.7.9")]
       bad = [f"{p}@{v}" for p, v in banned if v in have.get(p, ())]
       if bad:
           print("FATAL: override did not apply, these resolved versions survived:", ", ".join(bad))
