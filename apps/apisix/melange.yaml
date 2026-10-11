@@ -129,7 +129,7 @@ environment:
       # Build against Wolfi's CURRENT crypto/regex/compression, never api7's pinned
       # older ones. openssl-dev ONLY -- listing `openssl`/`openssl-config` here pinned
       # an older libssl than the rest of the toolchain expects in apps/kong.
-      - openssl-dev
+      - openssl-3.6-dev    # openssl-4.0-dev also provides openssl-dev at a higher version; nginx 1.29.2 ocsp stapling does not build on OpenSSL 4 (incomplete ASN1_INTEGER)
       - pcre2-dev
       # PCRE **1**, not a typo: jsonschema -> lrexlib-pcre needs pcre.h, and there is
       # no pcre2 build of that rock. Without it the whole rock tree fails on
