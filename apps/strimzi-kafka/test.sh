@@ -134,6 +134,5 @@ echo "JMX exporter serves kafka_server_ metrics"
 
 kv="$(x /opt/kafka-exporter/kafka_exporter --version 2>&1 || true)"
 grep -q 'version' <<<"$kv" || { echo "kafka_exporter --version failed: $kv"; exit 1; }
-x sh -c 'ls /opt/cruise-control/libs/cruise-control-[0-9]*.jar >/dev/null && test -x /opt/cruise-control/cruise_control_run.sh'
 
 echo "smoke test passed (nonroot user: $user)"

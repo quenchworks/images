@@ -3,7 +3,7 @@
 #   /opt/kafka                    Kafka dist + Strimzi run scripts + kafka-agent,
 #                                 tracing-agent + third-party libs (oauth, otel,
 #                                 metrics reporters, quotas, config providers)
-#   /opt/cruise-control           Cruise Control libs + its run scripts
+# Cruise Control (/opt/cruise-control upstream) is NOT shipped; see build.conf.
 #   /opt/kafka-exporter           kafka_exporter (Go, from source) + run script
 #   /opt/prometheus-jmx-exporter  JMX exporter javaagent jar
 package:
@@ -22,7 +22,7 @@ package:
       - gawk        # dynamic_resources.sh / to_bytes.gawk
       - grep        # kafka_readiness.sh uses grep -P
       - curl        # kafka_readiness.sh probes the kafka-agent
-      - openssl     # cruise-control TLS prep scripts
+      - openssl     # TLS tooling, as upstream's base image carries
 
 environment:
   contents:
@@ -53,7 +53,6 @@ pipeline:
       export MAVEN_OPTS="-Dmaven.repo.local=$(pwd)/.m2repo -Duser.home=$(pwd)"
       MVN="mvn -B -ntp -DskipTests -Dmaven.javadoc.skip=true -Dcheckstyle.skip -Dspotbugs.skip"
       KHOME="${{targets.destdir}}/opt/kafka"
-      CC="${{targets.destdir}}/opt/cruise-control"
       KEXP="${{targets.destdir}}/opt/kafka-exporter"
       JMX="${{targets.destdir}}/opt/prometheus-jmx-exporter"
       D=docker-images/kafka-based/kafka
@@ -104,21 +103,17 @@ pipeline:
         mv "/tmp/agents/io.strimzi.$a-${{package.version}}.jar" "$KHOME/libs/$a-${{package.version}}.jar"
       done
 
-      # --- third-party libs and Cruise Control, from Strimzi's own poms ---
+      # --- third-party libs, from Strimzi's own pom ---
       # log4j floored to the 2.25.5 the Kafka swap above installs, so the
       # layout-template jar does not lag the api jar.
       $MVN -Dlog4j.version=2.25.5 dependency:copy-dependencies -f docker-images/artifacts/kafka-thirdparty-libs/4.3.x/pom.xml
       cp docker-images/artifacts/kafka-thirdparty-libs/4.3.x/target/dependency/*.jar "$KHOME/libs/"
-      $MVN dependency:copy-dependencies -f docker-images/artifacts/kafka-thirdparty-libs/cc/pom.xml
-      install -d "$CC/libs"
-      cp docker-images/artifacts/kafka-thirdparty-libs/cc/target/dependency/*.jar "$CC/libs/"
 
       # --- run scripts, as upstream COPYs them ---
       cp -r "$D"/scripts/. "$KHOME/"
-      cp -r "$D"/cruise-control-scripts/. "$CC/"
       install -d "$KEXP" "$KHOME/plugins"
       cp -r "$D"/exporter-scripts/. "$KEXP/"
-      chmod 0755 "$KHOME"/*.sh "$CC"/*.sh "$KEXP"/*.sh
+      chmod 0755 "$KHOME"/*.sh "$KEXP"/*.sh
 
       # --- JMX exporter javaagent ---
       install -d "$JMX"
@@ -153,4 +148,4 @@ test:
     - runs: |
         test -x /opt/kafka/kafka_run.sh
         test -x /opt/kafka-exporter/kafka_exporter
-        ls /opt/kafka/libs/kafka-agent-*.jar /opt/cruise-control/libs/cruise-control-*.jar
+        ls /opt/kafka/libs/kafka-agent-*.jar
