@@ -31,7 +31,7 @@ pipeline:
       export CGO_ENABLED=0 GOFLAGS=-mod=mod GOTOOLCHAIN=local
       # 0-CVE float (docs/go-module-float.md), a floor: raise a module only where the
       # line links an older one (1.8 and 1.9 carry x/crypto, x/net and x/text CVEs).
-      for want in golang.org/x/crypto@v0.56.0 golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0; do
+      for want in golang.org/x/crypto@v0.57.0 golang.org/x/net@v0.60.0 golang.org/x/text@v0.42.0; do
         m="${want%@*}"; w="${want#*@}"
         have="$(go list -m -f '{{.Version}}' "$m" 2>/dev/null || true)"
         [ -n "$have" ] || continue

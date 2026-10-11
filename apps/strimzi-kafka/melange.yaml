@@ -86,7 +86,7 @@ pipeline:
       swap jackson-jakarta-rs-json-provider-2.21.5.jar c176333dd1edb820698fd3376e6f376919e3b6a208b37d112ce32192e9e787d6 "$M/com/fasterxml/jackson/jakarta/rs/jackson-jakarta-rs-json-provider/2.21.5/jackson-jakarta-rs-json-provider-2.21.5.jar" 'jackson-jakarta-rs-json-provider-2.21.2.jar'
       swap jackson-module-blackbird-2.21.5.jar 6e1aac3aed140a3defec385083bba339d52eebb3f940582f03f64ad43ef3c433 "$M/com/fasterxml/jackson/module/jackson-module-blackbird/2.21.5/jackson-module-blackbird-2.21.5.jar" 'jackson-module-blackbird-2.21.2.jar'
       swap jackson-module-jakarta-xmlbind-annotations-2.21.5.jar 5cb2cc2bf59faccf412ed6cba8588724b23c6145e5bda8d5ebee26db6d4dd12a "$M/com/fasterxml/jackson/module/jackson-module-jakarta-xmlbind-annotations/2.21.5/jackson-module-jakarta-xmlbind-annotations-2.21.5.jar" 'jackson-module-jakarta-xmlbind-annotations-2.21.2.jar'
-      swap lz4-java-1.11.1.jar e5e31b195fcc7e9c5da4b191af3b0082ee616c13f61cbd79409ffa65e4dd5c47 "$M/at/yawk/lz4/lz4-java/1.11.1/lz4-java-1.11.1.jar" 'lz4-java-1.10.2.jar'
+      swap lz4-java-1.11.4.jar 58c8e0b813960d2a248e050c353baea73139b48a2ffc55382d42c69707e17325 "$M/at/yawk/lz4/lz4-java/1.11.4/lz4-java-1.11.4.jar" 'lz4-java-1.10.2.jar'
       # jline 4.2.1 (the first target) is itself flagged since 2026-09: CVE-2026-77420/77421/
       # 77422 in the bundled reader/builtins, fixed in 4.3.1 on the 4.x line.
       swap jline-4.3.1.jar c75761d4625467083c208563718fc37551af2a3468271a0758726b1f7f728d75 "$M/org/jline/jline/4.3.1/jline-4.3.1.jar" 'jline-3.30.4.jar'
@@ -135,7 +135,7 @@ pipeline:
       mkdir -p /tmp/kexp && tar -xzf /tmp/kexp.tgz -C /tmp/kexp --strip-components=1
       cd /tmp/kexp
       export CGO_ENABLED=0 GOFLAGS=-mod=mod GOTOOLCHAIN=local
-      for want in golang.org/x/crypto@v0.56.0 golang.org/x/net@v0.58.0 golang.org/x/text@v0.41.0; do
+      for want in golang.org/x/crypto@v0.57.0 golang.org/x/net@v0.60.0 golang.org/x/text@v0.42.0; do
         m="${want%@*}"; w="${want#*@}"
         have="$(go list -m -f '{{.Version}}' "$m" 2>/dev/null || true)"
         [ -n "$have" ] || continue
