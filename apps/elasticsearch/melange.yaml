@@ -321,11 +321,11 @@ pipeline:
       nettyswap netty-transport                     6251adc2a2921572382732a2db188d4f4f2251fd6ebb49c5d44bbf33d6bfb1a7
       nettyswap netty-transport-classes-epoll       55049554b799dc8e53bf234fffa36e001f7b5b65c32994b9bd59fc6356f1c52f
       nettyswap netty-transport-native-unix-common  8056e7637f9948f953314894cf995ab664711b66c73c4cd5b593ae84f0b1048c
-      # --- (h) lz4-java 1.10.1 -> 1.11.1 in core lib/ (CVE-2026-59949 MEDIUM: the native
+      # --- (h) lz4-java 1.10.1 -> 1.11.4 in core lib/ (CVE-2026-59949 MEDIUM: the native
       #     XXHash impl can crash the JVM on invalid input; new in the 9.4.4 bundle). Same
-      #     at.yawk.lz4 coordinates, same net/jpountz layout, and the 1.11.1 jar still ships
+      #     at.yawk.lz4 coordinates, same net/jpountz layout, and the 1.11.4 jar still ships
       #     the linux amd64 + aarch64 natives -> content-swap in place keeping the 1.10.1
-      #     filename (Trivy reads the jar's pom.properties = 1.11.1; the derived automatic-
+      #     filename (Trivy reads the jar's pom.properties = 1.11.4; the derived automatic-
       #     module name comes from the filename, so the module graph is untouched).
       #
       # This swap MUST target whatever lz4 jar upstream actually ships, not a hardcoded
@@ -334,20 +334,20 @@ pipeline:
       # CREATING a second jar. The JVM then refused to boot:
       #   java.lang.module.FindException: Two versions of module org.lz4.java found in
       #   /opt/elasticsearch/lib (lz4-java-1.10.1.jar and lz4-java-1.11.1.jar)
-      # Resolve the real filename, and skip the swap entirely once upstream ships >= 1.11.1.
+      # Resolve the real filename, and skip the swap once upstream ships >= 1.11.4.
       lz4="$(find "$dest/lib" -maxdepth 1 -name 'lz4-java-*.jar' -print)"
       n_lz4="$(printf '%s\n' "$lz4" | grep -c . || true)"
       test "$n_lz4" -eq 1 || { echo "FATAL: expected exactly 1 lz4 jar, found $n_lz4:"; \
                               printf '%s\n' "$lz4"; exit 1; }
       lz4ver="$(basename "$lz4" .jar)"; lz4ver="${lz4ver#lz4-java-}"
       case "$lz4ver" in
-        1.10.*)
-          echo "lz4-java $lz4ver is vulnerable; content-swapping 1.11.1 into $(basename "$lz4")"
-          getj "$MC/at/yawk/lz4/lz4-java/1.11.1/lz4-java-1.11.1.jar" lz4-java-1.11.1.jar e5e31b195fcc7e9c5da4b191af3b0082ee616c13f61cbd79409ffa65e4dd5c47
-          cp "$DL/lz4-java-1.11.1.jar" "$lz4"
+        1.10.*|1.11.[0-3])
+          echo "lz4-java $lz4ver is vulnerable; content-swapping 1.11.4 into $(basename "$lz4")"
+          getj "$MC/at/yawk/lz4/lz4-java/1.11.4/lz4-java-1.11.4.jar" lz4-java-1.11.4.jar 58c8e0b813960d2a248e050c353baea73139b48a2ffc55382d42c69707e17325
+          cp "$DL/lz4-java-1.11.4.jar" "$lz4"
           ;;
         *)
-          echo "lz4-java $lz4ver already >= 1.11.1 upstream; no swap needed"
+          echo "lz4-java $lz4ver already >= 1.11.4 upstream; no swap needed"
           ;;
       esac
       # Whatever happened above, exactly one lz4 jar must remain or the JVM will not boot.

@@ -49,11 +49,11 @@ pipeline:
       # -91777). Replace every older 2.22.x copy, keep anything already newer, and fail if
       # the library vanished (upstream moved: re-audit).
       M=https://repo1.maven.org/maven2/com/fasterxml/jackson/core
-      fixjar() { # artifact version sha256
-        local a="$1" v="$2" sha="$3" n=0 f have
+      fixjar() { # artifact version sha256 [major prefix, default 2.]
+        local a="$1" v="$2" sha="$3" maj="${4:-2.}" n=0 f have
         wget -q -O "/tmp/$a-$v.jar" "$M/$a/$v/$a-$v.jar"
         echo "$sha  /tmp/$a-$v.jar" | sha256sum -c - >/dev/null
-        for f in $(find "$dest" -name "$a-2.*.jar"); do
+        for f in $(find "$dest" -name "$a-$maj*.jar"); do
           n=$((n + 1))
           have="${f##*/$a-}"; have="${have%.jar}"
           [ "$have" = "$v" ] && continue
@@ -65,6 +65,10 @@ pipeline:
       }
       fixjar jackson-core 2.22.3 8a501126a385b25841915d839508f8a66e2a0dbc8a6709d055ef3b3e852b094c
       fixjar jackson-databind 2.22.3 556db5439e206114346043f68d200497dc96a0bca62a360a81784092ebd0e0a9
+      # amqp-client 5.35.0 (CVE-2026-106121/-106122, fixed 5.36.1); 5.37.0 has the same
+      # packages (one added class) and the same Automatic-Module-Name.
+      M=https://repo1.maven.org/maven2/com/rabbitmq
+      fixjar amqp-client 5.37.0 b27134820890c5e56ed57d27cc50b70742fa2c31b36a6e9e28e14a43f34ff96f 5.
 
       # lib-webapp pins some Jetty 12.1 modules older than the copies the dist ships in
       # lib/ (3.1.0: server, security, util at 12.1.9 vs 12.1.12; 12.1.9 is flagged).

@@ -101,12 +101,12 @@ pipeline:
              '                <version>5.4.3</version>\n'
              '            </dependency>\n'
              '            <dependency>\n'
-             '                <!-- QuenchWorks CVE-2026-59949 pin: lz4-java native XXHash can crash\n'
+             '                <!-- QuenchWorks CVE-2026-59949 + CVE-2026-106449..106453 pin (1.11.4): lz4-java native XXHash can crash\n'
              '                     the JVM. at.yawk.lz4 has a single artifact on Maven Central, so\n'
              '                     there is no sibling module to keep version-aligned. -->\n'
              '                <groupId>at.yawk.lz4</groupId>\n'
              '                <artifactId>lz4-java</artifactId>\n'
-             '                <version>1.11.1</version>\n'
+             '                <version>1.11.4</version>\n'
              '            </dependency>\n'
              '            <dependency>\n'
              '                <!-- QuenchWorks CVE-2026-54291 pin (HIGH): postgresql JDBC driver -->\n'
@@ -190,6 +190,9 @@ pipeline:
       # released bytecode is identical to upstream's `mvn clean package`.
       mvn -B -ntp clean package -DskipTests
       test -f target/quarkus-app/quarkus-run.jar
+      # lz4-java must resolve at or above 1.11.4 (CVE-2026-106449..106453) in the shipped tree
+      bad="$(find target/quarkus-app -name '*lz4-java-1.10.*.jar' -o -name '*lz4-java-1.11.[0-3].jar' -o -name '*lz4-java-1.[0-9].*.jar')"
+      test -z "$bad" || { echo "vulnerable lz4-java shipped: $bad"; exit 1; }
       # Install the fast-jar tree verbatim under /usr/share/floci.
       install -d "${{targets.destdir}}/usr/share/floci"
       cp -a target/quarkus-app "${{targets.destdir}}/usr/share/floci/quarkus-app"

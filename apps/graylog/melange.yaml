@@ -59,11 +59,11 @@ pipeline:
       #     which the image smoke cannot exercise (it needs MongoDB). 2.2.1 exists for
       #     both if a CVE ever lands on them.
       #   * com.sun.mail:jakarta.mail 1.6.7 -> 1.6.8 (CVE-2025-7962 SMTP injection)
-      #   * at.yawk.lz4:lz4-java 1.10.4 -> 1.11.1 (CVE-2026-59949 MEDIUM: the native
+      #   * at.yawk.lz4:lz4-java 1.10.4 -> 1.11.4 (CVE-2026-59949 MEDIUM: the native
       #     XXHash implementations can crash the JVM). Sole artifact in the at.yawk.lz4
       #     group -- no sibling modules to keep aligned -- and only graylog.jar bundles
       #     it (all three storage plugin jars are clean).
-      #   * com.rabbitmq:amqp-client 5.29.0 -> 5.34.0 (7 CVEs, 4 of them HIGH) -- added
+      #   * com.rabbitmq:amqp-client 5.29.0 -> 5.37.0 (7 CVEs, 4 HIGH; CVE-2026-106121..106123 2026-10) -- added
       #     for 7.1.8. graylog.jar only; the storage plugins do not bundle it.
       #   * httpclient5 5.5.1 -> 5.6.4 and httpcore5 + httpcore5-h2 5.3.4 -> 5.4.3
       #     (CVE-2026-64607, CVE-2026-54399, CVE-2026-54428) in the opensearch3 storage
@@ -125,14 +125,14 @@ pipeline:
       getj "$MC/com/sun/mail/jakarta.mail/1.6.8/jakarta.mail-1.6.8.jar" jakarta.mail-1.6.8.jar c83f1a1ed580a35878957de7367071be27026d02d34ace6267d0c3da23e193c2
       ( cd "$ST/mail" && unzip -qo "$DL/jakarta.mail-1.6.8.jar" 'com/sun/mail/*' 'javax/mail/*' 'META-INF/maven/com.sun.mail/*' )
 
-      # --- at.yawk.lz4:lz4-java 1.11.1 ---
+      # --- at.yawk.lz4:lz4-java 1.11.4 ---
       # graylog.jar's bundled net/jpountz/** tree is byte-for-byte the SAME FILE SET as the
       # published 1.10.4 jar, and 1.11.1's tree is a strict superset of it, so the overlay
       # leaves no stale classes behind. net/jpountz/util/**/liblz4-java.so are the prebuilt
       # natives shipped inside the jar -- they are part of this tree, so the overlay replaces
       # the vulnerable native XXHash code too, not just the Java side.
-      getj "$MC/at/yawk/lz4/lz4-java/1.11.1/lz4-java-1.11.1.jar" lz4-java-1.11.1.jar e5e31b195fcc7e9c5da4b191af3b0082ee616c13f61cbd79409ffa65e4dd5c47
-      ( cd "$ST/lz4" && unzip -qo "$DL/lz4-java-1.11.1.jar" 'net/jpountz/*' 'META-INF/maven/at.yawk.lz4/*' )
+      getj "$MC/at/yawk/lz4/lz4-java/1.11.4/lz4-java-1.11.4.jar" lz4-java-1.11.4.jar 58c8e0b813960d2a248e050c353baea73139b48a2ffc55382d42c69707e17325
+      ( cd "$ST/lz4" && unzip -qo "$DL/lz4-java-1.11.4.jar" 'net/jpountz/*' 'META-INF/maven/at.yawk.lz4/*' )
 
       # --- com.rabbitmq:amqp-client 5.29.0 -> 5.33.1 (6 CVEs: CVE-2026-63335/63336/63337/
       #     69219/69220/61634). Loose + un-relocated at com/rabbitmq/** and bundled ONLY by
@@ -149,8 +149,8 @@ pipeline:
       #     file-set-IDENTICAL to 5.33.1 (596 entries each), and the only entry the
       #     bundled 5.29.0 has that 5.34.0 lacks is still SocketFrameHandler$1.class,
       #     which apply() already deletes -- so the overlay needs no new prune.
-      getj "$MC/com/rabbitmq/amqp-client/5.34.0/amqp-client-5.34.0.jar" amqp-client-5.34.0.jar 407bab4db77453b42b052554934095873db0f1c9b8018aebb97f19eb9f5575fa
-      ( cd "$ST/amqp" && unzip -qo "$DL/amqp-client-5.34.0.jar" 'com/rabbitmq/*' 'META-INF/maven/com.rabbitmq/*' 'rabbitmq-amqp-client.properties' )
+      getj "$MC/com/rabbitmq/amqp-client/5.37.0/amqp-client-5.37.0.jar" amqp-client-5.37.0.jar b27134820890c5e56ed57d27cc50b70742fa2c31b36a6e9e28e14a43f34ff96f
+      ( cd "$ST/amqp" && unzip -qo "$DL/amqp-client-5.37.0.jar" 'com/rabbitmq/*' 'META-INF/maven/com.rabbitmq/*' 'rabbitmq-amqp-client.properties' )
 
       # --- httpcomponents 5.x in plugin/graylog-storage-opensearch3 (3 CVEs) --------------
       #   httpclient5  5.5.1 -> 5.6.4  (CVE-2026-64607 MEDIUM, connection leak on a

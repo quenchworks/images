@@ -96,6 +96,27 @@ pipeline:
         fi
       done
 
+  - name: Swap lz4-java to 1.11.4
+    runs: |
+      set -eu
+      # CVE-2026-106449..106453 (one HIGH) in lz4-java below 1.11.4; 41.0.1 ships 1.11.2.
+      # 1.11.4 has the identical file list and Automatic-Module-Name as 1.11.1 (diffed).
+      # Match any vulnerable version so the next release does not turn this into a no-op;
+      # rename the jar and rewrite the module.xml resource-root, as the swaps above do.
+      old="$(find modules -name 'lz4-java-*.jar')"
+      [ "$(printf '%s\n' "$old" | grep -c .)" = 1 ] || { echo "expected one lz4-java jar, found: $old" >&2; exit 1; }
+      o="$(basename "$old")"; dir="$(dirname "$old")"
+      case "$o" in
+        lz4-java-1.10.*|lz4-java-1.11.[0-3].jar)
+          grep -q "path=\"$o\"" "$dir/module.xml" || { echo "module.xml in $dir does not name $o" >&2; exit 1; }
+          curl -fsSL -o "$dir/lz4-java-1.11.4.jar" https://repo1.maven.org/maven2/at/yawk/lz4/lz4-java/1.11.4/lz4-java-1.11.4.jar
+          echo "58c8e0b813960d2a248e050c353baea73139b48a2ffc55382d42c69707e17325  $dir/lz4-java-1.11.4.jar" | sha256sum -c -
+          rm -f "$old"
+          sed -i "s|path=\"$o\"|path=\"lz4-java-1.11.4.jar\"|" "$dir/module.xml"
+          ;;
+        *) echo "lz4-java is $o; not below 1.11.4, nothing to swap" ;;
+      esac
+
   - name: Install under /opt/wildfly with a read-only-rootfs layout
     runs: |
       set -eu
