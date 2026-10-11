@@ -33,5 +33,6 @@ docker exec "$NAME" etcdctl --endpoints="$EP" put qw hello >/dev/null
 user="$(docker inspect "$IMAGE" --format '{{.Config.User}}')"
 [ "$user" = "1001" ] || { echo "expected user 1001, got '$user'"; exit 1; }
 
-echo "version:"; docker exec "$NAME" etcd --version | head -1
+# capture first: `| head -1` under pipefail turned docker's SIGPIPE into exit 141
+v="$(docker exec "$NAME" etcd --version)"; echo "version:"; echo "${v%%$'\n'*}"
 echo "smoke test passed (nonroot user: $user)"

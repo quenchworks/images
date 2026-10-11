@@ -105,8 +105,11 @@ pipeline:
       go build -trimpath -ldflags "-s -w -X 'github.com/git-lfs/git-lfs/v3/config.Vendor=Quenchworks'" \
         -o "${{targets.destdir}}/usr/bin/git-lfs" .
       m="$(go version -m "${{targets.destdir}}/usr/bin/git-lfs")"
-      grep -Eq 'dep[[:space:]]+golang.org/x/crypto[[:space:]]+v0.56.0' <<<"$m" \
-        || { echo "git-lfs does not link golang.org/x/crypto v0.56.0"; exit 1; }
+      # at least the floor (an exact match broke when the floor moved to v0.57.0)
+      got="$(awk '$1 == "dep" && $2 == "golang.org/x/crypto" { print $3 }' <<<"$m")"
+      [ -n "$got" ] && ! vlt "$got" v0.57.0 || { echo "git-lfs links golang.org/x/crypto '$got', below v0.57.0"; exit 1; }
+      got="$(awk '$1 == "dep" && $2 == "golang.org/x/net" { print $3 }' <<<"$m")"
+      [ -z "$got" ] || ! vlt "$got" v0.60.0 || { echo "git-lfs links golang.org/x/net $got, below v0.60.0"; exit 1; }
 
 test:
   environment:
