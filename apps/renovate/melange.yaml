@@ -40,7 +40,24 @@ pipeline:
       # Global install of the exact pinned version into the image prefix. npm
       # creates ${destdir}/usr/bin/renovate -> ../lib/node_modules/renovate/...
       # and unpacks the bundled deps under ${destdir}/usr/lib/node_modules.
-      npm install -g "renovate@${{package.version}}" --prefix="${destdir}/usr"
+      # --min-release-age-exclude (user decision 2026-10-11): npm 12's 14-day release-age
+      # cooldown is lifted for these names ONLY, on this one install command. renovate 44.148.1
+      # (published 2026-10-08) is the first release on simple-git 4.0.2 + handlebars 4.7.10
+      # (CVE-2026-102826..102829, CVE-2026-106444..106446), and it pins its direct deps
+      # EXACTLY, so the fresh pins it ships must be exempt too. A dry run with
+      # --min-release-age=14 on 2026-10-11 failed ETARGET on exactly this list and passed with
+      # it. npm exempts only the named package; everything else keeps the cooldown. Re-derive
+      # the list (or drop it) on the next version bump.
+      npm install -g "renovate@${{package.version}}" --prefix="${destdir}/usr" \
+        --min-release-age-exclude=renovate \
+        --min-release-age-exclude=handlebars \
+        --min-release-age-exclude=ignore \
+        --min-release-age-exclude=@redis/client \
+        --min-release-age-exclude=@containerbase/base \
+        --min-release-age-exclude=@renovatebot/base-image \
+        --min-release-age-exclude=@renovatebot/detect-tools \
+        --min-release-age-exclude=@renovatebot/osv-offline \
+        --min-release-age-exclude=@renovatebot/osv-offline-db
 
       # --- brace-expansion CVE-2026-14257 + CVE-2026-69152 (both HIGH): install the fixed
       # 5.0.9 over every stale copy
