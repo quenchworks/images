@@ -17,8 +17,13 @@ package:
       - containers-common
       - fuse-overlayfs
       - just-newuidmap-newgidmap
-      - rootlesskit-config-nonroot   # /etc/subuid and /etc/subgid for "nonroot"
       - libseccomp
+
+    # /etc/subuid and /etc/subgid are written below, as Wolfi's
+    # rootlesskit-config-nonroot writes them, without pulling the rootlesskit
+    # binary it depends on (3.2.0-r1 links x/net v0.58.0, CVE-2026-78669).
+    replaces:
+      - shadow-subids
 
 environment:
   contents:
@@ -86,6 +91,12 @@ pipeline:
       [storage.options.overlay]
       mount_program = "/usr/bin/fuse-overlayfs"
       CONF
+
+  - name: Map the nonroot user's subordinate ids
+    runs: |
+      install -d "${{targets.destdir}}/etc"
+      printf 'nonroot:100000:65536\n65532:100000:65536\n' > "${{targets.destdir}}/etc/subuid"
+      printf 'nonroot:100000:65536\n65532:100000:65536\n' > "${{targets.destdir}}/etc/subgid"
 
 test:
   pipeline:

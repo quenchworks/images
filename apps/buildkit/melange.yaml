@@ -1,10 +1,11 @@
 # Builds BuildKit from source onto Wolfi: buildkitd (the daemon) and buildctl (the
 # client). Flags follow upstream's Dockerfile: CGO off, tags
 # "osusergo netgo static_build seccomp", version stamped via -X on
-# github.com/moby/buildkit/version. The rootless runtime (rootlesskit, runc,
-# fuse-overlayfs, newuidmap) comes from Wolfi as runtime deps. rootlesskit pulls
-# rootlesskit-config-nonroot, which owns /etc/subuid and /etc/subgid
-# ("nonroot:100000:65536"), so the image names its uid-1001 user nonroot.
+# github.com/moby/buildkit/version. runc, fuse-overlayfs and newuidmap come from
+# Wolfi as runtime deps. rootlesskit is built from source below (Wolfi 3.2.0-r1
+# links x/net v0.58.0, CVE-2026-78669), and this package owns /etc/subuid and
+# /etc/subgid ("nonroot:100000:65536", as Wolfi's rootlesskit-config-nonroot
+# writes them), so the image names its uid-1001 user nonroot.
 package:
   name: quench-buildkit
   version: __VER__
@@ -16,7 +17,8 @@ package:
     runtime:
       - ca-certificates-bundle
       - runc
-      - rootlesskit
+      - mount             # rootlesskit shells out to mount and unshare
+      - util-linux-misc
       - fuse-overlayfs
       - fuse3
       - just-newuidmap-newgidmap
@@ -26,6 +28,9 @@ package:
       - openssh-client
       - pigz
       - xz
+    # /etc/subuid and /etc/subgid: shadow-subids ships them empty.
+    replaces:
+      - shadow-subids
 
 environment:
   contents:
@@ -37,6 +42,7 @@ environment:
       - build-base
       - busybox
       - ca-certificates-bundle
+      - curl
       - go
 
 pipeline:
@@ -90,3 +96,32 @@ pipeline:
       done
       "${{targets.destdir}}/usr/bin/buildctl" --version | grep -F "v${{package.version}}"
       "${{targets.destdir}}/usr/bin/buildkitd" --version | grep -F "v${{package.version}}"
+
+  # rootlesskit from source with the x/net floor; v3.2.0 is the newest release.
+  - name: Build rootlesskit and the subid files
+    runs: |
+      set -eu
+      export CGO_ENABLED=0 GOTOOLCHAIN=local GOFLAGS=-mod=mod
+      mkdir -p /tmp/rootlesskit && cd /tmp/rootlesskit
+      curl -fsSL -o rk.tgz https://github.com/rootless-containers/rootlesskit/archive/refs/tags/v3.2.0.tar.gz
+      echo "75e990eabaa699d86557bfab635b76e430fe91f37bbbb134bc70079e53c3f88d  rk.tgz" | sha256sum -c -
+      tar -xzf rk.tgz --strip-components=1
+      FLOOR="golang.org/x/net@v0.60.0"
+      vlt() { awk -v a="${1#v}" -v b="${2#v}" 'function pp(s,  p){sub(/\+.*/,"",s);p=index(s,"-");if(p){C=substr(s,1,p-1);P=substr(s,p+1)}else{C=s;P=""}} function cmp(x,y,  i,n,m,X,Y){n=split(x,X,".");m=split(y,Y,".");for(i=1;i<=n&&i<=m;i++){if(X[i]==Y[i])continue;if(X[i]~/^[0-9]+$/&&Y[i]~/^[0-9]+$/)return (X[i]+0<Y[i]+0)?-1:1;if(X[i]~/^[0-9]+$/)return -1;if(Y[i]~/^[0-9]+$/)return 1;return (X[i]<Y[i])?-1:1}return (n<m)?-1:(n>m)?1:0} BEGIN{pp(a);ca=C;pa=P;pp(b);cb=C;pb=P;c=cmp(ca,cb);if(c==0){if(pa==pb)c=0;else if(pa=="")c=1;else if(pb=="")c=-1;else c=cmp(pa,pb)}exit !(c<0)}'; }
+      need=""
+      for mv in $FLOOR; do
+        have="$(go list -m -e -f '{{.Version}}' "${mv%@*}" 2>/dev/null)"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        vlt "$have" "${mv#*@}" && need="$need $mv"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || { go get $need; go mod tidy; }
+      for c in rootlesskit rootlessctl; do
+        go build -trimpath -ldflags "-s -w" -o "${{targets.destdir}}/usr/bin/$c" ./cmd/$c
+      done
+      got="$(go version -m "${{targets.destdir}}/usr/bin/rootlesskit" | awk '$2 == "golang.org/x/net" { print $3 }')"
+      [ -z "$got" ] || ! vlt "$got" v0.60.0 || { echo "rootlesskit links golang.org/x/net $got"; exit 1; }
+      "${{targets.destdir}}/usr/bin/rootlesskit" --version | grep -F 3.2.0
+      install -d "${{targets.destdir}}/etc"
+      printf 'nonroot:100000:65536\n65532:100000:65536\n' > "${{targets.destdir}}/etc/subuid"
+      printf 'nonroot:100000:65536\n65532:100000:65536\n' > "${{targets.destdir}}/etc/subgid"
