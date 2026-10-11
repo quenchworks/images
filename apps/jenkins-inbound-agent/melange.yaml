@@ -39,9 +39,12 @@
 # build instead of shipping quietly.
 package:
   name: git-lfs
-  version: 3.7.1
-  epoch: 22            # MUST stay above Wolfi's newest revision (r21) -- see above
-  description: "git-lfs 3.7.1 built from source with golang.org/x/net floated past CVE-2026-46600 (shadows Wolfi's git-lfs-3.7.1-r21)"
+  version: 3.8.0
+  # 2026-10-11: moved to upstream v3.8.0. Wolfi's advisory for CVE-2026-78669 names
+  # git-lfs 3.8.0-r3 as fixed, so the shadow must version above it; it still carries
+  # the x/net v0.60.0 float asserted below. Keep the epoch above Wolfi's newest revision.
+  epoch: 4
+  description: "git-lfs 3.8.0 built from source with golang.org/x/net floated past CVE-2026-46600 (shadows Wolfi's git-lfs-3.7.1-r21)"
   copyright:
     - license: MIT
   # No `provides:` here on purpose: `cmd:git-lfs=<version>` -- which Wolfi's apk
@@ -71,7 +74,7 @@ pipeline:
       destdir="${{targets.destdir}}"
       mkdir -p "$destdir"/usr/bin
       cd "$(mktemp -d)"
-      git clone --depth 1 --branch v3.7.1 https://github.com/git-lfs/git-lfs.git src
+      git clone --depth 1 --branch v3.8.0 https://github.com/git-lfs/git-lfs.git src
       cd src
       # Verify the tag resolves to the commit we reviewed. A tag is mutable
       # upstream, and every other source in this repo is pinned by
@@ -83,8 +86,8 @@ pipeline:
       # what gets checked out, so the expected value must come from
       # `refs/tags/v3.7.1^{}`.
       got="$(git rev-parse HEAD)"
-      test "$got" = "b84b33847fe6458f36ef521534dc0eac953cb379" \
-        || { echo "FATAL: git-lfs v3.7.1 is $got, expected b84b33847fe6458f36ef521534dc0eac953cb379"; exit 1; }
+      test "$got" = "aece9221f8c09221a14395d964806b956289bc07" \
+        || { echo "FATAL: git-lfs v3.8.0 is $got, expected aece9221f8c09221a14395d964806b956289bc07"; exit 1; }
       # Float the golang.org/x/* family COHERENTLY, not one module at a time.
       # Raising x/net alone leaves x/text at v0.38.0 = CVE-2026-56852 (HIGH, DoS
       # on invalid UTF-8), which just moves the finding instead of clearing it.
@@ -99,7 +102,7 @@ pipeline:
       # Match upstream's own ldflags so `git lfs version` reports a real version
       # rather than the "" it prints when these are unset.
       go build -trimpath -buildvcs=false \
-        -ldflags "-s -w -X github.com/git-lfs/git-lfs/v3/config.GitCommit=v3.7.1" \
+        -ldflags "-s -w -X github.com/git-lfs/git-lfs/v3/config.GitCommit=v3.8.0" \
         -o "$destdir"/usr/bin/git-lfs ./
       chmod 0755 "$destdir"/usr/bin/git-lfs
       # Prove the float actually landed in the binary, so a silent MVS downgrade

@@ -27,8 +27,9 @@ KC
 chmod -R a+rX "$WORK"
 docker run -d --name "$NAME" --read-only --tmpfs /tmp -v "$WORK/certs:/certs:ro" -v "$WORK/kubeconfig:/etc/kubeconfig:ro" \
   -e KUBECONFIG=/etc/kubeconfig -e POD_NAMESPACE=gatekeeper-system "$IMAGE" --disable-cert-rotation >/dev/null
-# poll, not a fixed sleep: a slow runner was still "setting up controllers" at 15 s
-for _ in $(seq 30); do
+# poll, not a fixed sleep: controller setup retries discovery against the dead API
+# server with backoff, and has sat at "setting up controllers" for over 60 s on a runner
+for _ in $(seq 90); do
   out="$(docker logs "$NAME" 2>&1)"
   grep -q '"setting up audit"' <<<"$out" && break
   sleep 2
