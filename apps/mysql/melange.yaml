@@ -10,7 +10,6 @@ package:
   dependencies:
     runtime:
       - ca-certificates-bundle
-      - libcurl-openssl4   # MySQL 9.x links libcurl (telemetry/components)
 
 environment:
   contents:
@@ -32,7 +31,10 @@ environment:
       - rpcsvc-proto
       - linux-headers
       - pkgconf
-      - curl-dev           # MySQL 9.x requires system libcurl (WITH_CURL=system)
+      # No curl-dev: it pulls openssl-4.0-dev, whose headers conflict with openssl-3.6-dev,
+      # and MySQL's ssl.cmake cannot parse OpenSSL 4 (2026-10-11). The server builds with
+      # -DWITH_CURL=none (upstream option "0 | no | off | none (skip curl)"); the bundled
+      # extra/curl is 8.14.1 and would be linked statically, out of the scanner's sight.
       - curl               # the curl CLI: used to pre-fetch Boost into ./boost/
       # MySQL 9.x bundles abseil 20250814, which does not compile under GCC 16; use
       # Wolfi's system protobuf + abseil (WITH_PROTOBUF=system) instead.
@@ -70,6 +72,7 @@ pipeline:
         -DWITH_BOOST=boost \
         -DWITH_SSL=system \
         -DWITH_ZLIB=system \
+        -DWITH_CURL=none \
         -DWITH_PROTOBUF=system \
         -DWITH_UNIT_TESTS=OFF \
         -DWITH_ROUTER=OFF \
