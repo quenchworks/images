@@ -260,7 +260,14 @@ pipeline:
       # (prebuild-install/node-gyp postinstall) is silently skipped and the app has no DB driver.
       # This build is hermetic (sha-pinned tarball, no network mutation of the pinned tree), so
       # running the pinned deps' install scripts is exactly the pre-npm-12 behavior we need.
-      npm install --omit=dev --no-audit --no-fund --legacy-peer-deps --dangerously-allow-all-scripts
+      # --min-release-age-exclude (user decision 2026-10-11): npm 12's 14-day release-age
+      # cooldown is lifted for these two packages ONLY, on this one install command. Both are
+      # CVE fixes pinned exactly above (@modelcontextprotocol/sdk 1.31.0, published 2026-09-28;
+      # handlebars 4.7.10, published 2026-10-05). npm exempts only the named package; its own
+      # dependencies still follow the cooldown. A dry run with --min-release-age=14 on the
+      # 2.40.7 tree needed exactly these two. Drop each entry once its version is 14 days old.
+      npm install --omit=dev --no-audit --no-fund --legacy-peer-deps --dangerously-allow-all-scripts \
+        --min-release-age-exclude=@modelcontextprotocol/sdk --min-release-age-exclude=handlebars
 
       # --- brace-expansion CVE-2026-14257: 5.0.8 + the CJS interop it broke ---------------
       # Why the blunt `"brace-expansion":"5.0.8"` override above is the ONLY option: the
