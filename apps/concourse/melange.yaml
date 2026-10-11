@@ -168,8 +168,10 @@ pipeline:
       }
       # registry-image v1.18.0 pins x/crypto v0.54.0 (CVE-2026-56854/-56855/-78662) and
       # x/mod v0.39.0 (CVE-2026-56864/-56865); time v1.11.4 pins x/mod v0.38.0 (the same two).
+      # registry-image also links x/net v0.58.0 (CVE-2026-78669); x/net v0.60.0 needs
+      # crypto v0.57.0, and its x/text v0.42.0 needs mod v0.41.0, so those move with it.
       build_type registry-image 1.18.0 df42c61a2d4b82c8183d448213cf4adfa23c4bf88d862fbdbceb3f016fe281ec cmd/ \
-        golang.org/x/crypto@v0.56.0 golang.org/x/mod@v0.40.0
+        golang.org/x/net@v0.60.0 golang.org/x/crypto@v0.57.0 golang.org/x/mod@v0.41.0
       build_type time 1.11.4 4c660e6aacebddebe921b7d3ef1b59eda7bf63537b87d52a0bb6456a628b04d4 "" \
         golang.org/x/mod@v0.40.0
 
