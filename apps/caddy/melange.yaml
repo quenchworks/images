@@ -51,12 +51,24 @@ pipeline:
   - runs: |
       export CGO_ENABLED=0
       export GOTOOLCHAIN=local
-      # No module floats: 2.11.7's go.mod already requires more than every floor the 2.11.4
+      # Only the x/net floor below: 2.11.7's go.mod already requires more than every floor the 2.11.4
       # recipe raised (otel 1.46 family, x/net 0.59, x/crypto 0.57, grpc 1.83.2, cel.dev/cel-go
       # 0.32). Floating below a requirement makes `go get` DOWNGRADE caddy itself to a release
       # that accepts it (2026-10-04: the build vendored 2.11.4's cmd/main.go and failed on
       # memlimit.SetGoMemLimitWithOpts). Re-add a float only for a module the scan flags, and
       # only above what go.mod already requires.
+      # 0-CVE floor (raise only below it): x/net v0.60.0 closes CVE-2026-78659 and its siblings.
+      FLOOR="golang.org/x/net@v0.60.0"
+      # Go semver order (a release outranks its prereleases); busybox sort -V does not.
+      vlt() { awk -v a="${1#v}" -v b="${2#v}" 'function pp(s,  p){sub(/\+.*/,"",s);p=index(s,"-");if(p){C=substr(s,1,p-1);P=substr(s,p+1)}else{C=s;P=""}} function cmp(x,y,  i,n,m,X,Y){n=split(x,X,".");m=split(y,Y,".");for(i=1;i<=n&&i<=m;i++){if(X[i]==Y[i])continue;if(X[i]~/^[0-9]+$/&&Y[i]~/^[0-9]+$/)return (X[i]+0<Y[i]+0)?-1:1;if(X[i]~/^[0-9]+$/)return -1;if(Y[i]~/^[0-9]+$/)return 1;return (X[i]<Y[i])?-1:1}return (n<m)?-1:(n>m)?1:0} BEGIN{pp(a);ca=C;pa=P;pp(b);cb=C;pb=P;c=cmp(ca,cb);if(c==0){if(pa==pb)c=0;else if(pa=="")c=1;else if(pb=="")c=-1;else c=cmp(pa,pb)}exit !(c<0)}'; }
+      need=""
+      for mv in $FLOOR; do
+        have="$(GOFLAGS=-mod=mod go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${mv%@*}" 2>/dev/null)"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        vlt "$have" "${mv#*@}" && need="$need $mv"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || { GOFLAGS=-mod=mod go get $need; GOFLAGS=-mod=mod go mod tidy; }
       GOFLAGS=-mod=mod go mod tidy
       GOFLAGS=-mod=mod go mod vendor
       export GOFLAGS=-mod=vendor
