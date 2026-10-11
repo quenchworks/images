@@ -27,7 +27,8 @@ done
 API=http://127.0.0.1:19120/api/v2
 cfg="$(curl -fsS "$API/config")"
 echo "$cfg" | grep -q '"defaultBranch" *: *"main"' || { echo "unexpected config: $cfg"; exit 1; }
-[ -z "$WANT" ] || docker logs "$NAME" 2>&1 | grep -q "$WANT" || { echo "version $WANT not in the startup log"; exit 1; }
+logs="$(docker logs "$NAME" 2>&1)"
+[ -z "$WANT" ] || grep -q "$WANT" <<<"$logs" || { echo "version $WANT not in the startup log"; exit 1; }
 hash="$(curl -fsS "$API/trees/main" | sed -n 's/.*"hash" *: *"\([0-9a-f]*\)".*/\1/p')"
 [ -n "$hash" ] || { echo "no hash for main"; exit 1; }
 curl -fsS -X POST -H 'Content-Type: application/json' \
