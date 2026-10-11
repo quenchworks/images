@@ -116,8 +116,10 @@ pipeline:
       # Go semver order (a release outranks its prereleases); busybox sort -V does not.
       vlt() { awk -v a="${1#v}" -v b="${2#v}" 'function pp(s,  p){sub(/\+.*/,"",s);p=index(s,"-");if(p){C=substr(s,1,p-1);P=substr(s,p+1)}else{C=s;P=""}} function cmp(x,y,  i,n,m,X,Y){n=split(x,X,".");m=split(y,Y,".");for(i=1;i<=n&&i<=m;i++){if(X[i]==Y[i])continue;if(X[i]~/^[0-9]+$/&&Y[i]~/^[0-9]+$/)return (X[i]+0<Y[i]+0)?-1:1;if(X[i]~/^[0-9]+$/)return -1;if(Y[i]~/^[0-9]+$/)return 1;return (X[i]<Y[i])?-1:1}return (n<m)?-1:(n>m)?1:0} BEGIN{pp(a);ca=C;pa=P;pp(b);cb=C;pb=P;c=cmp(ca,cb);if(c==0){if(pa==pb)c=0;else if(pa=="")c=1;else if(pb=="")c=-1;else c=cmp(pa,pb)}exit !(c<0)}'; }
       need=""
+      # plain go list: this is a go.work build, where -mod=mod is refused, and under set -e the
+      # failing substitution (stderr discarded) ended the step with no output (2026-10-11).
       for mv in $FLOOR; do
-        have="$(GOFLAGS=-mod=mod go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${mv%@*}" 2>/dev/null)"
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${mv%@*}" 2>/dev/null)"
         case "$have" in v[0-9]*) ;; *) continue ;; esac
         vlt "$have" "${mv#*@}" && need="$need $mv"
       done
