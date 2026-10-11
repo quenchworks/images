@@ -44,19 +44,26 @@ pipeline:
       # the console only reads the local broker, and Jolokia 2 loads services from
       # META-INF/jolokia/services in each jar, so dropping the one jar disables the proxy and
       # leaves the agent intact. Fail if the war moved or its web.xml names the proxy.
-      war="$(find "$home/web" -name '*.war' -exec sh -c 'unzip -l "$1" | grep -q "jolokia-service-jsr160-"' _ {} \; -print)"
-      [ "$(printf '%s\n' "$war" | grep -c .)" = 1 ] || { echo "expected one war with jolokia-service-jsr160, found: $war"; exit 1; }
-      webxml="$(unzip -p "$war" WEB-INF/web.xml || true)"
-      if grep -qi jsr160 <<EOX
+      # It ships either as a plain jar or inside a war; handle both, fail if neither.
+      jars="$(find "$home" -name 'jolokia-service-jsr160-*.jar')"
+      war="$(find "$home" -name '*.war' -exec sh -c 'unzip -l "$1" | grep -q "jolokia-service-jsr160-"' _ {} \; -print)"
+      if [ -z "$jars$war" ]; then
+        echo "jolokia-service-jsr160 not found; jolokia files shipped:"; find "$home" -iname '*jolokia*'; exit 1
+      fi
+      [ -z "$jars" ] || rm -f $jars
+      for w in $war; do
+        webxml="$(unzip -p "$w" WEB-INF/web.xml || true)"
+        if grep -qi jsr160 <<EOX
       $webxml
       EOX
-      then echo "web.xml in $war references jsr160; re-audit"; exit 1; fi
-      zip -q -d "$war" 'WEB-INF/lib/jolokia-service-jsr160-*.jar'
-      listing="$(unzip -l "$war")"
+        then echo "web.xml in $w references jsr160; re-audit"; exit 1; fi
+        zip -q -d "$w" 'WEB-INF/lib/jolokia-service-jsr160-*.jar'
+      done
+      left="$(find "$home" -name 'jolokia-service-jsr160-*.jar'; for w in $war; do unzip -l "$w"; done)"
       if grep -q jolokia-service-jsr160 <<EOX
-      $listing
+      $left
       EOX
-      then echo "jsr160 still in $war"; exit 1; fi
+      then echo "jsr160 still shipped"; exit 1; fi
       # create writes absolute paths into the instance; aim them at the installed tree
       ./bin/artemis create "$inst" --silent --nio --no-autotune --require-login \
         --user build --password "$(od -An -tx1 -N24 /dev/urandom | tr -d ' \n')" \
