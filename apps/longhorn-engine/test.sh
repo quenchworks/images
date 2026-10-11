@@ -41,7 +41,8 @@ snaps="$(docker exec "$NAME" longhorn --url localhost:9501 snapshot ls)"
 [ "$(grep -cE '^[0-9a-f-]{36}$' <<<"$snaps")" -ge 1 ] || { echo "no snapshot after snapshot create: $snaps"; exit 1; }
 
 docker run --rm --entrypoint tgtd "$IMAGE" --version
-docker run --rm --entrypoint sg_raw "$IMAGE" -V 2>&1 | head -1
+# Capture first: `| head -1` closes the pipe early and pipefail turns the SIGPIPE into 141.
+sg="$(docker run --rm --entrypoint sg_raw "$IMAGE" -V 2>&1)"; echo "${sg%%$'\n'*}"
 im="$(docker run --rm --entrypoint longhorn-instance-manager "$IMAGE" --version)"
 [ -z "$WANT" ] || grep -q "v$WANT" <<<"$im" || { echo "instance-manager reports '$im'"; exit 1; }
 
