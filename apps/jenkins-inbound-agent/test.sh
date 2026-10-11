@@ -11,7 +11,10 @@ ep="$(docker inspect "$IMAGE" --format '{{json .Config.Entrypoint}}')"
 echo "  $ep"; echo "$ep" | grep -q "jenkins-agent" || { echo "wrong entrypoint"; exit 1; }
 
 echo "JRE runs"
-docker run --rm --entrypoint java "$IMAGE" -version 2>&1 | grep -qiE "openjdk|version" || { echo "no working JRE"; exit 1; }
+# capture, then grep a here-string: `| grep -q` exits on the first match and pipefail turns
+# docker's SIGPIPE into a miss (2.565 aarch64, 2026-10-11)
+jv="$(docker run --rm --entrypoint java "$IMAGE" -version 2>&1)"
+grep -qiE "openjdk|version" <<<"$jv" || { echo "no working JRE: $jv"; exit 1; }
 
 echo "remoting agent.jar present and is a JAR"
 docker run --rm --entrypoint sh "$IMAGE" -c 'test -s /usr/share/jenkins/agent.jar' || { echo "agent.jar missing"; exit 1; }
