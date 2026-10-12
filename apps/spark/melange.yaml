@@ -117,13 +117,16 @@ pipeline:
       S="${{targets.destdir}}/opt/spark"
       : > /tmp/deps.txt
       find "$S" -name "*.jar" -type f | while read -r j; do
-        unzip -l "$j" | awk "{print \$NF}" | grep "^META-INF/maven/.*/pom.properties$" | while read -r p; do
+        # grep finds nothing in jars without Maven metadata; under pipefail that exit 1 would
+        # end this step silently (round 4, CI 38253299912), so it may not fail the pipeline.
+        unzip -l "$j" | awk "{print \$NF}" | { grep "^META-INF/maven/.*/pom.properties$" || true; } | while read -r p; do
           props="$(unzip -p "$j" "$p" | tr -d "\r")"
           a="$(printf "%s\n" "$props" | sed -n "s/^groupId=//p"):$(printf "%s\n" "$props" | sed -n "s/^artifactId=//p")"
           v="$(printf "%s\n" "$props" | sed -n "s/^version=//p")"
           echo "${j##*/} $a $v" >> /tmp/deps.txt
         done
       done
+      echo "floor check: $(find "$S" -name "*.jar" -type f | wc -l) jars, $(wc -l < /tmp/deps.txt) pom.properties entries"
       floor() {
         case "$1" in
           com.fasterxml.jackson.core:jackson-core|com.fasterxml.jackson.core:jackson-databind) echo "__JACKSON_HADOOP__ __JACKSON__" ;;
