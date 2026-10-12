@@ -1,0 +1,59 @@
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-apache-polaris@local
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+      homedir: /home/nonroot
+  run-as: 1001
+
+# The distribution writes ./logs/polaris.log by default; the image logs to the console only,
+# so the root filesystem can stay read-only. Quarkus reads ./config/application.properties
+# relative to the work dir (/home/nonroot/config).
+environment:
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  HOME: /home/nonroot
+  LANG: C.UTF-8
+  QUARKUS_LOG_FILE_ENABLED: "false"
+
+paths:
+  - path: /home/nonroot
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+work-dir: /home/nonroot
+
+# Iceberg REST and management API on 8181, health and metrics on 8182 (/q/health).
+# Persistence defaults to in-memory; POLARIS_PERSISTENCE_TYPE=relational-jdbc with the
+# QUARKUS_DATASOURCE_* settings selects PostgreSQL, bootstrapped once with the admin tool:
+#   java -jar /usr/lib/polaris/admin/quarkus-run.jar bootstrap -r <realm> -c <realm>,<id>,<secret>
+# openjdk-21-jre has no /usr/bin/java symlink, so the path is the JDK own.
+entrypoint:
+  command: /usr/lib/jvm/java-21-openjdk/bin/java -jar /usr/lib/polaris/server/quarkus-run.jar
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-apache-polaris"
+  org.opencontainers.image.licenses: "Apache-2.0"

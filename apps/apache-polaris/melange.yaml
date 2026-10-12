@@ -1,0 +1,202 @@
+# Packages Apache Polaris onto Wolfi from its official binary distribution (Quarkus fast-jar).
+package:
+  name: quench-apache-polaris
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Apache Polaris, the Iceberg REST catalog, on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-21-jre       # the release is built with Java 21 (class files target 17)
+      - busybox              # Hadoop local file system (FILE storage) shells out to chmod
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - curl
+      - python-3
+      - zip
+      - unzip
+
+pipeline:
+  - runs: mkdir -p dist
+  - uses: fetch
+    with:
+      uri: https://github.com/apache/polaris/releases/download/apache-polaris-${{package.version}}/polaris-bin-${{package.version}}.tgz
+      expected-sha256: __SHA256__
+      strip-components: 1
+      directory: dist
+  - runs: |
+      set -eu
+      D="$PWD/dist"
+      QIDX=/tmp/qidx.py
+      cat > "$QIDX" <<'PY'
+      import io, struct, sys, zipfile
+      # Re-indexes quarkus-application.dat (Quarkus 3.x fast-jar, format version 3) after jars
+      # were swapped in place: adds the package directories a new jar has and the index lacks,
+      # and fails if a jar gained a fully-indexed resource (top level, META-INF, META-INF/services).
+      root = sys.argv[1]
+      changed = set(sys.argv[2:])  # lib paths whose jar was swapped or stripped
+      dat = root + "/quarkus/quarkus-application.dat"
+      b = open(dat, "rb").read()
+      p = 0
+      def take(n):
+          global p
+          v = b[p:p + n]; p += n; return v
+      def u16(): return struct.unpack(">H", take(2))[0]
+      def i32(): return struct.unpack(">i", take(4))[0]
+      def utf(): return take(u16()).decode("utf-8")
+      def wutf(s):
+          e = s.encode("utf-8"); return struct.pack(">H", len(e)) + e
+      def dirs_of(names):
+          out = []
+          for n in names:
+              if n.endswith("/"): continue  # Quarkus visits file entries only
+              d = "" if "/" not in n else n[:n.rindex("/")]
+              out.append(d)
+              if n.startswith("META-INF/versions/"):
+                  part = n[len("META-INF/versions/"):]
+                  s = part.find("/")
+                  if s != -1 and part.rfind("/") != s:
+                      out.append(part[s + 1:part.rindex("/")])
+          return list(dict.fromkeys(out))
+      def fully(names):
+          r = set()
+          for n in names:
+              if n.endswith("/"): continue
+              r.add(n.split("/", 1)[0])
+              for pre in ("META-INF", "META-INF/services"):
+                  sp = pre + "/"
+                  if not n.startswith(sp): continue
+                  if n == sp: r.add(pre); continue
+                  j = n.find("/", len(sp)); r.add(n[:j] if j != -1 else n)
+          return r
+      assert i32() == 0xF0315432 - (1 << 32) and i32() == 3, "unexpected index format"
+      out = io.BytesIO(); out.write(b[:8]); out.write(wutf(utf()))
+      n = u16(); out.write(struct.pack(">H", n))
+      jars, added = [], 0
+      for _ in range(n):
+          path = utf(); jars.append(path); out.write(wutf(path))
+          s = p; has = take(1)[0]
+          if has:
+              for _ in range(6):
+                  if take(1)[0]: utf()
+          gen, tr = take(1)[0], take(1)[0]
+          out.write(b[s:p])
+          old = [utf() for _ in range(u16())]
+          new = old
+          if path in changed:
+              names = zipfile.ZipFile(root + "/" + path).namelist()
+              new = old + [d for d in dirs_of(names) if d not in set(old)]
+          added += len(new) - len(old)
+          out.write(struct.pack(">H", len(new)) + b"".join(wutf(d) for d in new))
+          if gen or tr:
+              s = p; cnt = i32()
+              for _ in range(cnt): utf()
+              out.write(b[s:p])
+      s = p
+      for _ in range(u16()): utf()
+      fi = {}
+      for _ in range(u16()):
+          r = utf()
+          for _ in range(u16()): fi.setdefault(u16(), set()).add(r)
+      assert p == len(b), "trailing bytes in the index"
+      for i, path in enumerate(jars):
+          if path not in changed: continue
+          extra = fully(zipfile.ZipFile(root + "/" + path).namelist()) - fi.get(i, set())
+          assert not extra, f"{path} gained fully-indexed resources {sorted(extra)}"
+      out.write(b[s:])
+      open(dat, "wb").write(out.getvalue())
+      assert changed <= set(jars), f"not in the index: {sorted(changed - set(jars))}"
+      print(f"quarkus-application.dat: {n} jars, {len(changed)} changed, {added} package dirs added")
+      PY
+      M=https://repo1.maven.org/maven2
+      CH=""
+      # jswap <lib name prefix> <maven path> <version> <sha256>: whole-jar swap under the SAME file
+      # name (the fast-jar index keys jars by path), only where the bundled version is older.
+      jswap() {
+        hit=0
+        for j in "$D"/*/lib/main/"$1"-*.jar; do
+          [ -f "$j" ] || continue
+          have="${j##*/$1-}"; have="${have%.jar}"
+          case "$have" in [0-9]*) ;; *) continue ;; esac
+          hit=1
+          [ "$have" = "$3" ] && continue
+          [ "$(printf '%s\n%s\n' "$have" "$3" | sort -V | head -1)" = "$have" ] || continue
+          [ -f "/tmp/jswap-$3-${2##*/}.jar" ] || {
+            curl -fsSL -o "/tmp/jswap-$3-${2##*/}.jar" "$M/$2/$3/${2##*/}-$3.jar"
+            echo "$4  /tmp/jswap-$3-${2##*/}.jar" | sha256sum -c -
+          }
+          cp "/tmp/jswap-$3-${2##*/}.jar" "$j"; chmod 644 "$j"
+          CH="$CH $j"
+          echo "swapped ${j#$D/} -> $3"
+        done
+        [ "$hit" = 1 ] || { echo "no $1 jar in the dist; re-audit"; exit 1; }
+      }
+      jswap com.fasterxml.jackson.core.jackson-core com/fasterxml/jackson/core/jackson-core 2.22.3 8a501126a385b25841915d839508f8a66e2a0dbc8a6709d055ef3b3e852b094c
+      jswap com.fasterxml.jackson.core.jackson-databind com/fasterxml/jackson/core/jackson-databind 2.22.3 556db5439e206114346043f68d200497dc96a0bca62a360a81784092ebd0e0a9
+      jswap tools.jackson.core.jackson-core tools/jackson/core/jackson-core 3.2.3 a0c17e7e665a5e95c82f5fb45c0fec2ae3dc556c80f0016452c9c84cd23f3817
+      jswap tools.jackson.core.jackson-databind tools/jackson/core/jackson-databind 3.2.3 235b72436af983857e44efa42449f4f0a2c571e69d6c5d9dd1253ae7d192dcf2
+      jswap at.yawk.lz4.lz4-java at/yawk/lz4/lz4-java 1.11.4 58c8e0b813960d2a248e050c353baea73139b48a2ffc55382d42c69707e17325
+      jswap org.apache.commons.commons-configuration2 org/apache/commons/commons-configuration2 2.15.0 a359968dda319134c4f187e6f82b66f5808bf7db48e0d6e40922e98084c87ba8
+
+      # Jetty 9.4 is end of life: CVE-2026-2332 is fixed in 9.4.60, which is not on Maven Central.
+      # jetty-http 9.4.x is kept as an empty jar (manifest only, so the index entry stays valid and a
+      # class lookup ends in a plain ClassNotFoundException). Its only users are jetty-client
+      # (Solr audit of the Ranger authorizer) and optional probes (micrometer, netty ALPN).
+      for j in "$D"/*/lib/main/org.eclipse.jetty.jetty-http-9.4.*.jar; do
+        [ -f "$j" ] || continue
+        zip -q -d "$j" "org/*" "META-INF/maven/*" "META-INF/services/*"
+        CH="$CH $j"; echo "emptied ${j#$D/}"
+      done
+
+      # hadoop-client-runtime is a shaded jar (newest 3.5.0) holding jackson 2.18.6, jetty 9.4.58,
+      # jline 3.9.0 and commons-configuration2 2.10.1 under org/apache/hadoop/shaded. The jackson,
+      # jetty and jline copies serve YARN clients, the Hadoop HTTP server and JSON helpers, which
+      # Polaris never runs, so they are removed. commons-configuration2 IS used (FileSystem ->
+      # UserGroupInformation -> metrics2): the dist also carries the unshaded hadoop-common of the
+      # same Hadoop release, whose metrics2 uses the unshaded commons-configuration2 (swapped to
+      # 2.15.0 above, with the lang3 3.20 and text 1.15 it wants). Removing metrics2 from
+      # hadoop-client-api makes the fast-jar loader fall through to the hadoop-common copy.
+      for j in "$D"/*/lib/main/org.apache.hadoop.hadoop-client-runtime-*.jar; do
+        [ -f "$j" ] || continue
+        lib="${j%/*}"
+        api="$(ls "$lib"/org.apache.hadoop.hadoop-client-api-*.jar)"
+        com="$(ls "$lib"/org.apache.hadoop.hadoop-common-*.jar)"
+        [ "${api##*-}" = "${com##*-}" ] || { echo "hadoop-client-api and hadoop-common differ: $api $com"; exit 1; }
+        unzip -Z1 "$com" org/apache/hadoop/metrics2/impl/MetricsSystemImpl.class >/dev/null
+        zip -q -d "$api" "org/apache/hadoop/metrics2/*"
+        zip -q -d "$j" "org/apache/hadoop/shaded/com/fasterxml/*" "org/apache/hadoop/shaded/org/eclipse/*" \
+          "org/apache/hadoop/shaded/org/jline/*" "org/apache/hadoop/shaded/org/apache/commons/configuration2/*" \
+          "META-INF/versions/*/com/fasterxml/*" "META-INF/maven/com.fasterxml.jackson.*" \
+          "META-INF/maven/org.eclipse.jetty*" "META-INF/maven/org.jline/*" "META-INF/maven/org.apache.commons/commons-configuration2/*"
+        if unzip -Z1 "$j" | grep -E "shaded/(com/fasterxml|org/eclipse|org/jline|org/apache/commons/configuration2)/" >/dev/null; then
+          echo "strip left classes in $j"; exit 1
+        fi
+        CH="$CH $j $api"; echo "stripped ${j#$D/}, metrics2 of ${api#$D/}"
+      done
+
+      for app in "$D"/*/quarkus/quarkus-application.dat; do
+        a="${app%/quarkus/quarkus-application.dat}"
+        rel=""
+        for j in $CH; do case "$j" in "$a"/*) rel="$rel ${j#$a/}" ;; esac; done
+        python3 -I "$QIDX" "$a" $rel
+      done
+      mkdir -p "${{targets.destdir}}/usr/lib/polaris" "${{targets.destdir}}/usr/share/licenses/apache-polaris"
+      cp -a dist/server dist/admin "${{targets.destdir}}/usr/lib/polaris/"
+      cp dist/LICENSE dist/NOTICE "${{targets.destdir}}/usr/share/licenses/apache-polaris/"
+      chmod -R a+rX "${{targets.destdir}}/usr/lib/polaris"
+
+test:
+  pipeline:
+    - runs: |
+        test -f /usr/lib/polaris/server/quarkus-run.jar
+        test -f /usr/lib/polaris/admin/quarkus-run.jar
