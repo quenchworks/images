@@ -46,4 +46,24 @@ echo "$health" | grep -qi 'ok' \
 user="$(docker inspect "$IMAGE" --format '{{.Config.User}}')"
 [ "$user" = "1001" ] || { echo "expected user 1001, got '$user'"; exit 1; }
 
+# Precondition of apps/n8n/vex.openvex.json (simple-git): the image ships no git executable,
+# so no bypassed git option can ever run. Fail if one appears anywhere. No apostrophes in
+# this single-quoted script.
+docker run --rm --entrypoint /usr/bin/node "$IMAGE" -e '
+const fs = require("fs"), path = require("path"), hits = [];
+(function walk(d) {
+  let es; try { es = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+  for (const e of es) {
+    const p = path.join(d, e.name);
+    if (e.isDirectory()) { if (!["/proc", "/sys", "/dev"].includes(p)) walk(p); }
+    else if (e.name === "git") hits.push(p);
+  }
+})("/");
+if (hits.length) { console.error("git in image, the simple-git VEX no longer holds:", hits); process.exit(1); }
+require("/opt/n8n/node_modules/simple-git").simpleGit("/").version().then(v => {
+  if (v.installed) { console.error("simple-git found git:", JSON.stringify(v)); process.exit(1); }
+  console.log("no git executable in image; simple-git reports installed=false");
+});
+'
+
 echo "smoke test passed (nonroot user: $user)"

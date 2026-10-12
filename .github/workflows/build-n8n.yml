@@ -96,6 +96,14 @@ jobs:
       - name: Assemble single-arch image for the scan gate
         run: apko build apko.rendered.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}
 
+      # Validate the VEX BEFORE Trivy is allowed to honour it (scripts/check-vex.py):
+      # an entry removes a finding from the 0-CVE gate, so it must be airtight.
+      - name: Install uv (for the VEX validator)
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Check VEX
+        working-directory: ${{ github.workspace }}
+        run: uv run scripts/check-vex.py n8n
+
       - name: Scan, the hard 0-CVE gate (before publish)
         uses: aquasecurity/trivy-action@d2a0b60797ff03db6132bd4e2b293f9b37081297 # master 2026-09-26, v0.36.0+11, bundles trivy v0.71.2
         # comprehensive detection so Trivy scans the full node_modules dependency tree
@@ -103,6 +111,9 @@ jobs:
         # Verified locally: OS pkgs + every node_modules package, 0-CVE. Do NOT drop this.
         env:
           TRIVY_DETECTION_PRIORITY: comprehensive
+          # simple-git 3.36.0 / argv-parser 1.1.1 (4 rows): the image ships no git binary,
+          # and test.sh asserts that. trivy-action has no `vex:` input; pass it via TRIVY_VEX.
+          TRIVY_VEX: apps/n8n/vex.openvex.json
         with:
           input: apps/n8n/image.tar
           format: table

@@ -384,6 +384,54 @@ pipeline:
       console.log("undici: " + copies.length + " copy(ies), all at or above the per-major fix floor");
       JSEOF
 
+      # --- every override above is a FLOOR, asserted on every installed copy ---------------
+      # An override that silently misses a copy (a nested dir, a direct edge) ships the old
+      # version behind a green install. Walk the whole tree and fail only on a copy BELOW its
+      # floor, so a newer transitive copy passes. Validated 2026-10-12 against the published
+      # 2.40.7 image: it flags exactly the 8 stale rows the nightly scan reported, nothing else.
+      node - <<'JSEOF'
+      const fs = require("fs"), path = require("path");
+      // value = floor for every copy; {major: floor} = floor only for copies on that major
+      const FLOOR = {
+        "nodemailer": "10.0.10", "nanoid": { 3: "3.3.18" }, "ws": "8.21.0",
+        "@modelcontextprotocol/sdk": "1.31.0", "handlebars": "4.7.10", "compression": "1.8.2",
+        "multer": "2.4.0", "xlsx": "0.20.3", "adm-zip": "0.6.1", "@anthropic-ai/sdk": "0.91.1",
+        "@langchain/mongodb": "1.3.1", "@langchain/redis": "1.1.1", "vm2": "3.12.2",
+        "@azure/identity": { 3: "4.2.1" }, "@opentelemetry/core": { 1: "2.8.0", 2: "2.8.0" },
+        "@opentelemetry/exporter-prometheus": "0.217.0", "@opentelemetry/sdk-node": "0.217.0",
+        "@tiptap/core": "3.31.3", "@tootallnate/once": "2.0.1", "ajv": { 7: "8.18.0" },
+        "axios": "1.20.0", "fast-xml-parser": "5.7.0", "form-data": "4.0.6",
+        "@hono/node-server": "2.0.10", "js-yaml": "4.3.2", "langsmith": "0.6.0",
+        "linkify-it": "5.0.2", "markdown-it": "14.3.2", "mysql2": "3.23.1",
+        "@opentelemetry/propagator-jaeger": "2.9.0", "protobufjs": "8.6.6", "qs": "6.16.0",
+        "sanitize-html": "2.17.7", "semver": { 4: "5.7.2", 5: "5.7.2" }, "stream-json": "3.6.0",
+        "tar": { 6: "7.5.22", 7: "7.5.22" }, "snowflake-sdk": "3.3.0", "toml": "4.2.0", "uuid": "11.1.1",
+      };
+      const parse = v => v.split("-")[0].split(".").map(Number);
+      const cmp = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+      const found = {}, bad = [];
+      // Every installed copy: a dir whose parent is node_modules (or a scope dir under it).
+      (function walk(dir) {
+        for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+          if (!e.isDirectory()) continue;
+          const p = path.join(dir, e.name);
+          if (path.basename(dir) === "node_modules" || path.basename(path.dirname(dir)) === "node_modules" && path.basename(dir).startsWith("@")) {
+            const name = e.name.startsWith("@") ? null : (path.basename(dir).startsWith("@") ? path.basename(dir) + "/" : "") + e.name;
+            if (name && FLOOR[name] !== undefined && fs.existsSync(path.join(p, "package.json"))) {
+              const v = JSON.parse(fs.readFileSync(path.join(p, "package.json"), "utf8")).version, n = parse(v);
+              const f = typeof FLOOR[name] === "string" ? FLOOR[name] : FLOOR[name][n[0]];
+              (found[name] = found[name] || []).push(v);
+              if (f && cmp(n, parse(f)) < 0) bad.push(p + " @ " + v + " < " + f);
+            }
+          }
+          walk(p);
+        }
+      })("node_modules");
+      if (bad.length) throw new Error("pinned package below its CVE floor:\n  " + bad.join("\n  "));
+      for (const k of Object.keys(FLOOR)) if (!found[k]) console.log("floor: " + k + " not in tree");
+      console.log("floors: " + Object.values(found).flat().length + " copies of " + Object.keys(found).length + " pinned packages, all at or above floor");
+      JSEOF
+
       # --- stream-json 1.9.1 -> 3.5.0: assert the pin, then migrate the consumer's API -------
       # CVE-2026-71429 fixes ONLY at 3.5.0 (the advisory range is a bare `< 3.5.0`, so no 2.x
       # escape exists), and 3.x is an ESM-only API redesign. The single consumer in this tree,

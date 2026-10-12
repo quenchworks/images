@@ -1,0 +1,37 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/n8n/2026-10-12",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-10-12T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": { "name": "CVE-2026-102826" },
+      "products": [ { "@id": "pkg:npm/simple-git@3.36.0" } ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Measured 2026-10-12 on n8n 2.40.7 (published sha256:cfb73b45). GHSA-g4wm-2vf7-vfgr: the blockUnsafeOperationsPlugin denylist misses include.path / includeIf, so a -c include.path=<file> argument reaches git, and git then loads that file and runs a command it names. The command runs only inside a git process, and this image ships no git executable: apko.yaml installs only wolfi-baselayout, ca-certificates-bundle, tzdata, nodejs-24 and quench-n8n; the full image file list (crane export, 263k entries) has no file named git and only ldconfig and node in /usr/bin; no shell either. Verified inside the image: simpleGit with config include.path plus a push carrying --receive-p rejects with spawn git ENOENT, and simpleGit().version() returns installed=false. n8n source control also refuses to start without git (cli dist/modules/source-control.ee/source-control-git.service.ee.js:74 Git binary not found). test.sh fails the build if any executable named git appears, so this statement cannot outlive its precondition."
+    },
+    {
+      "vulnerability": { "name": "CVE-2026-102827" },
+      "products": [ { "@id": "pkg:npm/simple-git@3.36.0" } ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Measured 2026-10-12 on n8n 2.40.7 (published sha256:cfb73b45). GHSA-858h-whjf-mvg5: git accepts abbreviated long options (--receive-p, --exe) that the denylist does not match, so git push runs the named command. The command runs only inside a git process, and this image ships no git executable: apko.yaml installs only wolfi-baselayout, ca-certificates-bundle, tzdata, nodejs-24 and quench-n8n; the image file list (crane export) has no file named git and only ldconfig and node in /usr/bin. Verified inside the image: git.push with --receive-p=touch /tmp/pwn rejects with spawn git ENOENT and no file is created; simpleGit().version() returns installed=false. The n8n Git node also rejects push targets starting with a hyphen (n8n-nodes-base 2.40.2 dist/nodes/Git/Git.node.js:311). test.sh fails the build if any executable named git appears."
+    },
+    {
+      "vulnerability": { "name": "CVE-2026-102828" },
+      "products": [ { "@id": "pkg:npm/simple-git@3.36.0" } ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Measured 2026-10-12 on n8n 2.40.7 (published sha256:cfb73b45). GHSA-x6jw-m9v5-85vh: trailer.<token>.cmd is not on the denylist, so git interpret-trailers runs the configured command. That needs a git process, and this image ships no git executable: apko.yaml installs only wolfi-baselayout, ca-certificates-bundle, tzdata, nodejs-24 and quench-n8n; the image file list (crane export) has no file named git and only ldconfig and node in /usr/bin. Verified inside the image: simple-git calls reject with spawn git ENOENT and simpleGit().version() returns installed=false. n8n never runs interpret-trailers or commit --trailer (grep over the n8n 2.40.7 and n8n-nodes-base 2.40.2 dist: 0 matches), and the Git node addConfig allows only user.email, user.name, remote.origin.url by default (dist/nodes/Git/descriptions/AddConfigDescription.js:4). test.sh fails the build if any executable named git appears."
+    },
+    {
+      "vulnerability": { "name": "CVE-2026-102829" },
+      "products": [ { "@id": "pkg:npm/%40simple-git/argv-parser@1.1.1" } ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Measured 2026-10-12 on n8n 2.40.7 (published sha256:cfb73b45). GHSA-v5rq-49vh-5v5c: parseEnv drops VISUAL, so an attacker-set VISUAL editor is not flagged and git launches it during an interactive operation. That needs a git process, and this image ships no git executable: apko.yaml installs only wolfi-baselayout, ca-certificates-bundle, tzdata, nodejs-24 and quench-n8n; the image file list (crane export) has no file named git and only ldconfig and node in /usr/bin. Verified inside the image: simpleGit().env({VISUAL}) followed by a push rejects with spawn git ENOENT; simpleGit().version() returns installed=false. n8n also never forwards caller env to git: the Git node passes a fresh object holding only GIT_TERMINAL_PROMPT and GIT_ALLOW_PROTOCOL (n8n-nodes-base 2.40.2 dist/nodes/Git/Git.node.js:490). test.sh fails the build if any executable named git appears."
+    }
+  ]
+}
