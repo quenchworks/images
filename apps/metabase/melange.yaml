@@ -58,4 +58,14 @@ pipeline:
       (cd core && zip -q -r ../metabase.jar com META-INF)
       v="$(unzip -p metabase.jar META-INF/maven/com.fasterxml.jackson.core/jackson-core/pom.properties | sed -n 's/^version=//p')"
       [ "$v" = "__CORE_VER__" ] || { echo "jackson-core is $v after the swap"; exit 1; }
+      # netty-codec-dns 4.1.135 (CVE-2026-73508): same in-place swap, on the 4.1 line the uberjar
+      # already runs it from (its netty core is 4.2.17).
+      curl -fsSL -o dns.jar "https://repo1.maven.org/maven2/io/netty/netty-codec-dns/__NETTY_DNS_VER__/netty-codec-dns-__NETTY_DNS_VER__.jar"
+      echo "__NETTY_DNS_SHA256__  dns.jar" | sha256sum -c -
+      v="$(unzip -p metabase.jar META-INF/maven/io.netty/netty-codec-dns/pom.properties | sed -n 's/^version=//p')"
+      [ -n "$v" ] || { echo "no netty-codec-dns in the uberjar; re-audit"; exit 1; }
+      mkdir dns && unzip -q dns.jar 'io/netty/handler/codec/dns/*' 'META-INF/maven/io.netty/netty-codec-dns/*' -d dns
+      (cd dns && zip -q -r ../metabase.jar io META-INF)
+      v="$(unzip -p metabase.jar META-INF/maven/io.netty/netty-codec-dns/pom.properties | sed -n 's/^version=//p')"
+      [ "$v" = "__NETTY_DNS_VER__" ] || { echo "netty-codec-dns is $v after the swap"; exit 1; }
       install -Dm644 metabase.jar "${{targets.destdir}}/usr/share/metabase/metabase.jar"
