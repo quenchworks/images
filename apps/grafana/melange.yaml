@@ -53,28 +53,23 @@ pipeline:
       # go.mod replaces 31 of go.work's 34 local modules itself, so module mode builds
       # without the workspace, and -mod=mod lets go get move the floated modules.
       export GOWORK=off GOFLAGS=-mod=mod GOTOOLCHAIN=local CGO_ENABLED=0
-      O=go.opentelemetry.io
-      # The otel set is one coherent release train (core 1.45.0, log 0.21.0, and the
-      # contrib modules built against exactly that pair); moving only the flagged
-      # exporters leaves the rest of the log family on the old API and fails to compile.
-      go get github.com/apache/thrift@v0.24.0 github.com/openfga/openfga@v1.18.1 \
-             golang.org/x/net@v0.60.0 golang.org/x/mod@v0.41.0 \
-             $O/otel@v1.45.0 $O/otel/trace@v1.45.0 $O/otel/metric@v1.45.0 \
-             $O/otel/sdk@v1.45.0 $O/otel/sdk/metric@v1.45.0 \
-             $O/otel/exporters/otlp/otlptrace@v1.45.0 \
-             $O/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0 \
-             $O/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0 \
-             $O/otel/exporters/otlp/otlpmetric/otlpmetricgrpc@v1.45.0 \
-             $O/otel/exporters/otlp/otlpmetric/otlpmetrichttp@v1.45.0 \
-             $O/otel/exporters/stdout/stdoutmetric@v1.45.0 \
-             $O/otel/exporters/stdout/stdouttrace@v1.45.0 \
-             $O/otel/exporters/prometheus@v0.67.0 \
-             $O/otel/log@v0.21.0 $O/otel/sdk/log@v0.21.0 \
-             $O/otel/exporters/otlp/otlplog/otlploggrpc@v0.21.0 \
-             $O/otel/exporters/otlp/otlplog/otlploghttp@v0.21.0 \
-             $O/otel/exporters/stdout/stdoutlog@v0.21.0 \
-             $O/contrib/bridges/otelzap@v0.20.0 $O/contrib/bridges/prometheus@v0.70.0 \
-             $O/contrib/exporters/autoexport@v0.70.0 $O/contrib/otelconf@v0.25.0
+      # The otel set is one release train (core 1.45.0, log 0.21.0, and the contrib modules
+      # built against that pair); moving only the flagged exporters leaves the rest of the log
+      # family on the old API and fails to compile. Floors, so 13.1.7's otel 1.46.0 stays.
+      # 0-CVE FLOORS, not pins (docs/go-module-float.md): raise a module only where go.mod has it
+      # below the floor; a module absent from the graph is skipped. Bare `go get` pins downgraded
+      # newer upstream releases (found 2026-10-05).
+      FLOOR="github.com/apache/thrift@v0.24.0 github.com/openfga/openfga@v1.18.1 golang.org/x/net@v0.60.0 golang.org/x/mod@v0.41.0 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/sdk/metric@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp@v1.45.0 go.opentelemetry.io/otel/exporters/stdout/stdoutmetric@v1.45.0 go.opentelemetry.io/otel/exporters/stdout/stdouttrace@v1.45.0 go.opentelemetry.io/otel/exporters/prometheus@v0.67.0 go.opentelemetry.io/otel/log@v0.21.0 go.opentelemetry.io/otel/sdk/log@v0.21.0 go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc@v0.21.0 go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp@v0.21.0 go.opentelemetry.io/otel/exporters/stdout/stdoutlog@v0.21.0 go.opentelemetry.io/contrib/bridges/otelzap@v0.20.0 go.opentelemetry.io/contrib/bridges/prometheus@v0.70.0 go.opentelemetry.io/contrib/exporters/autoexport@v0.70.0 go.opentelemetry.io/contrib/otelconf@v0.25.0"
+      # Go semver order (a release outranks its prereleases); busybox sort -V does not.
+      vlt() { awk -v a="${1#v}" -v b="${2#v}" 'function pp(s,  p){sub(/\+.*/,"",s);p=index(s,"-");if(p){C=substr(s,1,p-1);P=substr(s,p+1)}else{C=s;P=""}} function cmp(x,y,  i,n,m,X,Y){n=split(x,X,".");m=split(y,Y,".");for(i=1;i<=n&&i<=m;i++){if(X[i]==Y[i])continue;if(X[i]~/^[0-9]+$/&&Y[i]~/^[0-9]+$/)return (X[i]+0<Y[i]+0)?-1:1;if(X[i]~/^[0-9]+$/)return -1;if(Y[i]~/^[0-9]+$/)return 1;return (X[i]<Y[i])?-1:1}return (n<m)?-1:(n>m)?1:0} BEGIN{pp(a);ca=C;pa=P;pp(b);cb=C;pb=P;c=cmp(ca,cb);if(c==0){if(pa==pb)c=0;else if(pa=="")c=1;else if(pb=="")c=-1;else c=cmp(pa,pb)}exit !(c<0)}'; }
+      need=""
+      for mv in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${mv%@*}" 2>/dev/null)"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        vlt "$have" "${mv#*@}" && need="$need $mv"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
       go build -trimpath \
         -ldflags "-w -X main.version=${VER} -X main.commit=__COMMIT__ -X main.buildBranch=HEAD" \
         -o ../grafana-built ./pkg/cmd/grafana
@@ -82,10 +77,12 @@ pipeline:
       ./grafana-built --version | grep -q "version ${VER}"
       # the gate reads these from the binary; assert the floats actually landed
       go version -m grafana-built | tr -s '\t' ' ' > mods.txt   # fields are tab-separated
+      # at-or-above each floor (exact asserts failed once upstream passed the floor)
       for want in "github.com/apache/thrift v0.24.0" "github.com/openfga/openfga v1.18.1" \
                   "go.opentelemetry.io/otel/sdk v1.45.0" \
                   "go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.21.0"; do
-        grep -qF "$want" mods.txt || { echo "float missing from binary: $want"; exit 1; }
+        got="$(awk -v m="${want% *}" '$1=="dep" && $2==m {print $3}' mods.txt)"
+        [ -n "$got" ] && ! vlt "$got" "${want#* }" || { echo "float missing from binary: $want (got ${got:-none})"; exit 1; }
       done
       rm -rf grafana-src grafana-src.tar.gz mods.txt
 
