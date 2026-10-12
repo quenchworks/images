@@ -157,7 +157,9 @@ pipeline:
       done
       test ! -e "$S/yarn"
       # derby jars carry no pom.properties; match Hive-side jars by file name too.
-      [ -z "$(find "$S" -name "derby-*.jar" -o -name "hive-*.jar" -o -name "libthrift-*.jar")" ] || { echo "Hive jars present"; bad=1; }
+      # hive-storage-api is ORC's vector API (sql/core needs it), not Hive: allowed.
+      hive="$(find "$S" \( -name "derby-*.jar" -o -name "hive-*.jar" -o -name "libthrift-*.jar" \) ! -name "hive-storage-api-*.jar")"
+      [ -z "$hive" ] || { echo "Hive jars present:"; echo "$hive"; bad=1; }
       [ "$bad" = 0 ]
       echo "floors OK ($(wc -l < /tmp/deps.txt) pom.properties entries)"
 
