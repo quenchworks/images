@@ -1,18 +1,24 @@
-# Apache Spark from Wolfi's per-line spark-<X.Y>-scala-2.13 apks (built from source
-# by Wolfi, vulnerable Maven deps bumped). No melange step. The -compat apk adds the
-# /opt/spark, /opt/entrypoint.sh and /opt/decom.sh links upstream's image uses.
-# __PKG__ / __PKG_COMPAT__ are rendered per version by build.conf.
+# Apache Spark built from source by melange.yaml (quench-spark: /opt/spark,
+# /opt/entrypoint.sh, /opt/decom.sh). The contract is upstream's apache/spark image:
+# entrypoint driver | executor | pass-through, SPARK_HOME=/opt/spark, work-dir
+# /opt/spark/work-dir (the entrypoint writes java_opts.txt there).
 contents:
   keyring:
     - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
   repositories:
     - https://packages.wolfi.dev/os
+    - "@local ./packages"
   packages:
     - wolfi-baselayout
     - ca-certificates-bundle
     - openjdk-21-jre
-    - __PKG__
-    - __PKG_COMPAT__
+    - bash
+    - busybox
+    - tini
+    - procps
+    - posix-libc-utils
+    - quench-spark@local
 
 accounts:
   groups:
@@ -38,7 +44,7 @@ environment:
 work-dir: /opt/spark/work-dir
 
 paths:
-  - path: /usr/lib/spark/work-dir
+  - path: /opt/spark/work-dir
     type: directory
     uid: 1001
     gid: 1001

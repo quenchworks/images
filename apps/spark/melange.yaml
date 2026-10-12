@@ -1,0 +1,159 @@
+# Apache Spark __VER__ built from the source tag with Maven (dev/make-distribution.sh),
+# Scala 2.13, -Pkubernetes only: no -Phive/-Phive-thriftserver (Hive 2.3.10, Derby,
+# libthrift have no fixed 2.3 line) and no -Pyarn (yarn-shuffle jar shades its own
+# netty/jackson). Vulnerable deps are raised to floors at build time, so the shade
+# plugin embeds the fixed versions in spark-core (Jetty) and the connect client (netty).
+#
+# Two shaded jars Spark consumes are rebuilt from their own source tags first and
+# installed into the local Maven repo under their original coordinates:
+#   parquet-jackson __PARQUET__   jackson 2.19.2 shaded; no Parquet release ships a fixed one
+#   hadoop-client-runtime __HADOOP__  jackson 2.18.6, commons-configuration2 2.10.1, Jetty
+#       9.4.58 client stack, jline 3.9.0 shaded. Jackson and configuration2 are raised.
+#       Jetty 9.4 has no fixed release (EOL, every fix is 12.x) and jline is unfixed on
+#       3.9; both are excluded from the shade. In hadoop-client-api only YARN code
+#       (YarnClientImpl container shell, yarn webapp) and HttpServer2 reference them,
+#       and this image is built without -Pyarn and never starts a Hadoop HTTP server.
+# check_floors at the end fails the build if any copy, shaded included, is below its floor.
+package:
+  name: quench-spark
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Apache Spark __VER__ (Scala 2.13), built from source"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-21-jre
+      - bash
+      - busybox
+      - tini              # /opt/entrypoint.sh execs /usr/bin/tini
+      - procps            # sbin/spark-daemon.sh uses ps
+      - posix-libc-utils  # entrypoint.sh calls getent
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - bash
+      - curl
+      - ca-certificates-bundle
+      - openjdk-21
+      - openjdk-21-default-jvm
+      - maven-3.9
+      - unzip
+      - zip
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/apache/spark/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: "__SHA256__"
+  - runs: |
+      set -eux
+      export JAVA_HOME=/usr/lib/jvm/java-21-openjdk
+      export PATH="${JAVA_HOME}/bin:${PATH}"
+      W="$(pwd)"
+      export MAVEN_OPTS="-Xss128m -Xmx8g -XX:ReservedCodeCacheSize=1g -Dmaven.repo.local=${W}/.m2repo -Duser.home=${W}"
+      SKIP="-B -ntp -DskipTests -Dmaven.javadoc.skip=true -Drat.skip=true -Denforcer.skip=true -Dlicense.skip=true -Dspotless.check.skip=true -Dspotless.apply.skip=true -Djapicmp.skip=true"
+      get() { # url sha256 dest
+        curl -fsSL --retry 3 -o "$3" "$1"
+        echo "$2  $3" | sha256sum -c -
+      }
+
+      # --- parquet-jackson __PARQUET__ re-shaded with jackson __JACKSON__ ---
+      get https://archive.apache.org/dist/parquet/apache-parquet-__PARQUET__/apache-parquet-__PARQUET__.tar.gz __PARQUET_SHA256__ /tmp/parquet.tgz
+      mkdir -p /tmp/parquet && tar -xzf /tmp/parquet.tgz -C /tmp/parquet --strip-components=1
+      # jackson-annotations 2.20+ is versioned X.Y only, so it cannot take the patch version.
+      sed -i '/<artifactId>jackson-annotations<\/artifactId>/{n;s|\${jackson.version}|__JACKSON_ANN__|}' /tmp/parquet/parquet-jackson/pom.xml
+      grep -q '<version>__JACKSON_ANN__</version>' /tmp/parquet/parquet-jackson/pom.xml
+      mvn $SKIP -f /tmp/parquet/parquet-jackson/pom.xml \
+        -Djackson.version=__JACKSON__ -Djackson-databind.version=__JACKSON__ install
+
+      # --- hadoop-client-runtime __HADOOP__ re-shaded ---
+      get https://archive.apache.org/dist/hadoop/common/hadoop-__HADOOP__/hadoop-__HADOOP__-src.tar.gz __HADOOP_SHA256__ /tmp/hadoop.tgz
+      mkdir -p /tmp/hadoop
+      tar -xzf /tmp/hadoop.tgz -C /tmp/hadoop --strip-components=1
+      HP=/tmp/hadoop/hadoop-project/pom.xml
+      sed -i '/<artifactId>commons-configuration2<\/artifactId>/{n;s|<version>2.10.1</version>|<version>__CONFIG2__</version>|}' "$HP"
+      grep -q '<version>__CONFIG2__</version>' "$HP"
+      RT=/tmp/hadoop/hadoop-client-modules/hadoop-client-runtime/pom.xml
+      sed -i 's|<exclude>org.eclipse.jetty:jetty-continuation</exclude>|&<exclude>org.eclipse.jetty:jetty-client</exclude><exclude>org.eclipse.jetty:jetty-http</exclude><exclude>org.eclipse.jetty:jetty-io</exclude><exclude>org.eclipse.jetty.websocket:*</exclude><exclude>org.jline:*</exclude>|' "$RT"
+      grep -q '<exclude>org.jline:\*</exclude>' "$RT"
+      mvn $SKIP -f "$RT" -Djackson2.version=__JACKSON_HADOOP__ -Djackson2.databind.version=__JACKSON_HADOOP__ install
+
+      # --- Spark ---
+      sed -i '/<artifactId>lz4-java<\/artifactId>/{n;s|<version>1.11.0</version>|<version>__LZ4__</version></dependency><dependency><groupId>org.jline</groupId><artifactId>jline</artifactId><version>__JLINE__</version><classifier>jdk8</classifier>|}' pom.xml
+      grep -q '<version>__LZ4__</version>' pom.xml
+      grep -q '<version>__JLINE__</version><classifier>jdk8</classifier>' pom.xml
+      ./dev/make-distribution.sh --mvn mvn --name quench -Pkubernetes -T 2 $SKIP \
+        -Dfasterxml.jackson.version=__JACKSON__ -Djetty.version=__JETTY__ -Dnetty.version=__NETTY__ \
+        -Dlog4j.version=__LOG4J__ -Dvertx.version=__VERTX__
+
+      S="${{targets.destdir}}/opt/spark"
+      install -d "$S" "$S/work-dir"
+      cp -a dist/. "$S/"
+      ln -s "spark-examples_2.13-${{package.version}}.jar" "$S/examples/jars/spark-examples.jar"
+      test -f "$S/examples/jars/spark-examples_2.13-${{package.version}}.jar"
+      D=resource-managers/kubernetes/docker/src/main/dockerfiles/spark
+      install -m 0755 "$D/entrypoint.sh" "${{targets.destdir}}/opt/entrypoint.sh"
+      install -m 0755 "$D/decom.sh" "${{targets.destdir}}/opt/decom.sh"
+
+  - runs: |
+      # Floors: every copy of a flagged library, shaded ones included (read from the
+      # META-INF/maven pom.properties Trivy also reads), must be at or above the floor
+      # for its major.minor line. A line with no floor, or "none", fails.
+      set -eu
+      S="${{targets.destdir}}/opt/spark"
+      : > /tmp/deps.txt
+      find "$S" -name "*.jar" -type f | while read -r j; do
+        unzip -l "$j" | awk "{print \$NF}" | grep "^META-INF/maven/.*/pom.properties$" | while read -r p; do
+          props="$(unzip -p "$j" "$p" | tr -d "\r")"
+          a="$(printf "%s\n" "$props" | sed -n "s/^groupId=//p"):$(printf "%s\n" "$props" | sed -n "s/^artifactId=//p")"
+          v="$(printf "%s\n" "$props" | sed -n "s/^version=//p")"
+          echo "${j##*/} $a $v" >> /tmp/deps.txt
+        done
+      done
+      floor() {
+        case "$1" in
+          com.fasterxml.jackson.core:jackson-core|com.fasterxml.jackson.core:jackson-databind) echo "__JACKSON_HADOOP__ __JACKSON__" ;;
+          io.netty:netty-codec-compression|io.netty:netty-codec-dns|io.netty:netty-codec-http|io.netty:netty-codec-http2|io.netty:netty-handler|io.netty:netty-resolver-dns|io.netty:netty-transport-native-epoll|io.netty:netty-transport-native-kqueue) echo "__NETTY__" ;;
+          org.eclipse.jetty:jetty-server|org.eclipse.jetty:jetty-security|org.eclipse.jetty:jetty-util|org.eclipse.jetty:jetty-http) echo "__JETTY__" ;;
+          org.apache.logging.log4j:log4j-api|org.apache.logging.log4j:log4j-core) echo "__LOG4J__" ;;
+          at.yawk.lz4:lz4-java) echo "__LZ4__" ;;
+          io.vertx:vertx-core) echo "__VERTX__" ;;
+          org.apache.commons:commons-configuration2) echo "__CONFIG2__" ;;
+          org.jline:*) echo "__JLINE__" ;;
+          org.apache.derby:derby|org.apache.hive:hive-exec|org.apache.thrift:libthrift) echo "none" ;;
+        esac
+      }
+      bad=0
+      while read -r jar a v; do
+        f="$(floor "$a")"
+        [ -n "$f" ] || continue
+        line="$(echo "$v" | cut -d. -f1-2)"
+        want=""
+        for x in $f; do [ "$(echo "$x" | cut -d. -f1-2)" = "$line" ] && want="$x"; done
+        if [ -z "$want" ] || [ "$(printf "%s\n%s\n" "$v" "$want" | sort -V | head -1)" != "$want" ]; then
+          echo "BELOW FLOOR: $jar $a $v (floors: $f)"; bad=1
+        fi
+      done < /tmp/deps.txt
+      # A check that matched nothing proves nothing: the shaded copies must be seen.
+      for need in "spark-core_2.13-${{package.version}}.jar org.eclipse.jetty:jetty-server" "hadoop-client-runtime-__HADOOP__.jar com.fasterxml.jackson.core:jackson-databind" "parquet-jackson-__PARQUET__.jar com.fasterxml.jackson.core:jackson-databind" "spark-connect-client-jvm_2.13-${{package.version}}.jar io.netty:netty-handler"; do
+        grep -q "^$need " /tmp/deps.txt || { echo "floor check saw no: $need"; bad=1; }
+      done
+      test ! -e "$S/yarn"
+      # derby jars carry no pom.properties; match Hive-side jars by file name too.
+      [ -z "$(find "$S" -name "derby-*.jar" -o -name "hive-*.jar" -o -name "libthrift-*.jar")" ] || { echo "Hive jars present"; bad=1; }
+      [ "$bad" = 0 ]
+      echo "floors OK ($(wc -l < /tmp/deps.txt) pom.properties entries)"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /opt/entrypoint.sh
+        test -f /opt/spark/examples/jars/spark-examples.jar
+        test -f /opt/spark/jars/spark-kubernetes_2.13-${{package.version}}.jar
