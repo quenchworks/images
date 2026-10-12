@@ -82,7 +82,12 @@ pipeline:
       # psycopg-binary (1.105.0+) bundles libpq + OpenSSL in psycopg_binary.libs; psycopg
       # falls back to its python impl on Wolfi's libpq-18. pip skips it when absent.
       "$VENV/bin/pip" uninstall -y polars polars-runtime-32 pyroscope-io numpy cryptography hf-xet psycopg-binary
-      "$VENV/bin/pip" check
+      # litellm-proxy-extras requires psycopg-binary by name; that one line is expected,
+      # anything else pip check reports still fails the build.
+      CHK=$("$VENV/bin/pip" check 2>&1) || {
+        REST=$(printf '%s\n' "$CHK" | grep -v '^litellm-proxy-extras [^ ]* requires psycopg-binary, which is not installed\.$' || true)
+        if [ -n "$REST" ]; then printf '%s\n' "$REST"; exit 1; fi
+      }
       SITE="$VENV/lib/python3.13/site-packages"
       if ls -d "$SITE"/*.libs 2>/dev/null | grep -q .; then echo "bundled native libs:"; ls -d "$SITE"/*.libs; exit 1; fi
       for p in polars _polars_runtime_32 pyroscope numpy cryptography hf_xet; do
