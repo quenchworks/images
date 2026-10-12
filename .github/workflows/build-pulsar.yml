@@ -33,7 +33,10 @@ jobs:
           source "apps/${APP}/build.conf"
           echo "blocked=$([ "${BLOCKED:-0}" = "1" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
           n=${#VERSIONS[@]}; start=$(( n > 3 ? n - 3 : 0 ))
-          latest3=("${VERSIONS[@]:start}")
+          # HELD lines stay in VERSIONS (the lock keeps the chart's line) but are not
+          # built: they cannot pass the gate (see build.conf STATUS).
+          held=" ${HELD[*]:-} "; latest3=()
+          for v in "${VERSIONS[@]:start}"; do [[ "$held" == *" $v "* ]] || latest3+=("$v"); done
           echo "building: ${latest3[*]}"
           echo "vers=$(printf '%s\n' "${latest3[@]}" | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
           echo "latest=${latest3[${#latest3[@]}-1]}" >> "$GITHUB_OUTPUT"

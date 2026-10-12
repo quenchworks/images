@@ -2,7 +2,7 @@
 # platform (broker + BookKeeper + metadata store). We ship the upstream BINARY
 # distribution (prebuilt jars) on a hardened Wolfi JRE -- that JRE plus the many
 # bundled jars are the CVE surface the Trivy gate scans (a bundled JDK would escape
-# attribution). Pulsar 4.0 LTS supports Java 17/21, so this runs on openjdk-21-jre,
+# attribution). Pulsar 4.2 and 5.0 both need Java 21, so this runs on openjdk-21-jre,
 # the shared base the JVM tier (kafka/opensearch/solr/zookeeper) uses.
 #
 # We ship the lean `-bin` dist, NOT the `-all` bundle: connectors (Pulsar IO) and
@@ -81,6 +81,11 @@ pipeline:
       # from Maven Central (ABI-safe), and DROP the Java Functions runtime uber-jar
       # (java-instance.jar) which SHADES a vulnerable jackson-databind and is never
       # loaded by `bin/pulsar standalone --no-functions-worker` (the mode this image runs).
+      # Pulsar 5.0 ships every fixed jar itself (dist scan 2026-10-12: 0 fixable, incl.
+      # java-instance.jar), so this whole block runs for the 4.x line only. A 5.x finding
+      # gets its own swap below the fi, not a reuse of these exact-version lines.
+      case "${{package.version}}" in
+      4.*)
       MC="https://repo1.maven.org/maven2"
       swap() { # <maven-group-path> <artifact> <oldver> <newver> [sha256] [classifier]
         grp="$1"; art="$2"; old="$3"; new="$4"; sha="${5:-}"; cls="${6:-}"
@@ -243,6 +248,9 @@ pipeline:
         || { echo "FATAL: nested bcprov is not the 1.85 content"; exit 1; }
       # Drop the shaded functions-runtime uber-jar (unused in --no-functions-worker standalone).
       rm -f "$dest/instances/java-instance.jar"
+      ;;
+      *) echo "pulsar ${{package.version}}: no 4.x jar remediation" ;;
+      esac
       chmod -R a+rX "$dest"
 
       # Bake a config-from-env entrypoint. A read-only rootfs means ALL of standalone's
