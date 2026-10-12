@@ -1,0 +1,115 @@
+# Assembles the Backdrop CMS runtime image: the Backdrop tree (quench-backdrop) plus a
+# hardened Wolfi PHP-FPM (127.0.0.1:9000) and Wolfi nginx (:8080), supervised by
+# supervisord. Nonroot (uid/gid 1001), multi-arch, read-only-rootfs friendly. SBOM by
+# apko. No upstream Backdrop image is inherited; the runtime is built from Wolfi packages.
+#
+# Ports:
+#   8080/tcp  nginx, serves /var/www/html and FastCGI-passes .php to php-fpm
+#   9000/tcp  php-fpm, loopback only
+#
+# Writable at runtime (emptyDir/PVC): /var/www/html/files (uploads, config/active,
+# config/staging, backups) and /tmp. The database comes from BACKDROP_DB_HOST, _PORT,
+# _NAME, _USER, _PASSWORD (+ optional _PREFIX, BACKDROP_HASH_SALT); install with
+# `php core/scripts/install.sh --db-url=mysql://...` from /var/www/html.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - busybox                       # provides /bin/sh for the entrypoint script
+    - ca-certificates-bundle
+    - supervisor
+    - nginx
+    - quench-backdrop@local
+    # PHP 8.4 (Backdrop's floor is 7.1). Extensions: what core checks for (pdo, curl,
+    # zip, intl, apcu for the cache) plus gd for image styles, mbstring and the XML set,
+    # and the MySQL driver (Backdrop supports MySQL/MariaDB only).
+    - php-8.4
+    - php-8.4-fpm
+    - php-8.4-fpm-config
+    - php-8.4-config
+    - php-8.4-opcache
+    - php-8.4-opcache-config
+    - php-8.4-ctype
+    - php-8.4-ctype-config
+    - php-8.4-dom
+    - php-8.4-dom-config
+    - php-8.4-fileinfo
+    - php-8.4-fileinfo-config
+    - php-8.4-iconv
+    - php-8.4-iconv-config
+    - php-8.4-intl
+    - php-8.4-intl-config
+    - php-8.4-mbstring
+    - php-8.4-mbstring-config
+    - php-8.4-openssl
+    - php-8.4-openssl-config
+    - php-8.4-xml
+    - php-8.4-xml-config
+    - php-8.4-xmlreader
+    - php-8.4-xmlreader-config
+    - php-8.4-xmlwriter
+    - php-8.4-xmlwriter-config
+    - php-8.4-simplexml
+    - php-8.4-simplexml-config
+    - php-8.4-curl
+    - php-8.4-curl-config
+    - php-8.4-zip
+    - php-8.4-zip-config
+    - php-8.4-gd
+    - php-8.4-gd-config
+    - php-8.4-exif
+    - php-8.4-exif-config
+    - php-8.4-sodium
+    - php-8.4-sodium-config
+    - php-8.4-apcu
+    - php-8.4-apcu-config
+    - php-8.4-pdo
+    - php-8.4-pdo-config
+    - php-8.4-mysqlnd
+    - php-8.4-mysqlnd-config
+    - php-8.4-pdo_mysql
+    - php-8.4-pdo_mysql-config
+
+accounts:
+  groups:
+    - groupname: backdrop
+      gid: 1001
+  users:
+    - username: backdrop
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/backdrop-entrypoint.sh
+
+work-dir: /var/www/html
+
+paths:
+  - path: /var/www/html/files
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+    recursive: true
+  - path: /tmp
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o1777
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-backdrop"
+  org.opencontainers.image.licenses: "GPL-2.0-or-later"

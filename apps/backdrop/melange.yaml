@@ -1,0 +1,297 @@
+# Packages Backdrop CMS (backdrop/backdrop, the backdrop.zip release asset) for Wolfi. The
+# archive is the finished application (PHP sources, no composer vendor tree), so there is
+# nothing to compile: fetch it, verify its sha256, install it as the docroot at
+# /var/www/html. PHP-FPM, its extensions and nginx come from Wolfi (apko.yaml); this
+# package lays down the app tree and the runtime wiring (nginx config, php-fpm pool +
+# php.ini overrides, supervisord, entrypoint).
+#
+# Configuration: the shipped settings.php is replaced by one that reads the database from
+# BACKDROP_DB_* env vars and pins the config, backup and hash-salt settings, so neither the
+# installer nor a running site ever rewrites it. The docroot stays read-only; only files/
+# (uploads, config/active, config/staging, backups) and /tmp are writable.
+package:
+  name: quench-backdrop
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Backdrop CMS (PHP), served by a Wolfi PHP-FPM + nginx runtime"
+  copyright:
+    - license: GPL-2.0-or-later   # LICENSE.txt: GNU GPL version 2 or any later version
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+
+pipeline:
+  # A zip (top dir backdrop/): fetched without extraction, unpacked with busybox unzip.
+  - uses: fetch
+    with:
+      uri: https://github.com/backdrop/backdrop/releases/download/${{package.version}}/backdrop.zip
+      expected-sha256: __SHA256__
+      extract: false
+
+  - name: Install the Backdrop tree as the docroot at /var/www/html
+    runs: |
+      set -eu
+      app="${{targets.destdir}}/var/www/html"
+      install -d -m 0755 "$app"
+      mkdir -p /tmp/backdrop-src
+      unzip -q backdrop.zip -d /tmp/backdrop-src
+      cp -a /tmp/backdrop-src/backdrop/. "$app/"
+      test -f "$app/index.php"
+      test -f "$app/core/scripts/install.sh"
+      grep -q "define('BACKDROP_VERSION', '${{package.version}}');" "$app/core/includes/bootstrap.inc"
+      # The upstream settings.php must still carry the array form this one replaces.
+      grep -q "^\$database = array(" "$app/settings.php"
+      cat > "$app/settings.php" <<'PHP'
+      <?php
+      /**
+       * Quenchworks settings.php: read-only. The database comes from the environment;
+       * mount a settings.local.php next to this file for anything else.
+       */
+      $database = array(
+        'database' => 'database_name',
+        'username' => 'user',
+        'password' => 'pass',
+        'host' => 'localhost',
+      );
+      if (getenv('BACKDROP_DB_HOST')) {
+        $database = array(
+          'host' => getenv('BACKDROP_DB_HOST'),
+          'port' => getenv('BACKDROP_DB_PORT') ?: '3306',
+          'database' => getenv('BACKDROP_DB_NAME') ?: 'backdrop',
+          'username' => getenv('BACKDROP_DB_USER') ?: 'backdrop',
+          'password' => (string) getenv('BACKDROP_DB_PASSWORD'),
+          'prefix' => (string) getenv('BACKDROP_DB_PREFIX'),
+        );
+      }
+      // Explicit paths, so the installer never tries to rewrite this file.
+      $config_directories['active'] = 'files/config/active';
+      $config_directories['staging'] = 'files/config/staging';
+      $settings['backup_directory'] = 'files/backups';
+      // Empty falls back to a hash of the database credentials.
+      $settings['hash_salt'] = (string) getenv('BACKDROP_HASH_SALT');
+      $settings['update_free_access'] = FALSE;
+      $settings['restore_free_access'] = FALSE;
+      $settings['backdrop_drupal_compatibility'] = TRUE;
+      $config['system.core']['file_temporary_path'] = '/tmp';
+      if (file_exists(__DIR__ . '/settings.local.php')) {
+        include __DIR__ . '/settings.local.php';
+      }
+      PHP
+      head -1 "$app/settings.php" | grep -q '^<?php$'
+      install -d -m 0755 "$app/files"
+
+  - name: Install the nginx site config (FastCGI to php-fpm, port 8080, /var/www/html)
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/etc/backdrop/conf.d"
+      # Run via `nginx -c /etc/backdrop/nginx.conf`; /etc/nginx/nginx.conf belongs to the
+      # Wolfi nginx package. Nonroot: no user directive, pid + temp paths under /tmp.
+      cat > "$destdir/etc/backdrop/nginx.conf" <<'EOF'
+      worker_processes auto;
+      pid /tmp/nginx.pid;
+      error_log /dev/stderr warn;
+
+      events {
+          worker_connections 1024;
+      }
+
+      http {
+          include       /etc/nginx/mime.types;
+          default_type  application/octet-stream;
+          access_log    /dev/stdout;
+
+          client_body_temp_path /tmp/nginx-client-body;
+          proxy_temp_path       /tmp/nginx-proxy;
+          fastcgi_temp_path     /tmp/nginx-fastcgi;
+          uwsgi_temp_path       /tmp/nginx-uwsgi;
+          scgi_temp_path        /tmp/nginx-scgi;
+
+          sendfile      on;
+          tcp_nopush    on;
+          keepalive_timeout 65;
+          server_tokens off;
+          client_max_body_size 64m;
+
+          server {
+              listen 8080 default_server;
+              listen [::]:8080 default_server;
+              server_name _;
+
+              root  /var/www/html;
+              index index.php;
+              charset utf-8;
+
+              location = /favicon.ico { access_log off; log_not_found off; }
+              location = /robots.txt  { access_log off; log_not_found off; }
+              location ~ /\.(?!well-known).* { deny all; }
+
+              # Never served: CLI scripts, active/staging config, database backups,
+              # and PHP source that is not an entry point.
+              location ^~ /core/scripts/   { return 403; }
+              location ^~ /files/config/   { return 403; }
+              location ^~ /files/backups/  { return 403; }
+              location ~* \.(engine|inc|install|module|profile|po|sh|sql|theme|tpl\.php|test|yml|json)$ { return 403; }
+              # Uploaded files are served as bytes; a .php in files/ never executes.
+              location ~ ^/files/.*\.php$ { return 403; }
+
+              location / {
+                  try_files $uri @rewrite;
+              }
+              location @rewrite {
+                  rewrite ^/(.*)$ /index.php?q=$1;
+              }
+              # Image style derivatives are generated by the front controller.
+              location ~ ^/files/styles/ {
+                  try_files $uri @rewrite;
+              }
+
+              location ~ \.php$ {
+                  fastcgi_split_path_info ^(.+?\.php)(|/.*)$;
+                  try_files $fastcgi_script_name =404;
+                  include        /etc/nginx/fastcgi_params;
+                  fastcgi_param  SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                  fastcgi_param  PATH_INFO $fastcgi_path_info;
+                  fastcgi_param  QUERY_STRING $query_string;
+                  fastcgi_pass   127.0.0.1:9000;
+                  fastcgi_buffers 16 16k;
+                  fastcgi_buffer_size 32k;
+                  fastcgi_read_timeout 300;
+              }
+
+              location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff2?)$ {
+                  try_files $uri @rewrite;
+                  expires 30d;
+                  log_not_found off;
+                  access_log off;
+              }
+
+              # Chart drop-in server-level config (ConfigMap mounts land here).
+              include /etc/backdrop/conf.d/*.conf;
+          }
+      }
+      EOF
+      : > "$destdir/etc/backdrop/conf.d/.keep.conf"
+
+  - name: Install the php-fpm pool + php.ini overrides for nonroot / read-only rootfs
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/etc/php/php-fpm.d"
+      install -d "$destdir/etc/php/conf.d"
+      # Loaded last: listen on loopback for nginx, foreground master, logs to stderr,
+      # and keep the environment so settings.php sees BACKDROP_DB_*.
+      cat > "$destdir/etc/php/php-fpm.d/zzz-backdrop.conf" <<'EOF'
+      [global]
+      daemonize = no
+      error_log = /proc/self/fd/2
+
+      [www]
+      listen = 127.0.0.1:9000
+      catch_workers_output = yes
+      decorate_workers_output = no
+      clear_env = no
+      pm = dynamic
+      pm.max_children = 16
+      pm.start_servers = 2
+      pm.min_spare_servers = 1
+      pm.max_spare_servers = 4
+      access.log = /proc/self/fd/2
+      EOF
+      cat > "$destdir/etc/php/conf.d/zzz-backdrop.ini" <<'EOF'
+      expose_php = Off
+      memory_limit = 256M
+      apc.enable = 1
+      apc.shm_size = 64M
+      upload_max_filesize = 64M
+      post_max_size = 64M
+      max_execution_time = 300
+      max_input_vars = 3000
+      sys_temp_dir = /tmp
+      upload_tmp_dir = /tmp
+      session.save_path = /tmp
+      error_reporting = E_ALL & ~E_DEPRECATED & ~E_STRICT
+      display_errors = Off
+      log_errors = On
+      error_log = /proc/self/fd/2
+      opcache.enable = 1
+      opcache.enable_cli = 0
+      opcache.memory_consumption = 128
+      opcache.max_accelerated_files = 10000
+      opcache.revalidate_freq = 2
+      EOF
+
+  - name: Install the supervisord config + container entrypoint
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/etc/backdrop" "$destdir/usr/bin"
+      # /etc/backdrop/supervisord.conf, not /etc/supervisord.conf (owned by Wolfi
+      # supervisor-config). pid + sock under /tmp, logs to stdout.
+      cat > "$destdir/etc/backdrop/supervisord.conf" <<'EOF'
+      [supervisord]
+      nodaemon=true
+      logfile=/dev/stdout
+      logfile_maxbytes=0
+      pidfile=/tmp/supervisord.pid
+
+      [unix_http_server]
+      file=/tmp/supervisor.sock
+
+      [supervisorctl]
+      serverurl=unix:///tmp/supervisor.sock
+
+      [rpcinterface:supervisor]
+      supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+
+      [program:php-fpm]
+      command=/usr/bin/php-fpm --nodaemonize --fpm-config /etc/php/php-fpm.conf
+      autostart=true
+      autorestart=true
+      priority=10
+      stdout_logfile=/dev/stdout
+      stdout_logfile_maxbytes=0
+      stderr_logfile=/dev/stderr
+      stderr_logfile_maxbytes=0
+
+      [program:nginx]
+      command=/usr/sbin/nginx -c /etc/backdrop/nginx.conf -g "daemon off;"
+      autostart=true
+      autorestart=true
+      priority=20
+      stdout_logfile=/dev/stdout
+      stdout_logfile_maxbytes=0
+      stderr_logfile=/dev/stderr
+      stderr_logfile_maxbytes=0
+      EOF
+      cat > "$destdir/usr/bin/backdrop-entrypoint.sh" <<'EOF'
+      #!/bin/sh
+      set -eu
+      mkdir -p /tmp/nginx-client-body /tmp/nginx-proxy /tmp/nginx-fastcgi \
+               /tmp/nginx-uwsgi /tmp/nginx-scgi 2>/dev/null || true
+      exec supervisord -c /etc/backdrop/supervisord.conf
+      EOF
+      chmod 0755 "$destdir/usr/bin/backdrop-entrypoint.sh"
+
+  - name: Sanity-check the assembled tree
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      test -f "$destdir/var/www/html/index.php"
+      test -f "$destdir/var/www/html/core/includes/bootstrap.inc"
+      grep -q "BACKDROP_DB_HOST" "$destdir/var/www/html/settings.php"
+      if find "$destdir/var/www/html" -type f -exec sh -c 'head -c4 "$1" | grep -q ELF' _ {} \; -print | grep -q .; then
+        echo "prebuilt ELF binaries left in the app tree" >&2; exit 1
+      fi
+      test -f "$destdir/etc/backdrop/nginx.conf"
+      test -f "$destdir/etc/php/php-fpm.d/zzz-backdrop.conf"
+      test -f "$destdir/etc/php/conf.d/zzz-backdrop.ini"
+      test -f "$destdir/etc/backdrop/supervisord.conf"
+      test -x "$destdir/usr/bin/backdrop-entrypoint.sh"
