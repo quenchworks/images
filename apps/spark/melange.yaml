@@ -87,6 +87,12 @@ pipeline:
       mvn $SKIP -f "$RT" -Djackson2.version=__JACKSON_HADOOP__ -Djackson2.databind.version=__JACKSON_HADOOP__ install
 
       # --- Spark ---
+      # XSDToSchema imports the Hadoop shaded jline copy of java.io.InputStreamReader; jline
+      # left the hadoop-client-runtime shade above, so point it at the JDK class.
+      X=sql/core/src/main/scala/org/apache/spark/sql/execution/datasources/xml/XSDToSchema.scala
+      sed -i -e '/import org.apache.hadoop.shaded.org.jline.utils.InputStreamReader/d' -e 's|^import java.io.StringReader$|import java.io.{InputStreamReader, StringReader}|' "$X"
+      grep -q "^import java.io.{InputStreamReader, StringReader}" "$X"
+      ! grep -rq "hadoop.shaded.org.jline" --include=*.scala --include=*.java sql core common connector mllib examples resource-managers || exit 1
       sed -i '/<artifactId>lz4-java<\/artifactId>/{n;s|<version>1.11.0</version>|<version>__LZ4__</version></dependency><dependency><groupId>org.jline</groupId><artifactId>jline</artifactId><version>__JLINE__</version><classifier>jdk8</classifier>|}' pom.xml
       grep -q '<version>__LZ4__</version>' pom.xml
       grep -q '<version>__JLINE__</version><classifier>jdk8</classifier>' pom.xml
