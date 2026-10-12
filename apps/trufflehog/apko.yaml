@@ -1,0 +1,60 @@
+# git scans shell out to git (clone, log, cat-file); git runs upload-pack and hooks through
+# /bin/sh, so busybox ships sh (and ps, used by trufflehog's zombie check). openssh-client
+# serves ssh:// remotes, as in upstream's image.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - busybox
+    - git
+    - openssh-client
+    - quench-trufflehog@local
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+      homedir: /home/nonroot
+  run-as: 1001
+
+# --no-update: upstream's binary replaces itself from oss.trufflehog.org by default,
+# which would swap the scanned build for an unscanned one.
+entrypoint:
+  command: /usr/bin/trufflehog --no-update
+
+environment:
+  HOME: /home/nonroot
+  # mounted repositories are owned by another uid; upstream's entrypoint sets the same
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: safe.directory
+  GIT_CONFIG_VALUE_0: "*"
+
+work-dir: /home/nonroot
+
+paths:
+  - path: /home/nonroot
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-trufflehog"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"

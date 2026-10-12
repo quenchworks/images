@@ -1,0 +1,78 @@
+# Builds TruffleHog from source onto Wolfi: static Go, no cgo, version stamped via -X
+# like upstream's .goreleaser.yml (pkg/version.BuildVersion, no "v" prefix).
+package:
+  name: quench-trufflehog
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened TruffleHog secret scanner, built from source on Wolfi"
+  copyright:
+    - license: AGPL-3.0-only
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - git
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/trufflesecurity/trufflehog/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GO111MODULE=on
+      export GOTOOLCHAIN=local
+      # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
+      # Measured 2026-10-12 (trivy comprehensive on go.mod, same set at 3.97.9, 3.98.1
+      # and 3.99.2): edwards25519, moby/go-archive, moby/sys/user, amqp091-go, x/crypto,
+      # x/mod, x/net, x/text, grpc and the otel core + otlptrace are below their fixes.
+      # x/sys and x/sync move with the x/ set so it stays coherent; the otel modules the
+      # app links move as one train. docker/docker v28.5.2+incompatible stays: its fix
+      # exists only under github.com/moby/moby (see vex.openvex.json).
+      # trufflehog's go.mod `replace`s overseer and waas-client-library-go only.
+      FLOOR="filippo.io/edwards25519@v1.1.1 github.com/moby/go-archive@v0.3.0 github.com/moby/sys/user@v0.4.1 github.com/rabbitmq/amqp091-go@v1.14.0 golang.org/x/crypto@v0.57.0 golang.org/x/text@v0.42.0 golang.org/x/sys@v0.48.0 golang.org/x/net@v0.60.0 golang.org/x/sync@v0.23.0 golang.org/x/mod@v0.41.0 google.golang.org/grpc@v1.83.2 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/sdk/metric@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      # `go list -m` prints "<mod> <ver>" or "<mod> <ver> => <mod> <ver>", so $NF is
+      # the EFFECTIVE version and a replace cannot hide behind the require line.
+      go list -m -e $MODS
+      need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
+      go mod tidy
+      go build -trimpath \
+        -ldflags "-s -w -X github.com/trufflesecurity/trufflehog/v3/pkg/version.BuildVersion=${{package.version}}" \
+        -o "${{targets.destdir}}/usr/bin/trufflehog" .
+      # The float is only real if it reached the BINARY. Every `dep`/`=>` line of
+      # `go version -m` must be at or above its floor. Fail the build rather than ship it.
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/trufflehog" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor trufflehog)"
+      [ -z "$bad" ] || { echo "0-CVE float did not reach trufflehog:"; echo "$bad"; exit 1; }
+      # the docker/docker VEX holds only while no daemon, plugin or API-server package is linked
+      if go list -deps . | grep -E '^github.com/docker/docker/(daemon|plugin|api/server)'; then
+        echo "trufflehog now links Docker daemon code: re-check vex.openvex.json"; exit 1
+      fi
