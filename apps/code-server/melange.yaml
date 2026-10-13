@@ -92,8 +92,9 @@ pipeline:
       rm -rf "$dest"/lib/vscode/node_modules/@github/copilot-sdk-linux-*
       rg="$(ls "$dest"/lib/vscode/node_modules/@vscode/ripgrep-universal/bin/*/rg)"
       case "$("$rg" --version | head -1)" in
-        "ripgrep 15.0.0 (rev 3a612f88b8)") ;;
-        *) echo "bundled rg is not ripgrep 15.0.0 rev 3a612f88b8; ship its tag Cargo.lock"; "$rg" --version; exit 1 ;;
+        # the arm64 build prints no rev; its 16 crate strings all match the same tag lock
+        "ripgrep 15.0.0 (rev 3a612f88b8)"|"ripgrep 15.0.0") ;;
+        *) echo "bundled rg is not ripgrep 15.0.0; ship its tag Cargo.lock"; "$rg" --version; exit 1 ;;
       esac
       curl -fsSL -o rg.Cargo.lock https://raw.githubusercontent.com/BurntSushi/ripgrep/3a612f88b805e14aef45bfa43e25a54abc6297fc/Cargo.lock
       echo "257bfa1eeacfa4d8222e2c50f9d2f8d15ef07e96adee46eaa87839f3b6cfa3b4  rg.Cargo.lock" | sha256sum -c -
