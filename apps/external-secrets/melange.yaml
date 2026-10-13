@@ -72,3 +72,25 @@ pipeline:
       go build -trimpath -tags all_providers \
         -ldflags "-s -w" \
         -o "${{targets.destdir}}/usr/bin/external-secrets" .
+      # Rust blind spot: the 1Password SDK provider go:embeds core.wasm, closed-source Rust
+      # with no .dep-v0 and no published Cargo.lock, so Trivy saw none of its crates. Ship
+      # a lock built from the crate-version source paths compiled into the wasm (a lower
+      # bound: only crates that left a path string) so the gate scans them.
+      W="$(go list -m -f '{{.Dir}}' github.com/1password/onepassword-sdk-go)/internal/wasm/core.wasm"
+      LOCK="${{targets.destdir}}/usr/share/doc/external-secrets/onepassword-core/Cargo.lock"
+      install -d "${LOCK%/*}"
+      LC_ALL=C grep -aoE 'registry/src/[^/]+/[A-Za-z0-9_-]+-[0-9]+\.[0-9]+\.[0-9]+[^/]*' "$W" | sed 's|.*/||' | sort -u \
+        | awk 'BEGIN{print "version = 4"} match($0,/-[0-9]+\.[0-9]+\.[0-9]+/){printf "\n[[package]]\nname = \"%s\"\nversion = \"%s\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n",substr($0,1,RSTART-1),substr($0,RSTART+1)}' > "$LOCK"
+      test "$(grep -c '^\[\[package' "$LOCK")" -gt 30 || { echo "too few crates read from core.wasm"; exit 1; }
+      # time 0.3.46 (CVE-2026-25727, RFC 2822 parser) is VEXed on the wasm name section:
+      # fail if the names go away or an RFC 2822 symbol appears.
+      LC_ALL=C grep -aq '_ZN4time7parsing' "$W" || { echo "core.wasm has no time symbol names; re-check the time VEX"; exit 1; }
+      if LC_ALL=C grep -aqi 'rfc2822' "$W"; then echo "core.wasm now has the time RFC 2822 parser; re-check the time VEX"; exit 1; fi
+      # Every Rust artifact must carry .dep-v0 or ship beside a Cargo.lock.
+      D="${{targets.destdir}}"
+      find "$D" -type f -size +100k | while read -r f; do
+        LC_ALL=C grep -qa -e 'cargo/registry/src' -e 'rustc version' "$f" || continue
+        readelf -S "$f" 2>/dev/null | grep -q dep-v0 && continue
+        test -n "$(find "$D" -name Cargo.lock)" && continue
+        echo "Rust artifact with neither .dep-v0 nor a Cargo.lock: ${f#$D}"; exit 1
+      done

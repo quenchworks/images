@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/external-secrets/2026-10-13",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-10-13T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-25727"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/time@0.3.46"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "CVE-2026-25727 is stack exhaustion in the time crate when PARSING untrusted input with the RFC 2822 format (parsing::parsable Rfc2822 and its comment combinators), fixed in 0.3.47. time 0.3.46 reaches the image only inside core.wasm of github.com/1password/onepassword-sdk-go v0.4.1 (internal/wasm/core.wasm, go:embed, closed source, used by both 2.11.0 and 2.12.0 go.mod line 195), which external-secrets embeds in /usr/bin/external-secrets. core.wasm keeps a full wasm name section (971494 bytes); grep -aoE '_ZN4time[^ ]*' core.wasm lists 13 parsing symbols and the only well-known parser present is Rfc3339 (time::parsing::parsable ... Rfc3339 parse_offset_date_time); grep -aci rfc2822 core.wasm returned 0, and no time-0.3.46/src/parsing/combinator/rfc/rfc2822.rs source path is present. The RFC 2822 parser is not compiled in. The recipe fails the build if the name section disappears or any rfc2822 symbol appears. Verified 2026-10-13."
+    }
+  ]
+}
