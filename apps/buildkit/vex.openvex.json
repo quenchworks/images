@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/buildkit/2026-10-13",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-10-13T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "GHSA-cq8v-f236-94qc"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/rand@0.9.2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "GHSA-cq8v-f236-94qc makes rand unsound only when BOTH its log and thread_rng features are enabled and a custom logger calls rand::rng() while ThreadRng reseeds; the unsafe path is the log call inside the reseeding core. rand 0.9.2 reaches the image only in Wolfi libpathrs 0.2.5 (/usr/lib/libpathrs.so.0.2.5, a runc dependency), built from tag v0.2.5 commit 080908395e75a32a5c4dbe9b318bf93643429f9f with that tag Cargo.lock, which ships at /usr/share/doc/libpathrs/Cargo.lock. libpathrs Cargo.toml:78 declares rand = { version = \"0.9\", optional = true } with default features (no log), and the lock entry for rand 0.9.2 lists only rand_chacha and rand_core as dependencies: log, the optional dependency the log feature enables, is not resolved, so the log feature and the logging calls in rand are not compiled into the library. The recipe fails the build if libpathrs leaves 0.2.5 or the rand lock entry gains log. Verified 2026-10-13."
+    }
+  ]
+}

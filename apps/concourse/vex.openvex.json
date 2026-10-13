@@ -1,9 +1,9 @@
 {
   "@context": "https://openvex.dev/ns/v0.2.0",
-  "@id": "https://quench-works.com/vex/concourse/2026-09-29",
+  "@id": "https://quench-works.com/vex/concourse/2026-10-13",
   "author": "QuenchWorks <info@quench-works.com>",
-  "timestamp": "2026-09-29T00:00:00Z",
-  "version": 1,
+  "timestamp": "2026-10-13T00:00:00Z",
+  "version": 2,
   "statements": [
     {
       "vulnerability": {
@@ -17,6 +17,19 @@
       "status": "not_affected",
       "justification": "inline_mitigations_already_exist",
       "impact_statement": "PROVEN false-positive, measured 2026-09-29 on 8.3.1. CVE-2020-5415 is Concourse's own advisory (GitLab login mapped the user's display name to the user identity, allowing impersonation). Its fixed versions mix two version spaces: Concourse releases 6.3.1 and 6.4.1, and a concourse/dex pseudo-version 0.0.0-20200730150203-821b48abfd88. The dex fork is now tagged v1.14.0 (committer date 2026-05-19), which sorts below 6.3.1, so every current dex release matches by construction. Checked the code rather than the numbers: in v1.14.0 connector/gitlab/gitlab.go sets PreferredUsername to user.Username (the GitLab login) and Username to the display name; Concourse 8.3.1 authorizes team membership on the token's preferred_username first (atc/api/accessor/accessor.go:236, userName() returns the preferred_username claim when set), and skymarshal passes claims.PreferredUsername to its display user id generator (skymarshal/token/access_token.go:108-114). The identity Concourse matches against a team's GitLab user allow-list is therefore the login, which a user cannot set to someone else's; the display name the 2020 flaw keyed on is not what authorizes."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-cq8v-f236-94qc"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/rand@0.9.2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "GHSA-cq8v-f236-94qc makes rand unsound only when BOTH its log and thread_rng features are enabled and a custom logger calls rand::rng() while ThreadRng reseeds; the unsafe path is the log call inside the reseeding core. rand 0.9.2 reaches the image only in Wolfi libpathrs 0.2.5 (/usr/lib/libpathrs.so.0.2.5, a runc dependency), built from tag v0.2.5 commit 080908395e75a32a5c4dbe9b318bf93643429f9f with that tag Cargo.lock, which ships at /usr/share/doc/libpathrs/Cargo.lock. libpathrs Cargo.toml:78 declares rand = { version = \"0.9\", optional = true } with default features (no log), and the lock entry for rand 0.9.2 lists only rand_chacha and rand_core as dependencies: log, the optional dependency the log feature enables, is not resolved, so the log feature and the logging calls in rand are not compiled into the library. The recipe fails the build if libpathrs leaves 0.2.5 or the rand lock entry gains log. Verified 2026-10-13."
     }
   ]
 }

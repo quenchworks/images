@@ -39,6 +39,7 @@ environment:
       - git
       - curl                   # fetches the CNI plugins and resource type sources
       - tzdata                 # copied into the resource type rootfs
+      - libpathrs              # asserted at 0.2.5, its tag Cargo.lock ships
 
 pipeline:
   - uses: fetch
@@ -174,6 +175,17 @@ pipeline:
         golang.org/x/net@v0.60.0 golang.org/x/crypto@v0.57.0 golang.org/x/mod@v0.41.0
       build_type time 1.11.4 4c660e6aacebddebe921b7d3ef1b59eda7bf63537b87d52a0bb6456a628b04d4 "" \
         golang.org/x/mod@v0.40.0
+
+  - runs: |
+      # Rust blind spot (2026-10-13): runc pulls in Wolfi libpathrs, Rust built from tag
+      # v0.2.5 (commit 0809083) with its Cargo.lock and no .dep-v0, so the gate saw none
+      # of its crates. Ship that tag lock so Trivy scans them; rand 0.9.2 is VEXed (the
+      # lock resolves rand without its log feature). Fail if Wolfi moves off 0.2.5.
+      test -e /usr/lib/libpathrs.so.0.2.5 || { echo "Wolfi libpathrs is no longer 0.2.5; ship its tag Cargo.lock"; ls /usr/lib/libpathrs*; exit 1; }
+      curl -fsSL -o pathrs.Cargo.lock https://raw.githubusercontent.com/cyphar/libpathrs/080908395e75a32a5c4dbe9b318bf93643429f9f/Cargo.lock
+      echo "37c6947b90bf24c795cc403958f0957a929dc8dcdc5d6c3337db230d5d458068  pathrs.Cargo.lock" | sha256sum -c -
+      awk '/^name = "rand"$/{r=1} r&&/^ "log",?$/{exit 1} r&&/^$/{r=0}' pathrs.Cargo.lock || { echo "libpathrs rand now has its log feature; re-check the rand VEX"; exit 1; }
+      install -Dm0644 pathrs.Cargo.lock "${{targets.destdir}}/usr/share/doc/libpathrs/Cargo.lock"
 
 test:
   pipeline:
