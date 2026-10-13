@@ -68,7 +68,7 @@ docker run --rm --read-only --tmpfs /tmp "${MOUNTS[@]}" -v "$WORK/out:/out" --en
   "$IMAGE" /etc/satosa/proxy_conf.yaml /etc/satosa/tls.key /etc/satosa/tls.crt --dir /out
 grep -q 'SignatureValue' "$WORK/out/backend.xml" || { echo "backend.xml is not signed"; exit 1; }
 docker run --rm --read-only --tmpfs /tmp "${MOUNTS[@]}" -v "$WORK/out:/out:ro" --entrypoint /usr/bin/xmlsec1 "$IMAGE" \
-  --verify --enabled-reference-uris empty,same-doc --enabled-key-data raw-x509-cert --pubkey-cert-pem /etc/satosa/tls.crt --id-attr:ID urn:oasis:names:tc:SAML:2.0:metadata:EntitiesDescriptor /out/backend.xml
+  --verify --enabled-reference-uris empty,same-doc --enabled-key-data raw-x509-cert --lax-key-search --pubkey-cert-pem /etc/satosa/tls.crt --id-attr:ID urn:oasis:names:tc:SAML:2.0:metadata:EntitiesDescriptor /out/backend.xml
 
 logs="$(docker logs "$NAME" 2>&1)"
 if grep -E 'Traceback|CRITICAL' <<<"$logs"; then echo "satosa logged errors"; exit 1; fi
