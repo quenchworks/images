@@ -38,6 +38,32 @@ pipeline:
     with:
       uri: https://downloads.powerdns.com/releases/pdns-recursor-${{package.version}}.tar.xz
       expected-sha256: __SHA256__
+  # rec-rust-lib is a staticlib linked into pdns_recursor, so cargo-auditable cannot
+  # embed its crates (no .dep-v0 in a C++ binary) and Trivy sees none. Raise the
+  # vulnerable crates here, then ship the resulting Cargo.lock in the image so the
+  # gate scans exactly what was built (2026-10-13 Rust blind spot sweep).
+  - runs: |
+      set -eu
+      cd rec-rust-lib/rust
+      # Raise vulnerable crates to their fixed release on the same semver line (never down).
+      cfloor() {
+        line="${2%.*}"
+        locked() { awk -v n="$1" '$0=="name = \""n"\"" {getline; gsub(/version = |"/,""); print}' Cargo.lock; }
+        for v in $(locked "$1"); do
+          case "$v" in "$line".*) ;; *) continue ;; esac
+          [ "$v" = "$2" ] && continue
+          [ "$(printf '%s\n%s\n' "$v" "$2" | sort -V | head -1)" = "$v" ] || continue
+          cargo update -p "$1@$v" --precise "$2"
+        done
+        for v in $(locked "$1"); do
+          case "$v" in "$line".*) ;; *) continue ;; esac
+          [ "$(printf '%s\n%s\n' "$v" "$2" | sort -V | head -1)" = "$2" ] \
+            || { echo "$1 $v is still below the $2 floor"; exit 1; }
+        done
+      }
+      cfloor rustls 0.23.45         # GHSA-2mjx-qc3c-rqvc; 5.3 also leaves webpki 0.102 for 0.103
+      cfloor rustls-webpki 0.103.13 # GHSA-82j2-j2ch-gfr8
+      install -Dm0644 Cargo.lock "${{targets.destdir}}/usr/share/doc/powerdns-recursor/Cargo.lock"
   - runs: |
       set -eu
       ./configure --prefix=/usr --sbindir=/usr/bin --sysconfdir=/etc/powerdns \
