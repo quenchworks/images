@@ -1,0 +1,105 @@
+# Packages SATOSA into a venv at /opt/satosa/venv from the official wheel. Native
+# dependencies build from sdist against Wolfi libraries; Rust ones through cargo auditable.
+package:
+  name: quench-satosa
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened SATOSA, the SAML2/OIDC translating proxy, on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - python-3.13
+      - libffi
+      - openssl-4.0
+      - xmlsec            # /usr/bin/xmlsec1, which pysaml2 calls to sign and verify
+      - xmlsec-openssl    # libxmlsec1-openssl.so, the crypto engine xmlsec1 loads
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - python-3.13
+      - python-3.13-dev    # Python.h for cffi, cryptography, pyyaml
+      - py3.13-pip
+      - build-base
+      - pkgconf
+      - libffi-dev         # cffi from sdist
+      - openssl-4.0-dev    # cryptography from sdist, on the OpenSSL python-3.13 links
+      - rust
+      - cargo-auditable
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: __URL__
+      expected-sha256: __SHA256__
+      extract: false
+  - runs: |
+      set -eu
+      VER="${{package.version}}"
+      dest="${{targets.destdir}}"
+      VENV=/opt/satosa/venv
+      python3.13 -m venv "$VENV"
+      PIP="$VENV/bin/pip"
+      "$PIP" install --no-cache-dir --upgrade pip
+      # Every Rust build goes through `cargo auditable` (the wrapper reroutes only build
+      # and rustc) so the .dep-v0 section lists the crates and the gate scans them.
+      CW=$(mktemp -d)
+      printf '#!/bin/sh\ncase "$1" in build|rustc) exec /usr/bin/cargo auditable "$@";; esac\nexec /usr/bin/cargo "$@"\n' > "$CW/cargo"
+      chmod +x "$CW/cargo"
+      # The manylinux wheels bundle what the scan cannot see: cryptography links OpenSSL
+      # statically, cffi ships libffi in cffi.libs, pyyaml links libyaml, and the Rust
+      # wheels (cryptography, pydantic-core) carry no crate list. All build from sdist;
+      # pyyaml without yaml-dev is the pure-Python loader.
+      PATH="$CW:$PATH" "$PIP" install --no-cache-dir \
+        --no-binary cffi,cryptography,pydantic-core,pyyaml \
+        ./*.whl
+      site="$VENV/lib/python3.13/site-packages"
+      if ls -d "$site"/*.libs 2>/dev/null | grep -q .; then echo "bundled native libs:"; ls -d "$site"/*.libs; exit 1; fi
+      # Rust extension check: fails on any Rust .so without .dep-v0 or the exec bit
+      # (Trivy needs both). Copied from apps/pgadmin.
+      RUSTSO="
+      import importlib.metadata as m, os, sys
+      for d in m.distributions(path=[sys.argv[1]]):
+          for f in d.files or ():
+              p = str(f.locate())
+              if '.so' not in f.name or os.path.islink(p):
+                  continue
+              b = open(p, 'rb').read()
+              if b'rustc version' not in b and b'.dep-v0' not in b and b'/cargo/registry/src/' not in b:
+                  continue
+              if sys.argv[2] == 'all' or b'.dep-v0' not in b or not os.stat(p).st_mode & 0o111:
+                  print(d.metadata['Name'] + '==' + d.version)
+                  break
+      "
+      BLIND=$("$VENV/bin/python" -c "$RUSTSO" "$site" blind)
+      test -z "$BLIND" || { echo "Rust extensions without .dep-v0: $BLIND"; exit 1; }
+      ALL=$("$VENV/bin/python" -c "$RUSTSO" "$site" all)
+      echo "Rust extensions, all auditable:" $ALL
+      for want in cryptography pydantic_core; do
+        echo "$ALL" | tr -d '_-' | grep -qi "$(echo $want | tr -d '_')" || { echo "$want not found as a Rust extension"; exit 1; }
+      done
+      "$VENV/bin/python" -c "
+      import ssl, sys, importlib.metadata as m
+      from cryptography.hazmat.backends.openssl.backend import backend
+      assert backend.openssl_version_text() == ssl.OPENSSL_VERSION, (backend.openssl_version_text(), ssl.OPENSSL_VERSION)
+      v = m.version('satosa'); assert v == sys.argv[1], v
+      print('satosa', v, '; cryptography on', backend.openssl_version_text())
+      " "$VER"
+      "$PIP" uninstall -y pip
+      install -d "${dest}/opt/satosa"
+      cp -a "$VENV" "${dest}/opt/satosa/venv"
+      chmod -R a+rX "${dest}/opt/satosa"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /opt/satosa/venv/bin/gunicorn
+        test -x /opt/satosa/venv/bin/satosa-saml-metadata

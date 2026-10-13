@@ -1,0 +1,56 @@
+# SATOSA runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# gunicorn serves the proxy on :8080. The configuration is a proxy_conf.yaml at
+# SATOSA_CONFIG (default /etc/satosa/proxy_conf.yaml), mounted by the deployment;
+# SATOSA_STATE_ENCRYPTION_KEY overrides the key in it. pysaml2 writes xmlsec1 temp files
+# under /tmp, so a read-only root needs /tmp writable.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-satosa@local
+
+accounts:
+  groups:
+    - groupname: satosa
+      gid: 1001
+  users:
+    - username: satosa
+      uid: 1001
+      gid: 1001
+      homedir: /etc/satosa
+  run-as: 1001
+
+environment:
+  HOME: /etc/satosa
+  PATH: /opt/satosa/venv/bin:/usr/bin:/bin
+  PYTHONDONTWRITEBYTECODE: "1"
+  SATOSA_CONFIG: /etc/satosa/proxy_conf.yaml
+
+paths:
+  - path: /etc/satosa
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+work-dir: /etc/satosa
+
+entrypoint:
+  command: /opt/satosa/venv/bin/gunicorn --bind [::]:8080 --workers 2 --worker-tmp-dir /tmp --access-logfile - satosa.wsgi:app
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-satosa"
+  org.opencontainers.image.licenses: "Apache-2.0"
