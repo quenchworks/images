@@ -24,7 +24,9 @@ case "$ep" in null|'[]') ;; *) echo "expected no entrypoint, got $ep"; exit 1 ;;
 # The image env the upstream Deployment (060-Deployment-strimzi-cluster-operator.yaml)
 # sets; the operator refuses to start without its default image maps.
 K=q.example/kafka:x
-KMAP="$(printf '4.2.0=%s\n4.2.1=%s\n4.3.0=%s\n4.3.1=%s\n' $K $K $K $K)"
+# Superset of every supported Kafka version across the shipped lines (1.2.0: 4.2.0..4.3.1,
+# 1.3.0: 4.2.1..4.3.1 + 4.2.2); the operator needs an image for each version it supports.
+KMAP="$(for v in 4.2.0 4.2.1 4.2.2 4.3.0 4.3.1; do echo "$v=$K"; done)"
 echo "starting the cluster operator"
 docker run -d --name "$NAME" -p 127.0.0.1::8080 \
   -e STRIMZI_NAMESPACE=default -e STRIMZI_OPERATOR_NAMESPACE=default \

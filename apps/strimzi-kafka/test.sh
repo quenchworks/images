@@ -96,6 +96,10 @@ printf '%s\n' 'name=smoke' 'appender.console.type=Console' 'appender.console.nam
   'rootLogger.level=INFO' 'rootLogger.appenderRefs=console' 'rootLogger.appenderRef.console.ref=STDOUT' \
   > "$W/cfg/log4j2.properties"
 echo '{"lowercaseOutputName": true, "rules": [{"pattern": ".*"}]}' > "$W/cfg/metrics-config.json"
+# Strimzi 1.3.0+ reads the agent config from custom-config (the operator writes it);
+# 1.2.0 generated the same three keys in kafka_run.sh and ignores this file.
+printf '%s\n' "sslTrustStoreSecretName=smoke-cluster-ca-cert" "sslKeyStoreSecretName=$HOST" \
+  "namespace=default" > "$W/cfg/agent.config"
 chmod -R a+rX "$W"
 
 echo "starting $IMAGE via /opt/kafka/kafka_run.sh"
