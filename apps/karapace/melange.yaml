@@ -38,6 +38,8 @@ environment:
       - librdkafka-dev
       - py3.13-grpcio-1.84
       - py3.13-cryptography
+      - rust                   # Rust extensions rebuilt from sdist (see the pipeline)
+      - cargo-auditable
 
 pipeline:
   - uses: fetch
@@ -86,6 +88,47 @@ pipeline:
       assert lib.split('.')[:2] == sys.argv[1].split('.')[:2], (lib, sys.argv[1])
       print('confluent-kafka', confluent_kafka.version()[0], 'on librdkafka', lib, '; grpc', grpc.__version__, 'cryptography', cryptography.__version__, 'from Wolfi')
       " "$CK"
+      # --- Rust extensions: rebuilt from sdist with cargo auditable (2026-10-13) -----
+      # A PyPI Rust wheel embeds no crate list, so Trivy scanned none of its crates
+      # (fastar 0.12.0 links tar 0.4.45, GHSA-3pv8 MEDIUM, passed blind). Every Rust
+      # extension in the venv is rebuilt from its sdist through `cargo auditable` (the
+      # wrapper reroutes only build and rustc); the .dep-v0 section lists the crates and
+      # the gate scans them. Wolfi py3.13-cryptography stays blind (Wolfi apk class).
+      sdist() {
+        v=$("$VENV/bin/python" -c "import importlib.metadata as m, sys; print(m.version(sys.argv[1]))" "$1")
+        d=$(mktemp -d)
+        "$VENV/bin/pip" download -q --no-cache-dir --no-deps --no-binary "$1" "$1==$v" -d "$d"
+        tar -xzf "$d"/*.tar.gz -C "$d"
+        ls -d "$d"/*/
+      }
+      RUSTSO="
+      import importlib.metadata as m, os, sys
+      for d in m.distributions(path=[sys.argv[1]]):
+          for f in d.files or ():
+              p = str(f.locate())
+              if '.so' not in f.name or os.path.islink(p):
+                  continue
+              b = open(p, 'rb').read()
+              if b'rustc version' not in b and b'.dep-v0' not in b and b'/cargo/registry/src/' not in b:
+                  continue
+              if sys.argv[2] == 'all' or b'.dep-v0' not in b or not os.stat(p).st_mode & 0o111:
+                  print(d.metadata['Name'] + '==' + d.version)
+                  break
+      "
+      CW=$(mktemp -d)
+      printf '#!/bin/sh\ncase "$1" in build|rustc) exec /usr/bin/cargo auditable "$@";; esac\nexec /usr/bin/cargo "$@"\n' > "$CW/cargo"
+      chmod +x "$CW/cargo"
+      # fastar pins tar "0.4.45" (a caret range); its lock floors to the 0.4.46 fix.
+      F=$(sdist fastar)
+      (cd "$F" && cargo update -p tar --precise 0.4.46)
+      PATH="$CW:$PATH" "$VENV/bin/pip" install --no-cache-dir --no-deps --force-reinstall "$F"
+      for spec in $("$VENV/bin/python" -c "$RUSTSO" "$SITE" blind); do
+        PATH="$CW:$PATH" "$VENV/bin/pip" install --no-cache-dir --no-deps --force-reinstall --no-binary "${spec%%==*}" "$spec"
+      done
+      BLIND=$("$VENV/bin/python" -c "$RUSTSO" "$SITE" blind)
+      test -z "$BLIND" || { echo "Rust extensions without .dep-v0: $BLIND"; exit 1; }
+      echo "Rust extensions, all auditable:" $("$VENV/bin/python" -c "$RUSTSO" "$SITE" all)
+      "$VENV/bin/pip" check
       "$VENV/bin/pip" uninstall -y pip
       install -d "$dest/opt/karapace"
       cp -a "$VENV" "$dest/opt/karapace/venv"
