@@ -57,6 +57,9 @@ environment:
       # cargo-chef rust-1.98.1 -- bumping VERSIONS without this fails on the MSRV, not on
       # anything that looks version-related. Keep this aligned with upstream's Dockerfile pin.
       - rust-1.98               # Wolfi rust toolchain (matches upstream's pinned 1.98.1)
+      # cargo auditable embeds the crate list in a .dep-v0 section; without it Trivy sees
+      # zero Rust packages in the binary and the gate passes blind (2026-10-13 sweep).
+      - cargo-auditable
 
 pipeline:
   - uses: git-checkout
@@ -72,7 +75,27 @@ pipeline:
   - runs: |
       cd qdrant
       export PROTOC="$(command -v protoc)"
-      cargo build --release --locked --bin qdrant
+      # Raise vulnerable crates to their fixed release on the same semver line (never down).
+      cfloor() {
+        line="${2%.*}"
+        locked() { awk -v n="$1" '$0=="name = \""n"\"" {getline; gsub(/version = |"/,""); print}' Cargo.lock; }
+        for v in $(locked "$1"); do
+          case "$v" in "$line".*) ;; *) continue ;; esac
+          [ "$v" = "$2" ] && continue
+          [ "$(printf '%s\n%s\n' "$v" "$2" | sort -V | head -1)" = "$v" ] || continue
+          cargo update -p "$1@$v" --precise "$2"
+        done
+        for v in $(locked "$1"); do
+          case "$v" in "$line".*) ;; *) continue ;; esac
+          [ "$(printf '%s\n%s\n' "$v" "$2" | sort -V | head -1)" = "$2" ] \
+            || { echo "$1 $v is still below the $2 floor"; exit 1; }
+        done
+      }
+      cfloor rand 0.9.3          # GHSA-cq8v-f236-94qc
+      cfloor rand 0.8.6          # GHSA-cq8v-f236-94qc (backport)
+      cfloor xxhash-rust 0.8.16  # GHSA-6g2r-675j-hx59
+      cargo auditable build --release --locked --bin qdrant
+      readelf -S target/release/qdrant | grep -q dep-v0 || { echo "qdrant has no .dep-v0 section"; exit 1; }
       install -Dm0755 target/release/qdrant "${{targets.destdir}}/usr/bin/qdrant"
 
   # Vendor the prebuilt web dashboard into /opt/qdrant/static (the dir the entrypoint
