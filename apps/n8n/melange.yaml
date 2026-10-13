@@ -48,6 +48,10 @@ environment:
                                # source compile. With npm present the prebuilt is used.
       - node-gyp               # native module install scripts shell out to node-gyp
       - python-3.13            # node-gyp requires python3 at build time (Wolfi names it python-3.13)
+      - rust                   # agent-browser CLI rebuilt from source (Rust blind spot step)
+      - cargo-auditable
+      - cmake                  # aws-lc-sys fallback builder
+      - curl                   # fetches the agent-browser source
 
 pipeline:
   - uses: fetch
@@ -563,6 +567,60 @@ pipeline:
       # Trim build-time cruft that bloats the image and the CVE surface but is never run.
       rm -rf node_modules/.cache 2>/dev/null || true
       find . -type d -name '.cache' -prune -exec rm -rf {} + 2>/dev/null || true
+
+  - runs: |
+      set -eu
+      # --- Rust blind spot (2026-10-13) --------------------------------------------------
+      # Trivy reads Rust crates only from a .dep-v0 section or a shipped Cargo.lock; none of
+      # the four prebuilt Rust natives in the tree had either.
+      # 1. chromadb-js-bindings (rustls-webpki 0.101.7 HIGH, opentelemetry_sdk 0.27.1): only
+      #    the chromadb `chroma` CLI (dist/cli.*) loads them to run a local server; n8n uses
+      #    the HTTP client, whose entry points never name them. Removed.
+      for f in $(find node_modules -path '*/chromadb/dist/chromadb.mjs' -o -path '*/chromadb/dist/cjs/chromadb.cjs'); do
+        if grep -q chromadb-js-bindings "$f"; then echo "$f now loads chromadb-js-bindings; re-check"; exit 1; fi
+      done
+      find node_modules -type d -name 'chromadb-js-bindings-*' -prune -exec rm -rf {} +
+      # 2. snowflake-sdk minicore: a closed Rust addon that only reports a version for
+      #    telemetry; minicore.js wraps the require in try/catch. Removed.
+      for f in $(find node_modules -path '*/snowflake-sdk/dist/lib/minicore/minicore.js'); do
+        grep -q "Failed to load binary" "$f" || { echo "$f no longer tolerates a missing binary"; exit 1; }
+      done
+      find node_modules -path '*/snowflake-sdk/dist/lib/minicore/binaries/*.node' -delete
+      # 3. agent-browser 0.26.0 (@n8n/mcp-browser): its CLI is rebuilt from the tag with
+      #    cargo auditable; the lock floors rustls 0.23.37, rustls-webpki 0.103.9 (HIGH),
+      #    quinn-proto 0.11.13 (HIGH) and rand. The npm package ships no linux-arm64 binary,
+      #    so arm64 gains one. The embedded dashboard is the upstream placeholder page.
+      AB=node_modules/agent-browser
+      test "$(node -p 'require("./node_modules/agent-browser/package.json").version')" = 0.26.0 || { echo "agent-browser moved off 0.26.0; re-pin its source"; exit 1; }
+      w=$(mktemp -d)
+      curl -fsSL -o "$w/ab.tgz" https://github.com/vercel-labs/agent-browser/archive/refs/tags/v0.26.0.tar.gz
+      echo "e1852f8fc953763d4482b107a201226413d78d701065a26758f3c3d0b6dc2ad8  $w/ab.tgz" | sha256sum -c -
+      tar -xzf "$w/ab.tgz" -C "$w" --strip-components=1
+      (cd "$w/cli" && cargo update -p rustls -p rustls-webpki -p quinn-proto -p rand@0.8.5 -p rand@0.9.2 && cargo auditable build --release --locked)
+      case "$(uname -m)" in x86_64) abarch=x64 ;; aarch64) abarch=arm64 ;; esac
+      readelf -SW "$w/cli/target/release/agent-browser" > "$w/sec"
+      grep -q dep-v0 "$w/sec" || { echo "agent-browser has no .dep-v0 section"; exit 1; }
+      install -m0755 "$w/cli/target/release/agent-browser" "$AB/bin/agent-browser-linux-$abarch"
+      "$AB/bin/agent-browser-linux-$abarch" --version
+      rm -rf "$w"
+      # 4. @napi-rs/canvas (pdfjs-dist DOMMatrix/Path2D): upstream commits no Cargo.lock and
+      #    a Skia build is out of reach, so ship a lock built from the crate source paths in
+      #    the binary (a lower bound: only crates that left a path string).
+      for so in $(find node_modules -path '*/@napi-rs/canvas-linux-*-gnu/*.node'); do
+        lock="$(dirname "$so")/Cargo.lock"
+        LC_ALL=C grep -aoE 'registry/src/[^/]+/[A-Za-z0-9_-]+-[0-9]+\.[0-9]+\.[0-9]+[^/]*' "$so" | sed 's|.*/||' | sort -u \
+          | awk 'BEGIN{print "version = 4"} match($0,/-[0-9]+\.[0-9]+\.[0-9]+/){printf "\n[[package]]\nname = \"%s\"\nversion = \"%s\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n",substr($0,1,RSTART-1),substr($0,RSTART+1)}' > "$lock"
+        test "$(grep -c '^\[\[package' "$lock")" -ge 10 || { echo "too few crates read from $so"; exit 1; }
+      done
+      # Every Rust ELF must carry .dep-v0 or ship beside a Cargo.lock (same dir or a parent).
+      find node_modules -type f -size +100k | while read -r f; do
+        LC_ALL=C grep -qa -e 'cargo/registry/src' -e 'rustc version' "$f" || continue
+        [ "$(od -An -tx1 -N4 "$f" | tr -d ' \n')" = "7f454c46" ] || continue
+        readelf -S "$f" 2>/dev/null | grep -q dep-v0 && continue
+        d="$(dirname "$f")"; while [ "$d" != node_modules ] && [ ! -e "$d/Cargo.lock" ]; do d="$(dirname "$d")"; done
+        [ -e "$d/Cargo.lock" ] && continue
+        echo "Rust artifact with neither .dep-v0 nor a Cargo.lock: $f"; exit 1
+      done
 
   - runs: |
       set -eu
