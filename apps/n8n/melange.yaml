@@ -593,6 +593,7 @@ pipeline:
       AB=node_modules/agent-browser
       test "$(node -p 'require("./node_modules/agent-browser/package.json").version')" = 0.26.0 || { echo "agent-browser moved off 0.26.0; re-pin its source"; exit 1; }
       w=$(mktemp -d)
+      export CARGO_HOME="$w/cargo-home"   # the default ~/.cargo is the workspace, which ships
       curl -fsSL -o "$w/ab.tgz" https://github.com/vercel-labs/agent-browser/archive/refs/tags/v0.26.0.tar.gz
       echo "e1852f8fc953763d4482b107a201226413d78d701065a26758f3c3d0b6dc2ad8  $w/ab.tgz" | sha256sum -c -
       tar -xzf "$w/ab.tgz" -C "$w" --strip-components=1
@@ -603,6 +604,7 @@ pipeline:
       install -m0755 "$w/cli/target/release/agent-browser" "$AB/bin/agent-browser-linux-$abarch"
       "$AB/bin/agent-browser-linux-$abarch" --version
       rm -rf "$w"
+      test ! -e .cargo || { echo ".cargo in the workspace would ship in /opt/n8n"; exit 1; }
       # 4. @napi-rs/canvas (pdfjs-dist DOMMatrix/Path2D): upstream commits no Cargo.lock and
       #    a Skia build is out of reach, so ship a lock built from the crate source paths in
       #    the binary (a lower bound: only crates that left a path string).
