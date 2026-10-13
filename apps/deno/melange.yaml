@@ -4,8 +4,10 @@
 # per-arch release zip (byte-identical to what `denoland/deno` ships), sha256-verify
 # it, and harden it on a minimal apko base — the same upstream-artifact pattern
 # clickhouse/kafka/mattermost use. Clean-room-consistent: it is upstream's published
-# artifact, and the Trivy gate still fully applies (comprehensive mode scans the
-# binary's embedded Rust/Cargo module graph).
+# artifact. The binary embeds NO Cargo module graph (no cargo-auditable .dep-v0
+# section), so Trivy cannot see its crates from the binary alone. The tag's own
+# Cargo.lock (sha256-pinned) is installed at /usr/share/doc/deno/Cargo.lock so the
+# gate scans every crate (measured 2026-10-13: trivy image reads a Cargo.lock in a layer).
 #
 # The prebuilt `deno` is a single dynamically-linked binary (verified via
 # `readelf -d`): it needs glibc (libc/libm/libdl/librt/libpthread + ld-linux) and
@@ -52,3 +54,7 @@ pipeline:
       echo "${sha}  deno.zip" | sha256sum -c -
       unzip -q deno.zip
       install -Dm0755 deno "${{targets.destdir}}/usr/bin/deno"
+      # the tag Cargo.lock, so Trivy sees the crates the binary hides
+      curl -fsSL -o Cargo.lock "https://raw.githubusercontent.com/denoland/deno/v${VER}/Cargo.lock"
+      echo "__SHA_LOCK__  Cargo.lock" | sha256sum -c -
+      install -Dm0644 Cargo.lock "${{targets.destdir}}/usr/share/doc/deno/Cargo.lock"

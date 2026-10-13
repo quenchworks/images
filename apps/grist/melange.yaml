@@ -42,7 +42,7 @@ pipeline:
       expected-sha256: __SHA256__
   # Deno runs the pyodide sandbox with dropped permissions. Upstream's release binary (per-arch
   # zip, sha256 pinned in build.conf), not the Wolfi apk: Wolfi lags at 2.8.2 (CVE-2026-50185,
-  # CVE-2026-48504 and older rustls-webpki/quinn-proto). Same artifact as apps/deno.
+  # CVE-2026-48504 and older rustls-webpki/quinn-proto). Same artifact and Cargo.lock as apps/deno.
   - runs: |
       set -eu
       case "$(uname -m)" in
@@ -55,6 +55,11 @@ pipeline:
       unzip -q -d /tmp/deno-bin /tmp/deno.zip
       install -Dm0755 /tmp/deno-bin/deno "${{targets.destdir}}/usr/bin/deno"
       rm -rf /tmp/deno.zip /tmp/deno-bin
+      # the binary has no cargo-auditable data; ship the tag Cargo.lock so Trivy sees its crates
+      curl -fsSL -o /tmp/deno.lock "https://raw.githubusercontent.com/denoland/deno/v__DENO__/Cargo.lock"
+      echo "__DENO_SHA_LOCK__  /tmp/deno.lock" | sha256sum -c -
+      install -Dm0644 /tmp/deno.lock "${{targets.destdir}}/usr/share/doc/deno/Cargo.lock"
+      rm -f /tmp/deno.lock
   - runs: |
       set -eu
       export GRIST_SKIP_EXT_AUTOSETUP=1 YARN_CACHE_FOLDER=/tmp/yarn-cache
@@ -116,6 +121,12 @@ pipeline:
       rm -rf node_modules/stream-json node_modules/stream-chain
       # the sandbox runs the deno installed above, not the npm deno binary
       for d in sandbox/pyodide/worker/node_modules/@deno/*/; do rm -f "$d/deno"; ln -s /usr/bin/deno "$d/deno"; done
+      # the npm deno postinstall also copies its own binary (2.6.3, 21 hidden crate findings) to
+      # node_modules/deno/deno; Grist never runs it (SandboxPyodide.ts findDenoBinaryUncached
+      # only looks in node_modules/@deno/*), so drop it and keep package.json for that lookup
+      rm -f sandbox/pyodide/worker/node_modules/deno/deno
+      test -f sandbox/pyodide/worker/node_modules/deno/package.json
+      if [ -e sandbox/pyodide/worker/node_modules/deno/deno ]; then exit 1; fi
       # every pin must be what actually got installed, and the patched modules must load
       node -e '
         const want = { dompurify: "3.4.17", "js-yaml": "4.3.2", moment: "2.31.0", "image-size": "2.0.4",
