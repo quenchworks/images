@@ -87,6 +87,9 @@ environment:
       - nodejs-20               # React UI build (matches upstream's node:20 ui-builder)
       - yarn                    # React UI build (yarn install + yarn build)
       - rust-1.96               # matches upstream quickwit/rust-toolchain.toml channel
+      # cargo auditable embeds the crate list in a .dep-v0 section; without it Trivy sees
+      # zero Rust packages in the binary and the gate passes blind (2026-10-13 sweep).
+      - cargo-auditable
                                 # 1.96; edition 2024 needs >= 1.85. Provides rustfmt
                                 # (required by tonic's gRPC codegen).
 
@@ -148,8 +151,37 @@ pipeline:
       # cmake >= 3.31 reads this from the environment, so it applies to every cmake-based
       # -sys build (librdkafka, zstd, ...) without patching their CMakeLists.
       export CMAKE_POLICY_VERSION_MINIMUM=3.5
-      cargo build --release -p quickwit-cli --bin quickwit \
+      # Raise vulnerable crates to their fixed release on the same semver line (never down).
+      cfloor() {
+        line="${2%.*}"
+        locked() { awk -v n="$1" '$0=="name = \""n"\"" {getline; gsub(/version = |"/,""); print}' Cargo.lock; }
+        for v in $(locked "$1"); do
+          case "$v" in "$line".*) ;; *) continue ;; esac
+          [ "$v" = "$2" ] && continue
+          [ "$(printf '%s\n%s\n' "$v" "$2" | sort -V | head -1)" = "$v" ] || continue
+          cargo update -p "$1@$v" --precise "$2"
+        done
+        for v in $(locked "$1"); do
+          case "$v" in "$line".*) ;; *) continue ;; esac
+          [ "$(printf '%s\n%s\n' "$v" "$2" | sort -V | head -1)" = "$2" ] \
+            || { echo "$1 $v is still below the $2 floor"; exit 1; }
+        done
+      }
+      cfloor rustls 0.23.45         # GHSA-2mjx-qc3c-rqvc
+      FEATURES=jemalloc,openssl-support,quickwit-indexing/kafka,quickwit-indexing/kinesis,quickwit-indexing/vrl,quickwit-storage/azure,quickwit-storage/gcs,quickwit-metastore/postgres
+      # vex.openvex.json guards. rand 0.7.3 (http-types via azure_core) is VEXed because its
+      # log feature, a precondition of GHSA-cq8v-f236-94qc, is off: fail if it ever turns on.
+      rlog="$(cargo tree -e features --target all -p quickwit-cli --features "$FEATURES" -i rand@0.7.3 2>/dev/null | { grep -F "rand feature \"log\"" || true; })"
+      [ -z "$rlog" ] || { echo "rand 0.7.3 now builds its log feature; revisit vex.openvex.json"; exit 1; }
+      # rustls-webpki 0.101.7 (rustls 0.21 via aws-smithy-http-client hyper-0.14) is VEXed because
+      # aws-smithy-runtime builds that client only for a BehaviorVersion before v2026_01_12 and
+      # quickwit-aws pins v2026_01_12. Fail if the pin moves back or any code names an older one.
+      grep -q "BehaviorVersion::v2026_01_12()" quickwit-aws/src/lib.rs || { echo "quickwit-aws BehaviorVersion pin changed; revisit vex.openvex.json"; exit 1; }
+      old="$(find . -name "*.rs" -path "*/src/*" -exec grep -lE "BehaviorVersion::v20(1|2[0-5])|hyper_014" {} + || true)"
+      [ -z "$old" ] || { echo "legacy AWS client reachable from: $old; revisit vex.openvex.json"; exit 1; }
+      cargo auditable build --release -p quickwit-cli --bin quickwit \
         --features jemalloc,openssl-support,quickwit-indexing/kafka,quickwit-indexing/kinesis,quickwit-indexing/vrl,quickwit-storage/azure,quickwit-storage/gcs,quickwit-metastore/postgres
+      readelf -S target/release/quickwit | grep -q dep-v0 || { echo "target/release/quickwit has no .dep-v0 section"; exit 1; }
       install -Dm0755 target/release/quickwit "${{targets.destdir}}/usr/bin/quickwit"
 
   # 3. Ship the upstream default config so Quickwit has a sane base; the entrypoint +

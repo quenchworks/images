@@ -1,0 +1,61 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/quickwit/2026-10-13",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-10-13T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "GHSA-82j2-j2ch-gfr8"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/rustls-webpki@0.101.7"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The CRL BIT STRING panic needs CRL parsing with RevocationOptions in a rustls 0.21 verifier. rustls-webpki 0.101.7 is linked only through rustls 0.21.12 <- hyper-rustls 0.24.2 <- aws-smithy-http-client 1.2.0 (hyper-0.14 legacy client), measured with `cargo tree -e features -i rustls@0.21.12` on quickwit v0.9.1 with this recipe's feature set. aws-smithy-runtime 1.12.0 builds that legacy client only in src/client/defaults.rs:85 (compiled out when default-https-client is on, which aws-config enables here) and :100 (only for a BehaviorVersion older than v2026_01_12). quickwit-aws/src/lib.rs:58-72 loads the one SdkConfig with BehaviorVersion::v2026_01_12() and an explicit http_client built with tls::Provider::Rustls(CryptoMode::AwsLc), the rustls 0.23 stack; grep over every src/*.rs found no older BehaviorVersion and no hyper_014. The recipe fails the build if either changes. No rustls 0.21 verifier is ever constructed, so certificate path validation and CRL parsing in webpki 0.101.7 never run. The 0.101.x line has no fixed release (fix is 0.103.13). Verified 2026-10-13."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-965h-392x-2mh5"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/rustls-webpki@0.101.7"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The URI name constraint bug needs certificate path validation by a rustls 0.21 verifier. rustls-webpki 0.101.7 is linked only through rustls 0.21.12 <- hyper-rustls 0.24.2 <- aws-smithy-http-client 1.2.0 (hyper-0.14 legacy client), measured with `cargo tree -e features -i rustls@0.21.12` on quickwit v0.9.1 with this recipe's feature set. aws-smithy-runtime 1.12.0 builds that legacy client only in src/client/defaults.rs:85 (compiled out when default-https-client is on, which aws-config enables here) and :100 (only for a BehaviorVersion older than v2026_01_12). quickwit-aws/src/lib.rs:58-72 loads the one SdkConfig with BehaviorVersion::v2026_01_12() and an explicit http_client built with tls::Provider::Rustls(CryptoMode::AwsLc), the rustls 0.23 stack; grep over every src/*.rs found no older BehaviorVersion and no hyper_014. The recipe fails the build if either changes. No rustls 0.21 verifier is ever constructed, so certificate path validation and CRL parsing in webpki 0.101.7 never run. The 0.101.x line has no fixed release (fix is 0.103.13). Verified 2026-10-13."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-xgp8-3hg3-c2mh"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/rustls-webpki@0.101.7"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The wildcard name constraint bug needs certificate path validation by a rustls 0.21 verifier. rustls-webpki 0.101.7 is linked only through rustls 0.21.12 <- hyper-rustls 0.24.2 <- aws-smithy-http-client 1.2.0 (hyper-0.14 legacy client), measured with `cargo tree -e features -i rustls@0.21.12` on quickwit v0.9.1 with this recipe's feature set. aws-smithy-runtime 1.12.0 builds that legacy client only in src/client/defaults.rs:85 (compiled out when default-https-client is on, which aws-config enables here) and :100 (only for a BehaviorVersion older than v2026_01_12). quickwit-aws/src/lib.rs:58-72 loads the one SdkConfig with BehaviorVersion::v2026_01_12() and an explicit http_client built with tls::Provider::Rustls(CryptoMode::AwsLc), the rustls 0.23 stack; grep over every src/*.rs found no older BehaviorVersion and no hyper_014. The recipe fails the build if either changes. No rustls 0.21 verifier is ever constructed, so certificate path validation and CRL parsing in webpki 0.101.7 never run. The 0.101.x line has no fixed release (fix is 0.103.13). Verified 2026-10-13."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-cq8v-f236-94qc"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/rand@0.7.3"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "GHSA-cq8v-f236-94qc makes rand unsound only when its log feature is enabled and a custom logger calls thread_rng. rand 0.7.3 enters through http-types 2.12.0 <- azure_core 0.21.0 (quickwit-storage azure). `cargo tree -e features -i rand@0.7.3` on quickwit v0.9.1 with this recipe's feature set shows only the alloc, std and default features; log is absent, so the logging code in rand 0.7.3 (cfg feature log) is not compiled. The 0.7 line has no fixed release. The recipe runs the same cargo tree check and fails the build if the log feature ever appears. Verified 2026-10-13."
+    }
+  ]
+}
