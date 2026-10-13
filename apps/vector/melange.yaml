@@ -134,6 +134,13 @@ pipeline:
       case "$FEATURES" in *gcp*|*greptime*) echo "FEATURES now build tonic TLS; revisit vex.openvex.json"; exit 1 ;; esac
       tlsuse="$(find src lib -name "*.rs" ! -path src/sources/gcp_pubsub.rs -exec grep -lE "ClientTlsConfig|ServerTlsConfig|[.]tls_config[(]" {} + || true)"
       [ -z "$tlsuse" ] || { echo "new tonic TLS caller(s), revisit vex.openvex.json: $tlsuse"; exit 1; }
+      # vex.openvex.json also clears rustls-webpki 0.101.7 (0.58.0: rustls 0.21 in the default
+      # hyper-0.14 AWS client): every AWS config gets vector own OpenSSL connector
+      # (src/aws/mod.rs fn connector). Fail if a default AWS loader appears or that changes.
+      awsdef="$(find src lib -name "*.rs" -exec grep -lE "aws_config::(defaults|load_defaults|load_from_env|from_env)[^_a-z]" {} + || true)"
+      [ -z "$awsdef" ] || { echo "default AWS loader in: $awsdef; revisit vex.openvex.json"; exit 1; }
+      [ "$(grep -c "HyperClientBuilder::new().build(" src/aws/mod.rs)" = 2 ] && grep -q "let tls_connector = build_tls_connector(tls_settings)" src/aws/mod.rs \
+        || { echo "src/aws/mod.rs connector changed; revisit vex.openvex.json"; exit 1; }
       cfloor xxhash-rust 0.8.16     # GHSA-6g2r-675j-hx59
       cargo auditable build --release --locked --no-default-features --features "${FEATURES}" --bin vector
       readelf -S target/release/vector | grep -q dep-v0 || { echo "target/release/vector has no .dep-v0 section"; exit 1; }

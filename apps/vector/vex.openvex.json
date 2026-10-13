@@ -3,7 +3,7 @@
   "@id": "https://quench-works.com/vex/vector/2026-10-13",
   "author": "QuenchWorks <info@quench-works.com>",
   "timestamp": "2026-10-13T00:00:00Z",
-  "version": 1,
+  "version": 2,
   "statements": [
     {
       "vulnerability": {
@@ -56,6 +56,45 @@
       "status": "not_affected",
       "justification": "vulnerable_code_not_in_execute_path",
       "impact_statement": "The wildcard name constraint bug is reached only through certificate path validation by a rustls 0.22 verifier this binary never constructs. rustls-webpki 0.102.8 is linked only through rustls 0.22.4 <- tokio-rustls 0.25.0 <- tonic 0.11.0 (feature tls), measured with `cargo tree -e normal,build -i rustls-webpki@0.102.8` on vector v0.58.0 and v0.59.0 with this recipe's feature set. tonic 0.11.0 builds that TLS stack only in Endpoint::tls_config (src/transport/channel/endpoint.rs:242) and Server::tls_config (src/transport/server/mod.rs:151); Endpoint::new leaves tls None (endpoint.rs:425-426). grep for ClientTlsConfig|ServerTlsConfig|.tls_config( over vector src/ and lib/ matches only src/sources/gcp_pubsub.rs (v0.59.0 :283-293, v0.58.0 :291-301), feature sources-gcp_pubsub, which this build does not enable; vector gRPC servers terminate TLS with OpenSSL (vector-core tls), not tonic. The recipe fails the build if a gcp/greptime feature or any other tonic TLS caller appears. 0.102.x has no fixed release; the fix is 0.103.13, which needs tonic 0.12+ upstream. Verified 2026-10-13."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-82j2-j2ch-gfr8"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/rustls-webpki@0.101.7"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The CRL BIT STRING panic needs CRL parsing with RevocationOptions in a rustls 0.21 verifier. rustls-webpki 0.101.7 (vector 0.58.0 only) comes in through rustls 0.21.12 <- hyper-rustls 0.24.2 <- aws-smithy-http-client 1.2.0 legacy-rustls-ring, the default hyper-0.14 client of aws-smithy-runtime 1.12.1, measured with `cargo tree -e all -i rustls-webpki@0.101.7` with this recipe's features. Vector never sends AWS traffic through it: src/aws/mod.rs:109-125 (fn connector, documented as the connector all AWS requests use because vector keeps TLS on OpenSSL) wraps vector's hyper-openssl connector (src/http.rs:260 build_tls_connector) in HyperClientBuilder, and every SDK config and credential provider is given that client: src/aws/mod.rs:143-144 and :224, src/aws/auth.rs:254, :334 and :419-421. grep for aws_config::defaults|load_defaults|load_from_env|from_env over src and lib returned 0 matches, so no config falls back to the default client. No rustls 0.21 verifier ever validates a certificate. The 0.101.x line has no fixed release (0.103.13). The recipe fails the build if a default loader appears or the OpenSSL connector changes. Verified 2026-10-13."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-965h-392x-2mh5"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/rustls-webpki@0.101.7"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The URI name constraint bug needs certificate path validation by a rustls 0.21 verifier. rustls-webpki 0.101.7 (vector 0.58.0 only) comes in through rustls 0.21.12 <- hyper-rustls 0.24.2 <- aws-smithy-http-client 1.2.0 legacy-rustls-ring, the default hyper-0.14 client of aws-smithy-runtime 1.12.1, measured with `cargo tree -e all -i rustls-webpki@0.101.7` with this recipe's features. Vector never sends AWS traffic through it: src/aws/mod.rs:109-125 (fn connector, documented as the connector all AWS requests use because vector keeps TLS on OpenSSL) wraps vector's hyper-openssl connector (src/http.rs:260 build_tls_connector) in HyperClientBuilder, and every SDK config and credential provider is given that client: src/aws/mod.rs:143-144 and :224, src/aws/auth.rs:254, :334 and :419-421. grep for aws_config::defaults|load_defaults|load_from_env|from_env over src and lib returned 0 matches, so no config falls back to the default client. No rustls 0.21 verifier ever validates a certificate. The 0.101.x line has no fixed release (0.103.13). The recipe fails the build if a default loader appears or the OpenSSL connector changes. Verified 2026-10-13."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-xgp8-3hg3-c2mh"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/rustls-webpki@0.101.7"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The wildcard name constraint bug needs certificate path validation by a rustls 0.21 verifier. rustls-webpki 0.101.7 (vector 0.58.0 only) comes in through rustls 0.21.12 <- hyper-rustls 0.24.2 <- aws-smithy-http-client 1.2.0 legacy-rustls-ring, the default hyper-0.14 client of aws-smithy-runtime 1.12.1, measured with `cargo tree -e all -i rustls-webpki@0.101.7` with this recipe's features. Vector never sends AWS traffic through it: src/aws/mod.rs:109-125 (fn connector, documented as the connector all AWS requests use because vector keeps TLS on OpenSSL) wraps vector's hyper-openssl connector (src/http.rs:260 build_tls_connector) in HyperClientBuilder, and every SDK config and credential provider is given that client: src/aws/mod.rs:143-144 and :224, src/aws/auth.rs:254, :334 and :419-421. grep for aws_config::defaults|load_defaults|load_from_env|from_env over src and lib returned 0 matches, so no config falls back to the default client. No rustls 0.21 verifier ever validates a certificate. The 0.101.x line has no fixed release (0.103.13). The recipe fails the build if a default loader appears or the OpenSSL connector changes. Verified 2026-10-13."
     }
   ]
 }
