@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/documentdb/2026-10-13",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-10-13T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-48504"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/opentelemetry_sdk@0.30.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "CVE-2026-48504 is unbounded parsing of an inbound W3C baggage header in opentelemetry_sdk BaggagePropagator::extract_with_context. The documentdb gateway (pg_documentdb_gw) ships opentelemetry_sdk 0.30.0 on the 0.114-0 and 0.116-0 lines; 0.117-0 already carries the fixed 0.32.1, and 0.30 to 0.32 is a breaking bump. grep for Baggage over pg_documentdb_gw at v0.114-0 and v0.116-0 returned 0 matches. v0.116-0 installs only TraceContextPropagator (documentdb_gateway_core/src/telemetry/telemetry_manager.rs:100) and parses traceparent itself from the request comment (telemetry/context_propagation.rs:38, no propagator); v0.114-0 installs no propagator at all. The MongoDB wire protocol carries no baggage header, so BaggagePropagator is never constructed. The recipe fails the build if any gateway source names a Baggage type. Verified 2026-10-13."
+    }
+  ]
+}

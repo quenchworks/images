@@ -63,6 +63,9 @@ environment:
       - libxml2-dev
       - json-c-dev
       - rust-1.96     # the pg_documentdb_gw gateway is a Cargo/Rust project (provides cargo+rustc)
+      # cargo auditable embeds the crate list in a .dep-v0 section; without it Trivy sees
+      # zero Rust packages in the binary and the gate passes blind (2026-10-13 sweep).
+      - cargo-auditable
   environment:
     # git.launchpad.net is intermittently slow/flaky from CI runners (observed:
     # a transfer crawling for ~23 min before the server killed it with an SSL
@@ -200,7 +203,36 @@ pipeline:
       rm -f .cargo/config.toml
       # Build offline-friendly, release profile. The `documentdb_gateway` member is the
       # binary we ship; build just it (skip the test crate).
-      cargo build --release --locked -p documentdb_gateway
+      # Raise vulnerable crates to their fixed release on the same semver line (never down).
+      cfloor() {
+        line="${2%.*}"
+        locked() { awk -v n="$1" '$0=="name = \""n"\"" {getline; gsub(/version = |"/,""); print}' Cargo.lock; }
+        for v in $(locked "$1"); do
+          case "$v" in "$line".*) ;; *) continue ;; esac
+          [ "$v" = "$2" ] && continue
+          [ "$(printf '%s\n%s\n' "$v" "$2" | sort -V | head -1)" = "$v" ] || continue
+          cargo update -p "$1@$v" --precise "$2"
+        done
+        for v in $(locked "$1"); do
+          case "$v" in "$line".*) ;; *) continue ;; esac
+          [ "$(printf '%s\n%s\n' "$v" "$2" | sort -V | head -1)" = "$2" ] \
+            || { echo "$1 $v is still below the $2 floor"; exit 1; }
+        done
+      }
+      cfloor cmov 0.5.4             # CVE-2026-50185
+      cfloor openssl 0.10.80        # CVE-2026-45784
+      cfloor tokio-postgres 0.7.18  # GHSA-3gjw-f78c-vvpw
+      cfloor postgres-protocol 0.6.12  # GHSA-5x78-73v4-xg6w GHSA-rgqc-3x5p-6gwg
+      cfloor rand 0.10.1            # GHSA-cq8v-f236-94qc
+      cfloor rand 0.9.3             # GHSA-cq8v-f236-94qc
+      cfloor serde_with 3.21.0      # GHSA-7gcf-g7xr-8hxj
+      # vex.openvex.json clears opentelemetry_sdk 0.30.0 (CVE-2026-48504, 0.114/0.116 lines; the fix
+      # 0.32.1 is a breaking bump): the bug is in BaggagePropagator, which the gateway never
+      # installs (TraceContextPropagator only). Fail if any gateway source names a Baggage type.
+      bag="$(find . -name "*.rs" ! -path "./target/*" -exec grep -l "Baggage" {} + || true)"
+      [ -z "$bag" ] || { echo "gateway now uses otel Baggage: $bag; revisit vex.openvex.json"; exit 1; }
+      cargo auditable build --release --locked -p documentdb_gateway
+      readelf -S target/release/documentdb_gateway | grep -q dep-v0 || { echo "target/release/documentdb_gateway has no .dep-v0 section"; exit 1; }
       install -d "${{targets.destdir}}/usr/local/bin"
       install -m0755 target/release/documentdb_gateway "${{targets.destdir}}/usr/local/bin/documentdb_gateway"
 
