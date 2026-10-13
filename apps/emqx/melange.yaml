@@ -43,6 +43,11 @@ environment:
       - busybox
       - curl
       - ca-certificates-bundle
+      - build-base
+      - rust                   # Rust NIFs rebuilt from source (see the pipeline)
+      - cargo-auditable
+      - cmake                  # aws-lc-sys fallback builder
+      - protobuf-dev           # protoc for the greptime-proto / arrow-flight codegen
 
 pipeline:
   # EMQX publishes separate el9 amd64/arm64 tarballs; fetch the one matching the build
@@ -67,6 +72,40 @@ pipeline:
       dest="${{targets.destdir}}/opt/emqx"
       install -d "$dest"
       tar -xzf emqx.tar.gz -C "$dest"
+
+      # --- Rust NIFs: rebuilt from source with cargo auditable (2026-10-13) ---------
+      # The tarball's two Rust NIFs (greptimedb_rs, datalayers) carry no .dep-v0 and
+      # their repos commit no Cargo.lock, so Trivy saw none of their crates (rustls
+      # 0.23.43, GHSA-2mjx MEDIUM, passed blind). Rebuild each from the tag EMQX pins in
+      # its mix.exs with `cargo auditable` (fresh resolve, so current patch releases) and
+      # replace the prebuilt .so. A tag change fails here until its sha256 is pinned.
+      MIX="$(curl -fsSL "https://raw.githubusercontent.com/emqx/emqx/${VER}/mix.exs")"
+      DLMIX="$(curl -fsSL "https://raw.githubusercontent.com/emqx/emqx/${VER}/apps/emqx_bridge_datalayers/mix.exs")"
+      case "$MIX" in *'greptimedb-ingester-erlnif", tag: "0.1.13"'*) ;; *) echo "EMQX ${VER} moved greptimedb_rs off 0.1.13; pin the new tag"; exit 1 ;; esac
+      case "$DLMIX" in *'datalayers-adapter-erl", tag: "0.1.5"'*) ;; *) echo "EMQX ${VER} moved datalayers off 0.1.5; pin the new tag"; exit 1 ;; esac
+      export RUSTLER_NIF_VERSION=2.16   # loads on every ERTS EMQX 6 bundles (OTP 25+)
+      nif() { # <owner/repo> <tag> <sha256> <lib name> <emqx lib dir glob>
+        w=$(mktemp -d)
+        curl -fsSL -o "$w/src.tgz" "https://github.com/$1/archive/refs/tags/$2.tar.gz"
+        echo "$3  $w/src.tgz" | sha256sum -c -
+        tar -xzf "$w/src.tgz" -C "$w" --strip-components=1
+        (cd "$w" && cargo auditable build --release)
+        so="$w/target/release/lib$4.so"
+        readelf -SW "$so" > "$w/sec"; readelf -W --dyn-syms "$so" > "$w/sym"
+        grep -q dep-v0 "$w/sec" || { echo "$so has no .dep-v0 section"; exit 1; }
+        grep -q ' nif_init$' "$w/sym" || { echo "$so exports no nif_init"; exit 1; }
+        old=$(ls "$dest"/lib/$5/priv/lib$4.so)
+        install -m0755 "$so" "$old"
+        rm -rf "$w"
+      }
+      nif emqx/greptimedb-ingester-erlnif 0.1.13 811cfe09722770cc234518106377f9a520dae8b13d5fdb60936a9da55d7d1c84 greptimedb_nif 'greptimedb_rs-*'
+      nif datalayers-io/datalayers-adapter-erl 0.1.5 934261b586e08144088837f89cf079361fa42213b8af825568d8930e794a27f5 datalayers_nif 'datalayers-*'
+      # Every Rust artifact must carry .dep-v0 (none here ships a Cargo.lock).
+      find "$dest" -type f -size +100k | while read -r f; do
+        LC_ALL=C grep -qa -e 'cargo/registry/src' -e 'rustc version' "$f" || continue
+        readelf -S "$f" 2>/dev/null | grep -q dep-v0 && continue
+        echo "Rust artifact without .dep-v0: ${f#$dest}"; exit 1
+      done
 
       # Convenience symlink so `emqx` is on PATH.
       install -d "${{targets.destdir}}/usr/bin"
