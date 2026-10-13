@@ -1,15 +1,9 @@
-# Packages Garage (Deuxfleurs' S3-compatible distributed object store) onto Wolfi.
-# Garage is NOT built from source here: a from-source Rust build pulls a large crate
-# tree and is heavy on a 2-core/7GB GitHub runner. Instead we ship Garage's OWN
-# official precompiled static binary (the same upstream-artifact pattern
-# clickhouse/scylladb/cockroachdb use), then harden it on a minimal apko base and gate
-# it 0-CVE with Trivy. This is clean-room-consistent: it is upstream's published
-# musl-static artifact, not a Bitnami chart, and the scan still fully applies.
-#
-# The binary is a fully self-contained musl static-PIE (x86_64) / static (aarch64)
-# executable -- it needs NO runtime libs. We still ship bash/busybox/ca-certificates
-# because the bootstrap entrypoint (single-node layout assign+apply + S3 key/bucket
-# create on first boot) is a bash script.
+# Builds Garage (Deuxfleurs' S3-compatible distributed object store) from the release
+# tag with `cargo auditable build`, so the crate list lands in a .dep-v0 section and the
+# gate scans every crate. Until 2026-10-13 this shipped upstream's prebuilt musl
+# binary, which carries no crate data: Trivy saw zero Rust packages and the gate passed
+# blind over aws-lc-sys, lz4_flex, quinn-proto and rustls-webpki HIGH findings.
+# Features match upstream's release build (nix/compile.nix, release = true).
 #
 # Garage is the AGPL S3-compatible object-store ALTERNATIVE to the default SeaweedFS.
 package:
@@ -32,28 +26,53 @@ environment:
     repositories:
       - https://packages.wolfi.dev/os
     packages:
+      - build-base
       - busybox
-      - curl
       - ca-certificates-bundle
+      - cmake                   # aws-lc-sys fallback builder
+      - perl                    # libsodium-sys configure, aws-lc-sys
+      - rust
+      - cargo-auditable
 
 pipeline:
-  # Garage publishes a separate per-target static binary, so fetch the one matching
-  # the build arch by uname -m (x86_64 -> x86_64-unknown-linux-musl,
-  # aarch64 -> aarch64-unknown-linux-musl) with the arch-matching sha256 -- the wrong
-  # arch yields a non-executable / wrong-arch binary. The musl-static binary links no
-  # external libs (verified: static-PIE / statically linked, stripped).
-  - runs: |
-      VER="${{package.version}}"
-      case "$(uname -m)" in
-        x86_64)  target=x86_64-unknown-linux-musl;  sha=__SHA_AMD__ ;;
-        aarch64) target=aarch64-unknown-linux-musl; sha=__SHA_ARM__ ;;
-        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
-      esac
+  - uses: git-checkout
+    with:
+      repository: https://github.com/deuxfleurs-org/garage
+      tag: v${{package.version}}
+      expected-commit: __COMMIT__
+      destination: garage
 
-      binurl="https://garagehq.deuxfleurs.fr/_releases/v${VER}/${target}/garage"
-      curl -fsSL -o garage "$binurl"
-      echo "${sha}  garage" | sha256sum -c -
-      install -Dm0755 garage "${{targets.destdir}}/usr/bin/garage"
+  - runs: |
+      cd garage
+      # Raise vulnerable crates to their fixed release on the same semver line (never down).
+      cfloor() {
+        line="${2%.*}"
+        locked() { awk -v n="$1" '$0=="name = \""n"\"" {getline; gsub(/version = |"/,""); print}' Cargo.lock; }
+        for v in $(locked "$1"); do
+          case "$v" in "$line".*) ;; *) continue ;; esac
+          [ "$v" = "$2" ] && continue
+          [ "$(printf '%s\n%s\n' "$v" "$2" | sort -V | head -1)" = "$v" ] || continue
+          cargo update -p "$1@$v" --precise "$2"
+        done
+        for v in $(locked "$1"); do
+          case "$v" in "$line".*) ;; *) continue ;; esac
+          [ "$(printf '%s\n%s\n' "$v" "$2" | sort -V | head -1)" = "$2" ] \
+            || { echo "$1 $v is still below the $2 floor"; exit 1; }
+        done
+      }
+      cfloor lz4_flex 0.11.6        # CVE-2026-32829
+      cfloor rand 0.8.6             # GHSA-cq8v-f236-94qc
+      cfloor rand 0.9.3
+      cfloor rustls 0.23.45         # GHSA-2mjx-qc3c-rqvc; also lifts aws-lc-sys past 0.39.0
+      cfloor rustls-webpki 0.103.13 # GHSA-82j2-j2ch-gfr8
+      cfloor xxhash-rust 0.8.16     # GHSA-6g2r-675j-hx59
+      # protobuf 2.28.0 (prometheus) is VEXed as encode-only: fail if garage starts decoding it
+      if grep -rlE 'protobuf::|ProtobufEncoder' src; then echo "garage now uses protobuf directly; re-check the protobuf VEX"; exit 1; fi
+      export GIT_VERSION="v${{package.version}}"
+      cargo auditable build --release --locked -p garage \
+        --features bundled-libs,lmdb,sqlite,fjall,k2v,consul-discovery,kubernetes-discovery,metrics,telemetry-otlp,syslog,journald
+      readelf -S target/release/garage | grep -q dep-v0 || { echo "target/release/garage has no .dep-v0 section"; exit 1; }
+      install -Dm0755 target/release/garage "${{targets.destdir}}/usr/bin/garage"
 
   - runs: |
       # The single-node bootstrap entrypoint. Garage refuses to start without a config

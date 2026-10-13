@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/garage/2026-10-13",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-10-13T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2025-53605"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/protobuf@2.28.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "CVE-2025-53605 is uncontrolled recursion in protobuf 2.x when PARSING a message with nested unknown groups (CodedInputStream, reached through Message::parse_from / merge_from). Garage 2.3.0 and 2.4.1 link protobuf 2.28.0 only through prometheus 0.13.4 and opentelemetry-prometheus 0.10.0 (cargo tree -i protobuf with the release features lists no other parent), and 3.x is a breaking major neither crate supports. grep -rnE 'parse_from|merge_from|CodedInputStream' over prometheus-0.13.4/src and opentelemetry-prometheus-0.10.0/src returned 0 matches: both only build MetricFamily structs (opentelemetry-prometheus lib.rs:449-536, RepeatedField::from_vec) and prometheus only writes protobuf in encoder/pb.rs:30. The merge_from impls exist only as generated Message trait code in prometheus proto/proto_model.rs with no caller. Garage serves /metrics through TextEncoder (src/api/admin/special.rs:52) and its sources name no protobuf type (git grep at v2.3.0 and v2.4.1). No input reaches a protobuf decoder. The recipe fails the build if garage sources ever name protobuf or ProtobufEncoder. Verified 2026-10-13."
+    }
+  ]
+}
