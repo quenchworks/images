@@ -70,6 +70,7 @@ environment:
       - go-1.27
       # --- Rust (orchestrator/worker) ---
       - rust
+      - cargo-auditable
       # clang 19, as upstream (Debian trixie). aws-lc-fips-sys 0.14 builds the
       # fips-2025-09-12-lts aws-lc, whose delocated FIPS module can outgrow the
       # +-1 MiB reach of aarch64 `adr` ("fixup value out of range"; aws/aws-lc#3533,
@@ -184,7 +185,9 @@ pipeline:
         chmod 0755 /usr/local/bin/clang-fips
         export AWS_LC_FIPS_SYS_CC=/usr/local/bin/clang-fips
         export PYO3_PYTHON="$(command -v python3.14)"
-        cargo build --package authentik --no-default-features --features core --release --locked
+        # cargo auditable: the .dep-v0 crate list lets the gate scan the binary (2026-10-13)
+        cargo auditable build --package authentik --no-default-features --features core --release --locked
+        readelf -S target/release/authentik | grep dep-v0 >/dev/null
         install -Dm0755 target/release/authentik /usr/bin-stage/authentik
       else
         echo "no Rust authentik workspace at this version (pre-2026.x); worker runs via python"
@@ -204,7 +207,8 @@ pipeline:
       export UV_SYSTEM_CERTS=1
       # upstream's Dockerfile list: these link the system OpenSSL, krb5 and libxml2 instead
       # of the copies their wheels carry (cryptography's links OpenSSL statically)
-      export UV_NO_BINARY_PACKAGE="cryptography lxml python-kadmin-rs xmlsec"
+      # plus every other Rust extension, so cargo auditable (below) builds them all
+      export UV_NO_BINARY_PACKAGE="cryptography lxml python-kadmin-rs xmlsec cbor2 pydantic-core rpds-py watchfiles"
       export VENV_PATH=/ak-root/.venv
       mkdir -p /ak-root
       # lxml + xmlsec build from SOURCE, as upstream's [tool.uv] no-binary-package pin
@@ -247,6 +251,9 @@ pipeline:
       #      and the kubernetes client use it; authentik imports no oauthlib class itself
       #      (its OAuth1 source goes through requests_oauthlib). 4.0 breaks only the OAuth2
       #      PROVIDER side (revocation JSONP removed, grant validation order), not the client.
+      #      Rust extensions on pyo3 below 0.29 (GHSA-36hh HIGH, 2026-10-13): pydantic 2.13.4
+      #      (core 2.46.4) -> 2.14.1 (core 2.50.1), watchfiles 1.2.0 -> 1.3.0, rpds-py
+      #      2026.5.1 -> 2026.9.1, python-kadmin-rs 0.7.2 -> 0.7.4, all on pyo3 0.29.
       #      The two python-3.14 / python-3.14-base rows (CVE-2026-15308, fixed in
       #      3.14.6-r4) need NO edit: apko.yaml lists `python-3.14` UNPINNED, so a
       #      plain rebuild resolves Wolfi's newest (r4 is published on both arches).
@@ -273,6 +280,11 @@ pipeline:
           '  "djangorestframework==3.17.2",\n'
           '  "anyio==4.14.2",\n'
           '  "oauthlib==4.0.0",\n'
+          '  "pydantic==2.14.1",\n'
+          '  "pydantic-core==2.50.1",\n'
+          '  "watchfiles==1.3.0",\n'
+          '  "rpds-py==2026.9.1",\n'
+          '  "python-kadmin-rs==0.7.4",\n'
           ']\n'
       )
       t, n = re.subn(r'(?m)^\[tool\.uv\]\s*$', overrides, t, count=1)
@@ -293,7 +305,29 @@ pipeline:
       # `ak server`/`ak worker` at django.setup(). --no-editable builds a real wheel
       # for each workspace member and installs the package tree INTO site-packages,
       # so the imports resolve with no dependency on the build-time source path.
-      VIRTUAL_ENV="$VENV_PATH" uv sync --no-dev --no-install-project --no-editable --active
+      # --- Rust extensions: rebuilt from sdist with cargo auditable (2026-10-13) -----
+      # A PyPI Rust wheel embeds no crate list, so Trivy scanned none of its crates (pyo3
+      # below 0.29, GHSA-36hh HIGH, passed blind). Every Rust extension in the venv is
+      # rebuilt from its sdist through `cargo auditable` (the wrapper reroutes only build
+      # and rustc); the .dep-v0 section lists the crates and the gate scans them.
+      RUSTSO="
+      import importlib.metadata as m, os, sys
+      for d in m.distributions(path=[sys.argv[1]]):
+          for f in d.files or ():
+              p = str(f.locate())
+              if '.so' not in f.name or os.path.islink(p):
+                  continue
+              b = open(p, 'rb').read()
+              if b'rustc version' not in b and b'.dep-v0' not in b and b'/cargo/registry/src/' not in b:
+                  continue
+              if sys.argv[2] == 'all' or b'.dep-v0' not in b or not os.stat(p).st_mode & 0o111:
+                  print(d.metadata['Name'] + '==' + d.version)
+                  break
+      "
+      CW=$(mktemp -d)
+      printf '#!/bin/sh\ncase "$1" in build|rustc) exec /usr/bin/cargo auditable "$@";; esac\nexec /usr/bin/cargo "$@"\n' > "$CW/cargo"
+      chmod +x "$CW/cargo"
+      PATH="$CW:$PATH" VIRTUAL_ENV="$VENV_PATH" uv sync --no-dev --no-install-project --no-editable --active
       # what the scan cannot see must not be there: no bundled native libs, and lxml and
       # xmlsec on the same Wolfi libxml2 (a mismatch fails xmlsec at import)
       sp_chk="$(echo "$VENV_PATH"/lib/python3.14/site-packages)"
@@ -324,6 +358,26 @@ pipeline:
       for mod in guardian django_channels_postgres django_dramatiq_postgres django_postgres_cache; do
         test -e "$sp/$mod/__init__.py" || { echo "FAIL: workspace package '$mod' not materialized in site-packages"; exit 1; }
       done
+      # bcrypt 5.0.0 (newest; Wolfi builds the same) pins pyo3 0.26 (GHSA-36hh HIGH). Its
+      # main branch moved to pyo3 0.29 with no source change pyo3 needs (5.0.0 compiles on
+      # 0.29.3, measured 2026-10-13), so the pin is raised in the sdist uv.lock names.
+      B=$(mktemp -d)
+      python3.14 -c "
+      import hashlib, sys, tarfile, tomllib, urllib.request
+      p = next(p for p in tomllib.load(open('uv.lock', 'rb'))['package'] if p['name'] == 'bcrypt')
+      b = urllib.request.urlopen(p['sdist']['url'], timeout=300).read()
+      assert 'sha256:' + hashlib.sha256(b).hexdigest() == p['sdist']['hash'], 'bcrypt sdist sha mismatch'
+      open(sys.argv[1] + '/b.tgz', 'wb').write(b)
+      tarfile.open(sys.argv[1] + '/b.tgz').extractall(sys.argv[1], filter='data')
+      " "$B"
+      B=$(ls -d "$B"/bcrypt-*/)
+      sed -i -E 's/^pyo3 = \{ version = "0\.2[0-8]"/pyo3 = { version = "0.29"/' "${B}src/_bcrypt/Cargo.toml"
+      (cd "${B}src/_bcrypt" && cargo update -p pyo3)
+      PATH="$CW:$PATH" uv pip install --python "$VENV_PATH/bin/python" --no-deps --reinstall "$B"
+      "$VENV_PATH/bin/python" -c "import bcrypt; h = bcrypt.hashpw(b'x', bcrypt.gensalt(4)); assert bcrypt.checkpw(b'x', h)"
+      BLIND=$("$VENV_PATH/bin/python" -c "$RUSTSO" "$sp" blind)
+      test -z "$BLIND" || { echo "Rust extensions without .dep-v0: $BLIND"; exit 1; }
+      echo "Rust extensions, all auditable:" $("$VENV_PATH/bin/python" -c "$RUSTSO" "$sp" all)
 
   # ---------------------------------------------------------------------------
   # 5. Assemble the package tree, mirroring upstream's final-image COPY layout.

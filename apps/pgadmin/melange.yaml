@@ -12,7 +12,6 @@ package:
       - python-3.13
       - py3.13-cryptography
       - py3.13-pillow
-      - py3.13-bcrypt
       - py3.13-psycopg          # pure psycopg on Wolfi's libpq, not psycopg-binary
       - py3.13-pynacl
       - libpq-18
@@ -32,11 +31,12 @@ environment:
       - py3.13-pip
       - py3.13-cryptography
       - py3.13-pillow
-      - py3.13-bcrypt
       - py3.13-psycopg
       - py3.13-pynacl
       - libpq-18
       - build-base             # fallback for any dependency without a wheel
+      - rust                   # bcrypt from sdist (see the pipeline)
+      - cargo-auditable
 
 pipeline:
   - uses: fetch
@@ -55,8 +55,8 @@ pipeline:
       "$PIP" install --no-cache-dir --no-deps "pgadmin4-${VER}-py3-none-any.whl"
       # pgAdmin's own requirements, minus the extras, with psycopg[binary]==X.Y.Z
       # rewritten to plain psycopg: Wolfi's py3.13-psycopg (on libpq-18) satisfies it.
-      # The Wolfi cryptography, Pillow, bcrypt and PyNaCl already satisfy their pins, so
-      # pip leaves them in the system site-packages.
+      # The Wolfi cryptography, Pillow and PyNaCl already satisfy their pins, so pip
+      # leaves them in the system site-packages. bcrypt is rebuilt below.
       "$VENV/bin/python" - > requirements.txt <<'PY'
       import importlib.metadata as m, re
       for r in m.requires("pgadmin4"):
@@ -83,16 +83,61 @@ pipeline:
       # what the scan cannot see must not be there
       site="$VENV/lib/python3.13/site-packages"
       if ls -d "$site"/*.libs 2>/dev/null | grep -q .; then echo "❌ bundled native libs:"; ls -d "$site"/*.libs; exit 1; fi
-      for p in psycopg_binary cryptography PIL bcrypt nacl; do
+      for p in psycopg_binary cryptography PIL nacl; do
         test ! -e "$site/$p" || { echo "❌ $p installed into the venv instead of from Wolfi"; exit 1; }
       done
       "$VENV/bin/python" -c "
-      import cryptography, PIL, bcrypt, nacl, psycopg
-      for mod in (cryptography, PIL, bcrypt, nacl, psycopg):
+      import cryptography, PIL, nacl, psycopg
+      for mod in (cryptography, PIL, nacl, psycopg):
           assert mod.__file__.startswith('/usr/lib/python3.13/site-packages/'), mod.__file__
       assert psycopg.pq.__impl__ in ('c', 'python'), psycopg.pq.__impl__
       print('native deps from Wolfi; psycopg', psycopg.__version__, psycopg.pq.__impl__, 'libpq', psycopg.pq.version())
       "
+      SITE="$site"
+      # sdist <dist>: unpack the sdist of the installed version; prints its directory
+      sdist() {
+        v=$("$VENV/bin/python" -c "import importlib.metadata as m, sys; print(m.version(sys.argv[1]))" "$1")
+        d=$(mktemp -d)
+        "$VENV/bin/pip" download -q --no-cache-dir --no-deps --no-binary "$1" "$1==$v" -d "$d"
+        tar -xzf "$d"/*.tar.gz -C "$d"
+        ls -d "$d"/*/
+      }
+      # --- Rust extensions: rebuilt from sdist with cargo auditable (2026-10-13) -----
+      # A PyPI Rust wheel embeds no crate list, so Trivy scanned none of its crates (pyo3
+      # below 0.29, GHSA-36hh HIGH, passed blind). Every Rust extension in the venv is
+      # rebuilt from its sdist through `cargo auditable` (the wrapper reroutes only build
+      # and rustc); the .dep-v0 section lists the crates and the gate scans them.
+      RUSTSO="
+      import importlib.metadata as m, os, sys
+      for d in m.distributions(path=[sys.argv[1]]):
+          for f in d.files or ():
+              p = str(f.locate())
+              if '.so' not in f.name or os.path.islink(p):
+                  continue
+              b = open(p, 'rb').read()
+              if b'rustc version' not in b and b'.dep-v0' not in b and b'/cargo/registry/src/' not in b:
+                  continue
+              if sys.argv[2] == 'all' or b'.dep-v0' not in b or not os.stat(p).st_mode & 0o111:
+                  print(d.metadata['Name'] + '==' + d.version)
+                  break
+      "
+      CW=$(mktemp -d)
+      printf '#!/bin/sh\ncase "$1" in build|rustc) exec /usr/bin/cargo auditable "$@";; esac\nexec /usr/bin/cargo "$@"\n' > "$CW/cargo"
+      chmod +x "$CW/cargo"
+      # bcrypt 5.0.0 (newest; Wolfi builds the same) pins pyo3 0.26 (GHSA-36hh HIGH). Its
+      # main branch moved to pyo3 0.29 with no source change pyo3 needs (5.0.0 compiles on
+      # 0.29.3, measured 2026-10-13), so the pin is raised in the sdist.
+      B=$(sdist bcrypt)
+      sed -i -E 's/^pyo3 = \{ version = "0\.2[0-8]"/pyo3 = { version = "0.29"/' "${B}src/_bcrypt/Cargo.toml"
+      (cd "${B}src/_bcrypt" && cargo update -p pyo3)
+      PATH="$CW:$PATH" "$VENV/bin/pip" install --no-cache-dir --no-deps --force-reinstall "$B"
+      "$VENV/bin/python" -c "import bcrypt; h = bcrypt.hashpw(b'x', bcrypt.gensalt(4)); assert bcrypt.checkpw(b'x', h)"
+      for spec in $("$VENV/bin/python" -c "$RUSTSO" "$SITE" blind); do
+        PATH="$CW:$PATH" "$VENV/bin/pip" install --no-cache-dir --no-deps --force-reinstall --no-binary "${spec%%==*}" "$spec"
+      done
+      BLIND=$("$VENV/bin/python" -c "$RUSTSO" "$SITE" blind)
+      test -z "$BLIND" || { echo "Rust extensions without .dep-v0: $BLIND"; exit 1; }
+      echo "Rust extensions, all auditable:" $("$VENV/bin/python" -c "$RUSTSO" "$SITE" all)
       "$VENV/bin/python" -c "import importlib.metadata as m, sys; v = m.version('pgadmin4'); assert v == sys.argv[1], v" "$VER"
       # the packager's config hook (config.py imports config_distro)
       cat > "$site/pgadmin4/config_distro.py" <<'CFG'

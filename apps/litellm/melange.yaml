@@ -36,6 +36,10 @@ environment:
       - py3.13-hf-xet
       - libpq-18
       - build-base             # fallback for any transitive dep without a wheel
+      - rust                   # Rust extensions rebuilt from sdist (see the pipeline)
+      - cargo-auditable
+      - cmake                  # aws-lc-sys (litellm rust_bridge)
+      - perl
 
 pipeline:
   - runs: |
@@ -102,6 +106,66 @@ pipeline:
       if "$VENV/bin/pip" show psycopg >/dev/null 2>&1; then
         "$VENV/bin/python" -c "import psycopg; assert psycopg.pq.__impl__ == 'python', psycopg.pq.__impl__; print('psycopg python impl, libpq', psycopg.pq.version())"
       fi
+
+      # sdist <dist>: unpack the sdist of the installed version; prints its directory
+      sdist() {
+        v=$("$VENV/bin/python" -c "import importlib.metadata as m, sys; print(m.version(sys.argv[1]))" "$1")
+        d=$(mktemp -d)
+        "$VENV/bin/pip" download -q --no-cache-dir --no-deps --no-binary "$1" "$1==$v" -d "$d"
+        tar -xzf "$d"/*.tar.gz -C "$d"
+        ls -d "$d"/*/
+      }
+      # --- Rust extensions: rebuilt from sdist with cargo auditable (2026-10-13) -----
+      # A PyPI Rust wheel embeds no crate list, so Trivy scanned none of its crates (pyo3
+      # below 0.29, GHSA-36hh HIGH, passed blind). Every Rust extension in the venv is
+      # rebuilt from its sdist through `cargo auditable` (the wrapper reroutes only build
+      # and rustc); the .dep-v0 section lists the crates and the gate scans them.
+      RUSTSO="
+      import importlib.metadata as m, os, sys
+      for d in m.distributions(path=[sys.argv[1]]):
+          for f in d.files or ():
+              p = str(f.locate())
+              if '.so' not in f.name or os.path.islink(p):
+                  continue
+              b = open(p, 'rb').read()
+              if b'rustc version' not in b and b'.dep-v0' not in b and b'/cargo/registry/src/' not in b:
+                  continue
+              if sys.argv[2] == 'all' or b'.dep-v0' not in b or not os.stat(p).st_mode & 0o111:
+                  print(d.metadata['Name'] + '==' + d.version)
+                  break
+      "
+      CW=$(mktemp -d)
+      printf '#!/bin/sh\ncase "$1" in build|rustc) exec /usr/bin/cargo auditable "$@";; esac\nexec /usr/bin/cargo "$@"\n' > "$CW/cargo"
+      chmod +x "$CW/cargo"
+      # fastuuid 0.14.0 (newest) is on pyo3 0.26 and does not build on 0.29 (downcast was
+      # renamed); its rand 0.8.5 (LOW) floors to 0.8.6. The pyo3 VEX holds while its
+      # source iterates no Python list or tuple and makes no closure (measured 2026-10-13).
+      F=$(sdist fastuuid)
+      test "$(grep -cE '[.](iter|nth|nth_back|skip|step_by)[(]|[.]rev[(]|new_closure' "${F}src/lib.rs")" = 0
+      (cd "$F" && cargo update -p rand --precise 0.8.6)
+      PATH="$CW:$PATH" "$VENV/bin/pip" install --no-cache-dir --no-deps --force-reinstall "$F"
+      # litellm's own rust_bridge (litellm-rust in the sdist). The AWS SDK crates ask for
+      # their "rustls" feature, which also compiles the legacy hyper 0.14 client on rustls
+      # 0.21 and rustls-webpki 0.101.7 (GHSA-82j2 HIGH, no 0.101 fix). The SDKs get only
+      # default-https-client, the rustls 0.23 client aws-smithy-runtime 1.14 selects for
+      # BehaviorVersion v2026_01_12 and later (client/defaults.rs:75-94); litellm passes
+      # latest() at every call site and aws-config does too. rustls and serde_with (pinned
+      # =3.16.1, GHSA-7gcf) move to their fixed patch releases.
+      L=$(sdist litellm)
+      R="${L}litellm-rust"
+      sed -i 's/features = \["rustls", "rt-tokio"\]/features = ["default-https-client", "rt-tokio"]/' "$R"/crates/*/Cargo.toml
+      sed -i -E 's/^(aws-sdk-[a-z0-9]+) = "([0-9.]+)"$/\1 = { version = "\2", default-features = false, features = ["default-https-client", "rt-tokio"] }/' "$R"/crates/*/Cargo.toml
+      sed -i 's/^serde_with = { version = "=3[.]16[.]1"/serde_with = { version = "=3.21.0"/' "$R/Cargo.toml"
+      # metadata first: it drops rustls 0.21 from the lock, so -p rustls is unambiguous
+      (cd "$R" && cargo metadata --format-version 1 >/dev/null && cargo update -p rustls -p serde_with)
+      if grep -A1 '^name = "rustls"$' "$R/Cargo.lock" | grep -q 'version = "0[.]21'; then echo "rustls 0.21 still in litellm-rust"; exit 1; fi
+      PATH="$CW:$PATH" "$VENV/bin/pip" install --no-cache-dir --no-deps --force-reinstall "$L"
+      for spec in $("$VENV/bin/python" -c "$RUSTSO" "$SITE" blind); do
+        PATH="$CW:$PATH" "$VENV/bin/pip" install --no-cache-dir --no-deps --force-reinstall --no-binary "${spec%%==*}" "$spec"
+      done
+      BLIND=$("$VENV/bin/python" -c "$RUSTSO" "$SITE" blind)
+      test -z "$BLIND" || { echo "Rust extensions without .dep-v0: $BLIND"; exit 1; }
+      echo "Rust extensions, all auditable:" $("$VENV/bin/python" -c "$RUSTSO" "$SITE" all)
 
       # license guard: the proprietary package must not be in the image
       if "$VENV/bin/pip" show litellm-enterprise >/dev/null 2>&1; then

@@ -1,0 +1,35 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/litellm/2026-10-13",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-10-13T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "GHSA-36hh-v3qg-5jq4"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/pyo3@0.26.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "PROVEN not reachable. GHSA-36hh is unchecked index + n in pyo3 Iterator::nth/nth_back for PyList/PyTuple iterators (pyo3-0.26.0 src/types/tuple.rs:377/433, list.rs:651/846), reached only by code that calls nth, nth_back, skip or step_by on such an iterator. pyo3 0.26.0 is linked here only by fastuuid 0.14.0 (litellm/_uuid.py imports it), the newest release, whose code does not build on pyo3 0.29 (downcast renamed; cargo build measured 2026-10-13). Checked the fastuuid 0.14.0 sdist: src/lib.rs (517 lines) never iterates a Python list or tuple; the one tuple it takes, UUID(fields=...), is read by fields.len() and get_item(0..5) (src/lib.rs:118-123). grep for iter(, nth, skip, step_by, rev( and new_closure over src/lib.rs returned 0. pyo3 0.26.0 itself calls nth/nth_back only in its #[cfg(test)] modules (grep over src/). The recipe fails the build if any of those calls appears in fastuuid. Verified 2026-10-13."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-chgr-c6px-7xpp"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/pyo3@0.26.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "PROVEN not reachable. GHSA-chgr is PyCFunction::new_closure accepting a closure without a Sync bound (pyo3-0.26.0 src/types/function.rs:73). pyo3 0.26.0 is linked here only by fastuuid 0.14.0, the newest release, which does not build on pyo3 0.29 (measured 2026-10-13). grep for new_closure over the fastuuid 0.14.0 sdist src/ returned 0: fastuuid defines only #[pyclass]/#[pyfunction] items and creates no closure-backed function, so the unsound constructor is never called. The recipe fails the build if new_closure appears in fastuuid src/lib.rs. Verified 2026-10-13."
+    }
+  ]
+}

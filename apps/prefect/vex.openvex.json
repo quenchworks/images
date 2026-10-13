@@ -1,0 +1,35 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/prefect/2026-10-13",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-10-13T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "GHSA-36hh-v3qg-5jq4"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/pyo3@0.28.3"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
+      "impact_statement": "PROVEN not reachable with attacker-sized n. GHSA-36hh is unchecked index + n in pyo3 Iterator::nth/nth_back for PyList/PyTuple iterators (pyo3-0.28.3 src/types/tuple.rs:393 `self.index + n`, list.rs:674/869); it needs n near usize::MAX to wrap. pyo3 0.28.3 is linked here only by burner-redis 0.1.7 (docket's in-memory Redis), the newest release, whose code does not build on pyo3 0.29 (downcast renamed; measured with cargo build on 2026-10-13). Checked the burner-redis 0.1.7 sdist: the only list/tuple iterator calls that reach nth are args.iter().skip(1) or .skip(2) on the PyTuple of dispatch_pipeline_command (src/lib.rs:2944, skips at :3021, :3062, :3084, :3109, :3285, :3370, :3538, :3553, :3648, :3659); Skip calls nth with that literal on a fresh iterator (index 0), so index + n is at most 2 and cannot wrap. grep for nth, nth_back, step_by and rev() over src/lib.rs returned 0; the .skip() calls in scripting.rs and store.rs iterate Rust VecDeque/BTreeMap, not pyo3 types. pyo3 0.28.3 itself calls nth/nth_back only in its #[cfg(test)] modules (grep over src/). The recipe fails the build if any .skip() takes another argument or nth/nth_back/step_by/rev appears. Verified 2026-10-13."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-chgr-c6px-7xpp"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/pyo3@0.28.3"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
+      "impact_statement": "PROVEN not exploitable here. GHSA-chgr is PyCFunction::new_closure accepting a closure that is Send but not Sync, so concurrent calls from two Python threads could race on non-Sync captured state. pyo3 0.28.3 is linked here only by burner-redis 0.1.7 (newest release; its code does not build on pyo3 0.29, measured 2026-10-13), and its sdist has exactly one new_closure call (src/lib.rs:402-410): the atexit save hook, which captures an Arc<Store> and a String and only calls store.save(&path). Both captures are Sync: the same Arc<Store> is downgraded and moved into a tokio task at src/lib.rs:416-418, which the compiler accepts only when Store is Send + Sync, and String is Sync. A closure whose captured state is all Sync cannot data-race when called concurrently, which is exactly what the missing bound would have enforced. grep -c new_closure over src/ returned 1. The recipe fails the build if the count changes. Verified 2026-10-13."
+    }
+  ]
+}

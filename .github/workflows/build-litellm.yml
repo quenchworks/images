@@ -94,6 +94,12 @@ jobs:
       - name: Assemble single-arch image for the scan gate
         run: apko build apko.rendered.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}
 
+      - name: Install uv (for the VEX validator)
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Check VEX
+        working-directory: ${{ github.workspace }}
+        run: uv run scripts/check-vex.py litellm
+
       - name: Scan, the hard 0-CVE gate (before publish)
         uses: aquasecurity/trivy-action@d2a0b60797ff03db6132bd4e2b293f9b37081297 # master 2026-09-26, v0.36.0+11, bundles trivy v0.71.2
         # detection-priority=comprehensive is REQUIRED here: litellm ships as a pip venv
@@ -104,6 +110,9 @@ jobs:
         # (verified locally: 28 OS pkgs + 51 python pkgs, all 0-CVE). Do NOT drop this.
         env:
           TRIVY_DETECTION_PRIORITY: comprehensive
+          # Documented VEX clearance: pyo3 0.26.0 in fastuuid 0.14.0, no list/tuple iteration.
+          # trivy-action has no `vex:` input; pass it through the TRIVY_VEX env.
+          TRIVY_VEX: apps/litellm/vex.openvex.json
         with:
           input: apps/litellm/image.tar
           format: table

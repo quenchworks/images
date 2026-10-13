@@ -28,6 +28,8 @@ environment:
       - py3.13-pip
       - py3.13-cryptography
       - build-base             # fallback for any transitive dep without a wheel
+      - rust                   # Rust extensions rebuilt from sdist (see the pipeline)
+      - cargo-auditable
 
 pipeline:
   - runs: |
@@ -37,7 +39,8 @@ pipeline:
       VENV=/opt/prefect/venv
       python3.13 -m venv --system-site-packages "$VENV"
       "$VENV/bin/pip" install --no-cache-dir --upgrade pip
-      "$VENV/bin/pip" install --no-cache-dir "prefect==${VER}"
+      # pydantic 2.13 pins pydantic-core 2.46, built on pyo3 0.28.3 (GHSA-36hh)
+      "$VENV/bin/pip" install --no-cache-dir "prefect==${VER}" "pydantic>=2.14.1"
       "$VENV/bin/python" -c "import importlib.metadata as m, sys; v = m.version('prefect'); assert v == sys.argv[1], v; print('prefect', v)" "${VER}"
       # the UI build ships in the wheel; without it the server serves the API only
       test -f "$VENV"/lib/python3.13/site-packages/prefect/server/ui/index.html
@@ -47,6 +50,51 @@ pipeline:
       if ls -d "$SITE"/*.libs 2>/dev/null | grep -q .; then echo "bundled native libs:"; ls -d "$SITE"/*.libs; exit 1; fi
       test ! -e "$SITE/cryptography" || { echo "cryptography installed into the venv instead of from Wolfi"; exit 1; }
       "$VENV/bin/python" -c "import cryptography as c; assert c.__file__.startswith('/usr/lib/python3.13/site-packages/'), c.__file__; print('cryptography', c.__version__, 'from Wolfi')"
+      # sdist <dist>: unpack the sdist of the installed version; prints its directory
+      sdist() {
+        v=$("$VENV/bin/python" -c "import importlib.metadata as m, sys; print(m.version(sys.argv[1]))" "$1")
+        d=$(mktemp -d)
+        "$VENV/bin/pip" download -q --no-cache-dir --no-deps --no-binary "$1" "$1==$v" -d "$d"
+        tar -xzf "$d"/*.tar.gz -C "$d"
+        ls -d "$d"/*/
+      }
+      # --- Rust extensions: rebuilt from sdist with cargo auditable (2026-10-13) -----
+      # A PyPI Rust wheel embeds no crate list, so Trivy scanned none of its crates (pyo3
+      # below 0.29, GHSA-36hh HIGH, passed blind). Every Rust extension in the venv is
+      # rebuilt from its sdist through `cargo auditable` (the wrapper reroutes only build
+      # and rustc); the .dep-v0 section lists the crates and the gate scans them.
+      RUSTSO="
+      import importlib.metadata as m, os, sys
+      for d in m.distributions(path=[sys.argv[1]]):
+          for f in d.files or ():
+              p = str(f.locate())
+              if '.so' not in f.name or os.path.islink(p):
+                  continue
+              b = open(p, 'rb').read()
+              if b'rustc version' not in b and b'.dep-v0' not in b and b'/cargo/registry/src/' not in b:
+                  continue
+              if sys.argv[2] == 'all' or b'.dep-v0' not in b or not os.stat(p).st_mode & 0o111:
+                  print(d.metadata['Name'] + '==' + d.version)
+                  break
+      "
+      CW=$(mktemp -d)
+      printf '#!/bin/sh\ncase "$1" in build|rustc) exec /usr/bin/cargo auditable "$@";; esac\nexec /usr/bin/cargo "$@"\n' > "$CW/cargo"
+      chmod +x "$CW/cargo"
+      # burner-redis 0.1.7 (newest; docket's in-memory backend) is on pyo3 0.28.3 and its
+      # code does not build on 0.29 (downcast was renamed). VEX (vex.openvex.json) holds
+      # while its sources keep the shape measured on 2026-10-13: every .skip() takes a
+      # literal 1 or 2, nothing calls nth, nth_back, step_by or rev, one new_closure.
+      B=$(sdist burner-redis)
+      test "$(grep -oE '[.]skip[(][^)]*[)]' "${B}src/lib.rs" | sort -u | tr '\n' ' ')" = ".skip(1) .skip(2) "
+      test "$(grep -cE '[.](nth|nth_back|step_by)[(]|[.]rev[(][)]' "${B}src/lib.rs")" = 0
+      test "$(grep -c 'new_closure' "${B}src/lib.rs")" = 1
+      PATH="$CW:$PATH" "$VENV/bin/pip" install --no-cache-dir --no-deps --force-reinstall "$B"
+      for spec in $("$VENV/bin/python" -c "$RUSTSO" "$SITE" blind); do
+        PATH="$CW:$PATH" "$VENV/bin/pip" install --no-cache-dir --no-deps --force-reinstall --no-binary "${spec%%==*}" "$spec"
+      done
+      BLIND=$("$VENV/bin/python" -c "$RUSTSO" "$SITE" blind)
+      test -z "$BLIND" || { echo "Rust extensions without .dep-v0: $BLIND"; exit 1; }
+      echo "Rust extensions, all auditable:" $("$VENV/bin/python" -c "$RUSTSO" "$SITE" all)
       "$VENV/bin/pip" uninstall -y pip
       install -d "${dest}/opt/prefect"
       cp -a "$VENV" "${dest}/opt/prefect/venv"
