@@ -74,6 +74,10 @@ pipeline:
       echo "${sha}  rustfs.zip" | sha256sum -c -
       unzip -o rustfs.zip
       install -Dm0755 rustfs "${{targets.destdir}}/usr/bin/rustfs"
+      # the tag Cargo.lock, so Trivy sees the crates the binary hides (no .dep-v0)
+      curl -fsSL -o Cargo.lock "https://raw.githubusercontent.com/rustfs/rustfs/${VER}/Cargo.lock"
+      echo "__SHA_LOCK__  Cargo.lock" | sha256sum -c -
+      install -Dm0644 Cargo.lock "${{targets.destdir}}/usr/share/doc/rustfs/Cargo.lock"
 
   - runs: |
       # Thin entrypoint. RustFS stores all object data under its VOLUMES dir, which
