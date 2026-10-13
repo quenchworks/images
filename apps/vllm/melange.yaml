@@ -55,6 +55,11 @@ environment:
       - python-3.12
       - py3.12-pip
       - build-base             # fallback for any transitive dep that has no wheel (sdist build)
+      - rust                   # Rust extensions rebuilt from sdist (see the pipeline)
+      - cargo-auditable
+      - perl                   # openssl-src (vllm-rs native-tls-vendored)
+      - openssl-4.0-dev        # cryptography from sdist, on the OpenSSL python-3.12 links
+      - pkgconf
 
 pipeline:
   # Create an isolated venv and install the vLLM CPU wheel from the version-specific CPU
@@ -95,6 +100,101 @@ pipeline:
 
       # vllm --version must work headless (no GPU, no model); assert it at build time.
       # (import vllm + the version check run in test.sh against the assembled image.)
+      VENV=/opt/vllm/venv
+      SITE="$VENV/lib/python3.12/site-packages"
+      # sdist <dist>: unpack the sdist of the installed version; prints its directory
+      sdist() {
+        v=$("$VENV/bin/python" -c "import importlib.metadata as m, sys; print(m.version(sys.argv[1]))" "$1")
+        d=$(mktemp -d)
+        "$VENV/bin/pip" download -q --no-cache-dir --no-deps --no-binary "$1" "$1==$v" -d "$d"
+        tar -xzf "$d"/*.tar.gz -C "$d"
+        ls -d "$d"/*/
+      }
+      # --- Rust extensions: rebuilt from sdist with cargo auditable (2026-10-13) -----
+      # A PyPI Rust wheel embeds no crate list, so Trivy scanned none of its crates (pyo3
+      # below 0.29, GHSA-36hh HIGH, passed blind). Every Rust extension in the venv is
+      # rebuilt from its sdist through `cargo auditable` (the wrapper reroutes only build
+      # and rustc); the .dep-v0 section lists the crates and the gate scans them.
+      RUSTSO="
+      import importlib.metadata as m, os, sys
+      for d in m.distributions(path=[sys.argv[1]]):
+          for f in d.files or ():
+              p = str(f.locate())
+              if '.so' not in f.name or os.path.islink(p):
+                  continue
+              b = open(p, 'rb').read()
+              if b'rustc version' not in b and b'.dep-v0' not in b and b'/cargo/registry/src/' not in b:
+                  continue
+              if sys.argv[2] == 'all' or b'.dep-v0' not in b or not os.stat(p).st_mode & 0o111:
+                  print(d.metadata['Name'] + '==' + d.version)
+                  break
+      "
+      CW=$(mktemp -d)
+      printf '#!/bin/sh\ncase "$1" in build|rustc) exec /usr/bin/cargo auditable "$@";; esac\nexec /usr/bin/cargo "$@"\n' > "$CW/cargo"
+      chmod +x "$CW/cargo"
+      # Raise vulnerable crates to their fixed release on the same semver line (never down).
+      cfloor() {
+        line="${2%.*}"
+        locked() { awk -v n="$1" '$0=="name = \""n"\"" {getline; gsub(/version = |"/,""); print}' Cargo.lock; }
+        for v in $(locked "$1"); do
+          case "$v" in "$line".*) ;; *) continue ;; esac
+          [ "$v" = "$2" ] && continue
+          [ "$(printf '%s\n%s\n' "$v" "$2" | sort -V | head -1)" = "$v" ] || continue
+          cargo update -p "$1@$v" --precise "$2"
+        done
+      }
+      # pyo3 below 0.29 (GHSA-36hh HIGH): llguidance 1.7.6 (vllm caps <1.8), safetensors
+      # 0.8.0, outlines-core 0.2.14 (vllm pins it) and oss-harmony 0.0.11 are each the
+      # release vllm takes. All four compile on pyo3 0.29.3 with the pin raised; oss-harmony
+      # also needs PyObject spelled Py<PyAny> (the alias left in 0.29). Measured 2026-10-13.
+      for pk in llguidance:python_ext/ safetensors:bindings/python/ outlines-core: oss-harmony: fastar:; do
+        D=$(sdist "${pk%%:*}")
+        sed -i -E 's/^(pyo3 = \{ ?version = )"0[.]2[0-8][.0-9]*"/\1"0.29"/' "$D${pk#*:}Cargo.toml"
+        [ "${pk%%:*}" = oss-harmony ] && sed -i 's/PyResult<PyObject>/PyResult<Py<PyAny>>/' "${D}src/py_module.rs"
+        # and the other crates their locks hold below a fix, each to its patch release
+        (cd "$D${pk#*:}" && cargo update -p pyo3 && case "${pk%%:*}" in
+          outlines-core) cargo update -p bytes -p quinn-proto -p rustls -p rustls-webpki && cfloor rand 0.8.6 && cfloor rand 0.9.3 ;;
+          oss-harmony) cargo update -p serde_with ;;
+          fastar) cargo update -p tar ;;
+        esac)
+        PATH="$CW:$PATH" "$VENV/bin/pip" install --no-cache-dir --no-deps --force-reinstall "$D"
+      done
+      # vllm's own Rust artifacts (the vllm-rs frontend and _rust_tool_parser) come prebuilt
+      # in the +cpu wheel without .dep-v0, on pyo3 0.28.3. Both are rebuilt from this
+      # version's PyPI sdist (sha256 checked against PyPI) with pyo3/pythonize 0.29 (the
+      # parser compiles unchanged, measured 2026-10-13), the features tools/build_rust.py
+      # uses, and the lock raised to patch releases (rustls, rustls-webpki, serde_with,
+      # openssl-src for the vendored OpenSSL, rand).
+      VS=$(mktemp -d)
+      "$VENV/bin/python" -c "
+      import hashlib, json, sys, tarfile, urllib.request as u
+      d = json.load(u.urlopen('https://pypi.org/pypi/vllm/' + sys.argv[2] + '/json', timeout=60))
+      s = next(x for x in d['urls'] if x['packagetype'] == 'sdist')
+      b = u.urlopen(s['url'], timeout=900).read()
+      assert hashlib.sha256(b).hexdigest() == s['digests']['sha256'], 'vllm sdist sha mismatch'
+      open(sys.argv[1] + '/v.tgz', 'wb').write(b)
+      tarfile.open(sys.argv[1] + '/v.tgz').extractall(sys.argv[1], filter='data')
+      " "$VS" "$VER"
+      R="$VS/vllm-$VER/rust"
+      sed -i -E -e 's/^pyo3 = "0[.]2[0-8][.0-9]*"/pyo3 = "0.29"/' -e 's/^pythonize = "0[.]2[0-8][.0-9]*"/pythonize = "0.29"/' "$R/Cargo.toml"
+      (cd "$R" && cargo metadata --format-version 1 >/dev/null \
+        && cargo update -p pyo3 -p pythonize -p rustls -p rustls-webpki -p serde_with -p openssl-src \
+        && cfloor rand 0.8.6 && cfloor rand 0.9.3 \
+        && VLLM_RS_BUILD_VERSION="$VER" PYO3_PYTHON="$VENV/bin/python" cargo auditable build --release -p vllm-cmd --bin vllm-rs --features native-tls-vendored \
+        && PYO3_PYTHON="$VENV/bin/python" cargo auditable build --release -p vllm-tool-parser-py --features pyo3/abi3-py38)
+      install -m0755 "$R/target/release/vllm-rs" "$SITE/vllm/vllm-rs"
+      install -m0755 "$R/target/release/lib_rust_tool_parser.so" "$SITE/vllm/_rust_tool_parser.abi3.so"
+      readelf -S "$SITE/vllm/vllm-rs" | grep dep-v0 >/dev/null
+      test "$("$SITE/vllm/vllm-rs" --version)" = "vllm-rs $VER"
+      "$VENV/bin/python" -c "import vllm._rust_tool_parser"
+      rm -rf "$VS"
+      for spec in $("$VENV/bin/python" -c "$RUSTSO" "$SITE" blind); do
+        PATH="$CW:$PATH" "$VENV/bin/pip" install --no-cache-dir --no-deps --force-reinstall --no-binary "${spec%%==*}" "$spec"
+      done
+      BLIND=$("$VENV/bin/python" -c "$RUSTSO" "$SITE" blind)
+      test -z "$BLIND" || { echo "Rust extensions without .dep-v0: $BLIND"; exit 1; }
+      echo "Rust extensions, all auditable:" $("$VENV/bin/python" -c "$RUSTSO" "$SITE" all)
+
       /opt/vllm/venv/bin/vllm --version | tail -1 | grep -q "^${VER}+cpu$"
 
       # Remove pip from the venv. After the bumps above, the LAST fixable findings on this
