@@ -143,19 +143,24 @@ pipeline:
           cargo update -p "$1@$v" --precise "$2"
         done
       }
+      # cup <crate>...: cargo update each crate the lock holds, with the dependencies its
+      # newest compatible release needs (time and serde_with also move serde/serde_json)
+      cup() { for c in "$@"; do if grep -qx "name = \"$c\"" Cargo.lock; then cargo update --recursive -p "$c"; fi; done; }
       # pyo3 below 0.29 (GHSA-36hh HIGH): llguidance 1.7.6 (vllm caps <1.8), safetensors
-      # 0.8.0, outlines-core 0.2.14 (vllm pins it) and oss-harmony 0.0.11 are each the
-      # release vllm takes. All four compile on pyo3 0.29.3 with the pin raised; oss-harmony
-      # also needs PyObject spelled Py<PyAny> (the alias left in 0.29). Measured 2026-10-13.
-      for pk in llguidance:python_ext/ safetensors:bindings/python/ outlines-core: oss-harmony: fastar:; do
+      # 0.8.0, outlines-core 0.2.14 (vllm pins it), oss-harmony 0.0.11 (0.31) and
+      # openai-harmony 0.0.8 (0.30) are each the release vllm takes. All compile on pyo3
+      # 0.29.3 with the pin raised; the harmony crates also need PyObject spelled Py<PyAny>
+      # (the alias left in 0.29). Measured 2026-10-13. Packages a version lacks are skipped.
+      for pk in llguidance:python_ext/ safetensors:bindings/python/ outlines-core: oss-harmony: openai-harmony: fastar:; do
+        "$VENV/bin/pip" show "${pk%%:*}" >/dev/null 2>&1 || continue
         D=$(sdist "${pk%%:*}")
         sed -i -E 's/^(pyo3 = \{ ?version = )"0[.]2[0-8][.0-9]*"/\1"0.29"/' "$D${pk#*:}Cargo.toml"
-        [ "${pk%%:*}" = oss-harmony ] && sed -i 's/PyResult<PyObject>/PyResult<Py<PyAny>>/' "${D}src/py_module.rs"
+        case "${pk%%:*}" in *harmony) sed -i 's/PyResult<PyObject>/PyResult<Py<PyAny>>/' "${D}src/py_module.rs" ;; esac
         # and the other crates their locks hold below a fix, each to its patch release
         (cd "$D${pk#*:}" && cargo update -p pyo3 && case "${pk%%:*}" in
-          outlines-core) cargo update -p bytes -p quinn-proto -p rustls -p rustls-webpki && cfloor rand 0.8.6 && cfloor rand 0.9.3 ;;
-          oss-harmony) cargo update -p serde_with ;;
-          fastar) cargo update -p tar ;;
+          outlines-core) cup bytes quinn-proto rustls rustls-webpki && cfloor rand 0.8.6 && cfloor rand 0.9.3 ;;
+          *harmony) cup bytes quinn-proto rustls rustls-webpki time serde_with && cfloor rand 0.8.6 ;;
+          fastar) cup tar ;;
         esac)
         PATH="$CW:$PATH" "$VENV/bin/pip" install --no-cache-dir --no-deps --force-reinstall "$D"
       done
@@ -181,7 +186,7 @@ pipeline:
         && cargo update -p pyo3 -p pythonize -p rustls -p rustls-webpki -p serde_with -p openssl-src \
         && cfloor rand 0.8.6 && cfloor rand 0.9.3 \
         && VLLM_RS_BUILD_VERSION="$VER" PYO3_PYTHON="$VENV/bin/python" cargo auditable build --release -p vllm-cmd --bin vllm-rs --features native-tls-vendored \
-        && PYO3_PYTHON="$VENV/bin/python" cargo auditable build --release -p vllm-tool-parser-py --features pyo3/abi3-py38)
+        && PYO3_BUILD_EXTENSION_MODULE=1 PYO3_PYTHON="$VENV/bin/python" cargo auditable build --release -p vllm-tool-parser-py --features pyo3/abi3-py38)
       install -m0755 "$R/target/release/vllm-rs" "$SITE/vllm/vllm-rs"
       install -m0755 "$R/target/release/lib_rust_tool_parser.so" "$SITE/vllm/_rust_tool_parser.abi3.so"
       readelf -S "$SITE/vllm/vllm-rs" | grep dep-v0 >/dev/null
