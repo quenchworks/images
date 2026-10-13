@@ -1,0 +1,72 @@
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-grist@local
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+      homedir: /persist
+  run-as: 1001
+
+# /persist holds the home database (home.sqlite3) and the documents (docs/); the chart
+# mounts a volume here. Same layout as upstream's image.
+paths:
+  - path: /persist
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /persist/docs
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+# Upstream's image defaults, plus the pyodide formula sandbox. DENO_DIR must be writable
+# (deno keeps its cache there); /tmp is an emptyDir in the chart.
+environment:
+  NODE_ENV: production
+  NODE_OPTIONS: "--no-deprecation --disable-proto=delete"
+  NODE_PATH: _build:_build/ext:_build/stubs:ext/node_modules
+  GRIST_SANDBOX_FLAVOR: pyodide
+  DENO_DIR: /tmp/deno
+  GRIST_ORG_IN_PATH: "true"
+  GRIST_HOST: 0.0.0.0
+  GRIST_SERVE_SAME_ORIGIN: "true"
+  GRIST_DATA_DIR: /persist/docs
+  GRIST_INST_DIR: /persist
+  GRIST_SESSION_COOKIE: grist_core
+  GRIST_ALLOW_AUTOMATIC_VERSION_CHECKING: "false"
+  TYPEORM_DATABASE: /persist/home.sqlite3
+  HOME: /persist
+
+work-dir: /grist
+
+entrypoint:
+  command: /usr/bin/node
+
+cmd: _build/stubs/app/server/server.js
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-grist"
+  org.opencontainers.image.licenses: "Apache-2.0"

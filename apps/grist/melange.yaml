@@ -1,0 +1,143 @@
+# Packages Grist onto Wolfi: the tagged source compiled with yarn (tsc + webpack), the
+# production dependencies with the 0-CVE pins below, and the pyodide formula sandbox.
+package:
+  name: quench-grist
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Grist spreadsheet-database with the pyodide formula sandbox, on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - nodejs-22
+      - glibc                # the official deno binary (libc + ld-linux)
+      - libgcc               # libgcc_s for deno
+      - libstdc++            # @gristlabs/sqlite3 addon
+      - ca-certificates-bundle
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - bash                 # buildtools/build.sh and sandbox/pyodide/setup.sh
+      - build-base           # make + g++ if @gristlabs/sqlite3 has no prebuilt for this arch
+      - busybox
+      - ca-certificates-bundle
+      - curl
+      - nodejs-22
+      - npm                  # native modules probe their prebuilt through npm first
+      - node-gyp
+      - python-3.13          # node-gyp
+      - unzip
+      - yarn
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/gristlabs/grist-core/archive/refs/tags/v__VER__.tar.gz
+      expected-sha256: __SHA256__
+  # Deno runs the pyodide sandbox with dropped permissions. Upstream's release binary (per-arch
+  # zip, sha256 pinned in build.conf), not the Wolfi apk: Wolfi lags at 2.8.2 (CVE-2026-50185,
+  # CVE-2026-48504 and older rustls-webpki/quinn-proto). Same artifact as apps/deno.
+  - runs: |
+      set -eu
+      case "$(uname -m)" in
+        x86_64)  triple=x86_64-unknown-linux-gnu;  sha=__DENO_SHA_AMD__ ;;
+        aarch64) triple=aarch64-unknown-linux-gnu; sha=__DENO_SHA_ARM__ ;;
+        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+      esac
+      curl -fsSL -o /tmp/deno.zip "https://github.com/denoland/deno/releases/download/v__DENO__/deno-${triple}.zip"
+      echo "${sha}  /tmp/deno.zip" | sha256sum -c -
+      unzip -q -d /tmp/deno-bin /tmp/deno.zip
+      install -Dm0755 /tmp/deno-bin/deno "${{targets.destdir}}/usr/bin/deno"
+      rm -rf /tmp/deno.zip /tmp/deno-bin
+  - runs: |
+      set -eu
+      export GRIST_SKIP_EXT_AUTOSETUP=1 YARN_CACHE_FOLDER=/tmp/yarn-cache
+      export PYTHON="$(command -v python3.13)" npm_config_python="$(command -v python3.13)"
+      # 0-CVE pins (measured 2026-10-13 against 1.7.21). Direct deps move in dependencies; the
+      # transitive ones whose fix is outside their declared range go through yarn resolutions
+      # (yarn 1 path resolutions lose to shared lock entries, so each is one version for every
+      # copy); the rest lose their lock entries so yarn re-resolves them to the newest in range.
+      node -e '
+        const fs = require("fs");
+        const p = JSON.parse(fs.readFileSync("package.json"));
+        Object.assign(p.dependencies, {
+          "axios": "1.20.0", "colord": "2.10.0", "csv": "6.6.4", "dompurify": "3.4.17",
+          "engine.io": "6.6.11", "express": "4.22.3", "handlebars": "4.7.10", "image-size": "2.0.4",
+          "js-yaml": "4.3.2", "minio": "8.0.7", "moment": "2.31.0", "morgan": "1.12.1", "piscina": "4.9.4",
+          "uuid": "11.1.1", "ws": "8.22.0",
+        });
+        p.resolutions = Object.assign(p.resolutions || {}, {
+          "basic-ftp": "6.2.3", "socks": "2.8.10", "ip-address": "10.7.4", "dompurify": "3.4.17",
+          "decode-uri-component": "0.5.0", "js-yaml": "4.3.2", "on-headers": "1.1.0", "qs": "6.16.0",
+          "ws": "8.22.0", "uuid": "11.1.1", "moment": "2.31.0",
+        });
+        fs.writeFileSync("package.json", JSON.stringify(p, null, 2) + "\n");
+        const refresh = new Set(["bn.js", "body-parser", "brace-expansion", "diff", "fast-uri", "form-data",
+          "jws", "path-to-regexp", "pbkdf2", "proxy-addr", "shell-quote", "undici", "on-headers", "qs",
+          "dompurify", "js-yaml", "uuid", "moment"]);
+        const blocks = fs.readFileSync("yarn.lock", "utf8").split(/\n\n/);
+        fs.writeFileSync("yarn.lock", blocks.filter(b => {
+          const h = b.split("\n").find(l => l && !l.startsWith("#"));
+          const m = h && h.replace(/^"/, "").match(/^(@?[^@]+)@/);
+          return !(m && refresh.has(m[1]));
+        }).join("\n\n"));
+      '
+      # image-size 2 is buffer-only and has no default export (CVE-2025-71330 is fixed only in 2.x)
+      sed -i 's|^import imageSize from "image-size";|import { imageSize } from "image-size";|; s|await bluebird.fromCallback((cb: any) => imageSize(fileData.absPath, cb))|imageSize(await readFile(fileData.absPath))|' app/server/lib/ActiveDoc.ts
+      grep -q 'imageSize(await readFile(fileData.absPath))' app/server/lib/ActiveDoc.ts
+      # Grist spawns the sandbox (deno) with a minimal env; pass DENO_DIR so deno keeps its cache on
+      # a writable path under a read-only root (it refuses to start without one)
+      sed -i 's|      ELECTRON_RUN_AS_NODE: "1",|      ELECTRON_RUN_AS_NODE: "1",\n      ...(process.env.DENO_DIR ? { DENO_DIR: process.env.DENO_DIR } : {}),|' app/server/lib/NSandbox.ts
+      grep -q 'DENO_DIR: process.env.DENO_DIR' app/server/lib/NSandbox.ts
+      yarn install --network-timeout 600000
+      yarn run build:prod
+      (cd sandbox/pyodide && make setup)
+      test "$(ls sandbox/pyodide/_build/packages/*.whl | wc -l)" -eq "$(grep -c '==' sandbox/requirements.txt)"
+      yarn install --production --frozen-lockfile --ignore-scripts --network-timeout 600000
+      # query-string 7 (minio) requires decode-uri-component as CommonJS; 0.5.0 (CVE-2026-45822) is
+      # ESM-only, so take its default export (Node 22 loads ESM through require)
+      sed -i "s|^const decodeComponent = require('decode-uri-component');|const decodeComponent = require('decode-uri-component').default;|" node_modules/query-string/index.js
+      grep -q "require('decode-uri-component').default" node_modules/query-string/index.js
+      # xmlbuilder2 2.x (saml2-js) calls js-yaml 3 safeLoad, which 4.x renamed to load (safe by default)
+      sed -i 's|js_yaml_1.safeLoad(|js_yaml_1.load(|' node_modules/xmlbuilder2/lib/readers/YAMLReader.js
+      grep -q 'js_yaml_1.load(' node_modules/xmlbuilder2/lib/readers/YAMLReader.js
+      # stream-json 1.x (CVE-2026-71429, CVE-2026-104182/3; the fixes are the ESM-only 3.x with another
+      # API) is used only by minio listenBucketNotification, which Grist never calls: stub that parser
+      # and drop the package
+      sed -i 's|^var _Parser = require("stream-json/jsonl/Parser.js");|var _Parser = { make() { throw new Error("listenBucketNotification is not available in this image"); } };|' node_modules/minio/dist/main/notification.js
+      sed -i "s|^import jsonLineParser from 'stream-json/jsonl/Parser.js';|const jsonLineParser = { make() { throw new Error('listenBucketNotification is not available in this image'); } };|" node_modules/minio/dist/esm/notification.mjs
+      if grep -q "stream-json" node_modules/minio/dist/main/notification.js node_modules/minio/dist/esm/notification.mjs; then exit 1; fi
+      rm -rf node_modules/stream-json node_modules/stream-chain
+      # the sandbox runs the deno installed above, not the npm deno binary
+      for d in sandbox/pyodide/worker/node_modules/@deno/*/; do rm -f "$d/deno"; ln -s /usr/bin/deno "$d/deno"; done
+      # every pin must be what actually got installed, and the patched modules must load
+      node -e '
+        const want = { dompurify: "3.4.17", "js-yaml": "4.3.2", moment: "2.31.0", "image-size": "2.0.4",
+          uuid: "11.1.1", "basic-ftp": "6.2.3", "ip-address": "10.7.4", "decode-uri-component": "0.5.0",
+          qs: "6.16.0", ws: "8.22.0", minio: "8.0.7", express: "4.22.3" };
+        for (const [k, v] of Object.entries(want)) {
+          const got = require("./node_modules/" + k + "/package.json").version;
+          if (got !== v) { console.error(k, "is", got, "not", v); process.exit(1); }
+        }
+        require("minio"); require("query-string").parse("a=%E0%A4%A");
+        require("isomorphic-dompurify").sanitize("<b>x</b>");
+        require("xmlbuilder2").convert("<a>1</a>", { format: "object" });
+        console.log("pins installed, patched modules load");
+      '
+      app="${{targets.destdir}}/grist"
+      install -d "$app"
+      cp -a _build static sandbox plugins assets bower_components node_modules package.json "$app/"
+      rm -rf "$app/sandbox/gvisor" "$app/sandbox/docker"
+
+test:
+  pipeline:
+    - runs: |
+        cd /grist
+        node -e 'require("@gristlabs/sqlite3"); console.log("modules load")'
+        test -x sandbox/pyodide/worker/node_modules/@deno/*/deno
