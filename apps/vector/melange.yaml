@@ -58,6 +58,9 @@ environment:
       - openssl-dev             # system OpenSSL (NOT vendored) for TLS-capable components
       - perl                    # openssl-sys build scripts probe with perl
       - rust-1.95               # Wolfi rust toolchain (>= vector 0.57.0 MSRV 1.95; also builds 0.55/0.56)
+      # cargo auditable embeds the crate list in a .dep-v0 section; without it Trivy sees
+      # zero Rust packages in the binary and the gate passes blind (2026-10-13 sweep).
+      - cargo-auditable
 
 pipeline:
   - uses: git-checkout
@@ -108,7 +111,32 @@ pipeline:
       sinks-socket,\
       sinks-opentelemetry,\
       sinks-vector"
-      cargo build --release --locked --no-default-features --features "${FEATURES}" --bin vector
+      # Raise vulnerable crates to their fixed release on the same semver line (never down).
+      cfloor() {
+        line="${2%.*}"
+        locked() { awk -v n="$1" '$0=="name = \""n"\"" {getline; gsub(/version = |"/,""); print}' Cargo.lock; }
+        for v in $(locked "$1"); do
+          case "$v" in "$line".*) ;; *) continue ;; esac
+          [ "$v" = "$2" ] && continue
+          [ "$(printf '%s\n%s\n' "$v" "$2" | sort -V | head -1)" = "$v" ] || continue
+          cargo update -p "$1@$v" --precise "$2"
+        done
+        for v in $(locked "$1"); do
+          case "$v" in "$line".*) ;; *) continue ;; esac
+          [ "$(printf '%s\n%s\n' "$v" "$2" | sort -V | head -1)" = "$2" ] \
+            || { echo "$1 $v is still below the $2 floor"; exit 1; }
+        done
+      }
+      cfloor rustls 0.23.45         # GHSA-2mjx-qc3c-rqvc
+      # vex.openvex.json clears rustls-webpki 0.102.8 (rustls 0.22.4 via tonic 0.11 tls): tonic
+      # only builds that TLS stack in Endpoint/Server tls_config, which vector calls only from
+      # sources-gcp_pubsub and sinks-greptimedb. Fail if either feature or a new caller appears.
+      case "$FEATURES" in *gcp*|*greptime*) echo "FEATURES now build tonic TLS; revisit vex.openvex.json"; exit 1 ;; esac
+      tlsuse="$(find src lib -name "*.rs" ! -path src/sources/gcp_pubsub.rs -exec grep -lE "ClientTlsConfig|ServerTlsConfig|[.]tls_config[(]" {} + || true)"
+      [ -z "$tlsuse" ] || { echo "new tonic TLS caller(s), revisit vex.openvex.json: $tlsuse"; exit 1; }
+      cfloor xxhash-rust 0.8.16     # GHSA-6g2r-675j-hx59
+      cargo auditable build --release --locked --no-default-features --features "${FEATURES}" --bin vector
+      readelf -S target/release/vector | grep -q dep-v0 || { echo "target/release/vector has no .dep-v0 section"; exit 1; }
       install -Dm0755 target/release/vector "${{targets.destdir}}/usr/bin/vector"
 
   # Ship a minimal default config so the image runs standalone (the chart supplies the
