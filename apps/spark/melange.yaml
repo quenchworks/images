@@ -103,6 +103,9 @@ pipeline:
       S="${{targets.destdir}}/opt/spark"
       install -d "$S" "$S/work-dir"
       cp -a dist/. "$S/"
+      # The examples module pulls Derby (Hive metastore DB) for a JDBC example; SparkPi needs
+      # none of it, and Derby is what the no-Hive guard keeps out (round 6, CI 38262338839).
+      rm -f "$S"/examples/jars/derby*.jar
       ln -s "spark-examples_2.13-${{package.version}}.jar" "$S/examples/jars/spark-examples.jar"
       test -f "$S/examples/jars/spark-examples_2.13-${{package.version}}.jar"
       D=resource-managers/kubernetes/docker/src/main/dockerfiles/spark
