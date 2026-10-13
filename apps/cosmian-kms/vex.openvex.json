@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/cosmian-kms/2026-10-13",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-10-13T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2025-4432"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/ring@0.16.20"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "CVE-2025-4432 (RUSTSEC-2025-0009) is a panic in ring's AES functions (AES-GCM / QUIC header protection counter arithmetic) when overflow checks are on. Cosmian KMS 5.27.0 links ring 0.16.20 only through scratchstack-aws-signature 0.10.6 (Cargo.lock at tag 5.27.0: it is the only package listing ring 0.16.20; 5.27.1 and 5.28.0 carry no ring 0.16). Read the source of scratchstack-aws-signature 0.10.6: it imports only ring::hmac (src/hmac.rs:1, HMAC_SHA256) and ring::digest (src/signature.rs:20, SHA256); no ring::aead or AES call exists, grep for aead|aes over its src returned 0 matches. The AES code is therefore never executed. ring 0.16 has no fixed release (fix is 0.17.12). The recipe fails the build if any other crate depends on ring 0.16. Verified 2026-10-13."
+    }
+  ]
+}

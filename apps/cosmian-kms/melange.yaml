@@ -61,6 +61,9 @@ environment:
       # Toolchain is PINNED PER RELEASE in rust-toolchain.toml, read AT THE TAG.
       # master claims 1.97.0; the shipped tags say 1.91.0. Trust the tag.
       - rust-__RUST__
+      # cargo auditable embeds the crate list in a .dep-v0 section; without it Trivy sees
+      # zero Rust packages in the binary and the gate passes blind (2026-10-13 sweep).
+      - cargo-auditable
       # A VERSION FLOOR, not a bare name. The skew was never one bad version: across four
       # CI runs a different subset of the six legs failed each time, because the solver was
       # free to pick an openssl older than what cargo's bundled curl/ngtcp2 links against:
@@ -130,7 +133,30 @@ pipeline:
       # reproducible input set rather than whatever cargo resolves today.
       # non-fips: see the header -- Wolfi ships no OpenSSL FIPS provider.
       export CARGO_NET_GIT_FETCH_WITH_CLI=true
-      cargo build --release --locked -p cosmian_kms_server --features non-fips
+      # Raise vulnerable crates to their fixed release on the same semver line (never down).
+      cfloor() {
+        line="${2%.*}"
+        locked() { awk -v n="$1" '$0=="name = \""n"\"" {getline; gsub(/version = |"/,""); print}' Cargo.lock; }
+        for v in $(locked "$1"); do
+          case "$v" in "$line".*) ;; *) continue ;; esac
+          [ "$v" = "$2" ] && continue
+          [ "$(printf '%s\n%s\n' "$v" "$2" | sort -V | head -1)" = "$v" ] || continue
+          cargo update -p "$1@$v" --precise "$2"
+        done
+        for v in $(locked "$1"); do
+          case "$v" in "$line".*) ;; *) continue ;; esac
+          [ "$(printf '%s\n%s\n' "$v" "$2" | sort -V | head -1)" = "$2" ] \
+            || { echo "$1 $v is still below the $2 floor"; exit 1; }
+        done
+      }
+      cfloor rustls 0.23.45         # GHSA-2mjx-qc3c-rqvc
+      # vex.openvex.json clears ring 0.16.20 (CVE-2025-4432, 5.27.0 only): its one consumer is
+      # scratchstack-aws-signature 0.10.6, which calls only ring::hmac and ring::digest, never the
+      # AES code that panics. Fail if any other crate starts depending on ring 0.16.
+      r16="$(awk '/^\[\[package\]\]/{n=""} /^name = /{n=$3} /"ring 0[.]16/{print n}' Cargo.lock | sort -u | tr -d '"' | tr '\n' ' ')"
+      case "$r16" in ""|"scratchstack-aws-signature ") ;; *) echo "ring 0.16 now used by: $r16; revisit vex.openvex.json"; exit 1 ;; esac
+      cargo auditable build --release --locked -p cosmian_kms_server --features non-fips
+      readelf -S target/release/cosmian_kms | grep -q dep-v0 || { echo "target/release/cosmian_kms has no .dep-v0 section"; exit 1; }
 
       # ---- prove no vendored OpenSSL was fetched or built -------------------
       # If build.rs ignored OPENSSL_DIR it leaves an openssl-*-<os>-<arch> tree under
