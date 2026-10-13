@@ -1,0 +1,35 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/coolify-helper/2026-10-13",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-10-13T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "GHSA-7gcf-g7xr-8hxj"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/serde_with@2.3.3"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "GHSA-7gcf-g7xr-8hxj is a panic in serde_with's KeyValueMap serializer. nixpacks 1.41.0 (the last release; serde_with 2.x, fix only in 3.21.0) uses serde_with only for the #[serde_with::skip_serializing_none] attribute (src/nixpacks/nix/pkg.rs:5, plan/phase.rs:14 and :50, plan/mod.rs:29); grep for KeyValueMap over nixpacks src returned 0 matches. KeyValueMap is a generic serde_as adapter that is only compiled when named, so its code is not in the binary. The recipe fails the build if nixpacks ever names KeyValueMap. Verified 2026-10-13."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-mc8h-8q98-g5hr"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/remove_dir_all@0.5.3"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "GHSA-mc8h-8q98-g5hr is a TOCTOU race in remove_dir_all's own directory walk. nixpacks reaches remove_dir_all 0.5.3 only through tempdir 0.3.7 (TempDir drop, tempdir src/lib.rs:326). Read the source of remove_dir_all 0.5.3: src/lib.rs compiles its own fs module only under cfg(windows) and on every other target is `pub use std::fs::remove_dir_all`, so this Linux image runs the standard library implementation (rust 1.96, which carries the CVE-2022-21658 fix), not the vulnerable walk. The 0.5 line has no fixed release. Verified 2026-10-13."
+    }
+  ]
+}

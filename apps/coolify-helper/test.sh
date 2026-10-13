@@ -21,8 +21,8 @@ cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
 # Versions pinned in melange.yaml / tracked from Wolfi -- assert the bundled tools match.
-MISE_VERSION="2026.3.17"
-RAILPACK_VERSION="0.23.0"
+MISE_VERSION="2026.9.15"
+RAILPACK_VERSION="0.40.1"
 NIXPACKS_VERSION="1.41.0"
 # Must equal vars.pack-version in melange.yaml, which is what the build actually
 # checks out and stamps. This said 0.38.2 (the version upstream bundles) long after

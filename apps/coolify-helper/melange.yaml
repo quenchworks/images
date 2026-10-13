@@ -23,7 +23,7 @@
 # (commit e7dff30b7c998c301fd91bd169727b90c59ec291). The upstream helper Dockerfile
 # (docker/coolify-helper/Dockerfile) is FROM alpine:3.21 and bundles, by curling release
 # binaries: docker (28.0.0), docker compose (2.38.2), buildx (0.25.0), buildpacks `pack`
-# (0.38.2), nixpacks (1.41.0), railpack (0.23.0), mise (2026.3.17), minio `mc`
+# (0.38.2), nixpacks (1.41.0), railpack (0.40.1), mise (2026.9.15), minio `mc`
 # (RELEASE.2025-08-13T08-35-41Z), plus apk packages bash curl git git-lfs openssh-client
 # tar tini. We reproduce that toolset, but split by provenance:
 #
@@ -40,9 +40,9 @@
 #                                   NEWER than the 0.38.2 upstream bundles: 0.40.9 is the
 #                                   lifecycle v0.21.19 line that drops docker/docker
 #                                   float (docker/docker CVE-2026-33997 stays -- see below)
-#       railpack 0.23.0   (Go)   -- railwayapp/railpack, `go build ./cmd/cli`, house float
-#       nixpacks 1.41.0   (Rust) -- railwayapp/nixpacks, `cargo build --release`
-#       mise     2026.3.17 (Rust)-- jdx/mise, `cargo build --release`
+#       railpack 0.40.1   (Go)   -- railwayapp/railpack, `go build ./cmd/cli`, house float
+#       nixpacks 1.41.0   (Rust) -- railwayapp/nixpacks, `cargo auditable build --release`
+#       mise     2026.9.15 (Rust)-- jdx/mise, `cargo auditable build --release`
 #       mc       RELEASE.2025-08-13T08-35-41Z (Go) -- minio/mc, house x/* float. Moved
 #                OFF the Wolfi apk 2026-09-14: Wolfi's mc secdb secfixes carry
 #                golang.org/x/net CVE-2026-46600 in bucket "0" (no apk version, past
@@ -76,7 +76,7 @@
 # wrapper (coolify-helper-entrypoint) that seeds /tmp/railpack/mise/mise-<version> from it
 # on every start, then execs the container CMD -- so railpack finds the pinned mise without
 # any network download. mise's pinned version MUST match railpack's core/mise/version.txt
-# (2026.3.17 at railpack v0.23.0); bump the two in lockstep.
+# (2026.9.15 at railpack v0.40.1); bump the two in lockstep.
 package:
   name: quench-coolify-helper-tools
   version: __VER__
@@ -91,11 +91,11 @@ package:
 
 vars:
   pack-version: 0.40.9
-  railpack-version: 0.23.0
+  railpack-version: 0.40.1
   nixpacks-version: 1.41.0
-  # MUST equal railpack v0.23.0's core/mise/version.txt; railpack looks for
+  # MUST equal railpack v0.40.1's core/mise/version.txt; railpack looks for
   # /tmp/railpack/mise/mise-<this> at runtime.
-  mise-version: 2026.3.17
+  mise-version: 2026.9.15
   # Wolfi's mc apk (0.20250813.083541-rNN) never fixes golang.org/x/net
   # CVE-2026-46600 for this release (Wolfi secdb secfixes bucket "0" = no apk
   # version anywhere carries the fix) -- and this IS upstream's newest release
@@ -131,7 +131,10 @@ environment:
       - ca-certificates-bundle
       - git
       - go-1.26        # railpack go.mod requires go 1.26; pack needs go 1.24+
-      - rust-1.96      # provides cargo/rustc; nixpacks (edition 2021) + mise (rust-version 1.88) build with it
+      - rust-1.96      # provides cargo/rustc; nixpacks (edition 2021) + mise (rust-version 1.95) build with it
+      # cargo auditable embeds the crate list in a .dep-v0 section; without it Trivy sees
+      # zero Rust packages in the binary and the gate passes blind (2026-10-13 sweep).
+      - cargo-auditable
       - openssl-3.6-dev    # mise links openssl (native-tls); openssl-sys 0.9.111 rejects OpenSSL 4, which openssl-dev now resolves to
       - pkgconf
 
@@ -270,12 +273,12 @@ pipeline:
         -o "${{targets.destdir}}/usr/local/bin/pack" .
       "${{targets.destdir}}/usr/local/bin/pack" version
 
-  # ---- railpack (Go) -- railwayapp/railpack v0.23.0 ----
+  # ---- railpack (Go) -- railwayapp/railpack v0.40.1 ----
   - uses: git-checkout
     with:
       repository: https://github.com/railwayapp/railpack
       tag: v${{vars.railpack-version}}
-      expected-commit: ffdb0331677897577eafe61edc600aafdec387be
+      expected-commit: 562a043be17511b9965e574df446cdb425fa73d4
       destination: railpack-src
 
   - name: Build railpack from source
@@ -287,7 +290,7 @@ pipeline:
       export GOPATH="$(mktemp -d)"
       export GOCACHE="$(mktemp -d)"
       cd railpack-src
-      # 0-CVE gate: railpack v0.23.0's bundled module graph trails fixed releases
+      # 0-CVE gate: railpack's bundled module graph trails fixed releases
       # across x/net, x/crypto, x/text, x/mod, containerd/v2, buildkit, grpc,
       # in-toto-golang and otel/sdk. railpack does NOT import docker/docker (`go mod
       # why github.com/docker/docker` answers "main module does not need it"), so
@@ -301,6 +304,12 @@ pipeline:
       # (how railpack shipped x/crypto v0.54 against a v0.56 floor). Replaces
       # for modules the app does not use are dropped by tidy on their own.
       for f in $FLOOR; do
+        # Floors only: skip a module the tag already carries at or above the floor (or not at all),
+        # so a newer railpack is never downgraded by a floor written for an older one.
+        have="$(go list -m -f "{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}" "${f%%@*}" 2>/dev/null || true)"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        [ "$have" = "${f#*@}" ] && continue
+        [ "$(printf '%s\n%s\n' "${have#v}" "${f#*@v}" | sort -V | head -1)" = "${have#v}" ] || continue
         go mod edit -replace "${f%%@*}=${f}"
       done
       go mod tidy
@@ -324,16 +333,27 @@ pipeline:
       export CARGO_HOME="$(mktemp -d)"
       cd nixpacks-src
       # Single binary crate `nixpacks` (src/main.rs). Release profile, locked deps.
-      cargo build --release --locked --bin nixpacks
+      # nixpacks 1.41.0 is the last release and its 2023 lock trails fixes across
+      # actix-http, h2, mio, tokio, time, bytes, unsafe-libyaml, url/idna, rustix, rand.
+      # Raise every crate to its newest semver-compatible release (cargo update never
+      # moves a crate down or across a major), then build locked to that lock.
+      cargo update
+      # vex.openvex.json clears serde_with 2.3.3 (KeyValueMap, never used: nixpacks only uses
+      # skip_serializing_none) and remove_dir_all 0.5.3 (its own code is Windows-only; on
+      # Linux it re-exports std::fs::remove_dir_all). Fail if nixpacks starts using KeyValueMap.
+      kvm="$(grep -rl "KeyValueMap" src || true)"
+      [ -z "$kvm" ] || { echo "nixpacks now uses serde_with KeyValueMap: $kvm; revisit vex.openvex.json"; exit 1; }
+      cargo auditable build --release --locked --bin nixpacks
+      readelf -S target/release/nixpacks | grep -q dep-v0 || { echo "nixpacks has no .dep-v0 section"; exit 1; }
       install -Dm0755 target/release/nixpacks "${{targets.destdir}}/usr/local/bin/nixpacks"
       "${{targets.destdir}}/usr/local/bin/nixpacks" --version
 
-  # ---- mise (Rust) -- jdx/mise v2026.3.17 ----
+  # ---- mise (Rust) -- jdx/mise v2026.9.15 ----
   - uses: git-checkout
     with:
       repository: https://github.com/jdx/mise
       tag: v${{vars.mise-version}}
-      expected-commit: 073698a857f1237d0359e203ca52ce8b3957f5bd
+      expected-commit: c7c8b86c1b338d5568e077f12bd3fd15e75b94fc
       destination: mise-src
 
   - name: Build mise from source
@@ -344,7 +364,8 @@ pipeline:
       # mise is the workspace root binary crate. Build release; openssl-dev satisfies
       # its native-tls link. Stable path /usr/local/bin/mise; the entrypoint seeds the
       # railpack-expected /tmp/railpack/mise/mise-<version> copy at start.
-      cargo build --release --bin mise
+      cargo auditable build --release --bin mise
+      readelf -S target/release/mise | grep -q dep-v0 || { echo "mise has no .dep-v0 section"; exit 1; }
       install -Dm0755 target/release/mise "${{targets.destdir}}/usr/local/bin/mise"
       "${{targets.destdir}}/usr/local/bin/mise" --version
 
