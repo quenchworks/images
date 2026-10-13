@@ -72,6 +72,9 @@ environment:
       - openssl-dev             # system OpenSSL (NOT vendored) for the TLS stack
       - perl                    # openssl-sys build scripts probe with perl
       - __RUST__               # Wolfi rust toolchain matching upstream rust-toolchain.toml (build.conf RUST)
+      # cargo auditable embeds the crate list in a .dep-v0 section; without it Trivy sees
+      # zero Rust packages in the binary and the gate passes blind (2026-10-13 sweep).
+      - cargo-auditable
 
 pipeline:
   - uses: git-checkout
@@ -115,9 +118,27 @@ pipeline:
       cd meilisearch
       export OPENSSL_NO_VENDOR=1
       export MEILI_MINI_DASHBOARD_ASSETS="$PWD/mini-dashboard.zip"
-      cargo build --release --locked \
+      # Raise vulnerable crates to their fixed release on the same semver line (never down).
+      cfloor() {
+        line="${2%.*}"
+        locked() { awk -v n="$1" '$0=="name = \""n"\"" {getline; gsub(/version = |"/,""); print}' Cargo.lock; }
+        for v in $(locked "$1"); do
+          case "$v" in "$line".*) ;; *) continue ;; esac
+          [ "$v" = "$2" ] && continue
+          [ "$(printf '%s\n%s\n' "$v" "$2" | sort -V | head -1)" = "$v" ] || continue
+          cargo update -p "$1@$v" --precise "$2"
+        done
+        for v in $(locked "$1"); do
+          case "$v" in "$line".*) ;; *) continue ;; esac
+          [ "$(printf '%s\n%s\n' "$v" "$2" | sort -V | head -1)" = "$2" ] \
+            || { echo "$1 $v is still below the $2 floor"; exit 1; }
+        done
+      }
+      cfloor rustls 0.23.45         # GHSA-2mjx-qc3c-rqvc
+      cargo auditable build --release --locked \
         --features mini-dashboard,meilisearch-types/all-tokenizations \
         --bin meilisearch
+      readelf -S target/release/meilisearch | grep -q dep-v0 || { echo "target/release/meilisearch has no .dep-v0 section"; exit 1; }
       install -Dm0755 target/release/meilisearch "${{targets.destdir}}/usr/bin/meilisearch"
 
   - runs: |
