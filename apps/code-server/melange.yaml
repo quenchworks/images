@@ -32,6 +32,7 @@ environment:
       - busybox
       - curl
       - ca-certificates-bundle
+      - binutils               # readelf for the Rust .dep-v0 check
 
 pipeline:
   # coder publishes separate amd64/arm64 prebuilt tarballs, so fetch the one matching
@@ -76,6 +77,35 @@ pipeline:
       # (this is the VS Code extension, not the npm CLI, which isn't even shipped). npm
       # still runs fine from the integrated terminal; only the scripts side-panel is gone.
       rm -rf "$dest/lib/vscode/extensions/npm"
+
+      # Rust blind spot (2026-10-13): Trivy reads crates only from a .dep-v0 section or a
+      # shipped Cargo.lock, and none of the bundled Rust binaries has either. The GitHub
+      # Copilot agent natives (extensions/copilot with @github/copilot, the core
+      # @github/copilot-sdk-linux-* runtime, tgrep) and the @microsoft/mxc-sdk agent
+      # sandbox binaries are closed prebuilts: no source, no lock, and the copilot
+      # runtime.node links rustls 0.23.42 (GHSA-2mjx) and ammonia 4.1.3 (CVE-2026-102342),
+      # which no recipe can fix. They are removed, as VSCodium does; VS Code loads both
+      # lazily (dynamic import / runtime lookup), so the editor runs without them and the
+      # chat panel offers the extension instead. Core search keeps @vscode/ripgrep-universal
+      # rg, built from ripgrep tag 15.0.0: its tag Cargo.lock ships beside it.
+      rm -rf "$dest/lib/vscode/extensions/copilot" "$dest/lib/vscode/node_modules/@microsoft/mxc-sdk/bin"
+      rm -rf "$dest"/lib/vscode/node_modules/@github/copilot-sdk-linux-*
+      rg="$(ls "$dest"/lib/vscode/node_modules/@vscode/ripgrep-universal/bin/*/rg)"
+      case "$("$rg" --version | head -1)" in
+        "ripgrep 15.0.0 (rev 3a612f88b8)") ;;
+        *) echo "bundled rg is not ripgrep 15.0.0 rev 3a612f88b8; ship its tag Cargo.lock"; "$rg" --version; exit 1 ;;
+      esac
+      curl -fsSL -o rg.Cargo.lock https://raw.githubusercontent.com/BurntSushi/ripgrep/3a612f88b805e14aef45bfa43e25a54abc6297fc/Cargo.lock
+      echo "257bfa1eeacfa4d8222e2c50f9d2f8d15ef07e96adee46eaa87839f3b6cfa3b4  rg.Cargo.lock" | sha256sum -c -
+      install -Dm0644 rg.Cargo.lock "$dest/lib/vscode/node_modules/@vscode/ripgrep-universal/Cargo.lock"
+      # Every Rust artifact must carry .dep-v0 or ship beside a Cargo.lock (same dir or a parent).
+      find "$dest" -type f -size +100k | while read -r f; do
+        LC_ALL=C grep -qa -e 'cargo/registry/src' -e 'rustc version' "$f" || continue
+        readelf -S "$f" 2>/dev/null | grep -q dep-v0 && continue
+        d="$(dirname "$f")"; while [ "$d" != "$dest" ] && [ ! -e "$d/Cargo.lock" ]; do d="$(dirname "$d")"; done
+        [ -e "$d/Cargo.lock" ] && continue
+        echo "Rust artifact with neither .dep-v0 nor a Cargo.lock: ${f#$dest}"; exit 1
+      done
 
       # Bump the vendored pure-JS deps that carry FIXABLE CVEs to their upstream fixed
       # versions. This is a security update, not a gate weaken — same major line, same
