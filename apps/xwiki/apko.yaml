@@ -1,0 +1,50 @@
+# Assembles the XWiki image: Tomcat 10.1 on Wolfi openjdk-21, nonroot uid 1001,
+# multi-arch, SBOM by apko. Serves http://:8080/xwiki. Point it at PostgreSQL with
+# DB_HOST, DB_PORT (5432), DB_DATABASE (xwiki), DB_USER (xwiki) and DB_PASSWORD.
+# Data (attachments, Solr index, extensions) lives in /var/lib/xwiki/data.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-xwiki@local
+
+accounts:
+  groups:
+    - groupname: xwiki
+      gid: 1001
+  users:
+    - username: xwiki
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  - path: /var/lib/xwiki
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  JAVA_OPTS: "-Xmx1024m"
+
+entrypoint:
+  command: /usr/bin/xwiki-entrypoint.sh
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-xwiki"
+  org.opencontainers.image.licenses: "LGPL-2.1-only"

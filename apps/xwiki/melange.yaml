@@ -1,0 +1,172 @@
+# Assembles XWiki from release artifacts. Nothing is compiled:
+#   - Apache Tomcat 10.1.61 (Jakarta Servlet 5, the container upstream's image uses)
+#   - xwiki-platform-distribution-war-<v>.war, exploded to webapps/xwiki with its
+#     vulnerable jars swapped (below)
+#   - the PostgreSQL JDBC driver
+# The entrypoint renders hibernate.cfg.xml from DB_* environment variables into
+# /tmp/xwiki (never onto the data volume), as upstream's image does with sed.
+package:
+  name: quench-xwiki
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened XWiki on Tomcat 10.1"
+  copyright:
+    - license: LGPL-2.1-only
+  dependencies:
+    runtime:
+      - busybox
+      - ca-certificates-bundle
+      - openjdk-21-jre
+      - fontconfig
+      - ttf-dejavu
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - curl
+
+pipeline:
+  - runs: |
+      set -eu
+      V=${{package.version}}
+      M=https://repo1.maven.org/maven2
+      get() { curl -fsSL --retry 5 -o "$1" "$2"; echo "$3  $1" | sha256sum -c -; }
+
+      # Tomcat 10.1 (sha256 of the download; Apache's .sha512 matches it)
+      get /tmp/tomcat.tgz https://archive.apache.org/dist/tomcat/tomcat-10/v10.1.61/bin/apache-tomcat-10.1.61.tar.gz \
+        a9341c2ed0639896eb0760320c42430a303bef917f83ff3e6f16046f3ae2af79
+      dest="${{targets.destdir}}/opt/tomcat"
+      install -d "$dest"
+      tar xzf /tmp/tomcat.tgz -C "$dest" --strip-components=1 \
+        apache-tomcat-10.1.61/bin apache-tomcat-10.1.61/lib apache-tomcat-10.1.61/conf \
+        apache-tomcat-10.1.61/LICENSE apache-tomcat-10.1.61/NOTICE
+      find "$dest/bin" \( -name '*.bat' -o -name '*.exe' -o -name '*.tar.gz' \) -delete
+      install -d "$dest/webapps"
+      ln -s /tmp/tomcat/logs "$dest/logs"
+      ln -s /tmp/tomcat/temp "$dest/temp"
+      ln -s /tmp/tomcat/work "$dest/work"
+
+      # The WAR (sha256 matches the published .sha1 and xwiki/xwiki-docker)
+      get /tmp/xwiki.war "https://maven.xwiki.org/releases/org/xwiki/platform/xwiki-platform-distribution-war/$V/xwiki-platform-distribution-war-$V.war" __SHA256__
+      app="$dest/webapps/xwiki"
+      install -d "$app"
+      (cd "$app" && unzip -q /tmp/xwiki.war)
+      lib="$app/WEB-INF/lib"
+
+      # Jar swaps (measured 2026-10-14, trivy comprehensive on both WARs). Each swap
+      # replaces only copies OLDER than the fix, drops the stale .xed descriptor next to
+      # it (XWiki then reads the jar pom), and fails when nothing matches at all.
+      swap() {  # <glob> <maven path> <sha256>
+        local new want n=0 kept=0 v
+        new="$(basename "$2")"
+        want="$(echo "$new" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)"
+        for j in "$lib"/$1; do
+          [ -f "$j" ] || continue
+          v="$(basename "$j" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)"
+          if [ "$(printf '%s\n%s\n' "$v" "$want" | sort -V | head -1)" = "$want" ]; then
+            kept=$((kept+1)); continue
+          fi
+          rm -f "$j" "${j%.jar}.xed"; n=$((n+1))
+        done
+        test "$((n + kept))" -gt 0 || { echo "FATAL: no jar matched $1, re-audit the swaps"; exit 1; }
+        [ "$n" = 0 ] || get "$lib/$new" "$M/$2" "$3"
+        echo "  $1 -> $new ($n replaced, $kept already at or above it)"
+      }
+      swap 'jackson-core-2.*.jar' com/fasterxml/jackson/core/jackson-core/2.22.3/jackson-core-2.22.3.jar \
+        8a501126a385b25841915d839508f8a66e2a0dbc8a6709d055ef3b3e852b094c
+      swap 'jackson-databind-2.*.jar' com/fasterxml/jackson/core/jackson-databind/2.22.3/jackson-databind-2.22.3.jar \
+        556db5439e206114346043f68d200497dc96a0bca62a360a81784092ebd0e0a9
+      # a stray 4.1.130 native lib next to the 4.2.x epoll classes; native only, no classes
+      swap 'netty-transport-native-epoll-4.*-linux-x86_64.jar' io/netty/netty-transport-native-epoll/4.2.18.Final/netty-transport-native-epoll-4.2.18.Final-linux-x86_64.jar \
+        32a340971182d901cea513588549cfadc392bb7342f930379a6e34d853a331f0
+      # 1.9.5 closes the two CRITICALs; CVE-2026-42440 needs 2.x (see build.conf STATUS)
+      swap 'opennlp-tools-1.*.jar' org/apache/opennlp/opennlp-tools/1.9.5/opennlp-tools-1.9.5.jar \
+        f59ea5f700349cde3b46c4d2be0679e5c027353aa5757f010de5ae4db24538f9
+      swap 'jsoup-1.*.jar' org/jsoup/jsoup/1.23.2/jsoup-1.23.2.jar \
+        e9d8c856856680427f096d156f02a414289985c930998fcb519ce5be39b42003
+      # 17.10 ships 7.5.10 and logback 1.3 (fixes only on 1.5, slf4j 2 already ships); 18.x has both newer
+      swap 'junrar-*.jar' com/github/junrar/junrar/7.6.1/junrar-7.6.1.jar \
+        bafdea12be5407898b4b6ba5487d8f9021e8edeae2d6da746f65b8e2f95f021d
+      swap 'logback-core-1.*.jar' ch/qos/logback/logback-core/1.5.38/logback-core-1.5.38.jar \
+        a855a0fc97b1d06f4efb1c3bba5ebd0eb508d8b58e68e89e4bbc23a85135c883
+      swap 'logback-classic-1.*.jar' ch/qos/logback/logback-classic/1.5.38/logback-classic-1.5.38.jar \
+        afb439c61fa287c9e1925523b13baab03617e724406a389d48b61c2c3e46b700
+      get "$lib/postgresql-42.7.13.jar" "$M/org/postgresql/postgresql/42.7.13/postgresql-42.7.13.jar" \
+        6e0e4cc2d8cae902084f8a2b18728b073a6fd9d1f87c9d8bff8f298c18185b93
+
+      # Data in /var/lib/xwiki/data; Hibernate config from the rendered file in /tmp/xwiki.
+      sed -i 's|^# environment.permanentDirectory = .*|environment.permanentDirectory = /var/lib/xwiki/data/|' "$app/WEB-INF/xwiki.properties"
+      grep -q '^environment.permanentDirectory = /var/lib/xwiki/data/' "$app/WEB-INF/xwiki.properties"
+      sed -i 's|^# xwiki.store.hibernate.path=.*|xwiki.store.hibernate.path=/tmp/xwiki/hibernate.cfg.xml|' "$app/WEB-INF/xwiki.cfg"
+      grep -q '^xwiki.store.hibernate.path=/tmp/xwiki/hibernate.cfg.xml' "$app/WEB-INF/xwiki.cfg"
+
+      share="${{targets.destdir}}/usr/share/xwiki"
+      install -d "$share"
+      cat > "$share/hibernate.cfg.xml.in" <<'EOX'
+      <?xml version="1.0" encoding="UTF-8"?>
+      <!DOCTYPE hibernate-configuration PUBLIC
+        "-//Hibernate/Hibernate Configuration DTD//EN"
+        "http://www.hibernate.org/dtd/hibernate-configuration-3.0.dtd">
+      <hibernate-configuration>
+        <session-factory>
+          <property name="hibernate.show_sql">false</property>
+          <property name="hibernate.use_outer_join">true</property>
+          <property name="hibernate.jdbc.use_scrollable_resultset">false</property>
+          <property name="hibernate.dbcp.defaultAutoCommit">false</property>
+          <property name="hibernate.dbcp.maxTotal">50</property>
+          <property name="hibernate.dbcp.maxIdle">5</property>
+          <property name="hibernate.dbcp.maxWaitMillis">30000</property>
+          <property name="hibernate.connection.provider_class">com.xpn.xwiki.store.DBCPConnectionProvider</property>
+          <property name="hibernate.connection.url">jdbc:postgresql://@DB_HOST@:@DB_PORT@/@DB_DATABASE@</property>
+          <property name="hibernate.connection.username">@DB_USER@</property>
+          <property name="hibernate.connection.password">@DB_PASSWORD@</property>
+          <property name="hibernate.connection.driver_class">org.postgresql.Driver</property>
+          <property name="hibernate.jdbc.use_streams_for_binary">false</property>
+          <property name="xwiki.virtual_mode">schema</property>
+          <property name="hibernate.connection.charSet">UTF-8</property>
+          <property name="hibernate.connection.useUnicode">true</property>
+          <property name="hibernate.connection.characterEncoding">utf8</property>
+          <mapping resource="xwiki.postgresql.hbm.xml"/>
+          <mapping resource="feeds.hbm.xml"/>
+          <mapping resource="instance.hbm.xml"/>
+          <mapping resource="notification-filter-preferences.hbm.xml"/>
+          <mapping resource="mailsender.hbm.xml"/>
+        </session-factory>
+      </hibernate-configuration>
+      EOX
+      chmod -R a+rX "$dest" "$share"
+
+      install -d "${{targets.destdir}}/usr/bin"
+      cat > "${{targets.destdir}}/usr/bin/xwiki-entrypoint.sh" <<'EOS'
+      #!/bin/sh
+      # Renders the Hibernate config from DB_HOST, DB_PORT, DB_DATABASE, DB_USER,
+      # DB_PASSWORD, then execs Tomcat Bootstrap (what catalina.sh run execs).
+      set -eu
+      : "${DB_HOST:?set DB_HOST to the PostgreSQL host}"
+      : "${DB_PASSWORD:?set DB_PASSWORD}"
+      mkdir -p /tmp/tomcat/logs /tmp/tomcat/temp /tmp/tomcat/work /tmp/xwiki /var/lib/xwiki/data
+      val() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/[\\|&]/\\&/g'; }
+      umask 077
+      sed -e "s|@DB_HOST@|$(val "$DB_HOST")|" -e "s|@DB_PORT@|$(val "${DB_PORT:-5432}")|" \
+        -e "s|@DB_DATABASE@|$(val "${DB_DATABASE:-xwiki}")|" -e "s|@DB_USER@|$(val "${DB_USER:-xwiki}")|" \
+        -e "s|@DB_PASSWORD@|$(val "$DB_PASSWORD")|" \
+        /usr/share/xwiki/hibernate.cfg.xml.in > /tmp/xwiki/hibernate.cfg.xml
+      umask 022
+      exec "$JAVA_HOME/bin/java" ${JAVA_OPTS:-} \
+        -Djava.awt.headless=true -Dfile.encoding=UTF-8 \
+        -Djava.util.logging.config.file=/opt/tomcat/conf/logging.properties \
+        -Djava.util.logging.manager=org.apache.juli.ClassLoaderLogManager \
+        -Djdk.tls.ephemeralDHKeySize=2048 \
+        -Djava.protocol.handler.pkgs=org.apache.catalina.webresources \
+        -Dcatalina.base=/opt/tomcat -Dcatalina.home=/opt/tomcat \
+        -Djava.io.tmpdir=/tmp/tomcat/temp \
+        -classpath /opt/tomcat/bin/bootstrap.jar:/opt/tomcat/bin/tomcat-juli.jar \
+        org.apache.catalina.startup.Bootstrap start
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/xwiki-entrypoint.sh"
