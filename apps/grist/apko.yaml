@@ -44,6 +44,9 @@ environment:
   NODE_PATH: _build:_build/ext:_build/stubs:ext/node_modules
   GRIST_SANDBOX_FLAVOR: gvisor
   GVISOR_FLAGS: "-unprivileged -ignore-cgroups"
+  # pidusage (sandbox memory) shells out to getconf and falls back to 100 and 4096 when it
+  # cannot; the image has no shell, so keep that fallback quiet
+  PIDUSAGE_SILENT: "1"
   GRIST_ORG_IN_PATH: "true"
   GRIST_HOST: 0.0.0.0
   GRIST_SERVE_SAME_ORIGIN: "true"

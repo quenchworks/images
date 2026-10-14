@@ -35,7 +35,7 @@ done
 echo "status ok"
 
 B=http://127.0.0.1:18484/o/docs/api
-api() { curl -fsS -H "x-boot-key: $KEY" -H 'Content-Type: application/json' "$@"; }
+api() { curl -fsS -m 120 -H "x-boot-key: $KEY" -H 'Content-Type: application/json' "$@"; }
 fail() { echo "$1"; docker logs "$NAME" 2>&1 | tail -40; exit 1; }
 ws="$(api "$B/orgs/current/workspaces")" || fail "workspaces request failed"
 ws="$(jq -r '.[0].id' <<<"$ws")"
