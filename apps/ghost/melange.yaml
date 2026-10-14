@@ -205,8 +205,11 @@ pipeline:
       ]
       out=[]
       done=False; dropped=set()
+      # An upstream override with the same key as ours is a duplicate YAML key and pnpm
+      # refuses the file (6.70.0 added its own handlebars@<4.7.10): drop theirs, keep ours.
+      drops=drops+tuple(a.strip().split(": ")[0].replace(chr(39),"")+":" for a in add)
       for ln in lines:
-          hit=[d for d in drops if ln.strip().startswith(d)]
+          hit=[d for d in drops if ln.strip().replace(chr(39),"").startswith(d)]
           if hit:
               dropped.add(hit[0]); continue
           out.append(ln)
