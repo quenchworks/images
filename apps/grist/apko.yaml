@@ -35,14 +35,15 @@ paths:
     gid: 1001
     permissions: 0o755
 
-# Upstream's image defaults, plus the pyodide formula sandbox. DENO_DIR must be writable
-# (deno keeps its cache there); /tmp is an emptyDir in the chart.
+# Upstream's image defaults, including its gVisor sandbox flags: runsc (with the
+# unprivileged-mode port) runs the data engine in a sandbox per document, with no network.
+# run.py keeps runsc state in /tmp/runsc; /tmp is an emptyDir in the chart.
 environment:
   NODE_ENV: production
   NODE_OPTIONS: "--no-deprecation --disable-proto=delete"
   NODE_PATH: _build:_build/ext:_build/stubs:ext/node_modules
-  GRIST_SANDBOX_FLAVOR: pyodide
-  DENO_DIR: /tmp/deno
+  GRIST_SANDBOX_FLAVOR: gvisor
+  GVISOR_FLAGS: "-unprivileged -ignore-cgroups"
   GRIST_ORG_IN_PATH: "true"
   GRIST_HOST: 0.0.0.0
   GRIST_SERVE_SAME_ORIGIN: "true"

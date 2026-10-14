@@ -1,18 +1,19 @@
 # Packages Grist onto Wolfi: the tagged source compiled with yarn (tsc + webpack), the
-# production dependencies with the 0-CVE pins below, and the pyodide formula sandbox.
+# production dependencies with the 0-CVE pins below, and the gVisor formula sandbox (runsc
+# from source with the unprivileged-mode port, plus a Python venv for the data engine).
 package:
   name: quench-grist
   version: __VER__
   epoch: 0
-  description: "Quenchworks hardened Grist spreadsheet-database with the pyodide formula sandbox, on Wolfi"
+  description: "Quenchworks hardened Grist spreadsheet-database with the gVisor formula sandbox, on Wolfi"
   copyright:
     - license: Apache-2.0
   dependencies:
     runtime:
       - nodejs-22
-      - glibc                # the official deno binary (libc + ld-linux)
-      - libgcc               # libgcc_s for deno
       - libstdc++            # @gristlabs/sqlite3 addon
+      - python-3.13          # the data engine, run inside runsc from /grist/sandbox_venv3
+      - procps               # pgrep: Grist finds and kills each sandbox's runsc processes
       - ca-certificates-bundle
       - tzdata
 
@@ -23,16 +24,18 @@ environment:
     repositories:
       - https://packages.wolfi.dev/os
     packages:
-      - bash                 # buildtools/build.sh and sandbox/pyodide/setup.sh
-      - build-base           # make + g++ if @gristlabs/sqlite3 has no prebuilt for this arch
+      - bash                 # buildtools/build.sh
+      - build-base           # make + g++ if @gristlabs/sqlite3 has no prebuilt for this arch; gcc for the prewarmer
       - busybox
       - ca-certificates-bundle
       - curl
+      - go-1.27              # gvisor go.mod: go 1.27.2
+      - linux-headers        # the freestanding prewarmer includes asm/unistd.h
       - nodejs-22
       - npm                  # native modules probe their prebuilt through npm first
       - node-gyp
-      - python-3.13          # node-gyp
-      - unzip
+      - python-3.13          # node-gyp, and the sandbox venv
+      - python-3.13-dev      # wrapt has no cp313 wheel and builds from source
       - yarn
 
 pipeline:
@@ -40,26 +43,78 @@ pipeline:
     with:
       uri: https://github.com/gristlabs/grist-core/archive/refs/tags/v__VER__.tar.gz
       expected-sha256: __SHA256__
-  # Deno runs the pyodide sandbox with dropped permissions. Upstream's release binary (per-arch
-  # zip, sha256 pinned in build.conf), not the Wolfi apk: Wolfi lags at 2.8.2 (CVE-2026-50185,
-  # CVE-2026-48504 and older rustls-webpki/quinn-proto). Same artifact and Cargo.lock as apps/deno.
+  # gVisor runsc, built from the go branch commit pinned in build.conf. Upstream Grist ships
+  # gristlabs/gvisor-unprivileged (runsc of 2022 on go1.17.6) whose --unprivileged flag starts
+  # the gofer and sentry without new namespaces, chroot or capabilities, so it runs in a
+  # default nonroot container. Stock runsc cannot (measured 2026-10-14: fork/exec
+  # /proc/self/exe: operation not permitted, it must unshare namespaces). The edit below
+  # re-applies that flag to current gVisor; every substitution must match exactly once.
+  # The go branch has no main for the gvisor_sentry sidecar and no prewarmer (both are
+  # bazel targets), so those two files come from the matching master commit.
   - runs: |
       set -eu
-      case "$(uname -m)" in
-        x86_64)  triple=x86_64-unknown-linux-gnu;  sha=__DENO_SHA_AMD__ ;;
-        aarch64) triple=aarch64-unknown-linux-gnu; sha=__DENO_SHA_ARM__ ;;
-        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
-      esac
-      curl -fsSL -o /tmp/deno.zip "https://github.com/denoland/deno/releases/download/v__DENO__/deno-${triple}.zip"
-      echo "${sha}  /tmp/deno.zip" | sha256sum -c -
-      unzip -q -d /tmp/deno-bin /tmp/deno.zip
-      install -Dm0755 /tmp/deno-bin/deno "${{targets.destdir}}/usr/bin/deno"
-      rm -rf /tmp/deno.zip /tmp/deno-bin
-      # the binary has no cargo-auditable data; ship the tag Cargo.lock so Trivy sees its crates
-      curl -fsSL -o /tmp/deno.lock "https://raw.githubusercontent.com/denoland/deno/v__DENO__/Cargo.lock"
-      echo "__DENO_SHA_LOCK__  /tmp/deno.lock" | sha256sum -c -
-      install -Dm0644 /tmp/deno.lock "${{targets.destdir}}/usr/share/doc/deno/Cargo.lock"
-      rm -f /tmp/deno.lock
+      export GOTOOLCHAIN=local CGO_ENABLED=0 GOFLAGS="-buildvcs=false -trimpath"
+      src=/tmp/gvisor; mkdir -p "$src"
+      curl -fsSL -o /tmp/gvisor.tgz "https://github.com/google/gvisor/archive/__GVISOR_GO__.tar.gz"
+      echo "__GVISOR_GO_SHA__  /tmp/gvisor.tgz" | sha256sum -c -
+      tar xzf /tmp/gvisor.tgz -C "$src" --strip-components=1
+      raw="https://raw.githubusercontent.com/google/gvisor/__GVISOR_SRC__"
+      mkdir -p "$src/runsc/cmd/sentry"
+      curl -fsSL -o "$src/runsc/cmd/sentry/sentry_main.go" "$raw/runsc/cmd/sentry/sentry_main.go"
+      curl -fsSL -o /tmp/prewarmer.c "$raw/runsc/prewarmer/prewarmer.c"
+      printf '%s  %s\n' __SENTRY_MAIN_SHA__ "$src/runsc/cmd/sentry/sentry_main.go" __PREWARMER_SHA__ /tmp/prewarmer.c | sha256sum -c -
+      cd "$src"
+      python3.13 - <<'PY'
+      def sub(path, old, new, everywhere=False):
+          s = open(path).read()
+          n = s.count(old)
+          if n == 0 or (n != 1 and not everywhere):
+              raise SystemExit(f"{path}: expected one match, found {n}: {old[:60]!r}")
+          open(path, "w").write(s.replace(old, new))
+      sub("runsc/config/config.go",
+          '\tTestOnlyAllowRunAsCurrentUserWithoutChroot bool `flag:"TESTONLY-unsafe-nonroot"`\n',
+          '\tTestOnlyAllowRunAsCurrentUserWithoutChroot bool `flag:"TESTONLY-unsafe-nonroot"`\n\n'
+          '\t// Unprivileged starts the sandbox and gofer as the current user without new\n'
+          '\t// namespaces, chroot or capabilities (gristlabs/gvisor --unprivileged).\n'
+          '\tUnprivileged bool `flag:"unprivileged"`\n')
+      sub("runsc/config/flags.go", '\tflagSet.Bool("rootless", false,',
+          '\tflagSet.Bool("unprivileged", false, "start the sandbox and gofer as the current user without new namespaces, chroot or capabilities.")\n'
+          '\tflagSet.Bool("rootless", false,')
+      for f in ("runsc/cmd/run.go", "runsc/cmd/do.go"):
+          sub(f, "\t\tif err := specutils.MaybeRunAsRoot(); err != nil {",
+              "\t\tif conf.Unprivileged {\n\t\t} else if err := specutils.MaybeRunAsRoot(); err != nil {")
+      g = "runsc/cmd/gofer.go"
+      sub(g, "\tconf := args[0].(*config.Config)\n\n\t// Set traceback level",
+          "\tconf := args[0].(*config.Config)\n\tif conf.Unprivileged {\n\t\tg.applyCaps = false\n\t\tg.setUpRoot = false\n\t}\n\n\t// Set traceback level")
+      sub(g, "conf.TestOnlyAllowRunAsCurrentUserWithoutChroot",
+          "(conf.TestOnlyAllowRunAsCurrentUserWithoutChroot || conf.Unprivileged)", everywhere=True)
+      sub(g, "\tif err := unix.Chroot(root); err != nil {",
+          "\tif conf.Unprivileged {\n\t\tlog.Warningf(\"Unprivileged: gofer serves %q without chroot\", root)\n"
+          "\t} else if err := unix.Chroot(root); err != nil {")
+      sub("runsc/container/container.go",
+          "\tif !rootlessEUID {\n\t\tif userNS, ok := specutils.GetNS(specs.UserNamespace, c.Spec); ok {",
+          "\tif conf.Unprivileged {\n\t\tnss = nil\n\t\tpinGoferNetNS = false\n"
+          "\t} else if !rootlessEUID {\n\t\tif userNS, ok := specutils.GetNS(specs.UserNamespace, c.Spec); ok {")
+      sb = "runsc/sandbox/sandbox.go"
+      sub(sb, "\tif conf.Network == config.NetworkHost || conf.DirectFS {\n\t\tif userns, ok := specutils.GetNS(specs.UserNamespace, args.Spec); ok {",
+          "\tif conf.Unprivileged {\n\t\tlog.Warningf(\"Unprivileged: sandbox starts as the current user without new namespaces or chroot\")\n\t\tnss = nil\n"
+          "\t} else if conf.Network == config.NetworkHost || conf.DirectFS {\n\t\tif userns, ok := specutils.GetNS(specs.UserNamespace, args.Spec); ok {")
+      sub(sb, "\tif conf.Rootless || conf.TestOnlyAllowRunAsCurrentUserWithoutChroot {\n\t\t// Cannot change ownership without CAP_CHOWN.",
+          "\tif conf.Rootless || conf.Unprivileged || conf.TestOnlyAllowRunAsCurrentUserWithoutChroot {\n\t\t// Cannot change ownership without CAP_CHOWN.")
+      print("unprivileged port applied")
+      PY
+      bin="${{targets.destdir}}/usr/bin"
+      install -d "$bin/gvisor-bin"
+      go build -o "$bin/runsc" ./runsc
+      go build -o "$bin/gvisor-bin/gvisor_sentry" ./runsc/cmd/sentry
+      # flags from runsc/prewarmer/BUILD (prewarmer_binary)
+      gcc -Os -ffreestanding -fno-sanitize=all -fno-stack-protector -fno-asynchronous-unwind-tables \
+        -fno-unwind-tables -fno-pie -no-pie -static -nostdlib -nostartfiles \
+        -Wl,--build-id=none -Wl,--gc-sections -Wl,-s -Wl,-n \
+        -o "$bin/gvisor-bin/gvisor-sentry-prewarmer" /tmp/prewarmer.c
+      flags="$("$bin/runsc" flags 2>&1)"
+      case "$flags" in *-unprivileged*) ;; *) echo "runsc lacks -unprivileged"; exit 1 ;; esac
+      cd / && rm -rf "$src" /tmp/gvisor.tgz /tmp/prewarmer.c
   - runs: |
       set -eu
       export GRIST_SKIP_EXT_AUTOSETUP=1 YARN_CACHE_FOLDER=/tmp/yarn-cache
@@ -96,14 +151,8 @@ pipeline:
       # image-size 2 is buffer-only and has no default export (CVE-2025-71330 is fixed only in 2.x)
       sed -i 's|^import imageSize from "image-size";|import { imageSize } from "image-size";|; s|await bluebird.fromCallback((cb: any) => imageSize(fileData.absPath, cb))|imageSize(await readFile(fileData.absPath))|' app/server/lib/ActiveDoc.ts
       grep -q 'imageSize(await readFile(fileData.absPath))' app/server/lib/ActiveDoc.ts
-      # Grist spawns the sandbox (deno) with a minimal env; pass DENO_DIR so deno keeps its cache on
-      # a writable path under a read-only root (it refuses to start without one)
-      sed -i 's|      ELECTRON_RUN_AS_NODE: "1",|      ELECTRON_RUN_AS_NODE: "1",\n      ...(process.env.DENO_DIR ? { DENO_DIR: process.env.DENO_DIR } : {}),|' app/server/lib/NSandbox.ts
-      grep -q 'DENO_DIR: process.env.DENO_DIR' app/server/lib/NSandbox.ts
       yarn install --network-timeout 600000
       yarn run build:prod
-      (cd sandbox/pyodide && make setup)
-      test "$(ls sandbox/pyodide/_build/packages/*.whl | wc -l)" -eq "$(grep -c '==' sandbox/requirements.txt)"
       yarn install --production --frozen-lockfile --ignore-scripts --network-timeout 600000
       # query-string 7 (minio) requires decode-uri-component as CommonJS; 0.5.0 (CVE-2026-45822) is
       # ESM-only, so take its default export (Node 22 loads ESM through require)
@@ -119,14 +168,6 @@ pipeline:
       sed -i "s|^import jsonLineParser from 'stream-json/jsonl/Parser.js';|const jsonLineParser = { make() { throw new Error('listenBucketNotification is not available in this image'); } };|" node_modules/minio/dist/esm/notification.mjs
       if grep -q "stream-json" node_modules/minio/dist/main/notification.js node_modules/minio/dist/esm/notification.mjs; then exit 1; fi
       rm -rf node_modules/stream-json node_modules/stream-chain
-      # the sandbox runs the deno installed above, not the npm deno binary
-      for d in sandbox/pyodide/worker/node_modules/@deno/*/; do rm -f "$d/deno"; ln -s /usr/bin/deno "$d/deno"; done
-      # the npm deno postinstall also copies its own binary (2.6.3, 21 hidden crate findings) to
-      # node_modules/deno/deno; Grist never runs it (SandboxPyodide.ts findDenoBinaryUncached
-      # only looks in node_modules/@deno/*), so drop it and keep package.json for that lookup
-      rm -f sandbox/pyodide/worker/node_modules/deno/deno
-      test -f sandbox/pyodide/worker/node_modules/deno/package.json
-      if [ -e sandbox/pyodide/worker/node_modules/deno/deno ]; then exit 1; fi
       # every pin must be what actually got installed, and the patched modules must load
       node -e '
         const want = { dompurify: "3.4.17", "js-yaml": "4.3.2", moment: "2.31.0", "image-size": "2.0.4",
@@ -144,11 +185,27 @@ pipeline:
       app="${{targets.destdir}}/grist"
       install -d "$app"
       cp -a _build static sandbox plugins assets bower_components node_modules package.json "$app/"
-      rm -rf "$app/sandbox/gvisor" "$app/sandbox/docker"
+      # gvisor is the only flavor shipped: no deno, no pyodide
+      rm -rf "$app/sandbox/pyodide" "$app/sandbox/docker"
+      # run.py starts with /usr/bin/env python3; the image has no env binary
+      sed -i '1s|^#!/usr/bin/env python3$|#!/usr/bin/python3.13|' "$app/sandbox/gvisor/run.py"
+      test "$(head -1 "$app/sandbox/gvisor/run.py")" = '#!/usr/bin/python3.13'
+      # The data engine venv. NSandbox.ts mounts <app>/sandbox_venv3 into the sandbox and starts
+      # its python (upstream's install:python3 layout); the requirements are upstream's pins.
+      venv="$app/sandbox_venv3"
+      python3.13 -m venv "$venv"
+      "$venv/bin/python" -m pip install --no-cache-dir --no-deps -r sandbox/requirements.txt
+      "$venv/bin/python" -m pip uninstall -y pip
+      find "$venv/bin" -mindepth 1 ! -name 'python*' -delete
+      "$venv/bin/python" -c 'import astroid, asttokens, chardet, dateutil, friendly_traceback, iso8601, openpyxl, phonenumbers, roman, six, sortedcontainers, wrapt; print("engine requirements import")'
 
 test:
   pipeline:
     - runs: |
         cd /grist
         node -e 'require("@gristlabs/sqlite3"); console.log("modules load")'
-        test -x sandbox/pyodide/worker/node_modules/@deno/*/deno
+        runsc --version
+        test -x /usr/bin/gvisor-bin/gvisor_sentry
+        test -x /usr/bin/gvisor-bin/gvisor-sentry-prewarmer
+        sandbox_venv3/bin/python -c 'import astroid, openpyxl'
+        test ! -e sandbox/pyodide
