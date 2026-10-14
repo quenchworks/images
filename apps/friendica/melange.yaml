@@ -1,0 +1,474 @@
+# Packages Friendica (the friendica-full release tarball from files.friendi.ca) for Wolfi.
+# The tarball is the finished application: PHP sources plus a resolved composer vendor/
+# tree and the npm/bower browser assets under view/asset/, so there is nothing to
+# compile. We fetch it, verify its sha256, float the vendored libraries and browser
+# assets that carry fixed CVEs, and install it as the docroot at /var/www/html. PHP-FPM,
+# its extensions and nginx come from Wolfi (apko.yaml); this package lays down the app
+# tree and the runtime wiring (nginx config, php-fpm pool + php.ini overrides,
+# supervisord with the background worker daemon, entrypoint).
+#
+# Writable state on a read-only rootfs:
+#   config/       -> /var/friendica/config (volume; the installer writes local.config.php)
+#   view/smarty3/ -> /tmp/friendica/smarty3 (compiled templates, rebuilt on demand)
+package:
+  name: quench-friendica
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Friendica (PHP), served by a Wolfi PHP-FPM + nginx runtime"
+  copyright:
+    - license: AGPL-3.0-or-later   # LICENSE is the GNU AGPL v3; sources say AGPL-3.0-or-later
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      # composer + the runtime's PHP line, for the vendor float below.
+      - composer
+      - php-8.3
+      - php-8.3-ctype
+      - php-8.3-ctype-config
+      - php-8.3-mbstring
+      - php-8.3-mbstring-config
+      - php-8.3-openssl
+      - php-8.3-openssl-config
+      - php-8.3-phar
+      - php-8.3-phar-config
+      - php-8.3-curl
+      - php-8.3-curl-config
+      - php-8.3-iconv
+      - php-8.3-iconv-config
+      - php-8.3-zip
+      - php-8.3-zip-config
+      - php-8.3-dom
+      - php-8.3-dom-config
+      - php-8.3-xml
+      - php-8.3-xml-config
+      - php-8.3-xmlreader
+      - php-8.3-xmlreader-config
+      - php-8.3-xmlwriter
+      - php-8.3-xmlwriter-config
+      - php-8.3-simplexml
+      - php-8.3-simplexml-config
+      - php-8.3-fileinfo
+      - php-8.3-fileinfo-config
+      - php-8.3-gd
+      - php-8.3-gd-config
+      - php-8.3-gmp
+      - php-8.3-gmp-config
+      - php-8.3-intl
+      - php-8.3-intl-config
+      - php-8.3-posix
+      - php-8.3-posix-config
+
+pipeline:
+  # The archive holds a top-level friendica-full-<VER>/; fetch it WITHOUT extraction and
+  # unpack it into its own dir (the workspace also holds melange-out).
+  - uses: fetch
+    with:
+      uri: https://files.friendi.ca/friendica-full-${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+      extract: false
+
+  - name: Install the Friendica tree as the docroot at /var/www/html
+    runs: |
+      set -eu
+      app="${{targets.destdir}}/var/www/html"
+      install -d -m 0755 "$app"
+      mkdir -p /tmp/friendica-src
+      tar -xzf "friendica-full-${{package.version}}.tar.gz" -C /tmp/friendica-src
+      cp -a "/tmp/friendica-src/friendica-full-${{package.version}}/." "$app/"
+      test -f "$app/index.php"
+      test -f "$app/bin/console.php"
+      test -f "$app/vendor/autoload.php"
+      grep -qx "${{package.version}}" "$app/VERSION"
+      # Dev-only lockfiles of asset build tooling (a Ruby docs toolchain and a yarn dev
+      # tree), never loaded at runtime.
+      rm -f "$app/view/asset/es-jquery-sortable/Gemfile.lock" "$app/view/asset/jquery-textcomplete/yarn.lock"
+      # config/ holds local.config.php, written by the installer: point it at the volume.
+      test -f "$app/config/local-sample.config.php"
+      rm -rf "$app/config"
+      ln -s /var/friendica/config "$app/config"
+      # Compiled Smarty templates: scratch space under /tmp (the entrypoint creates it).
+      rm -rf "$app/view/smarty3"
+      ln -s /tmp/friendica/smarty3 "$app/view/smarty3"
+      # The background worker daemon refuses to start without system.pidfile, which
+      # defaults to empty. Default it to /tmp; local.config.php can still override it.
+      # The first 'pidfile' entry is the system section's (the second is jetstream's).
+      f="$app/static/defaults.config.php"
+      php -r '$f=$argv[1]; $s=file_get_contents($f); $n=0;
+        $s=preg_replace("/\x27pidfile\x27 => \x27\x27,/", "\x27pidfile\x27 => \x27/tmp/friendica/daemon.pid\x27,", $s, 1, $n);
+        if ($n !== 1) { fwrite(STDERR, "pidfile default not found\n"); exit(1); }
+        file_put_contents($f, $s);' "$f"
+      grep -q "'pidfile' => '/tmp/friendica/daemon.pid'," "$f"
+
+  - uses: fetch
+    with:
+      uri: https://raw.githubusercontent.com/friendica/friendica/${{package.version}}/composer.json
+      expected-sha256: __CJSON_SHA__
+      extract: false
+
+  - uses: fetch
+    with:
+      uri: https://raw.githubusercontent.com/friendica/friendica/${{package.version}}/composer.lock
+      expected-sha256: __CLOCK_SHA__
+      extract: false
+
+  # vendor/ comes from the tag's composer.lock, so a fixed library goes in with a targeted
+  # `composer update` that regenerates the autoloader. Copying files over would leave new
+  # classes unloadable. A package is floated only while the release ships it below the
+  # floor, so a newer Friendica release is never pulled back down. The vcs repository
+  # (git.friendi.ca php-json-ld) is dropped: nothing from it is updated, its locked dist
+  # stays as installed, and composer would otherwise need git to read it.
+  #   guzzlehttp/guzzle 7.15.5: CVE-2026-69246 (HIGH), -69245, -67339, -67353/4/5,
+  #     -59883, -55568, -55767; it needs promises >=2.5.1 and psr7 >=2.13 (both float).
+  #   guzzlehttp/psr7 2.13.1: CVE-2026-48998, -49214, -55766, -59882.
+  #   paragonie/sodium_compat 1.24.2: CVE-2025-69277 (1.x line; 2.x needs PHP 8.1, and
+  #     composer.json pins the platform to PHP 7.4).
+  #   phpseclib/phpseclib 3.0.57: CVE-2026-32935, -44167 (HIGH), -55599, -84308, -40194.
+  #   smarty/smarty 4.5.8: CVE-2026-62992, -62993 (fixed in 4.5.7).
+  #   symfony/cache 5.4.53: CVE-2026-45073 (HIGH). symfony/process 5.4.51: CVE-2026-24739.
+  # ext-imagick and ext-apcu are root requirements the build env does not carry (the
+  # runtime has apcu; imagick is optional in Friendica and left out as a CVE source).
+  - name: Float vendored libraries to their fixed releases
+    runs: |
+      set -eu
+      app="${{targets.destdir}}/var/www/html"
+      cp composer.json composer.lock "$app/"
+      cd "$app"
+      export COMPOSER_ALLOW_SUPERUSER=1 COMPOSER_NO_INTERACTION=1 COMPOSER_HOME=/tmp/composer-home
+      php -r '$f="composer.json"; $j=json_decode(file_get_contents($f), true);
+        $j["repositories"]=array_values(array_filter($j["repositories"], fn($r) => $r["type"] !== "vcs"));
+        file_put_contents($f, json_encode($j, JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)."\n");'
+      want="guzzlehttp/guzzle:7.15.5 guzzlehttp/psr7:2.13.1 guzzlehttp/promises:2.5.3 paragonie/sodium_compat:1.24.2 phpseclib/phpseclib:3.0.57 smarty/smarty:4.5.8 symfony/cache:5.4.53 symfony/process:5.4.51"
+      have() {
+        php -r '$j=json_decode(file_get_contents("vendor/composer/installed.json"), true);
+          foreach (($j["packages"] ?? $j) as $p) { if ($p["name"] === $argv[1]) { echo ltrim($p["version"], "v"); exit(0); } }
+          exit(1);' "$1"
+      }
+      specs=""; names=""
+      for spec in $want; do
+        n="${spec%%:*}"; v="${spec#*:}"
+        h="$(have "$n")" || { echo "$n is not vendored any more; drop it from the float list" >&2; exit 1; }
+        if php -r 'exit(version_compare($argv[1], $argv[2], "<") ? 0 : 1);' "$h" "$v"; then
+          specs="$specs $spec"; names="$names $n"
+        fi
+      done
+      ign="--ignore-platform-req=ext-imagick --ignore-platform-req=ext-apcu"
+      if [ -n "$specs" ]; then
+        composer require --no-update --no-scripts $ign $specs
+        composer update --no-scripts --no-dev --optimize-autoloader $ign $names
+      fi
+      # Assert what the scanner reads: every package at or above its floor in installed.json.
+      for spec in $want; do
+        n="${spec%%:*}"; v="${spec#*:}"
+        h="$(have "$n")"
+        php -r 'exit(version_compare($argv[1], $argv[2], ">=") ? 0 : 1);' "$h" "$v" || { echo "$n $h below $v" >&2; exit 1; }
+        echo "$n $h"
+      done
+      # The npm assets must still be where composer-installers-extender put them.
+      test -f view/asset/jquery/package.json
+      grep -q "'install_path' => __DIR__ . '/../../view/asset/jquery'" vendor/composer/installed.php
+      # The release tarball ships neither file; keep the tree in that shape.
+      rm -rf composer.json composer.lock /tmp/composer-home
+
+  # Browser assets under view/asset/ come from asset-packagist and are pinned by Friendica's
+  # composer.json to old majors with fixed CVEs (dompurify ^1.0, jquery ^2.0, moment ^2.24).
+  # Each is replaced by its npm release tarball, only while the shipped copy is older.
+  #   dompurify 1.0.11 -> 3.4.16: CVE-2024-48910 (CRITICAL), CVE-2024-45801, -47875 and 19
+  #     more. The UMD build still exposes window.DOMPurify.sanitize (the only call used).
+  #   jquery 2.2.4 -> 3.7.1: NSWG-ECO-328 (HIGH), CVE-2015-9251, -2019-11358, -2020-11022,
+  #     -2020-11023. jQuery Migrate 3.5.2 is appended to dist/jquery.min.js (the file both
+  #     head.tpl templates load) so the 2.x APIs Friendica's scripts still call (.bind,
+  #     .load, .error event shorthands) keep working; its console warnings are muted.
+  #   moment 2.30.1 -> 2.31.0: CVE-2026-17495.
+  - uses: fetch
+    with:
+      uri: https://registry.npmjs.org/dompurify/-/dompurify-3.4.16.tgz
+      expected-sha256: d288ced25e6bda3e5fc76d1fc9bca899260cf886e005e84f232e686ada57f1b4
+      extract: false
+  - uses: fetch
+    with:
+      uri: https://registry.npmjs.org/jquery/-/jquery-3.7.1.tgz
+      expected-sha256: 68a9f787516da47c680e09c187bcbac4536b6f85d90eb882844e12919e583f53
+      extract: false
+  - uses: fetch
+    with:
+      uri: https://registry.npmjs.org/jquery-migrate/-/jquery-migrate-3.5.2.tgz
+      expected-sha256: d1a1d30cc6b6c867510c64d5eb3c7b39da3a37839e529f7cdfc9a696983af45d
+      extract: false
+  - uses: fetch
+    with:
+      uri: https://registry.npmjs.org/moment/-/moment-2.31.0.tgz
+      expected-sha256: efddf549c13aa7cf270f573d9c464978ab0810c0652673ae6af1189bb56ab3f8
+      extract: false
+
+  - name: Swap the browser assets up to their fixed releases when older
+    runs: |
+      set -eu
+      asset="${{targets.destdir}}/var/www/html/view/asset"
+      ver() { php -r 'echo json_decode(file_get_contents($argv[1]), true)["version"];' "$1/package.json"; }
+      older() { php -r 'exit(version_compare($argv[1], $argv[2], "<") ? 0 : 1);' "$1" "$2"; }
+      for spec in dompurify:3.4.16 jquery:3.7.1 moment:2.31.0; do
+        n="${spec%%:*}"; v="${spec#*:}"
+        h="$(ver "$asset/$n")"
+        if older "$h" "$v"; then
+          rm -rf "$asset/$n"
+          install -d -m 0755 "$asset/$n"
+          tar -xzf "$n-$v.tgz" -C "$asset/$n" --strip-components=1
+          chmod -R u=rwX,go=rX "$asset/$n"
+          if [ "$n" = jquery ]; then
+            mkdir -p /tmp/jqm
+            tar -xzf jquery-migrate-3.5.2.tgz -C /tmp/jqm --strip-components=1
+            f="$asset/jquery/dist/jquery.min.js"
+            { cat "$f"; printf '\n;window.jQuery.migrateMute=true;\n'; cat /tmp/jqm/dist/jquery-migrate.min.js; } > /tmp/jq.min.js
+            mv /tmp/jq.min.js "$f"
+            chmod 0644 "$f"
+            grep -q 'jQuery Migrate v3.5.2' "$f"
+          fi
+        fi
+        h="$(ver "$asset/$n")"
+        older "$h" "$v" && { echo "$n $h still below $v" >&2; exit 1; }
+        echo "$n $h"
+      done
+      # The files the templates load must exist after the swap.
+      test -f "$asset/jquery/dist/jquery.min.js"
+      test -f "$asset/dompurify/dist/purify.min.js"
+      test -f "$asset/moment/min/moment-with-locales.min.js"
+
+  - name: Install the nginx site config (FastCGI to php-fpm, port 8080, /var/www/html)
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/etc/friendica/conf.d"
+      # Run via `nginx -c /etc/friendica/nginx.conf`; /etc/nginx/nginx.conf belongs to the
+      # Wolfi nginx package. Nonroot and read-only-rootfs friendly: no user directive, pid
+      # and temp paths under /tmp, logs to stdout/stderr. Routing follows upstream's
+      # mods/sample-nginx.config.
+      cat > "$destdir/etc/friendica/nginx.conf" <<'EOF'
+      worker_processes auto;
+      pid /tmp/nginx.pid;
+      error_log /dev/stderr warn;
+
+      events {
+          worker_connections 1024;
+      }
+
+      http {
+          include       /etc/nginx/mime.types;
+          default_type  application/octet-stream;
+          access_log    /dev/stdout;
+
+          client_body_temp_path /tmp/nginx-client-body;
+          proxy_temp_path       /tmp/nginx-proxy;
+          fastcgi_temp_path     /tmp/nginx-fastcgi;
+          uwsgi_temp_path       /tmp/nginx-uwsgi;
+          scgi_temp_path        /tmp/nginx-scgi;
+
+          sendfile      on;
+          tcp_nopush    on;
+          keepalive_timeout 65;
+          server_tokens off;
+          # Matches upload_max_filesize/post_max_size in the php.ini below.
+          client_max_body_size 64m;
+          client_body_buffer_size 128k;
+
+          server {
+              listen 8080 default_server;
+              listen [::]:8080 default_server;
+              server_name _;
+
+              root  /var/www/html;
+              index index.php;
+              charset utf-8;
+
+              location / {
+                  try_files $uri /index.php?pagename=$uri&$args;
+              }
+              # webfinger, nodeinfo, host-meta: all answered by index.php.
+              location ^~ /.well-known/ {
+                  rewrite ^ /index.php?pagename=$uri;
+              }
+              # Never reachable over HTTP: config, code, CLI, caches.
+              location ^~ /config/      { return 403; }
+              location ^~ /bin/         { return 403; }
+              location ^~ /src/         { return 403; }
+              location ^~ /vendor/      { return 403; }
+              location ^~ /static/      { return 403; }
+              location ^~ /view/smarty3/ { return 403; }
+              location ~* \.(tpl|md|tgz|log|out|sql)$ { return 403; }
+              location ~ /\. { return 403; }
+
+              location ~* \.php$ {
+                  try_files $uri =404;
+                  include        /etc/nginx/fastcgi_params;
+                  fastcgi_split_path_info ^(.+\.php)(/.+)$;
+                  fastcgi_param  SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                  fastcgi_index  index.php;
+                  fastcgi_pass   127.0.0.1:9000;
+                  fastcgi_buffers 16 16k;
+                  fastcgi_buffer_size 32k;
+                  fastcgi_read_timeout 300;
+              }
+
+              # Chart drop-in server-level config (ConfigMap mounts land here).
+              include /etc/friendica/conf.d/*.conf;
+          }
+      }
+      EOF
+      : > "$destdir/etc/friendica/conf.d/.keep.conf"
+
+  - name: Install the php-fpm pool + php.ini overrides for nonroot / read-only rootfs
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/etc/php/php-fpm.d"
+      install -d "$destdir/etc/php/conf.d"
+
+      # The Wolfi pool (www.conf) sets user/group = nobody and zz-apko.conf pins listen to
+      # [::]:9000. A nonroot master (uid 1001) can't setuid workers, so user/group are
+      # ignored with a warning (fine). This zzz- override (loaded last) pins the socket to
+      # 127.0.0.1:9000 (what nginx passes to), keeps the master in the foreground, logs to
+      # stderr, and passes the environment through (MYSQL_*, FRIENDICA_* settings).
+      cat > "$destdir/etc/php/php-fpm.d/zzz-friendica.conf" <<'EOF'
+      [global]
+      daemonize = no
+      error_log = /proc/self/fd/2
+
+      [www]
+      listen = 127.0.0.1:9000
+      catch_workers_output = yes
+      decorate_workers_output = no
+      clear_env = no
+      pm = dynamic
+      pm.max_children = 16
+      pm.start_servers = 2
+      pm.min_spare_servers = 1
+      pm.max_spare_servers = 4
+      access.log = /proc/self/fd/2
+      EOF
+
+      cat > "$destdir/etc/php/conf.d/zzz-friendica.ini" <<'EOF'
+      expose_php = Off
+      memory_limit = 256M
+      apc.enable = 1
+      apc.enable_cli = 1
+      apc.shm_size = 64M
+      upload_max_filesize = 64M
+      post_max_size = 64M
+      max_execution_time = 300
+      max_input_time = 300
+      register_argc_argv = On
+      sys_temp_dir = /tmp
+      upload_tmp_dir = /tmp
+      session.save_path = /tmp
+      error_reporting = E_ALL & ~E_DEPRECATED & ~E_STRICT
+      display_errors = Off
+      log_errors = On
+      error_log = /proc/self/fd/2
+      opcache.enable = 1
+      opcache.enable_cli = 0
+      opcache.memory_consumption = 128
+      opcache.max_accelerated_files = 10000
+      opcache.revalidate_freq = 2
+      EOF
+
+  - name: Install the supervisord config + container entrypoint
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      install -d "$destdir/etc/friendica"
+      install -d "$destdir/usr/bin"
+
+      # supervisord runs php-fpm (127.0.0.1:9000), nginx (:8080) and Friendica's background
+      # worker daemon. It lives at /etc/friendica/supervisord.conf (NOT
+      # /etc/supervisord.conf, which the Wolfi supervisor-config package owns).
+      cat > "$destdir/etc/friendica/supervisord.conf" <<'EOF'
+      [supervisord]
+      nodaemon=true
+      logfile=/dev/stdout
+      logfile_maxbytes=0
+      pidfile=/tmp/supervisord.pid
+
+      [unix_http_server]
+      file=/tmp/supervisor.sock
+
+      [supervisorctl]
+      serverurl=unix:///tmp/supervisor.sock
+
+      [rpcinterface:supervisor]
+      supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+
+      [program:php-fpm]
+      command=/usr/bin/php-fpm --nodaemonize --fpm-config /etc/php/php-fpm.conf
+      autostart=true
+      autorestart=true
+      priority=10
+      stdout_logfile=/dev/stdout
+      stdout_logfile_maxbytes=0
+      stderr_logfile=/dev/stderr
+      stderr_logfile_maxbytes=0
+
+      [program:nginx]
+      command=/usr/sbin/nginx -c /etc/friendica/nginx.conf -g "daemon off;"
+      autostart=true
+      autorestart=true
+      priority=20
+      stdout_logfile=/dev/stdout
+      stdout_logfile_maxbytes=0
+      stderr_logfile=/dev/stderr
+      stderr_logfile_maxbytes=0
+
+      [program:worker]
+      command=/usr/bin/friendica-worker.sh
+      autostart=true
+      autorestart=true
+      priority=30
+      stdout_logfile=/dev/stdout
+      stdout_logfile_maxbytes=0
+      stderr_logfile=/dev/stderr
+      stderr_logfile_maxbytes=0
+      EOF
+
+      # The worker daemon refuses to start until the site is installed (and dies if the
+      # database goes away), so it is retried rather than left FATAL by supervisord.
+      cat > "$destdir/usr/bin/friendica-worker.sh" <<'EOF'
+      #!/bin/sh
+      cd /var/www/html
+      while :; do
+        [ -f config/local.config.php ] && php bin/console.php daemon start -f
+        sleep 30
+      done
+      EOF
+      chmod 0755 "$destdir/usr/bin/friendica-worker.sh"
+
+      cat > "$destdir/usr/bin/friendica-entrypoint.sh" <<'EOF'
+      #!/bin/sh
+      set -eu
+      mkdir -p /tmp/nginx-client-body /tmp/nginx-proxy /tmp/nginx-fastcgi \
+               /tmp/nginx-uwsgi /tmp/nginx-scgi /tmp/friendica/smarty3
+      exec supervisord -c /etc/friendica/supervisord.conf
+      EOF
+      chmod 0755 "$destdir/usr/bin/friendica-entrypoint.sh"
+
+  - name: Sanity-check the assembled tree
+    runs: |
+      set -eu
+      destdir="${{targets.destdir}}"
+      test -f "$destdir/var/www/html/index.php"
+      test -L "$destdir/var/www/html/config"
+      test -L "$destdir/var/www/html/view/smarty3"
+      # no prebuilt ELF may remain anywhere in the app tree
+      if find "$destdir/var/www/html" -type f -exec sh -c 'head -c4 "$1" | grep -q ELF' _ {} \; -print | grep -q .; then
+        echo "prebuilt ELF binaries left in the app tree" >&2; exit 1
+      fi
+      test -f "$destdir/etc/friendica/nginx.conf"
+      test -f "$destdir/etc/php/php-fpm.d/zzz-friendica.conf"
+      test -f "$destdir/etc/php/conf.d/zzz-friendica.ini"
+      test -f "$destdir/etc/friendica/supervisord.conf"
+      test -x "$destdir/usr/bin/friendica-entrypoint.sh"
+      test -x "$destdir/usr/bin/friendica-worker.sh"
