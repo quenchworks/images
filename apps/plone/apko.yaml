@@ -1,0 +1,55 @@
+# Plone backend runtime image. Minimal, nonroot, multi-arch, SBOM by apko.
+# waitress serves Zope on :8080. Data (Data.fs + blobs) lives on the /data volume;
+# PLONE_RELSTORAGE_DSN switches to RelStorage on PostgreSQL. The entrypoint renders its
+# Zope config under /tmp, so a read-only root needs /tmp writable.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-plone@local
+
+accounts:
+  groups:
+    - groupname: plone
+      gid: 1001
+  users:
+    - username: plone
+      uid: 1001
+      gid: 1001
+      homedir: /data
+  run-as: 1001
+
+environment:
+  HOME: /data
+  PATH: /opt/plone/venv/bin:/usr/bin:/bin
+  PYTHONDONTWRITEBYTECODE: "1"
+  PLONE_DATA: /data
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+work-dir: /data
+
+entrypoint:
+  command: /opt/plone/bin/plone-start
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-plone"
+  org.opencontainers.image.licenses: "GPL-2.0-only"

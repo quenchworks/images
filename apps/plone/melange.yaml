@@ -1,0 +1,276 @@
+# Packages the Plone backend (Products.CMFPlone + plone.restapi on Zope) into a venv at
+# /opt/plone/venv, pinned by the official constraints file for the release. Native
+# dependencies build from sdist against Wolfi libraries; Rust ones through cargo auditable.
+package:
+  name: quench-plone
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Plone backend (Zope + plone.restapi) on Wolfi"
+  copyright:
+    - license: GPL-2.0-only
+  dependencies:
+    runtime:
+      - python-3.13
+      - libffi
+      - libstdc++         # RelStorage cache extensions are C++
+      - libxml2
+      - libxslt
+      - libjpeg-turbo
+      - libwebp
+      - freetype
+      - zlib
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - python-3.13
+      - python-3.13-dev    # Python.h for every C extension
+      - py3.13-pip
+      - build-base
+      - pkgconf
+      - libffi-dev         # cffi from sdist
+      - libxml2-dev        # lxml from sdist
+      - libxslt-dev
+      - libjpeg-turbo-dev  # Pillow from sdist
+      - libwebp-dev
+      - freetype-dev
+      - zlib-dev
+      - rust
+      - cargo-auditable
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://dist.plone.org/release/__VER__/constraints.txt
+      expected-sha256: __CSHA256__
+      extract: false
+  - runs: |
+      set -eu
+      VER="${{package.version}}"
+      dest="${{targets.destdir}}"
+      VENV=/opt/plone/venv
+      # Floors over the release constraints, each closing a scan finding. Exact pins, and
+      # asserted after the install so an inert pin fails the build.
+      FLOORS="__FLOORS__"
+      python3.13 - constraints.txt $FLOORS <<'PY'
+      import re, sys
+      path, floors = sys.argv[1], dict(a.split("==") for a in sys.argv[2:])
+      norm = lambda n: re.sub(r"[-_.]+", "-", n).lower()
+      want = {norm(k): f"{k}=={v}\n" for k, v in floors.items()}
+      out, seen = [], set()
+      for line in open(path):
+          m = re.match(r"([A-Za-z0-9_.\-]+)==", line)
+          n = norm(m.group(1)) if m else None
+          if n in want:
+              if n in seen:
+                  continue
+              seen.add(n)
+              line = want[n]
+          out.append(line)
+      out += [want[n] for n in want if n not in seen]
+      open(path, "w").writelines(out)
+      PY
+      python3.13 -m venv "$VENV"
+      PIP="$VENV/bin/pip"
+      "$PIP" install --no-cache-dir --upgrade pip
+      # Every Rust build goes through `cargo auditable` (the wrapper reroutes only build
+      # and rustc) so the .dep-v0 section lists the crates and the gate scans them.
+      CW=$(mktemp -d)
+      printf '#!/bin/sh\ncase "$1" in build|rustc) exec /usr/bin/cargo auditable "$@";; esac\nexec /usr/bin/cargo "$@"\n' > "$CW/cargo"
+      chmod +x "$CW/cargo"
+      # The manylinux wheels bundle what the scan cannot see: Pillow ships libjpeg, libwebp,
+      # libtiff and more in pillow.libs, lxml links libxml2/libxslt statically, cffi links
+      # libffi statically, pyyaml links libyaml, and rpds-py (Rust) carries no crate list.
+      # All build from sdist; pyyaml without yaml-dev is the pure-Python loader.
+      PATH="$CW:$PATH" "$PIP" install --no-cache-dir -c constraints.txt \
+        --no-binary cffi,lxml,pillow,pyyaml,rpds-py \
+        "Plone==$VER" RelStorage pg8000
+      "$PIP" check
+      site="$VENV/lib/python3.13/site-packages"
+      if ls -d "$site"/*.libs 2>/dev/null | grep -q .; then echo "bundled native libs:"; ls -d "$site"/*.libs; exit 1; fi
+      # Rust extension check: fails on any Rust .so without .dep-v0 or the exec bit
+      # (Trivy needs both). Copied from apps/satosa.
+      RUSTSO="
+      import importlib.metadata as m, os, sys
+      for d in m.distributions(path=[sys.argv[1]]):
+          for f in d.files or ():
+              p = str(f.locate())
+              if '.so' not in f.name or os.path.islink(p):
+                  continue
+              b = open(p, 'rb').read()
+              if b'rustc version' not in b and b'.dep-v0' not in b and b'/cargo/registry/src/' not in b:
+                  continue
+              if sys.argv[2] == 'all' or b'.dep-v0' not in b or not os.stat(p).st_mode & 0o111:
+                  print(d.metadata['Name'] + '==' + d.version)
+                  break
+      "
+      BLIND=$("$VENV/bin/python" -c "$RUSTSO" "$site" blind)
+      test -z "$BLIND" || { echo "Rust extensions without .dep-v0: $BLIND"; exit 1; }
+      ALL=$("$VENV/bin/python" -c "$RUSTSO" "$site" all)
+      echo "Rust extensions, all auditable:" $ALL
+      echo "$ALL" | grep -qi '^rpds' || { echo "rpds-py not found as a Rust extension"; exit 1; }
+      "$VENV/bin/python" - "$VER" $FLOORS <<'PY'
+      import sys, importlib.metadata as m
+      from PIL import features
+      import lxml.etree, relstorage, pg8000, plone.restapi
+      ver, floors = sys.argv[1], sys.argv[2:]
+      assert m.version("Plone") == ver, m.version("Plone")
+      for f in floors:
+          name, want = f.split("==")
+          assert m.version(name) == want, (name, m.version(name), want)
+      for codec in ("jpg", "webp", "zlib", "freetype2"):
+          assert features.check(codec), codec
+      print("Plone", ver, "CMFPlone", m.version("Products.CMFPlone"), "restapi", m.version("plone.restapi"),
+            "lxml on libxml2", lxml.etree.LIBXML_VERSION, "floors ok:", len(floors))
+      PY
+      "$PIP" uninstall -y pip
+      install -d "${dest}/opt/plone/bin"
+      cp -a "$VENV" "${dest}/opt/plone/venv"
+      # Entrypoint: renders zope.conf + zope.ini from the environment, creates the admin
+      # user and the site once, then serves with waitress.
+      cat > "${dest}/opt/plone/bin/plone-start" <<'PY'
+      #!/opt/plone/venv/bin/python
+      import os, subprocess
+      e = os.environ.get
+      data = e("PLONE_DATA", "/data")
+      etc = e("PLONE_ETC", "/tmp/plone")
+      dsn = e("PLONE_RELSTORAGE_DSN")
+      cache = e("PLONE_CACHE_SIZE", "30000")
+      os.makedirs(etc, exist_ok=True)
+      if dsn:
+          # RelStorage on PostgreSQL through pg8000 (pure Python). Blobs live in the
+          # database; blobcache is a local cache only.
+          os.makedirs(f"{data}/blobcache", mode=0o700, exist_ok=True)
+          storage = f"""%import relstorage
+      <zodb_db main>
+        mount-point /
+        cache-size {cache}
+        <relstorage>
+          blob-dir {data}/blobcache
+          shared-blob-dir false
+          keep-history {e("PLONE_RELSTORAGE_KEEP_HISTORY", "false")}
+          <postgresql>
+            driver pg8000
+            dsn {dsn}
+          </postgresql>
+        </relstorage>
+      </zodb_db>"""
+      else:
+          os.makedirs(f"{data}/filestorage", exist_ok=True)
+          os.makedirs(f"{data}/blobstorage", mode=0o700, exist_ok=True)
+          storage = f"""<zodb_db main>
+        mount-point /
+        cache-size {cache}
+        <blobstorage>
+          blob-dir {data}/blobstorage
+          <filestorage>
+            path {data}/filestorage/Data.fs
+          </filestorage>
+        </blobstorage>
+      </zodb_db>"""
+      conf = f"{etc}/zope.conf"
+      with open(conf, "w") as f:
+          f.write(f"""instancehome /opt/plone
+      clienthome {data}
+      debug-mode off
+      security-policy-implementation C
+      verbose-security off
+      default-zpublisher-encoding utf-8
+      {storage}
+      """)
+      with open(f"{etc}/zope.ini", "w") as f:
+          f.write(f"""[app:zope]
+      use = egg:Zope#main
+      zope_conf = {conf}
+
+      [filter:translogger]
+      use = egg:Paste#translogger
+      setup_console_handler = False
+
+      [pipeline:main]
+      pipeline = egg:Zope#httpexceptions translogger zope
+
+      [server:main]
+      use = egg:waitress#main
+      listen = {e("PLONE_LISTEN", "*:8080")}
+      threads = {e("PLONE_THREADS", "4")}
+      clear_untrusted_proxy_headers = false
+      max_request_body_size = 1073741824
+
+      [loggers]
+      keys = root, wsgi
+
+      [handlers]
+      keys = console
+
+      [formatters]
+      keys = generic
+
+      [logger_root]
+      level = {e("PLONE_LOG_LEVEL", "INFO")}
+      handlers = console
+
+      [logger_wsgi]
+      level = INFO
+      handlers = console
+      qualname = wsgi
+      propagate = 0
+
+      [handler_console]
+      class = StreamHandler
+      args = (sys.stdout,)
+      formatter = generic
+
+      [formatter_generic]
+      format = %(asctime)s %(levelname)s [%(name)s] %(message)s
+      """)
+      venv = "/opt/plone/venv/bin"
+      subprocess.run([f"{venv}/zconsole", "run", conf, "/opt/plone/bin/create_site.py"], check=True)
+      os.execv(f"{venv}/runwsgi", ["runwsgi", f"{etc}/zope.ini"])
+      PY
+      cat > "${dest}/opt/plone/bin/create_site.py" <<'PY'
+      # Run by plone-start through `zconsole run`, with the Zope root bound to `app`.
+      # Adds the admin user and the Plone site on first boot; a no-op afterwards.
+      import os, secrets, transaction
+      from AccessControl.SecurityManagement import newSecurityManager
+      from Testing.makerequest import makerequest
+      e = os.environ.get
+      app = makerequest(globals()["app"])
+      acl = app.acl_users
+      user = e("PLONE_ADMIN_USER", "admin")
+      if acl.getUserById(user) is None:
+          pw = e("PLONE_ADMIN_PASSWORD") or secrets.token_urlsafe(18)
+          acl._doAddUser(user, pw, ["Manager"], [])
+          transaction.commit()
+          print(f"created Zope admin user {user}" + ("" if e("PLONE_ADMIN_PASSWORD") else f" with generated password {pw}"), flush=True)
+      site_id = e("PLONE_SITE_ID", "Plone")
+      if site_id and site_id not in app.objectIds():
+          from plone.distribution.api import site as site_api
+          newSecurityManager(None, acl.getUserById(user).__of__(acl))
+          site_api.create(app, e("PLONE_DISTRIBUTION", "volto"), {
+              "site_id": site_id,
+              "title": e("PLONE_SITE_TITLE", "Plone site"),
+              "description": e("PLONE_SITE_DESCRIPTION", ""),
+              "default_language": e("PLONE_LANGUAGE", "en"),
+              "portal_timezone": e("PLONE_TIMEZONE", "UTC"),
+              "setup_content": e("PLONE_SETUP_CONTENT", "false").lower() == "true",
+          })
+          transaction.commit()
+          print(f"created Plone site /{site_id}", flush=True)
+      PY
+      chmod 0755 "${dest}/opt/plone/bin/plone-start"
+      chmod -R a+rX "${dest}/opt/plone"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /opt/plone/bin/plone-start
+        test -x /opt/plone/venv/bin/runwsgi
+        test -x /opt/plone/venv/bin/zconsole
