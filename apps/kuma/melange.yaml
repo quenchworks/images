@@ -12,10 +12,10 @@
 # kumahq/envoy-builds), which this control-plane image does not bundle. A
 # data-plane image is a separate concern.
 #
-# Version is stamped via -X on github.com/kumahq/kuma/v2/pkg/version so
+# Version is stamped via -X on github.com/kumahq/kuma/<major>/pkg/version (read from go.mod) so
 # `kuma-cp version` / `kumactl version` report the real release (mirrors upstream
 # mk/build.mk LD_FLAGS). Envoy compat version is a plain string constant from
-# mk/dev.mk (ENVOY_VERSION 1.38.2); it only affects the reported build info.
+# mk/dev.mk (ENVOY_VERSION, read at build time); it only affects the reported build info.
 #
 # go.mod now requires go >= 1.27, so this builds with go-1.27. Building on
 # go-1.26 failed with "go.mod requires go >= 1.27 (running go 1.26.8;
@@ -62,8 +62,13 @@ pipeline:
       export GOFLAGS=-mod=mod
       export GOTOOLCHAIN=local      # use the installed go-1.27, do not fetch go.mod's toolchain
       export GO111MODULE=on
-      VERPKG="github.com/kumahq/kuma/v2/pkg/version"
-      ENVOY_VERSION="1.38.2"        # mk/dev.mk: build-info string only
+      # module path moves per major (v2 -> v3 in 3.0.0); read it and the Envoy build-info
+      # string (mk/dev.mk ENVOY_VERSION) from the tarball instead of hardcoding a line.
+      VERPKG="$(awk '/^module /{print $2; exit}' go.mod)/pkg/version"
+      ENVOY_VERSION="$(awk -F'[ ?=]+' '/^ENVOY_VERSION /{print $2; exit}' mk/dev.mk)"
+      case "$VERPKG" in github.com/kumahq/kuma/*/pkg/version) ;; *) echo "unexpected module: $VERPKG"; exit 1 ;; esac
+      case "$ENVOY_VERSION" in [0-9]*.[0-9]*.[0-9]*) ;; *) echo "no ENVOY_VERSION in mk/dev.mk"; exit 1 ;; esac
+      echo "VERPKG=$VERPKG ENVOY_VERSION=$ENVOY_VERSION"
       LDFLAGS="-s -w \
         -X ${VERPKG}.version=${{package.version}} \
         -X ${VERPKG}.gitTag=v${{package.version}} \

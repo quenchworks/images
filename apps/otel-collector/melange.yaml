@@ -79,8 +79,11 @@ pipeline:
       # at ./_build, so the manifest's `../../../internal/obi-src` resolves to the
       # absolute path /internal/obi-src inside the build sandbox — extract there so
       # the vendored manifest can stay byte-for-byte identical to upstream's.
-      OBI_VERSION=v0.13.0
-      OBI_SHA256=fd0066942e83328dee88c410f5fb455c49ea0ef61fda8979c1cd5f790c7c03a0
+      OBI_VERSION=__OBI_VER__
+      OBI_SHA256=__OBI_SHA__
+      # the pin in build.conf must be the obi version this release's manifest names
+      grep -Eq "gomod: go\.opentelemetry\.io/obi(/collector)? ${OBI_VERSION}\$" manifest-${{package.version}}.yaml || {
+        echo "manifest-${{package.version}}.yaml does not name obi ${OBI_VERSION}"; exit 1; }
       OBI_TARBALL="obi-${OBI_VERSION}-source-generated.tar.gz"
       curl -fSL --retry 3 --retry-delay 1 -o "/tmp/${OBI_TARBALL}" \
         "https://github.com/open-telemetry/opentelemetry-ebpf-instrumentation/releases/download/${OBI_VERSION}/${OBI_TARBALL}"

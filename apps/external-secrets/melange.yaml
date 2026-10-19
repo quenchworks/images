@@ -4,7 +4,7 @@
 # the extracted root produces the full controller manager. The `all_providers` build
 # tag (upstream default) compiles in every secret backend via pkg/register. The same
 # binary serves the controller, webhook, and cert-controller (selected by subcommand
-# in the chart). ESO requires Go 1.26, so the build pins go-1.26. Output is a signed
+# in the chart). The Go line follows each release's go.mod (GO map in build.conf). Output is a signed
 # APK in Quenchworks' own repo. No upstream distro binaries.
 package:
   name: quench-external-secrets
@@ -27,7 +27,7 @@ environment:
       - build-base
       - busybox
       - ca-certificates-bundle
-      - go-1.26
+      - go-__GO__
 
 pipeline:
   - uses: fetch
@@ -37,7 +37,7 @@ pipeline:
   - runs: |
       export CGO_ENABLED=0
       export GOFLAGS=-mod=mod
-      export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's directive
+      export GOTOOLCHAIN=local      # use the installed go (GO map in build.conf), never fetch one
       export GO111MODULE=on
       # 0-CVE gate: minimal same-major bumps of indirect modules pulled in via the
       # replaced provider/generator submodules.
