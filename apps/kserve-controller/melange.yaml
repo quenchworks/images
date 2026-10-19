@@ -35,7 +35,10 @@ pipeline:
       # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
       # FLOOR is a floor, not a pin: only modules below it are raised, and the
       # shipped binary is asserted at or above it after the build.
-      FLOOR="github.com/moby/sys/user@v0.4.1 golang.org/x/net@v0.60.0 golang.org/x/text@v0.42.0 golang.org/x/crypto@v0.57.0 golang.org/x/sys@v0.48.0 golang.org/x/mod@v0.41.0 golang.org/x/oauth2@v0.36.0 google.golang.org/grpc@v1.83.2 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0"
+      # 2026-10-19: keda/v2 v2.21.0 clears CVE-2026-77524 (CRITICAL; 0.21.0 has v2.20.2). keda
+      # 2.21.0 requires grpc 1.84.0, oauth2 0.37.0 and otel 1.46.0, so those floors (and the grpc
+      # replace below) move with it: one `go get` refuses a set member below another's require.
+      FLOOR="github.com/moby/sys/user@v0.4.1 golang.org/x/net@v0.60.0 golang.org/x/text@v0.42.0 golang.org/x/crypto@v0.57.0 golang.org/x/sys@v0.48.0 golang.org/x/mod@v0.41.0 golang.org/x/oauth2@v0.37.0 google.golang.org/grpc@v1.84.0 github.com/kedacore/keda/v2@v2.21.0 go.opentelemetry.io/otel@v1.46.0 go.opentelemetry.io/otel/sdk@v1.46.0 go.opentelemetry.io/otel/trace@v1.46.0 go.opentelemetry.io/otel/metric@v1.46.0 go.opentelemetry.io/otel/sdk/metric@v1.46.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.46.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.46.0"
       MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
       below_floor() {
         awk -v floor="$FLOOR" -v tag="$1" '
@@ -55,9 +58,9 @@ pipeline:
       # Raise it only when upstream's replace is below the floor (0.21.0 replaces to v1.79.3);
       # an unconditional replace would pull a later release's higher grpc back down.
       g="$(go list -m -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' google.golang.org/grpc)"
-      if [ "$(printf '%s\n%s\n' "$g" v1.83.2 | sort -V | head -1)" != v1.83.2 ]; then
-        go mod edit -replace google.golang.org/grpc=google.golang.org/grpc@v1.83.2 \
-          -require google.golang.org/grpc@v1.83.2
+      if [ "$(printf '%s\n%s\n' "$g" v1.84.0 | sort -V | head -1)" != v1.84.0 ]; then
+        go mod edit -replace google.golang.org/grpc=google.golang.org/grpc@v1.84.0 \
+          -require google.golang.org/grpc@v1.84.0
       fi
       need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
       if [ -n "$need" ]; then go get $need; fi
