@@ -74,7 +74,7 @@ environment:
       - busybox
       - ca-certificates-bundle
       - python3   # rewrites composer.json / asserts the remediated lock (build only)
-      # composer + just enough php to run it: the release tarball vendors four packages
+      # composer + just enough php to run it: the release tarball vendors five packages
       # with fixable CVEs (see the bump step). Build env only; NOT in the runtime image.
       - composer
       - php-8.3
@@ -105,8 +105,9 @@ pipeline:
       # 48805 / 48806 / 48807 CRITICAL, 46638 / 48808 / 49981 HIGH, 46627 / 46628 /
       # 46635 / 47730 / 47732 MEDIUM -> fixed in 3.26/3.27), symfony/cache 5.4.46
       # (CVE-2026-45073 HIGH -> 5.4.52), symfony/process 5.4.47 (CVE-2026-24739 MEDIUM
-      # -> 5.4.51) and paragonie/sodium_compat 1.23.0 (CVE-2025-69277 MEDIUM -> 1.24.0).
-      # All four fixes are INSIDE the constraints phpMyAdmin declares, so this is a
+      # -> 5.4.51), paragonie/sodium_compat 1.23.0 (CVE-2025-69277 MEDIUM -> 1.24.0) and
+      # symfony/expression-language 5.4.45 (CVE-2026-109449 -> 5.4.54).
+      # All five fixes are INSIDE the constraints phpMyAdmin declares, so this is a
       # stale lock, not the drupal-11.2/11.3 kind of hard-pin conflict.
       #
       # A plain `composer update --no-dev` CANNOT be used here (it can for drupal): the
@@ -118,12 +119,13 @@ pipeline:
       # composer.json therefore PRUNES 20 shipped packages and silently removes PDF
       # export and two-factor auth. So we first restate the release's own resolved set
       # as exact requires -- making composer.json describe exactly what upstream shipped
-      # -- and only then raise the four floors. Result: 4 upgrades, 0 removals.
+      # -- and only then raise the five floors. Result: 5 upgrades, 0 removals.
       python3 - "$src" <<'PY'
       import json, sys
       root = sys.argv[1]
       bump = {"twig/twig": "^3.28.0", "symfony/cache": "^5.4.53",
-              "symfony/process": "^5.4.51", "paragonie/sodium_compat": "^1.24.0"}
+              "symfony/process": "^5.4.51", "paragonie/sodium_compat": "^1.24.0",
+              "symfony/expression-language": "^5.4.54"}
       cj = json.load(open(root + "/composer.json"))
       lock = json.load(open(root + "/composer.lock"))
       req = dict(cj["require"])
@@ -137,7 +139,8 @@ pipeline:
 
       composer update -d "$src" --with-dependencies --no-dev --no-scripts --no-audit \
         --no-progress --no-interaction --ignore-platform-reqs \
-        twig/twig symfony/cache symfony/process paragonie/sodium_compat
+        twig/twig symfony/cache symfony/process paragonie/sodium_compat \
+        symfony/expression-language
 
       # Assert the fixed versions really landed in the vendored inventory AND that the
       # optional runtime packages survived the re-resolve (a silent prune would break
@@ -148,7 +151,8 @@ pipeline:
       inst = json.load(open(root + "/vendor/composer/installed.json"))
       have = {p["name"]: p["version"].lstrip("v") for p in inst["packages"]}
       floors = {"twig/twig": (3, 27, 0), "symfony/cache": (5, 4, 52),
-                "symfony/process": (5, 4, 51), "paragonie/sodium_compat": (1, 24, 0)}
+                "symfony/process": (5, 4, 51), "paragonie/sodium_compat": (1, 24, 0),
+                "symfony/expression-language": (5, 4, 54)}
       bad = []
       for name, floor in floors.items():
           v = have.get(name)

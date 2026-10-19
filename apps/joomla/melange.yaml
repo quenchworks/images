@@ -134,6 +134,39 @@ pipeline:
       fi
       grep -A1 '"name": "enshrined/svg-sanitize"' "$vendor/composer/installed.json" | grep -q '"version": "1.0.0"'
 
+  # symfony/yaml 6.4.41 (vendored by 5.4.10, 6.1.4 and 6.2.0) has CVE-2026-109413, fixed in
+  # 6.4.45. 6.4.41...6.4.45 changes only Inline.php and Parser.php (same file set, same
+  # composer.json requires), so the composer classmap stays valid. Joomla ships a trimmed
+  # copy, so only the files it already has are replaced.
+  - uses: fetch
+    with:
+      uri: https://github.com/symfony/yaml/archive/refs/tags/v6.4.45.tar.gz
+      expected-sha256: fffd1710809b974084a658551835224e502fa938c3f081ee8428d7b81164a0d7
+      extract: false
+
+  - name: Swap the vendored symfony/yaml up to 6.4.45 when it is older
+    runs: |
+      set -eu
+      vendor="${{targets.destdir}}/var/www/html/libraries/vendor"
+      have=$(grep -A1 '"name": "symfony/yaml"' "$vendor/composer/installed.json" | sed -n 's/.*"version": "v\([^"]*\)".*/\1/p')
+      test -n "$have"
+      case "$have" in 6.4.*) ;; *) echo "symfony/yaml $have is not on the 6.4 line" >&2; exit 1 ;; esac
+      if [ "$(printf '%s\n' "$have" 6.4.45 | sort -V | head -1)" = "$have" ] && [ "$have" != 6.4.45 ]; then
+        mkdir -p /tmp/symfony-yaml
+        tar -xzf v6.4.45.tar.gz -C /tmp/symfony-yaml --strip-components=1
+        cd "$vendor/symfony/yaml"
+        find . -type f | while read -r f; do
+          test -f "/tmp/symfony-yaml/$f" || { echo "symfony/yaml 6.4.45 lacks $f" >&2; exit 1; }
+          cp "/tmp/symfony-yaml/$f" "$f"
+          cmp "/tmp/symfony-yaml/$f" "$f"
+        done
+        ref=a778aba2d7130eba6150cc80cb692988a361ee4b
+        sed -i "/\"name\": \"symfony\/yaml\"/,/\"type\": \"library\"/{s/\"v$have\"/\"v6.4.45\"/;s/\"$have.0\"/\"6.4.45.0\"/;s/[0-9a-f]\{40\}/$ref/g}" "$vendor/composer/installed.json"
+        sed -i "/'symfony\/yaml' => array(/,/),/{s/'v$have'/'v6.4.45'/;s/'$have.0'/'6.4.45.0'/;s/[0-9a-f]\{40\}/$ref/}" "$vendor/composer/installed.php"
+      fi
+      grep -A1 '"name": "symfony/yaml"' "$vendor/composer/installed.json" | grep -q '"version": "v6.4.45"'
+      grep -A1 "'symfony/yaml' => array(" "$vendor/composer/installed.php" | grep -q "'v6.4.45'"
+
   - name: Install the nginx site config (FastCGI to php-fpm, port 8080, /var/www/html)
     runs: |
       set -eu

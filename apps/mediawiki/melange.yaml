@@ -112,12 +112,21 @@ pipeline:
   #     float with it (the newest 2.x of each).
   #   web-auth/webauthn-lib 5.3.5: GHSA-gq4g-fpc9-vjfq; the lowest fix, because
   #     5.3.9 would also drag cbor-php and cose-lib forward.
+  #   symfony/yaml 5.4.54 / 6.4.45 / 7.4.18, per line: CVE-2026-109413.
   - name: Float vendored libraries to their fixed releases
     runs: |
       set -eu
       cd "${{targets.destdir}}/var/www/html/vendor"
       export COMPOSER_ALLOW_SUPERUSER=1 COMPOSER_NO_INTERACTION=1 COMPOSER_HOME=/tmp/composer-home
       want="guzzlehttp/guzzle:7.15.2 guzzlehttp/psr7:2.13.1 guzzlehttp/promises:2.5.3 web-auth/webauthn-lib:5.3.5"
+      # symfony/yaml CVE-2026-109413 is fixed per major (5.4.54, 6.4.45, 7.4.18) and
+      # each line pins its own major exactly (1.43 on 5.4, 1.45 on 6.4, 1.46 on 7.4).
+      case "$(sed -n -E 's/.*"symfony\/yaml": "([0-9]+)\..*/\1/p' composer.json)" in
+        5) want="$want symfony/yaml:5.4.54" ;;
+        6) want="$want symfony/yaml:6.4.45" ;;
+        7) want="$want symfony/yaml:7.4.18" ;;
+        *) echo "symfony/yaml: unexpected major in vendor/composer.json" >&2; exit 1 ;;
+      esac
       specs=""; names=""
       for spec in $want; do
         n="${spec%%:*}"
