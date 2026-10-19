@@ -22,7 +22,10 @@ for b in detect build release; do
 done
 echo "ccaas builder binaries present"
 
-docker run -d --name "$NAME" -e CORE_OPERATIONS_LISTENADDRESS=0.0.0.0:9443 \
+# core.yaml's vm.endpoint is the Docker socket; with no socket the docker health check keeps
+# /healthz at 503. Chaincode runs through the ccaas external builder, so clear it, as a
+# Kubernetes deployment does.
+docker run -d --name "$NAME" -e CORE_OPERATIONS_LISTENADDRESS=0.0.0.0:9443 -e CORE_VM_ENDPOINT= \
   -p 127.0.0.1::9443 "$IMAGE" >/dev/null
 port="$(docker port "$NAME" 9443/tcp | head -1 | sed 's/.*://')"
 code=""
@@ -32,7 +35,7 @@ for _ in $(seq 1 60); do
   [ "$(docker inspect -f '{{.State.Running}}' "$NAME")" = true ] || break
   sleep 1
 done
-if [ "$code" != 200 ]; then echo "peer /healthz never returned 200 (last: $code)"; docker logs "$NAME" 2>&1 | tail -60; exit 1; fi
+if [ "$code" != 200 ]; then echo "peer /healthz never returned 200 (last: $code $(cat /tmp/peer-health.$$ 2>/dev/null))"; docker logs "$NAME" 2>&1 | tail -60; exit 1; fi
 echo "healthz: $(cat /tmp/peer-health.$$)"; rm -f /tmp/peer-health.$$
 ver="$(curl -fsS "http://127.0.0.1:$port/version")"
 echo "version endpoint: $ver"

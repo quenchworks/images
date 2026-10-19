@@ -2,7 +2,8 @@
 # Shaped like upstream's images/peer/Dockerfile: FABRIC_CFG_PATH=/etc/hyperledger/fabric holding
 # the sampleconfig, state under /var/hyperledger (owned by 1001), cmd "/usr/bin/peer node start".
 # Ports: 7051 (gRPC), 9443 (operations, 127.0.0.1 in core.yaml).
-# Override settings with upstream's env vars (CORE_* for the peer, ORDERER_* for the orderer).
+# Override settings with upstream's env vars (CORE_*). core.yaml keeps vm.endpoint on the Docker
+# socket; without one, set CORE_VM_ENDPOINT= (empty) and use the ccaas builder, or /healthz stays 503.
 contents:
   keyring:
     - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
