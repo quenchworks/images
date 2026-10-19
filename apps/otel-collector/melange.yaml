@@ -102,9 +102,9 @@ pipeline:
       # (a `replace` in the manifest overrides every require, so raise the replace too).
 
       # Install the OpenTelemetry Collector Builder (ocb) pinned to the exact
-      # version used to cut the official otelcol-contrib 0.154.0 release.
+      # version used to cut the official otelcol-contrib release (OCB map in build.conf).
       CGO_ENABLED=0 go install -trimpath -ldflags="-s -w" \
-        go.opentelemetry.io/collector/cmd/builder@v${{package.version}}
+        go.opentelemetry.io/collector/cmd/builder@v__OCB__
 
       # Generate the distribution module from the vendored official manifest.
       # ocb's manifest sets output_path ./_build and build_tags grpcnotrace.
