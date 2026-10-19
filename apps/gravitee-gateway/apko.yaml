@@ -1,0 +1,47 @@
+# Assembles the Gravitee APIM gateway image: nonroot uid 1001, API traffic on 8082,
+# node API (health, metrics) on 18082. Plugins are unpacked at boot into
+# /tmp/gravitee/plugins, so /tmp must be writable (an emptyDir under a read-only root).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-gravitee-gateway@local
+
+accounts:
+  groups:
+    - groupname: gravitee
+      gid: 1001
+  users:
+    - username: gravitee
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  GRAVITEE_HOME: /opt/gravitee-gateway
+  PATH: /usr/lib/jvm/java-21-openjdk/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+work-dir: /opt/gravitee-gateway
+
+# The upstream bin/gravitee launcher is a shell script; this is the java line it execs.
+# Heap follows the container limit (JAVA_TOOL_OPTIONS overrides it).
+entrypoint:
+  command: /usr/lib/jvm/java-21-openjdk/bin/java -XX:MaxRAMPercentage=70 -XX:+DisableExplicitGC -Djava.awt.headless=true -Dfile.encoding=UTF-8 -Dvertx.disableFileCaching=true -Dvertx.disableFileCPResolving=true -Dvertx.disableContextTiming=true -Dvertx.logger-delegate-factory-class-name=io.vertx.core.logging.SLF4JLogDelegateFactory -Dgravitee.home=/opt/gravitee-gateway -Dplugins.workDir=/tmp/gravitee/plugins -cp /opt/gravitee-gateway/gravitee-bootstrap.jar io.gravitee.gateway.standalone.boostrap.Bootstrap
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-gravitee-gateway"
+  org.opencontainers.image.licenses: "Apache-2.0"

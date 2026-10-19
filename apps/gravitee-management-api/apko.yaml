@@ -1,0 +1,49 @@
+# Assembles the Gravitee APIM management API image: nonroot uid 1001, REST API on 8083
+# (/management for the console, /portal for the developer portal), node API on 18083.
+# Plugins are unpacked at boot into /tmp/gravitee/plugins and the search index lives in
+# /tmp/gravitee/data, so /tmp must be writable (an emptyDir under a read-only root).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-gravitee-management-api@local
+
+accounts:
+  groups:
+    - groupname: gravitee
+      gid: 1001
+  users:
+    - username: gravitee
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  GRAVITEE_HOME: /opt/gravitee-management-api
+  PATH: /usr/lib/jvm/java-21-openjdk/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+work-dir: /opt/gravitee-management-api
+
+# The upstream bin/gravitee launcher is a shell script; this is the java line it execs.
+# Heap follows the container limit (JAVA_TOOL_OPTIONS overrides it). The Jetty access log
+# is off: it writes rolling files under $GRAVITEE_HOME/logs.
+entrypoint:
+  command: /usr/lib/jvm/java-21-openjdk/bin/java -XX:MaxRAMPercentage=70 -XX:+DisableExplicitGC -Djava.awt.headless=true -Dfile.encoding=UTF-8 -Djersey.config.allowSystemPropertiesProvider=true -Djersey.config.server.wadl.disableWadl=true -Dvertx.disableFileCaching=true -Dvertx.disableFileCPResolving=true -Dvertx.logger-delegate-factory-class-name=io.vertx.core.logging.SLF4JLogDelegateFactory -Dgravitee.home=/opt/gravitee-management-api -Dplugins.workDir=/tmp/gravitee/plugins -Dsearch.data=/tmp/gravitee/data -Djetty.accesslog.enabled=false -cp /opt/gravitee-management-api/gravitee-bootstrap.jar io.gravitee.rest.api.standalone.boostrap.Bootstrap
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-gravitee-management-api"
+  org.opencontainers.image.licenses: "Apache-2.0"

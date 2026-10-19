@@ -1,0 +1,42 @@
+# Assembles the Gravitee APIM console image: the static UI plus the Wolfi nginx serving
+# it on 8080, nonroot uid 1001. Mount a writable tmpfs at /tmp for a read-only root. The
+# chart mounts its own constants.json (management API URL) and may mount its own
+# nginx.conf (for example to proxy /management to the management API).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - nginx
+    - quench-gravitee-console@local
+
+accounts:
+  groups:
+    - groupname: gravitee
+      gid: 1001
+  users:
+    - username: gravitee
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/nginx -c /etc/gravitee-console/nginx.conf
+
+work-dir: /usr/share/nginx/html
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-gravitee-console"
+  org.opencontainers.image.licenses: "Apache-2.0"

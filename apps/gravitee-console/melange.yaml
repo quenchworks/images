@@ -1,0 +1,89 @@
+# Installs the Gravitee APIM console (static Angular bundle) at /usr/share/nginx/html
+# from the full distribution zip, plus a nonroot, read-only-root nginx config at
+# /etc/gravitee-console/nginx.conf. nginx itself comes from Wolfi at runtime.
+package:
+  name: quench-gravitee-console
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Gravitee APIM console (static UI served by nginx)"
+  copyright:
+    - license: Apache-2.0
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - unzip
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://download.gravitee.io/graviteeio-apim/distributions/graviteeio-full-${{package.version}}.zip
+      expected-sha256: __SHA256__
+      extract: false
+  - runs: |
+      set -eu
+      v="${{package.version}}"
+      html="${{targets.destdir}}/usr/share/nginx/html"
+      unzip -q "graviteeio-full-$v.zip" "graviteeio-full-$v/graviteeio-apim-console-ui-$v/*"
+      rm -f "graviteeio-full-$v.zip"
+      install -d "$html"
+      cp -a "graviteeio-full-$v/graviteeio-apim-console-ui-$v/." "$html/"
+      # source maps are build debris, not part of the served app
+      find "$html" -name '*.map' -delete
+      test -f "$html/index.html"
+      test -f "$html/constants.json"
+      chmod -R a+rX "$html"
+      install -d "${{targets.destdir}}/etc/gravitee-console"
+      cat > "${{targets.destdir}}/etc/gravitee-console/nginx.conf" <<'NGINX'
+      # daemon off so nginx stays in the foreground as PID 1 (no shell wrapper).
+      daemon off;
+      worker_processes auto;
+      pid /tmp/nginx.pid;
+      error_log /dev/stderr notice;
+
+      events {
+          worker_connections 1024;
+      }
+
+      http {
+          include       /etc/nginx/mime.types;
+          default_type  application/octet-stream;
+
+          client_body_temp_path /tmp/client_body_temp;
+          proxy_temp_path       /tmp/proxy_temp;
+          fastcgi_temp_path     /tmp/fastcgi_temp;
+          uwsgi_temp_path       /tmp/uwsgi_temp;
+          scgi_temp_path        /tmp/scgi_temp;
+
+          access_log /dev/stdout;
+          sendfile      on;
+          gzip          on;
+          server_tokens off;
+
+          server {
+              listen      8080;
+              server_name _;
+              root        /usr/share/nginx/html;
+              index       index.html;
+
+              # constants.json carries the management API URL; never cache it
+              location = /constants.json {
+                  add_header Cache-Control "no-store";
+              }
+              location / {
+                  try_files $uri $uri/ /index.html;
+              }
+          }
+      }
+      NGINX
+
+test:
+  pipeline:
+    - runs: |
+        test -f /usr/share/nginx/html/index.html
+        test -f /etc/gravitee-console/nginx.conf

@@ -1,0 +1,174 @@
+# Installs the Gravitee APIM gateway under /opt/gravitee-gateway from the full
+# distribution zip: lib/, config/ and the plugins that pass the license gate, with the
+# CVE jar swaps applied to lib/ and inside every plugin zip.
+#
+# Plugin zips are opaque to the scanner (Trivy reads .jar/.war/.ear, not .zip), so each
+# kept plugin is also shipped expanded under plugins-expanded/. The zips are rebuilt
+# FROM that tree after the swaps, so what the scanner reads is byte for byte what the
+# gateway unpacks at boot. The gateway never reads plugins-expanded/.
+package:
+  name: quench-gravitee-gateway
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Gravitee APIM gateway (community plugins only) on Wolfi openjdk-21-jre"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-21-jre
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - bash
+      - busybox
+      - coreutils
+      - curl
+      - ca-certificates-bundle
+      - unzip
+      - zip
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://download.gravitee.io/graviteeio-apim/distributions/graviteeio-full-${{package.version}}.zip
+      expected-sha256: __SHA256__
+      extract: false
+  - runs: |
+      set -eu
+      v="${{package.version}}"
+      d="${{targets.destdir}}/opt/gravitee-gateway"
+      unzip -q "graviteeio-full-$v.zip" "graviteeio-full-$v/graviteeio-apim-gateway-$v/*"
+      rm -f "graviteeio-full-$v.zip"
+      src="graviteeio-full-$v/graviteeio-apim-gateway-$v"
+      install -d "$d"
+      cp -a "$src/lib" "$src/config" "$src/plugins" "$d/"
+      install -d "$d/license" "$d/logs" "$d/metrics" "$d/models"
+      # console logging only: the stock logback.xml also writes $GRAVITEE_HOME/logs,
+      # which a read-only root filesystem cannot take
+      sed -i -e '/<appender name="FILE"/,/<\/appender>/d' -e '/<appender name="async-file"/,/<\/appender>/d' \
+        -e '/<appender-ref ref="async-file" \/>/d' "$d/config/logback.xml"
+      ! grep -qE 'FILE|async-file' "$d/config/logback.xml"
+      # macOS natives are dead weight here; the BoringSSL tcnative blobs are an
+      # unscannable native TLS stack (the JDK TLS engine is the default and stays)
+      rm -f "$d"/lib/ext/*-osx-*.jar "$d"/lib/ext/netty-tcnative-boringssl-static-*.jar
+      cat > gate.sh <<'EOF'
+      #!/bin/bash
+      # gate.sh <gravitee-home>: license gate, then CVE jar swaps, then rebuild the zips.
+      set -euo pipefail
+      home="$1"; m="$PWD/jars"; mkdir -p "$m"
+      t="$(mktemp -d)"
+      # 1. License gate. A plugin is Enterprise when its jar carries com.graviteesource
+      # code or a licensed `feature=`; those need a Gravitee license key and are not
+      # under an OSI license. The denylist holds what the rule cannot see.
+      kept=0; dropped=0
+      for z in "$home"/plugins/*.zip; do
+        n="$(basename "$z" .zip)"
+        j="$(unzip -Z1 "$z" | grep -E '^[^/]+\.jar$' | head -1 || true)"
+        test -n "$j" || { echo "FATAL: $n has no plugin jar"; exit 1; }
+        unzip -p "$z" "$j" > "$t/p.jar"
+        why=""
+        # alert-engine-connectors-ws: no public source. repository-hazelcast: hazelcast
+        # 5.7.0 shades jackson 2.21.2 and 3.1.2 (no swap reaches a shaded copy).
+        # json-to-toon: mixes jackson 3.0.3/3.1.1 with jackson-annotations 2.18.
+        case "$n" in
+          gravitee-alert-engine-connectors-ws-*|gravitee-apim-repository-hazelcast-*|gravitee-policy-json-to-toon-*) why="denylist";;
+        esac
+        if unzip -p "$t/p.jar" plugin.properties | grep -q '^feature='; then why="licensed feature"; fi
+        if unzip -Z1 "$t/p.jar" | grep -qE '^(com/graviteesource/|META-INF/maven/com\.graviteesource)'; then why="Enterprise code"; fi
+        if [ -n "$why" ]; then echo "  drop $n ($why)"; rm -f "$z"; dropped=$((dropped+1)); continue; fi
+        install -d "$home/plugins-expanded/$n"
+        unzip -q "$z" -d "$home/plugins-expanded/$n"
+        rm -f "$z"; kept=$((kept+1))
+      done
+      echo "license gate: kept $kept plugins, dropped $dropped"
+      test "$kept" -gt 20
+      for g in 'gravitee-cloud-initializer-*.jar' 'gravitee-common-mcp-*.jar'; do
+        find "$home/lib" -name "$g" -print -delete
+      done
+      if find "$home/lib" -name '*.jar' -exec unzip -Z1 {} \; 2>/dev/null | grep -q '^com/graviteesource/'; then
+        echo "FATAL: Enterprise classes left in lib/"; exit 1
+      fi
+      # plugins/ext/repository-jdbc carries the JDBC drivers. The SQL Server driver goes:
+      # Trivy misreads its .jre11 classifier as an unfixed version (CVE-2025-59250 is
+      # fixed in that very build), and a driver can be mounted there when needed.
+      find "$home/plugins/ext" -name 'mssql-jdbc-*.jar' -print -delete
+      # 2. CVE swaps. Only a copy OLDER than the fix is replaced, so a release that
+      # already ships the fix is left alone; a glob with no match at all stops the build.
+      get() {  # <maven path> <artifact> <version> <sha256>
+        local f="$m/$2-$3.jar"
+        [ -s "$f" ] || curl -fsSL -o "$f" "https://repo1.maven.org/maven2/$1/$2/$3/$2-$3.jar"
+        echo "$4  $f" | sha256sum -c - >/dev/null
+      }
+      swapjar() {  # <glob> <artifact> <version>
+        local n=0 kept=0 v j
+        while IFS= read -r j; do
+          v="$(basename "$j" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)"
+          if [ "$(printf '%s\n%s\n' "$v" "$3" | sort -V | head -1)" = "$3" ]; then kept=$((kept+1)); continue; fi
+          rm -f "$j"; cp "$m/$2-$3.jar" "$(dirname "$j")/"; n=$((n+1))
+        done < <(find "$home/lib" "$home/plugins" "$home/plugins-expanded" -name "$1")
+        test "$((n + kept))" -gt 0 || { echo "FATAL: no jar matched $1 -- the dist moved"; exit 1; }
+        echo "  $1 -> $3 ($n replaced, $kept already at or above it)"
+      }
+      while read -r path a ver sum glob; do
+        get "$path" "$a" "$ver" "$sum"
+        swapjar "$glob" "$a" "$ver"
+      done <<'LIST'
+      at/yawk/lz4 lz4-java 1.11.4 58c8e0b813960d2a248e050c353baea73139b48a2ffc55382d42c69707e17325 lz4-java-[0-9]*.jar
+      com/fasterxml/jackson/core jackson-core 2.22.3 8a501126a385b25841915d839508f8a66e2a0dbc8a6709d055ef3b3e852b094c jackson-core-2.*.jar
+      com/fasterxml/jackson/core jackson-databind 2.22.3 556db5439e206114346043f68d200497dc96a0bca62a360a81784092ebd0e0a9 jackson-databind-2.*.jar
+      com/fasterxml/jackson/core jackson-annotations 2.22 21ddb598807d3a51a876704eb979d9296e1c6a6f47ab1826ff88c6d6a127a2d0 jackson-annotations-2.*.jar
+      io/micrometer micrometer-core 1.15.12 30f6136353e39bc067b26745a6c31b0b6e419d8ff59c05b5364d7c1d4b78083e micrometer-core-[0-9]*.jar
+      org/freemarker freemarker 2.3.35 0fac87dddd78f1223139e8ef88e819c7f483c0a3835cdf5982ad5e4576d1d896 freemarker-[0-9]*.jar
+      org/jsoup jsoup 1.23.2 e9d8c856856680427f096d156f02a414289985c930998fcb519ce5be39b42003 jsoup-[0-9]*.jar
+      org/springframework/data spring-data-commons 3.5.12 eb591cf120bc54aa952b980110efe5e4b914b1cc583ac6244ead7fe7df519b4b spring-data-commons-[0-9]*.jar
+      org/springframework/data spring-data-mongodb 4.5.12 48fd3227fb3291822d714d1c22761bf375a3a80e883c5c16976da30cfa35749a spring-data-mongodb-[0-9]*.jar
+      org/mongodb bson 5.5.2 e1194dbd95e94382bf9e6a0c5f24fefb95e1f3fbd2c4721c9a5355aeb857850a bson-[0-9]*.jar
+      org/mongodb bson-record-codec 5.5.2 cf5958ead440f7abc8e1d8f793754f07b4f21730c9c5060e8e996dec944071aa bson-record-codec-[0-9]*.jar
+      org/mongodb mongodb-driver-core 5.5.2 d1af1213405cccedc474e8309881b88f8caee20168f01fdd36c4503bb0fbd934 mongodb-driver-core-[0-9]*.jar
+      org/mongodb mongodb-driver-sync 5.5.2 8f933ca2e87f49ef3b2434dc068544b0fb85bcf1cf52b69a88f73ce77d5f1c69 mongodb-driver-sync-[0-9]*.jar
+      org/mongodb mongodb-driver-reactivestreams 5.5.2 3d23854272071425ae03ef621723ff479d36afa7948f82e7c0a07b96e8aa601a mongodb-driver-reactivestreams-[0-9]*.jar
+      org/postgresql postgresql 42.7.12 31fbf6f06b2217fb51d5100cee51b22625cc81640da0679b47914e54c1e6377c postgresql-[0-9]*.jar
+      org/mariadb/jdbc mariadb-java-client 3.5.9 11e3bb5bbf8ef0e806ae4d6c5d5033fedf7262cc777f0190bde8a2f3c8e6bd8d mariadb-java-client-[0-9]*.jar
+      io/opentelemetry opentelemetry-api 1.62.0 d58143928c049233653e6bf1282ff8a767ebdd5e6a82b3f336158c30e40b431d opentelemetry-api-[0-9]*.jar
+      io/opentelemetry opentelemetry-context 1.62.0 8ec86c3609222b9b6307bf40154c1f1c288d1f18ada0155409e7797adbdbe517 opentelemetry-context-[0-9]*.jar
+      LIST
+      # OpenTelemetry: only opentelemetry-api (CVE-2026-45292, baggage propagation, which
+      # gravitee-node-opentelemetry wires in) and its opentelemetry-context move to 1.62.
+      # The SDK, exporters and api-incubator stay on the dist's 1.39 line on purpose:
+      # gravitee-node-opentelemetry 9.13 links io.opentelemetry.sdk.internal.AttributesMap,
+      # which the 1.62 SDK moved (NoClassDefFoundError at boot, measured 2026-10-19), and
+      # the 1.39 sdk-logs links incubator event classes that 1.62-alpha removed. Every
+      # api/context class the 1.39 SDK and incubator reference exists in 1.62 (stable API,
+      # binary compatible); the boot test runs with tracing on to prove it.
+      # opentelemetry-context 1.62 depends on the opentelemetry-common artifact, which
+      # the 1.39 set did not have: add it beside every context jar
+      get io/opentelemetry opentelemetry-common 1.62.0 d6310bebde67d65c1519696728d8604005315ed08ab14071956fc0826fd71815
+      find "$home/lib" "$home/plugins-expanded" -name 'opentelemetry-context-1.62.0.jar' | while IFS= read -r j; do
+        ls "$(dirname "$j")"/opentelemetry-common-[0-9]*.jar >/dev/null 2>&1 || cp "$m/opentelemetry-common-1.62.0.jar" "$(dirname "$j")/"
+      done
+      # 3. Rebuild every plugin zip from its expanded (swapped) tree.
+      for x in "$home"/plugins-expanded/*/; do
+        n="$(basename "$x")"
+        (cd "$x" && zip -qrX "$home/plugins/$n.zip" .)
+      done
+      rm -rf "$t"
+      EOF
+      bash gate.sh "$d"
+      # one stable bootstrap path for the entrypoint (outside lib/, which is a classpath dir)
+      boot="$(cd "$d/lib" && ls gravitee-apim-gateway-standalone-bootstrap-*.jar)"
+      ln -s "lib/$boot" "$d/gravitee-bootstrap.jar"
+      chmod -R a+rX "$d"
+      # the release is the one the bootstrap jar was built as
+      test "$boot" = "gravitee-apim-gateway-standalone-bootstrap-$v.jar"
+
+test:
+  pipeline:
+    - runs: |
+        test -e /opt/gravitee-gateway/gravitee-bootstrap.jar
+        test -f /opt/gravitee-gateway/plugins/gravitee-apim-repository-mongodb-${{package.version}}.zip
