@@ -1,0 +1,222 @@
+# Builds the Netdata agent from its release source tarball onto Wolfi via melange
+# (CMake, C + the Go collectors). Output is a signed APK in QuenchWorks' own repo.
+# Wolfi ships no netdata apk; no upstream distro binaries or static installers are used.
+#
+# License scope (GPL-3.0-or-later agent only):
+#   - The local web dashboard is NOT shipped. Upstream does not keep it in the source
+#     tree: ENABLE_DASHBOARD downloads https://app.netdata.cloud/agent.tar.gz at
+#     configure time (packaging/cmake/Modules/NetdataDashboard.cmake), and that bundle
+#     is the Netdata Cloud UI under the NCUL1 license (REDISTRIBUTED.md), not OSI.
+#     No GPL v1 dashboard remains in 2.x, so the image is headless: the REST API
+#     (/api/v1, /api/v2, /api/v3) and the Prometheus export answer on :19999.
+#   - The ACLK cloud link (src/aclk) is GPL code compiled into the daemon. It only
+#     connects after a node is claimed with a Cloud token; the image ships no claim and
+#     the chart sets none, so no Cloud session is opened. Anonymous telemetry is off
+#     (an opt-out file in /etc/netdata plus DISABLE_TELEMETRY=1 in the image env).
+#
+# Plugins built: the internal collectors (proc, diskspace, cgroups, tc, idlejitter,
+# timex, statsd), apps.plugin (per-process accounting), cgroup-network, go.d.plugin
+# (src/go, Prometheus/HTTP/service collectors) and its cgroup-name helper. ML (dlib)
+# stays on. Left out: the python.d plugin (vendors an old urllib3), the bash charts.d
+# plugin, eBPF (fetches prebuilt BPF objects and needs a privileged pod), the Rust
+# otel/netflow plugins, systemd-journal/units, CUPS, FreeIPMI, Xen, NFACCT, the scripts
+# (Nagios) plugin, the MongoDB and remote-write exporters, nd-mcp and the debugfs plugin.
+package:
+  name: quench-netdata
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Netdata agent (headless, REST API + Prometheus export), built from source on Wolfi"
+  copyright:
+    - license: GPL-3.0-or-later
+  dependencies:
+    runtime:
+      - busybox
+      - bash                 # cgroup-network-helper.sh, get-kubernetes-labels.sh, tc-qos-helper.sh
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - cmake
+      - git
+      - go-1.27
+      - pkgconf
+      - linux-headers
+      - bison
+      - flex
+      - openssl-dev
+      - curl-dev
+      - zlib-dev
+      - lz4-dev
+      - zstd-dev
+      - brotli-dev
+      - util-linux-dev
+      - libuv-dev
+      - json-c-dev
+      - yaml-dev
+      - libcap-dev
+      - libmnl-dev
+      - pcre2-dev
+      - protobuf-dev
+      - protobuf-static        # protobuf-targets.cmake references libupb.a; config mode fails without it
+      - protoc
+      - abseil-cpp-dev
+
+pipeline:
+  - uses: fetch
+    with:
+      # The release source asset (netdata-vX.Y.Z.tar.gz); sha256 computed from a download
+      # and cross-checked against the release's sha256sums.txt.
+      uri: https://github.com/netdata/netdata/releases/download/v${{package.version}}/netdata-v${{package.version}}.tar.gz
+      expected-sha256: "__SHA256__"
+
+  - runs: |
+      set -eu
+      export GOTOOLCHAIN=local
+      cd src/go
+      # ---- prometheus: drop the v0.302.0 hold-down -------------------------
+      # go.mod pins `replace github.com/prometheus/prometheus => v0.302.0`, which carries
+      # CVE-2026-42151/42154/40179/44903 (fixed in 0.311.3). go.d only imports
+      # model/labels and model/textparse. 0.311.x makes labels a non-slice type unless
+      # built with the `slicelabels` tag (go.d ranges over and indexes labels), and
+      # renames textparse Parser.Metric to Labels and adds a bool to NewPromParser.
+      # Both edits are asserted so a source change cannot skip them silently.
+      go mod edit -dropreplace=github.com/prometheus/prometheus
+      go mod edit -replace=github.com/prometheus/prometheus=github.com/prometheus/prometheus@v0.311.3
+      f=pkg/prometheus/parse.go
+      sed -i -e 's/textparse.NewPromParser(text, labels.NewSymbolTable())/textparse.NewPromParser(text, labels.NewSymbolTable(), false)/' \
+             -e 's/parser.Metric(&d.currSeries)/parser.Labels(\&d.currSeries)/' "$f"
+      grep -q 'NewPromParser(text, labels.NewSymbolTable(), false)' "$f"
+      grep -q 'parser.Labels(&d.currSeries)' "$f"
+      if grep -q 'parser.Metric(' "$f"; then echo "parse.go still calls parser.Metric"; exit 1; fi
+
+      # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
+      # FLOOR is a FLOOR, not a pin: float only what is below it, then assert the
+      # shipped binary carries nothing below it.
+      FLOOR="golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.2 github.com/prometheus/prometheus@v0.311.3"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      GOFLAGS=-mod=mod go list -m $MODS
+      need="$(GOFLAGS=-mod=mod go list -m $MODS | awk '{ print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then GOFLAGS=-mod=mod go get $need; fi
+      # -e: 2.11.1 test-only imports (go-openapi testify) do not resolve; the build graph does.
+      go mod tidy -e
+
+  - runs: |
+      set -eu
+      export GOTOOLCHAIN=local
+      # cmake's add_go_target runs `cmake -E env ... go build`, which inherits GOFLAGS.
+      export GOFLAGS="-mod=mod -tags=slicelabels"
+      cmake -S . -B build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/ \
+        -DUSE_LTO=Off \
+        -DENABLE_DASHBOARD=Off \
+        -DENABLE_ML=On \
+        -DENABLE_PLUGIN_APPS=On \
+        -DENABLE_PLUGIN_GO=On \
+        -DENABLE_CGROUP_NAME=On \
+        -DENABLE_PLUGIN_CGROUP_NETWORK=On \
+        -DENABLE_ND_MCP=Off \
+        -DENABLE_PLUGIN_PYTHON=Off \
+        -DENABLE_PLUGIN_CHARTS=Off \
+        -DENABLE_PLUGIN_SCRIPTS=Off \
+        -DENABLE_PLUGIN_STATSD=Off \
+        -DENABLE_PLUGIN_OTEL=Off \
+        -DENABLE_PLUGIN_NETFLOW=Off \
+        -DENABLE_PLUGIN_EBPF=Off \
+        -DENABLE_PLUGIN_IBM=Off \
+        -DENABLE_PLUGIN_CUPS=Off \
+        -DENABLE_PLUGIN_FREEIPMI=Off \
+        -DENABLE_PLUGIN_XENSTAT=Off \
+        -DENABLE_PLUGIN_NFACCT=Off \
+        -DENABLE_PLUGIN_DEBUGFS=Off \
+        -DENABLE_PLUGIN_PERF=Off \
+        -DENABLE_PLUGIN_SLABINFO=Off \
+        -DENABLE_PLUGIN_LOCAL_LISTENERS=Off \
+        -DENABLE_PLUGIN_NETWORK_VIEWER=Off \
+        -DENABLE_PLUGIN_SYSTEMD_JOURNAL=Off \
+        -DENABLE_PLUGIN_SYSTEMD_UNITS=Off \
+        -DENABLE_EXPORTER_MONGODB=Off \
+        -DENABLE_EXPORTER_PROMETHEUS_REMOTE_WRITE=Off \
+        -DENABLE_WEBRTC=Off \
+        -DENABLE_SENTRY=Off
+      # -j8: this host and the CI runners both sit near the memory edge with dlib + protobuf C++.
+      cmake --build build -j8
+      d="${{targets.destdir}}"
+      DESTDIR="$d" cmake --install build
+
+      # The float is only real if it reached the binaries.
+      FLOOR="golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.2 github.com/prometheus/prometheus@v0.311.3"
+      for b in "$d/usr/libexec/netdata/plugins.d/go.d.plugin"; do
+        [ -x "$b" ] || { echo "missing $b"; exit 1; }
+        bad="$(go version -m "$b" | awk -v floor="$FLOOR" '
+          BEGIN { n = split(floor, f, " "); for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 == "dep" || $1 == "=>") && ($2 in want) {
+            split(substr($3, 2), g, "."); split(substr(want[$2], 2), w, ".")
+            for (i = 1; i <= 3; i++) { if ((g[i]+0) > (w[i]+0)) next; if ((g[i]+0) < (w[i]+0)) { print $2, $3; next } }
+          }')"
+        [ -z "$bad" ] || { echo "0-CVE float did not reach $b:"; echo "$bad"; exit 1; }
+      done
+
+      # Nonroot image: no setuid helpers (ndsudo, setuid plugins). apps.plugin and
+      # cgroup-network run with the pod's own privileges.
+      find "$d" -type f -perm -4000 -exec chmod u-s {} +
+      find "$d" -type f -perm -2000 -exec chmod g-s {} +
+      # Telemetry: the agent skips anonymous statistics when this file exists
+      # (src/daemon/analytics.c analytics_check_enabled); the script goes too.
+      touch "$d/etc/netdata/.opt-out-from-anonymous-statistics"
+      rm -f "$d/usr/libexec/netdata/plugins.d/anonymous-statistics.sh"
+      # No Cloud claiming in this image (see the header): drop the claim helper.
+      rm -f "$d/usr/sbin/netdata-claim.sh"
+      # usrmerge: Wolfi keeps executables in /usr/bin (/usr/sbin is a link there).
+      mkdir -p "$d/usr/bin"
+      mv "$d"/usr/sbin/* "$d/usr/bin/"
+      rmdir "$d/usr/sbin"
+      # /var/run is a symlink to /run in wolfi-baselayout; apko creates /run/netdata.
+      rmdir "$d/var/run/netdata" "$d/var/run" 2>/dev/null || true
+      test ! -e "$d/var/run/netdata"
+
+      # Default config for a container: logs to stderr, health notifications off
+      # (alarm-notify.sh needs bash), the host access prefix comes from the chart (-s /host).
+      cat > "$d/etc/netdata/netdata.conf" <<'EOF'
+      # QuenchWorks netdata.conf (headless agent, nonroot uid 1001).
+      [global]
+          run as user = netdata
+      [logs]
+          daemon = stderr
+          collector = stderr
+          access = off
+          health = stderr
+      [health]
+          script to execute on alarm = /bin/true
+      [web]
+          bind to = *:19999
+      EOF
+
+test:
+  pipeline:
+    - runs: |
+        /usr/bin/netdata -v
+        /usr/bin/netdata -v | grep -q "v${{package.version}}"
+        test -x /usr/libexec/netdata/plugins.d/apps.plugin
+        test -x /usr/libexec/netdata/plugins.d/go.d.plugin
+        test ! -e /usr/share/netdata/web/index.html
