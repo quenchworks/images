@@ -62,12 +62,27 @@ pipeline:
         unzip -q "/tmp/$1.zip" -d /tmp/plug
         mv "/tmp/plug/trino-$1-$V" "$dest/plugin/$1"
       }
-      plug jmx d28d6182227a87c1459504d405a8c9f0d7d9a847bf40a4e1ccbc2a673e6f5ca9
-      plug memory 267d46f0c80790e1cd7390b5d1831eeef604bf319e9be066a165684f86451544
-      plug postgresql 04eaa15357b5d3e74783d098ab2ebb570e2e1fe069cc3c128f28916e81e41650
-      plug tpcds 902f4d866babc32c7a7148433174d2f397bea5cc8e9a46031735a1df28d01ca6
-      plug tpch 303d89111e6ed671074bd54d9967d3a18a99d7510c26ac7b0c342abe26d76fe0
-      plug iceberg 59b4b9c5013b6df4b4459583aff6f4cb97c40cab9edf8d133dca04ea869b1140
+      case "$V" in
+        483)
+          plug jmx d28d6182227a87c1459504d405a8c9f0d7d9a847bf40a4e1ccbc2a673e6f5ca9
+          plug memory 267d46f0c80790e1cd7390b5d1831eeef604bf319e9be066a165684f86451544
+          plug postgresql 04eaa15357b5d3e74783d098ab2ebb570e2e1fe069cc3c128f28916e81e41650
+          plug tpcds 902f4d866babc32c7a7148433174d2f397bea5cc8e9a46031735a1df28d01ca6
+          plug tpch 303d89111e6ed671074bd54d9967d3a18a99d7510c26ac7b0c342abe26d76fe0
+          plug iceberg 59b4b9c5013b6df4b4459583aff6f4cb97c40cab9edf8d133dca04ea869b1140 ;;
+        484)
+          plug jmx 807fa774bd7529c10d0d1bac7f7de33c63407bb1a11301a61fbb1344a0fe6645
+          plug memory 719161889876e5504f845239608a6899ba8c8f0ac3617fa3739fd90df71b24d9
+          plug postgresql c1caca9fe09e17dbbefb93653df582ca87941bff03b1af7dc935837dc9d0376f
+          plug tpcds c8be35c857811818598bfe1f5603a0b4dfbce8455d1abab0beaf9304651b92b3
+          plug tpch c21c0cc1781da630343efe27088e83a09550695c2cb6ecd0250e6534209cd538
+          plug iceberg eba73e90f063cd4cdc376af1f517e3314b568b250561ab51e817bd342497639a ;;
+        *) echo "no plugin sha256 for $V"; exit 1 ;;
+      esac
+      # 483 only: 484 already ships jackson 2.22.3 (no tools.jackson 3.x), lz4-java 1.12.0,
+      # netty 4.2.19, httpclient5 5.6.5, libthrift 0.25.0 and snowflake-jdbc-thin 4.4.0
+      # (listed from the 484 core tarball and plugin zips, 2026-10-19). The gate scans both.
+      if [ "$V" = 483 ]; then
       # jackson-databind 2.22.1 (CVE-2026-68497/-19032/-83557) (and tools.jackson 3.2.1) sit in lib/ and
       # every plugin; 2.22.3 and 3.2.3 fix them and CVE-2026-91776/-91777. jackson-core 2.22.1 and
       # tools core 3.2.1 carry CVE-2026-89407/-89425 (2026-10-04), fixed at the same versions.
@@ -151,6 +166,7 @@ pipeline:
       rm "$ice"/'io.netty_netty-transport-native-kqueue-4.2.16.Final-osx-aarch_64.jar'
       rm "$ice"/'io...y_netty-transport-native-kqueue-4.2.16.Final-osx-x86_64.jar'
       ! ls "$ice" | grep -q 'netty.*4\.2\.16' || exit 1
+      fi
 
       # The launcher finds the install root by walking up from its own (resolved)
       # path to the directory holding bin/launcher, and preloads
