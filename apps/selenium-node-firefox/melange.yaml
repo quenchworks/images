@@ -1,0 +1,55 @@
+# Packages the Selenium Grid server jar (the upstream release asset) as a Firefox node:
+# Wolfi firefox + geckodriver, and a node config that names both explicitly.
+package:
+  name: quench-selenium-node-firefox
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Selenium Grid Firefox node on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-21-jre       # main classes are major 55 (Java 11); 21 is the tested LTS
+      - ca-certificates-bundle
+      - firefox
+      - geckodriver
+      - font-liberation      # headless Firefox still lays out text; one font family is enough
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/SeleniumHQ/selenium/releases/download/selenium-${{package.version}}/selenium-server-${{package.version}}.jar
+      expected-sha256: __SHA256__
+      extract: false
+  # The jar carries a short sh launcher before the zip data; `java -jar` reads it as is.
+  - runs: |
+      set -eu
+      install -Dm644 selenium-server-${{package.version}}.jar "${{targets.destdir}}/usr/share/selenium/selenium-server.jar"
+      install -d "${{targets.destdir}}/etc/selenium"
+      # No browserVersion in the stereotype: it would go stale on the next firefox apk.
+      cat > "${{targets.destdir}}/etc/selenium/config.toml" <<'CONF'
+      [node]
+      detect-drivers = false
+      selenium-manager = false
+
+      [[node.driver-configuration]]
+      display-name = "Firefox"
+      webdriver-executable = "/usr/bin/geckodriver"
+      max-sessions = 1
+      stereotype = '{"browserName": "firefox", "platformName": "linux", "moz:firefoxOptions": {"binary": "/usr/lib/firefox/firefox"}}'
+      CONF
+
+test:
+  pipeline:
+    - runs: |
+        test -s /usr/share/selenium/selenium-server.jar
+        test -s /etc/selenium/config.toml
