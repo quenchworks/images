@@ -1,0 +1,167 @@
+# Builds Falco __VER__ from source against Wolfi system libraries (modern eBPF
+# probe only) and the container plugin __PLUGIN__ from source with floated Go
+# modules. See build.conf for why and what stays bundled.
+package:
+  name: quench-falco
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Falco runtime threat detection with the container plugin, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+    - license: GPL-2.0-only   # the modern eBPF probe (dual GPL-2.0/MIT) compiled into falco
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - bash
+      - bpftool
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - clang-19            # modern eBPF probe; Wolfi built falco 0.44 with 19
+      - cmake
+      - cpp-httplib-dev
+      - curl-dev
+      - cxxopts-dev
+      - elfutils-dev
+      - git                 # the plugin's CMake fetches fmt, RE-flex, plugin-sdk-cpp, btrfs headers
+      - go-1.26
+      - jsoncpp-dev
+      - libbpf-dev
+      - libtbb-dev
+      - linux-headers
+      - llvm-19
+      - make
+      - nlohmann-json-dev
+      - openssl-4.0-dev     # curl-dev pulls openssl-4.0-dev; plain openssl-dev conflicts with it
+      - re2-dev
+      - samurai
+      - uthash
+      - valijson-dev
+      - yaml-cpp-dev
+      - zlib-dev
+  environment:
+    GOTOOLCHAIN: local
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/falcosecurity/falco/archive/refs/tags/${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+      strip-components: 1
+  - runs: mkdir -p plugins-src
+  - uses: fetch
+    with:
+      uri: https://github.com/falcosecurity/plugins/archive/refs/tags/plugins/container/v__PLUGIN__.tar.gz
+      expected-sha256: __PLUGIN_SHA256__
+      strip-components: 1
+      directory: plugins-src
+
+  - name: Check the pins this recipe depends on
+    runs: |
+      set -eu
+      # The container plugin version and rules line the tag pins must match what
+      # this recipe builds and what apko.yaml installs (falco-rules~5.2.0).
+      grep -q 'set(CONTAINER_VERSION "__PLUGIN__")' CMakeLists.txt
+      grep -q '"falco-rules-5.2.0"' cmake/modules/rules.cmake
+      # Never fetch the prebuilt container plugin: target falco depends on it
+      # only through this line.
+      sed -i '/add_dependencies(falco container)/d' CMakeLists.txt
+      if grep -n 'add_dependencies(falco container)' CMakeLists.txt; then exit 1; fi
+
+  - name: Build falco (system libraries, modern eBPF only)
+    runs: |
+      set -eu
+      cmake -B build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr \
+        -DFALCO_ETC_DIR=/etc/falco \
+        -DFALCO_VERSION=${{package.version}} \
+        -DUSE_BUNDLED_DEPS=OFF \
+        -DUSE_BUNDLED_TBB=OFF \
+        -DUSE_BUNDLED_JSONCPP=OFF \
+        -DUSE_BUNDLED_VALIJSON=OFF \
+        -DUSE_BUNDLED_RE2=OFF \
+        -DUSE_BUNDLED_UTHASH=OFF \
+        -DUSE_BUNDLED_BS_THREADPOOL=ON \
+        -DUSE_DYNAMIC_LIBELF=ON \
+        -DBUILD_FALCO_MODERN_BPF=ON \
+        -DBUILD_DRIVER=OFF \
+        -DBUILD_LIBSCAP_GVISOR=OFF \
+        -DADD_FALCOCTL_DEPENDENCY=OFF \
+        -DCREATE_TEST_TARGETS=OFF
+      cmake --build build --target falco -j"$(nproc)"
+      ver="$(build/userspace/falco/falco --version 2>&1 || true)"
+      echo "$ver"
+      case "$ver" in *"Falco version: ${{package.version}}"*) ;; *) echo "falco reports the wrong version"; exit 1 ;; esac
+      install -Dm755 build/userspace/falco/falco "${{targets.destdir}}/usr/bin/falco"
+      install -Dm644 falco.yaml "${{targets.destdir}}/etc/falco/falco.yaml"
+      install -Dm644 config/falco.container_plugin.yaml "${{targets.destdir}}/etc/falco/config.d/falco.container_plugin.yaml"
+      printf '# Your custom rules!\n' > falco_rules.local.yaml
+      install -Dm644 falco_rules.local.yaml "${{targets.destdir}}/etc/falco/falco_rules.local.yaml"
+      install -d "${{targets.destdir}}/etc/falco/rules.d"
+      # Nothing from the bundled OpenSSL or zlib builds may reach the binary.
+      for d in openssl-prefix zlib-prefix curl-prefix; do
+        if [ -e "build/$d" ]; then echo "bundled $d was built"; exit 1; fi
+      done
+
+  - name: Float the container plugin Go modules (CVE fixes)
+    working-directory: plugins-src/plugins/container/go-worker
+    runs: |
+      set -eu
+      # 0-CVE FLOORS, not pins (docs/go-module-float.md). podman/v6 6.0.2 carries
+      # CVE-2026-94603 (CRITICAL); containerd/v2 2.2.8 CVE-2026-53493; x/net and
+      # x/crypto the 2026-10 advisories. Coherent with the catalog x/* train.
+      FLOOR="github.com/containerd/containerd/v2@v2.2.9 go.podman.io/podman/v6@v6.1.3 golang.org/x/net@v0.60.0 golang.org/x/crypto@v0.57.0 golang.org/x/sys@v0.48.0 golang.org/x/term@v0.46.0 golang.org/x/text@v0.42.0"
+      # Go semver order (a release outranks its prereleases); busybox sort -V does not.
+      vlt() { awk -v a="${1#v}" -v b="${2#v}" 'function pp(s,  p){sub(/\+.*/,"",s);p=index(s,"-");if(p){C=substr(s,1,p-1);P=substr(s,p+1)}else{C=s;P=""}} function cmp(x,y,  i,n,m,X,Y){n=split(x,X,".");m=split(y,Y,".");for(i=1;i<=n&&i<=m;i++){if(X[i]==Y[i])continue;if(X[i]~/^[0-9]+$/&&Y[i]~/^[0-9]+$/)return (X[i]+0<Y[i]+0)?-1:1;if(X[i]~/^[0-9]+$/)return -1;if(Y[i]~/^[0-9]+$/)return 1;return (X[i]<Y[i])?-1:1}return (n<m)?-1:(n>m)?1:0} BEGIN{pp(a);ca=C;pa=P;pp(b);cb=C;pb=P;c=cmp(ca,cb);if(c==0){if(pa==pb)c=0;else if(pa=="")c=1;else if(pb=="")c=-1;else c=cmp(pa,pb)}exit !(c<0)}'; }
+      need=""
+      for mv in $FLOOR; do
+        have="$(GOFLAGS=-mod=mod go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${mv%@*}" 2>/dev/null)"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        vlt "$have" "${mv#*@}" && need="$need $mv"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
+      go mod tidy
+      # Keep the floors next to the build for the binary check below.
+      echo "$FLOOR" > ../floor.txt
+
+  - name: Build the container plugin (libcontainer.so)
+    working-directory: plugins-src/plugins/container
+    runs: |
+      set -eu
+      cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTS=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+      cmake --build build --target container -j"$(nproc)"
+      SO=build/libcontainer.so
+      # The gate sees the Go worker only through its build info: fail if it is
+      # unreadable, and check every floor reached the shipped library.
+      mods="$(go version -m "$SO" | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }')"
+      [ -n "$mods" ] || { echo "go version -m read no modules from $SO: the scan would be blind"; exit 1; }
+      echo "$(printf '%s\n' "$mods" | wc -l) Go modules in $SO"
+      vlt() { awk -v a="${1#v}" -v b="${2#v}" 'function pp(s,  p){sub(/\+.*/,"",s);p=index(s,"-");if(p){C=substr(s,1,p-1);P=substr(s,p+1)}else{C=s;P=""}} function cmp(x,y,  i,n,m,X,Y){n=split(x,X,".");m=split(y,Y,".");for(i=1;i<=n&&i<=m;i++){if(X[i]==Y[i])continue;if(X[i]~/^[0-9]+$/&&Y[i]~/^[0-9]+$/)return (X[i]+0<Y[i]+0)?-1:1;if(X[i]~/^[0-9]+$/)return -1;if(Y[i]~/^[0-9]+$/)return 1;return (X[i]<Y[i])?-1:1}return (n<m)?-1:(n>m)?1:0} BEGIN{pp(a);ca=C;pa=P;pp(b);cb=C;pb=P;c=cmp(ca,cb);if(c==0){if(pa==pb)c=0;else if(pa=="")c=1;else if(pb=="")c=-1;else c=cmp(pa,pb)}exit !(c<0)}'; }
+      bad=""
+      for mv in $(cat floor.txt); do
+        have="$(printf '%s\n' "$mods" | awk -v m="${mv%@*}" '$1 == m { v = $2 } END { print v }')"
+        [ -n "$have" ] || continue
+        if vlt "$have" "${mv#*@}"; then bad="$bad ${mv%@*}=$have"; fi
+      done
+      [ -z "$bad" ] || { echo "float did not reach libcontainer.so:$bad"; exit 1; }
+      # vex.openvex.json (docker/docker CVE-2026-33997) holds only while no
+      # daemon, plugin, api/server or authorization package is linked.
+      deps="$(cd go-worker && go list -deps -tags containers_image_openpgp .)"
+      printf '%s\n' "$deps" | grep -E '^github.com/(docker/docker|moby/moby)/(daemon|plugin|api/server|pkg/authorization)' > daemon.txt || true
+      if [ -s daemon.txt ]; then cat daemon.txt; echo "the plugin now links Docker daemon code: re-check vex.openvex.json"; exit 1; fi
+      printf '%s\n' "$deps" | grep -E '^github.com/docker/docker/' || true
+      # 0755: Trivy reads Go build info only from executable files.
+      install -Dm755 "$SO" "${{targets.destdir}}/usr/share/falco/plugins/libcontainer.so"
+      [ -x "${{targets.destdir}}/usr/share/falco/plugins/libcontainer.so" ]
+

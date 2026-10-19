@@ -1,0 +1,40 @@
+# Falco image: quench-falco built from source (falco with the modern eBPF probe
+# compiled in, the container plugin in /usr/share/falco/plugins) plus Wolfi
+# falco-rules on the 5.2.0 line Falco 0.45 pins. Default user 1001; a
+# deployment runs falco as root with privileges and host mounts (build.conf).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - falco-rules~5.2.0
+    - quench-falco@local
+
+accounts:
+  groups:
+    - groupname: falco
+      gid: 1001
+  users:
+    - username: falco
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/falco
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-falco"
+  org.opencontainers.image.licenses: "Apache-2.0 AND (GPL-2.0-only OR MIT)"

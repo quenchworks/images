@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/falco/2026-10-19",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-10-19T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-33997"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/docker/docker@v28.5.2%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "CVE-2026-33997 is a privilege-validation bypass in the Moby daemon's plugin installation. The module ships only inside the container plugin's Go worker (libcontainer.so). Checked with `go list -deps -tags containers_image_openpgp .` on plugins/container v0.7.5 go-worker after this recipe's floats (2026-10-19): it links github.com/docker/docker/client, api and api/types/* only, and from the new module paths moby/moby/api types and moby/moby/client; no daemon, plugin, api/server or pkg/authorization package of either path. The recipe fails the build if one is ever linked. The fix (29.3.1) exists only under the moby/moby module path, so the +incompatible module cannot be floated to it."
+    }
+  ]
+}
