@@ -207,12 +207,14 @@ pipeline:
         'guzzlehttp/psr7:^2.12.1' \
         'phpseclib/phpseclib:^2.0.55' \
         'symfony/dom-crawler:^6.4.40' \
+        'symfony/http-foundation:^6.4.46' \
         'symfony/serializer:^6.4.41' \
         'symfony/property-info:^6.4' \
         'symfony/property-access:^6.4' \
         'phpdocumentor/reflection-docblock:^5.3'
       composer update --no-scripts --with 'mtdowling/jmespath.php:^2.9.1' 'mtdowling/jmespath.php'
-      # HARD GATE: zero known advisories may remain in the resolved set.
+      # HARD GATE: zero known advisories may remain in the resolved set. (2026-10-19: 34.0.4/34.0.5
+      # ship http-foundation v6.4.42, CVE-2026-108082 ReDoS fixed in 6.4.46; floor above.)
       composer audit
       # The new webauthn serializer stack must autoload from the bundled tree.
       php -r 'require "autoload.php";
