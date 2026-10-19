@@ -343,8 +343,14 @@ def main() -> int:
                 if not prev:
                     print(f"!! {app}: cannot infer the PKG naming pattern")
                     return 3
-                mm = ".".join(v.split(".")[:2])
-                entries[m][v] = re.sub(r"\d+\.\d+$", mm, prev.group(1))
+                # Major.minor names (go-1.26) take the line; major-only names (erlang-27)
+                # take the major. Substituting major.minor into erlang-27 matched nothing
+                # and stamped erlang-27 on every line (2026-10-19, run 39215117461).
+                pat = prev.group(1)
+                if re.search(r"\d+\.\d+$", pat):
+                    entries[m][v] = re.sub(r"\d+\.\d+$", ".".join(v.split(".")[:2]), pat)
+                else:
+                    entries[m][v] = re.sub(r"\d+$", v.split(".")[0], pat)
 
     text = re.sub(r"^VERSIONS=\(.*\)$", "VERSIONS=(" + " ".join(versions) + ")",
                   text, count=1, flags=re.M)
