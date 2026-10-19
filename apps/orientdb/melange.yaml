@@ -1,0 +1,119 @@
+# Packages OrientDB Community (Apache-2.0) onto Wolfi: the upstream binary dist from
+# Maven Central on the Wolfi JRE. Pure JVM, so one tarball serves both arches.
+# STANDALONE ONLY: the distributed (Hazelcast) mode is removed, see build.conf STATUS.
+package:
+  name: quench-orientdb
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened OrientDB Community (standalone), packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-21-jre
+      - busybox
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - curl
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://repo1.maven.org/maven2/com/orientechnologies/orientdb-community/${{package.version}}/orientdb-community-${{package.version}}.tar.gz
+      expected-sha256: "__SHA256__"
+      strip-components: 1
+  - runs: |
+      dest="${{targets.destdir}}/opt/orientdb"
+      install -d "$dest" "$dest/databases" "$dest/log"
+      cp -r lib config plugins www license.txt readme.txt history.txt "$dest/"
+      install -d "$dest/bin"
+      cp bin/console.sh bin/backup.sh "$dest/bin/"
+
+      # ---- standalone only: drop Hazelcast and the distributed plugin ----
+      lib="$dest/lib"
+      for g in 'hazelcast-[0-9]*.jar' 'hazelcast-kubernetes-[0-9]*.jar' 'orientdb-distributed-[0-9]*.jar'; do
+        set -- $(find "$lib" -name "$g")
+        test "$#" -gt 0 || { echo "FATAL: no jar matched $g, the dist moved"; exit 1; }
+        rm -f "$@"
+      done
+      rm -f "$dest/config/hazelcast.xml" "$dest/config/default-distributed-db-config.json"
+      cfg="$dest/config/orientdb-server-config.xml"
+      grep -q OHazelcastPlugin "$cfg" || { echo "FATAL: OHazelcastPlugin handler not found"; exit 1; }
+      sed -i -e '/CLUSTER PLUGIN/d' -e '/OHazelcastPlugin/,/<\/handler>/d' "$cfg"
+      ! grep -qi hazelcast "$cfg" || { echo "FATAL: hazelcast still referenced in $cfg"; exit 1; }
+      # console logging only (the stock FileHandler writes relative to the cwd)
+      sed -i 's/^handlers *=.*/handlers = java.util.logging.ConsoleHandler/' \
+        "$dest/config/orientdb-server-log.properties"
+
+      # ---- 0-CVE jar swaps, version-aware: replace only older jars, fail if absent ----
+      swapjar() {  # <glob> <new-basename> <url> <sha256>
+        local n=0 kept=0 want v tmp
+        want="$(echo "$2" | grep -oE '[0-9]+(\.[0-9]+)+')"
+        tmp="$(mktemp)"
+        curl -fsSL -o "$tmp" "$3"
+        echo "$4  $tmp" | sha256sum -c -
+        for j in $(find "$lib" -name "$1"); do
+          v="$(basename "$j" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)"
+          if [ "$(printf '%s\n%s\n' "$v" "$want" | sort -V | head -1)" = "$want" ]; then
+            kept=$((kept+1)); continue
+          fi
+          rm -f "$j"; n=$((n+1))
+        done
+        test "$((n + kept))" -gt 0 || { echo "FATAL: no jar matched $1, the dist moved"; exit 1; }
+        [ "$n" = 0 ] || install -m0644 "$tmp" "$lib/$2"
+        rm -f "$tmp"
+        echo "  $1 -> $2 ($n replaced, $kept already at or above it)"
+      }
+      m=https://repo1.maven.org/maven2
+      swapjar 'jackson-core-2.*.jar' jackson-core-2.22.4.jar \
+        $m/com/fasterxml/jackson/core/jackson-core/2.22.4/jackson-core-2.22.4.jar \
+        2d30c375cddea9657a1e1ef97547a2694b663b355facb4de53a097782b312d1a
+      swapjar 'lz4-java-1.*.jar' lz4-java-1.11.4.jar \
+        $m/at/yawk/lz4/lz4-java/1.11.4/lz4-java-1.11.4.jar \
+        58c8e0b813960d2a248e050c353baea73139b48a2ffc55382d42c69707e17325
+      chmod -R a+rX "$dest"
+      # keep a pristine config copy so an empty config volume can be seeded
+      cp -r "$dest/config" "$dest/config.dist"
+
+      install -d "${{targets.destdir}}/usr/bin"
+      cat > "${{targets.destdir}}/usr/bin/orientdb-entrypoint" <<'EOS'
+      #!/bin/sh
+      # Starts OrientDB in the foreground. ORIENTDB_ROOT_PASSWORD sets the server root
+      # password on first start (OrientDB reads it natively).
+      set -eu
+      H="${ORIENTDB_HOME:-/opt/orientdb}"
+      [ -f "$H/config/orientdb-server-config.xml" ] || cp -r "$H/config.dist/." "$H/config/"
+      if ! grep -q '<user ' "$H/config/orientdb-server-config.xml" && [ -z "${ORIENTDB_ROOT_PASSWORD:-}" ]; then
+        echo "ORIENTDB_ROOT_PASSWORD is required on first start" >&2; exit 1
+      fi
+      mkdir -p "$H/databases" "$H/log"
+      cd "$H"
+      exec java -server ${ORIENTDB_OPTS_MEMORY:--Xms512m -Xmx512m} \
+        -Djna.nosys=true -Djava.awt.headless=true -Dfile.encoding=UTF8 \
+        -Djava.io.tmpdir="${ORIENTDB_TMP:-/tmp}" \
+        -DORIENTDB_HOME="$H" \
+        -Djava.util.logging.manager=com.orientechnologies.common.log.ShutdownLogManager \
+        -Djava.util.logging.config.file="$H/config/orientdb-server-log.properties" \
+        -Dorientdb.config.file="$H/config/orientdb-server-config.xml" \
+        -Dorientdb.www.path="$H/www" \
+        ${ORIENTDB_SETTINGS:-} \
+        -cp "$H/lib/*:$H/plugins/*" com.orientechnologies.orient.server.OServerMain "$@"
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/orientdb-entrypoint"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/bin/orientdb-entrypoint
+        test -f /opt/orientdb/config/orientdb-server-config.xml
+        ! ls /opt/orientdb/lib | grep -qi hazelcast
+        ! ls /opt/orientdb/lib | grep -q orientdb-distributed
+        ls /opt/orientdb/lib/jackson-core-2.22.4.jar /opt/orientdb/lib/lz4-java-1.11.4.jar

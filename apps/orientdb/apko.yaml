@@ -1,0 +1,64 @@
+# OrientDB Community (Apache-2.0), standalone. Binary protocol on 2424, HTTP API and
+# Studio on 2480. ORIENTDB_ROOT_PASSWORD sets the root password on first start.
+# Writable: /opt/orientdb/databases (data), /opt/orientdb/config (root user is stored
+# there), /opt/orientdb/log and /tmp.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-orientdb@local
+
+accounts:
+  groups:
+    - groupname: orientdb
+      gid: 1001
+  users:
+    - username: orientdb
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/orientdb-entrypoint
+
+environment:
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  ORIENTDB_HOME: /opt/orientdb
+  PATH: /usr/lib/jvm/java-21-openjdk/bin:/usr/bin:/bin:/opt/orientdb/bin
+
+work-dir: /opt/orientdb
+
+paths:
+  - path: /opt/orientdb/databases
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+  - path: /opt/orientdb/config
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+    recursive: true
+  - path: /opt/orientdb/log
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-orientdb"
+  org.opencontainers.image.licenses: "Apache-2.0"
