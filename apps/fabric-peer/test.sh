@@ -23,9 +23,18 @@ done
 echo "ccaas builder binaries present"
 
 # core.yaml's vm.endpoint is the Docker socket; with no socket the docker health check keeps
-# /healthz at 503. Chaincode runs through the ccaas external builder, so clear it, as a
-# Kubernetes deployment does.
-docker run -d --name "$NAME" -e CORE_OPERATIONS_LISTENADDRESS=0.0.0.0:9443 -e CORE_VM_ENDPOINT= \
+# /healthz at 503. Chaincode runs through the ccaas external builder, so run with vm.endpoint
+# empty, as a Kubernetes deployment does. 2.5 ignores an empty CORE_VM_ENDPOINT (viper treats
+# it as unset), so mount the image's own core.yaml with that one line changed.
+CFG="$(mktemp -d)"; trap 'docker rm -f "$NAME" >/dev/null 2>&1 || true; rm -rf "$CFG"' EXIT
+cid="$(docker create "$IMAGE")"
+docker cp "$cid:/etc/hyperledger/fabric/core.yaml" "$CFG/core.yaml" >/dev/null
+docker rm "$cid" >/dev/null
+sed -i 's|^\([[:space:]]*endpoint:\) unix:///var/run/docker.sock$|\1 ""|' "$CFG/core.yaml"
+grep -q '^[[:space:]]*endpoint: ""$' "$CFG/core.yaml" || { echo "vm.endpoint line not found in core.yaml"; exit 1; }
+chmod 0644 "$CFG/core.yaml"
+docker run -d --name "$NAME" -e CORE_OPERATIONS_LISTENADDRESS=0.0.0.0:9443 \
+  -v "$CFG/core.yaml:/etc/hyperledger/fabric/core.yaml:ro" \
   -p 127.0.0.1::9443 "$IMAGE" >/dev/null
 port="$(docker port "$NAME" 9443/tcp | head -1 | sed 's/.*://')"
 code=""
