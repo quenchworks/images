@@ -184,15 +184,20 @@ pipeline:
       R="$VS/vllm-$VER/rust"
       sed -i -E -e 's/^pyo3 = "0[.]2[0-8][.0-9]*"/pyo3 = "0.29"/' -e 's/^pythonize = "0[.]2[0-8][.0-9]*"/pythonize = "0.29"/' "$R/Cargo.toml"
       (cd "$R" && cargo metadata --format-version 1 >/dev/null \
-        && cargo update -p pyo3 -p pythonize -p rustls -p rustls-webpki -p serde_with -p openssl-src \
+        && up="" && for c in pyo3 pythonize rustls rustls-webpki serde_with openssl-src; do if grep -qx "name = \"$c\"" Cargo.lock; then up="$up -p $c"; fi; done \
+        && cargo update $up \
         && cfloor rand 0.8.6 && cfloor rand 0.9.3 \
         && VLLM_RS_BUILD_VERSION="$VER" PYO3_PYTHON="$VENV/bin/python" cargo auditable build --release -p vllm-cmd --bin vllm-rs --features native-tls-vendored \
-        && PYO3_BUILD_EXTENSION_MODULE=1 PYO3_PYTHON="$VENV/bin/python" cargo auditable build --release -p vllm-tool-parser-py --features pyo3/abi3-py38)
+        && if grep -qx 'name = "vllm-tool-parser-py"' Cargo.lock; then PYO3_BUILD_EXTENSION_MODULE=1 PYO3_PYTHON="$VENV/bin/python" cargo auditable build --release -p vllm-tool-parser-py --features pyo3/abi3-py38; fi)
       install -m0755 "$R/target/release/vllm-rs" "$SITE/vllm/vllm-rs"
-      install -m0755 "$R/target/release/lib_rust_tool_parser.so" "$SITE/vllm/_rust_tool_parser.abi3.so"
+      # 0.32 removed the PyO3 tool-parser bridge (tools/build_rust.py; no pyo3 in its rust lock),
+      # so the parser is rebuilt and checked only on the versions that still have it.
+      if [ -f "$R/target/release/lib_rust_tool_parser.so" ]; then
+        install -m0755 "$R/target/release/lib_rust_tool_parser.so" "$SITE/vllm/_rust_tool_parser.abi3.so"
+        "$VENV/bin/python" -c "import vllm._rust_tool_parser"
+      fi
       readelf -S "$SITE/vllm/vllm-rs" | grep dep-v0 >/dev/null
       test "$("$SITE/vllm/vllm-rs" --version)" = "vllm-rs $VER"
-      "$VENV/bin/python" -c "import vllm._rust_tool_parser"
       rm -rf "$VS"
       for spec in $("$VENV/bin/python" -c "$RUSTSO" "$SITE" blind); do
         PATH="$CW:$PATH" "$VENV/bin/pip" install --no-cache-dir --no-deps --force-reinstall --no-binary "${spec%%==*}" "$spec"
