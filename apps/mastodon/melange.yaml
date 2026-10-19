@@ -82,10 +82,11 @@ pipeline:
       # source gems only, nokogiri on the system libxml2 and libxslt
       bundle config set --local force_ruby_platform true
       bundle config set --local build.nokogiri '--use-system-libraries'
-      # rack-proxy 1.0.1 has a fixed advisory (>= 1.0.3); move only it, within the Gemfile
-      bundle lock --update rack-proxy --conservative
+      # fixed advisories: rack-proxy 1.0.1 (>= 1.0.3); css_parser 3.0.0 via premailer
+      # (GHSA-w3mx-4vv9-hjpg, >= 3.3.0, 2026-10-19). Move only these, within the Gemfile.
+      bundle lock --update rack-proxy css_parser --conservative
       bundle install --jobs 4 --retry 3
-      ruby -e 'v = File.read("Gemfile.lock")[/^    rack-proxy \(([\d.]+)\)/, 1]; abort("rack-proxy #{v} below 1.0.3") if Gem::Version.new(v) < Gem::Version.new("1.0.3"); puts "rack-proxy #{v}"'
+      ruby -e 'l = File.read("Gemfile.lock"); { "rack-proxy" => "1.0.3", "css_parser" => "3.3.0" }.each { |g, f| v = l[/^    #{g} \(([\d.]+)\)/, 1]; abort("#{g} #{v} below #{f}") if v.nil? || Gem::Version.new(v) < Gem::Version.new(f); puts "#{g} #{v}" }'
 
       # what the scan cannot see must not be there: nokogiri on the system libxml2, no
       # precompiled platform in the lock, no bundled .libs directory
