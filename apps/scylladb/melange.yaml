@@ -102,7 +102,7 @@ pipeline:
       # Rust blind spot (2026-10-13): libexec/scylla links scylla's rust/ crates (wasmtime
       # for WASM UDFs) with no .dep-v0, so the gate saw none of them. Ship the release
       # commit's rust/Cargo.lock (all 47 crate strings in the 2026.3.3 binary are in it).
-      # wasmtime-wasi 24.0.9 (CVE-2026-54786) is VEXed on rust/wasmtime_bindings/src/lib.rs.
+      # wasmtime-wasi 24.0.9 (CVE-2026-54786, CVE-2026-58494) is VEXed on rust/wasmtime_bindings/src/lib.rs.
       case "$BUILD" in
         *.d80b3d6ca26b) lsha=d80b3d6ca26b5457c1b59b47046fab27fa1953f3 lsum=ea633be18d92c60e312cc364fb9cffba63e69f51f3f9112634cd34a66e627d5d ;;
         *) echo "no rust/Cargo.lock pinned for scylla build $BUILD; pin it and re-check the VEX"; exit 1 ;;

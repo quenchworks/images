@@ -17,6 +17,19 @@
       "status": "not_affected",
       "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
       "impact_statement": "CVE-2026-54786 is a host resource leak in the native WASIp1 fd_renumber: a guest loops fd_renumber to exhaust host descriptors, which the advisory says needs a runtime that lets the guest acquire file descriptors (for example by opening a file); runtimes that deny file access are unaffected. wasmtime-wasi 24.0.9 is in /opt/scylladb/libexec/scylla only for WASM user-defined functions (an experimental feature, off unless enabled). At release commit d80b3d6ca26b5457c1b59b47046fab27fa1953f3, rust/wasmtime_bindings/src/lib.rs:194 builds the only WASI context as WasiCtxBuilder::new().build_p1() with no preopened_dir, no inherit_stdio and no inherit_env, and lib.rs:110 links preview1 onto it; grep -n 'preopen|inherit' over that file returned 0 matches. A guest therefore holds only the three virtual stdio descriptors and cannot open a file or socket, so it cannot obtain new descriptors to renumber in a loop. The recipe pins the lock per scylla build and fails on any new build until this is re-checked. Verified 2026-10-13."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-58494"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/wasmtime-wasi@24.0.9"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
+      "impact_statement": "CVE-2026-58494 (GHSA-4ch3-9j33-3pmj) lets a guest overwrite a host file exposed read-only in one preopened directory by hard-linking or renaming it into a second preopen that allows writes; it needs at least two preopened directories with different FilePerms. wasmtime-wasi 24.0.9 is in /opt/scylladb/libexec/scylla only for WASM user-defined functions (an experimental feature, off unless enabled). At release commit d80b3d6ca26b5457c1b59b47046fab27fa1953f3, rust/wasmtime_bindings/src/lib.rs:194 builds the only WASI context as WasiCtxBuilder::new().build_p1() with no preopened_dir, and grep -n 'preopen' over that file returns 0 matches, so a guest has no host directory capability at all and no file to link, rename or open. The recipe pins the lock per scylla build and fails on any new build until this is re-checked. Verified 2026-10-19."
     }
   ]
 }
