@@ -3,8 +3,10 @@
 # via -X internal/build.Version so `centrifugo version` reports the real release.
 # Output is a signed APK in Quenchworks' own repo. No upstream distro binaries.
 # Image-only (a server, no chart). Upstream tags carry a "v" prefix; goreleaser
-# stamps the bare version (module path is .../centrifugo/v6). go.mod requires
-# Go 1.26, so build with the go-1.26 toolchain explicitly.
+# stamps the bare version (module path is .../centrifugo/v6). 6.10.0's go.mod requires
+# Go 1.27.0: under go-1.26 the go command fetched the go1.27.0 toolchain and shipped
+# its stdlib (CVE-2026-78667, 2026-10-20). Build with go-1.27 and GOTOOLCHAIN=local so
+# a newer go line fails the build instead of downloading an unpatched toolchain.
 package:
   name: quench-centrifugo
   version: __VER__
@@ -26,7 +28,7 @@ environment:
       - build-base
       - busybox
       - ca-certificates-bundle
-      - go-1.26
+      - go-1.27
 
 pipeline:
   - uses: fetch
@@ -35,6 +37,7 @@ pipeline:
       expected-sha256: __SHA256__
   - runs: |
       export CGO_ENABLED=0
+      export GOTOOLCHAIN=local
       export GOFLAGS=-mod=mod
       # 0-CVE gate: 6.9.1 already requires webtransport-go v0.11.1 (CVE-2026-57497),
       # x/net v0.57.0, x/text v0.40.0, x/crypto v0.54.0 and x/sys v0.47.0, so the float
