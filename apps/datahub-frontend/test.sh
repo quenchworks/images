@@ -9,7 +9,7 @@ set -euo pipefail
 IMAGE="${1:?usage: test.sh <image-ref> [version]}"
 WANT="${2:-}"
 UPGRADE="${DATAHUB_UPGRADE_IMAGE:-ghcr.io/quenchworks/images/datahub-upgrade@sha256:7d4452a171f27fc059ff306181ea22c8aa13fb057579e76842788d41095a1576}"
-GMSIMG="${DATAHUB_GMS_IMAGE:-ghcr.io/quenchworks/images/datahub-gms@__GMS_DIGEST__}"
+GMSIMG="${DATAHUB_GMS_IMAGE:-ghcr.io/quenchworks/images/datahub-gms@sha256:5cb81778e07034d80c66cdbf95edbd48b8ddd9671f3cfa53f68fbc03dda3d615}"
 MYSQL=ghcr.io/quenchworks/images/mysql@sha256:40b6296bb2cea66b225f8d26bbecd4a11859dce69e48a7267fcfd38e58ac052e
 KAFKA=ghcr.io/quenchworks/images/kafka@sha256:6b7ea2f5c99d48e4ad40f686464687791b50e55d49b6b74b04985f38573febd2
 ES=ghcr.io/quenchworks/images/elasticsearch@sha256:f2b65a8c303e1591bcfde5a62435b0b97d60fc7a4a1399ced11ad8eb479ecda6
