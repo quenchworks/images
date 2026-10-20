@@ -1,0 +1,141 @@
+# Builds the Kubeflow Pipelines UI (frontend/) from the kubeflow/pipelines release tag onto
+# Wolfi: the React client (vite, static files only) and the Node server that serves it and
+# proxies the API server, artifact store and Kubernetes. Layout matches upstream's image
+# (/server, /client; `node dist/server.js ../client/ 3000` from /server), so the image is a
+# drop-in for ghcr.io/kubeflow/kfp-frontend.
+package:
+  name: quench-kfp-frontend
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks Kubeflow Pipelines UI (client + Node server), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - nodejs-24
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - nodejs-24
+      - npm
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/kubeflow/pipelines/archive/refs/tags/${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Build the client (static files)
+    working-directory: frontend
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)"
+      # .npmrc sets engine-strict and package.json pins node to exactly 24.14.0; Wolfi carries
+      # a newer 24.x. 0-CVE pins measured 2026-10-20 (npm audit --omit=dev): js-yaml and
+      # protobufjs are direct deps, so they are set in dependencies; the 7.x protobufjs copies
+      # under proto3-json-serializer and ts-proto are pinned in place, not forced to 8.x.
+      node -e '
+        const fs = require("fs");
+        const p = JSON.parse(fs.readFileSync("package.json"));
+        p.dependencies["js-yaml"] = "4.3.2";
+        p.dependencies["protobufjs"] = "8.6.6";
+        Object.assign(p.overrides, {
+          "qs": "6.16.0",
+          "proto3-json-serializer": { "protobufjs": "7.6.6" },
+          "ts-proto": { "protobufjs": "7.6.6" },
+        });
+        fs.writeFileSync("package.json", JSON.stringify(p, null, 2));
+      '
+      npm install --engine-strict=false --no-audit --no-fund
+      # The vite bundle is invisible to the scanner (no package.json survives into it), so the
+      # client tree carries its own gate. braces has no fixed release (GHSA-vfj7-8cjw-p6xm,
+      # <=3.0.3 and 3.0.3 is the newest); it reaches the tree only through tailwind's chokidar
+      # and http-proxy-middleware, neither of which src/ imports, so neither is in the bundle.
+      npm audit --omit=dev --json > audit.json || true
+      node -e '
+        const v = JSON.parse(require("fs").readFileSync("audit.json")).vulnerabilities || {};
+        const allowed = new Set(["braces", "micromatch", "http-proxy-middleware"]);
+        const bad = Object.keys(v).filter(k => !allowed.has(k));
+        if (bad.length) { console.error("client audit:", bad.join(" ")); process.exit(1); }
+        console.log("client audit clean apart from:", Object.keys(v).join(" ") || "nothing");
+      '
+      # upstream `npm run build` is lint + typecheck + vite build; the bundle is the vite step.
+      npm run build:tailwind
+      npx vite build
+      test -f build/index.html
+
+  - name: Build the server
+    working-directory: frontend/server
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)"
+      # 0-CVE pins measured 2026-10-20 (trivy rootfs, comprehensive, on the prod tree). axios
+      # and js-yaml are direct deps (an override may not conflict with one); the rest pin in
+      # overrides.
+      node -e '
+        const fs = require("fs");
+        const p = JSON.parse(fs.readFileSync("package.json"));
+        p.dependencies["axios"] = "1.20.0";
+        p.dependencies["js-yaml"] = "4.3.2";
+        p.overrides = Object.assign(p.overrides || {}, {
+          "body-parser": "2.3.0", "decode-uri-component": "0.5.0", "ip-address": "10.7.2",
+          "proxy-addr": "2.0.8", "qs": "6.16.0", "stream-json": "3.7.0",
+        });
+        fs.writeFileSync("package.json", JSON.stringify(p, null, 2));
+      '
+      npm install --engine-strict=false --no-audit --no-fund
+      ./node_modules/.bin/tsc --project .
+      npm prune --omit=dev --no-audit --no-fund
+      # decode-uri-component 0.5.0 and stream-json 3.x (the only releases with the fixes) are
+      # ESM-only, and their consumers are CommonJS: query-string 7 require()s the first, minio
+      # 8.0.7 (the newest) the second, by a path and API that 3.x dropped. Node 24 can
+      # require() ESM, so take the default export and use the 3.x API; same {key, value} records.
+      qs=node_modules/query-string/index.js
+      sed -i "s|^const decodeComponent = require('decode-uri-component');|const decodeComponent = (m => m.default \|\| m)(require('decode-uri-component'));|" "$qs"
+      grep -q "m.default || m)(require('decode-uri-component'))" "$qs" || { echo "FATAL: query-string patch did not apply"; exit 1; }
+      cjs=node_modules/minio/dist/main/notification.js
+      esm=node_modules/minio/dist/esm/notification.mjs
+      sed -i 's|require("stream-json/jsonl/Parser.js")|require("stream-json/jsonl/parser.js")|; s|_Parser.make()|_Parser.default.asStream()|' "$cjs"
+      sed -i "s|from 'stream-json/jsonl/Parser.js'|from 'stream-json/jsonl/parser.js'|; s|jsonLineParser.make()|jsonLineParser.asStream()|" "$esm"
+      grep -q '_Parser.default.asStream()' "$cjs" && grep -q 'jsonLineParser.asStream()' "$esm" \
+        && ! grep -q 'Parser.js' "$cjs" "$esm" || { echo "FATAL: minio stream-json patch did not apply"; exit 1; }
+      # every pinned copy, nested ones too, at or above its pin
+      node -e '
+        const lock = JSON.parse(require("fs").readFileSync("package-lock.json")).packages;
+        const want = { "axios": "1.20.0", "js-yaml": "4.3.2", "body-parser": "2.3.0", "decode-uri-component": "0.5.0",
+          "ip-address": "10.7.2", "proxy-addr": "2.0.8", "qs": "6.16.0", "stream-json": "3.7.0" };
+        const older = (a, b) => { const x = a.split(".").map(Number), y = b.split(".").map(Number); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i]; return false; };
+        for (const [k, v] of Object.entries(want))
+          for (const [path, e] of Object.entries(lock))
+            if ((path === "node_modules/" + k || path.endsWith("/node_modules/" + k)) && (!e.version || older(e.version, v))) {
+              console.error(path, "is", e.version, "below", v); process.exit(1); }
+        console.log("pins installed");
+      '
+      node -e '
+        const qs = require("query-string");
+        if (qs.parse("a=%20b").a !== " b") throw new Error("query-string decode broken");
+        const p = require("stream-json/jsonl/parser.js").default.asStream();
+        p.on("data", d => { if (d.value.Records[0] !== 1) throw new Error("jsonl shape"); console.log("patched deps work"); });
+        p.end("{\"Records\":[1]}\n");
+      '
+
+  - name: Install /server and /client
+    runs: |
+      set -eu
+      D="${{targets.destdir}}"
+      mkdir -p "$D/server/src/third_party/mlmd" "$D/client"
+      cp -a frontend/build/. "$D/client/"
+      cp -a frontend/server/dist frontend/server/node_modules frontend/server/package.json "$D/server/"
+      # helpers/mlmd-validator loads the generated MLMD protos from ../../src/third_party (as upstream ships them)
+      cp -a frontend/src/third_party/mlmd/generated "$D/server/src/third_party/mlmd/"
+      printf '{"type":"commonjs"}\n' > "$D/server/src/third_party/mlmd/generated/package.json"
+      printf '%s\n' "${{package.version}}" > "$D/server/dist/TAG_NAME"

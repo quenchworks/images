@@ -1,0 +1,35 @@
+# ML Metadata gRPC server from Wolfi's ml-metadata-store-server apk: nonroot uid 1001, no shell.
+# Kubeflow Pipelines runs it with --grpc_port and the --mysql_config_* flags.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - ml-metadata-store-server=__REL__
+
+accounts:
+  groups:
+    - groupname: mlmd
+      gid: 1001
+  users:
+    - username: mlmd
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/metadata_store_server
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-ml-metadata-store-server"
+  org.opencontainers.image.licenses: "Apache-2.0"

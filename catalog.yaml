@@ -2741,6 +2741,69 @@ catalog:
     tier: standard
     status: built
 
+  - name: kfp-api-server
+    category: Machine learning & AI
+    summary: The Kubeflow Pipelines API server, which stores pipelines, runs, experiments and recurring runs in MySQL and compiles each run to an Argo Workflow. Built from source, linking Wolfi's SQLite instead of a vendored copy.
+    source: https://github.com/kubeflow/pipelines
+    upstream: https://www.kubeflow.org/docs/components/pipelines/
+    license: Apache-2.0
+    tier: standard
+    status: built
+
+  - name: kfp-persistence-agent
+    category: Machine learning & AI
+    summary: The Kubeflow Pipelines persistence agent, which watches Argo Workflows and ScheduledWorkflows and reports run state back to the API server. Built from source.
+    source: https://github.com/kubeflow/pipelines
+    upstream: https://www.kubeflow.org/docs/components/pipelines/
+    license: Apache-2.0
+    tier: standard
+    status: built
+
+  - name: kfp-scheduled-workflow-controller
+    category: Machine learning & AI
+    summary: The Kubeflow Pipelines ScheduledWorkflow controller, which starts recurring and cron-scheduled pipeline runs. Built from source.
+    source: https://github.com/kubeflow/pipelines
+    upstream: https://www.kubeflow.org/docs/components/pipelines/
+    license: Apache-2.0
+    tier: standard
+    status: built
+
+  - name: kfp-driver
+    category: Machine learning & AI
+    summary: The Kubeflow Pipelines v2 driver, the step Argo runs before every task to resolve inputs, check the cache and record executions in ML Metadata. Built from source.
+    source: https://github.com/kubeflow/pipelines
+    upstream: https://www.kubeflow.org/docs/components/pipelines/
+    license: Apache-2.0
+    tier: standard
+    status: built
+
+  - name: kfp-launcher
+    category: Machine learning & AI
+    summary: The Kubeflow Pipelines v2 launcher, a static binary copied into every task container that runs the user command and moves input and output artifacts through the object store. Built from source.
+    source: https://github.com/kubeflow/pipelines
+    upstream: https://www.kubeflow.org/docs/components/pipelines/
+    license: Apache-2.0
+    tier: standard
+    status: built
+
+  - name: kfp-frontend
+    category: Machine learning & AI
+    summary: The Kubeflow Pipelines UI, the React client and the Node server that serves it and proxies the API server, artifacts and pod logs. Built from source with its npm dependencies pinned to fixed releases.
+    source: https://github.com/kubeflow/pipelines
+    upstream: https://www.kubeflow.org/docs/components/pipelines/
+    license: Apache-2.0
+    tier: standard
+    status: built
+
+  - name: ml-metadata-store-server
+    category: Machine learning & AI
+    summary: The ML Metadata gRPC server that Kubeflow Pipelines records executions and artifacts into, from Wolfi's package. Blocked because it statically links SQLite, zlib, gRPC, MariaDB Connector/C and libpq at versions the scanner cannot see.
+    source: https://github.com/google/ml-metadata
+    upstream: https://github.com/google/ml-metadata
+    license: Apache-2.0
+    tier: standard
+    status: blocked
+
   - name: mediawiki
     category: Apps & productivity
     summary: MediaWiki, the wiki engine behind Wikipedia. The official release on a hardened Wolfi php-8.3-fpm + nginx runtime (nonroot, read-only rootfs), with the vendored guzzle and webauthn libraries floated to their fixed releases by a targeted composer update. Ships 1.43 LTS and the supported stable lines. The chart installs the schema on first start, into SQLite by default or an external MySQL or PostgreSQL.

@@ -1,0 +1,41 @@
+# Runtime image for the Kubeflow Pipelines UI: Node 24, nonroot uid 1001, no shell.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-kfp-frontend@local
+
+accounts:
+  groups:
+    - groupname: kfp
+      gid: 1001
+  users:
+    - username: kfp
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  API_SERVER_ADDRESS: http://localhost:3001
+
+work-dir: /server
+
+entrypoint:
+  command: /usr/bin/node dist/server.js ../client/ 3000
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-kfp-frontend"
+  org.opencontainers.image.licenses: "Apache-2.0"
