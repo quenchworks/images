@@ -20,9 +20,12 @@ user="$(docker inspect "$IMAGE" --format '{{.Config.User}}')"
 [ "$user" = "1001" ] || { echo "expected user 1001, got '$user'"; exit 1; }
 
 docker network create "$NET" >/dev/null
-docker run -d --name "$DB" --network "$NET" mongo:8.0 >/dev/null
+# Our own MongoDB 9 image (MONGO_IMAGE overrides). Docker Hub mongo:8.0 refuses to start on
+# Linux 6.19+ kernels (the arm64 runners, 2026-10-19), and 9.0 has no such check.
+MONGO="${MONGO_IMAGE:-ghcr.io/quenchworks/images/mongodb@sha256:8969ef1e59df01606d0255b5fd80eb8405c03fbdac5b595b4c97a9534c0a43ba}"
+docker run -d --name "$DB" --network "$NET" --read-only --tmpfs /data:rw,mode=1777,exec "$MONGO" >/dev/null
 for i in $(seq 1 60); do
-  docker exec "$DB" mongosh --quiet --eval 'db.runCommand({ping:1}).ok' >/dev/null 2>&1 && break
+  docker exec -e HOME=/data "$DB" mongosh --quiet --eval 'db.runCommand({ping:1}).ok' >/dev/null 2>&1 && break
   [ "$i" = 60 ] && { echo "mongodb did not start"; docker logs "$DB" | tail -20; exit 1; }
   sleep 1
 done
