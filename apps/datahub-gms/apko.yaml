@@ -1,0 +1,58 @@
+# Assembles the DataHub GMS image: nonroot uid 1001, multi-arch, SBOM by apko. It serves
+# on 8080 (health at /health) and 4319 (Spring management). Configure it with DataHub's
+# environment (EBEAN_DATASOURCE_*, KAFKA_BOOTSTRAP_SERVER, ELASTICSEARCH_*,
+# SCHEMA_REGISTRY_TYPE, DATAHUB_SYSTEM_CLIENT_SECRET, DATAHUB_TOKEN_SERVICE_*); extra JVM
+# flags go in JDK_JAVA_OPTIONS. Logs also go to /tmp/datahub/logs: mount /tmp writable.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-datahub-gms@local
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+      homedir: /home/nonroot
+  run-as: 1001
+
+environment:
+  JAVA_HOME: /usr/lib/jvm/java-25-openjdk
+  HOME: /home/nonroot
+  LANG: C.UTF-8
+  ENTITY_REGISTRY_CONFIG_PATH: /datahub/datahub-gms/resources/entity-registry.yml
+  MANAGEMENT_SERVER_PORT: "4319"
+
+paths:
+  - path: /home/nonroot
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+work-dir: /home/nonroot
+
+# openjdk-25-jre has no /usr/bin/java symlink, so the path is the JDK's own.
+entrypoint:
+  command: /usr/lib/jvm/java-25-openjdk/bin/java @/datahub/datahub-gms/java.args
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-datahub-gms"
+  org.opencontainers.image.licenses: "Apache-2.0"

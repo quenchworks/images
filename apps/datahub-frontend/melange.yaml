@@ -1,0 +1,286 @@
+# Packages DataHub's frontend (the Play server for the React UI, login and the GraphQL
+# proxy) from upstream's release image, pulled by per-arch digest, onto Wolfi. Its lib/
+# runs on a plain classpath in upstream's order; vulnerable libraries are
+# replaced with fixed releases, including the copies bundled inside other jars.
+package:
+  name: quench-datahub-frontend
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened DataHub frontend (React UI), on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-25-jre       # upstream runs it on Java 25; classes are major 65 (Java 21)
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - curl
+      - crane
+      - unzip
+      - openjdk-25           # a full JDK: Shade.java runs as a single-file source program
+
+pipeline:
+  - runs: |
+      set -eu
+      VER="${{package.version}}"
+      case "$(uname -m)" in
+        x86_64)  plat=linux/amd64; dig=__DIG_AMD__ ;;
+        aarch64) plat=linux/arm64; dig=__DIG_ARM__ ;;
+        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+      esac
+      mkdir -p rootfs
+      crane export --platform "$plat" "index.docker.io/acryldata/datahub-frontend-react@${dig}" - | tar -x -C rootfs datahub-frontend
+      src=rootfs/datahub-frontend
+      # the app jar is named <major.minor.patch>-<build>: v1.7.0.1 ships datahub-frontend-1.7.0-1.jar
+      test -f "$src/lib/datahub-frontend-${VER%.*}-${VER##*.}.jar" || { echo "FATAL: not v$VER"; ls "$src/lib" | grep frontend; exit 1; }
+      D="${{targets.destdir}}"; APP=/datahub-frontend
+      install -d "$D$APP"
+      cp -a "$src/lib" "$src/conf" "$D$APP/"
+      # No default login: upstream ships datahub:datahub here. The chart (or a mount) provides
+      # the admin credential; until then nobody can log in.
+      : > "$D$APP/conf/user.props"
+      L="$D$APP/lib"; ARGS="$D$APP/java.args"
+      # The classpath, in the order upstream's Gradle start script lists it.
+      sed -n 's/^CLASSPATH=//p' "$src/bin/datahub-frontend" | tr ':' '\n' | sed "s|^\$APP_HOME|$APP|" > cp.txt
+
+      cat > Shade.java <<'JAVA'
+      // Shade: replace a library copy bundled inside another jar with a fixed release.
+      // usage: java -cp asm:asm-commons Shade.java <target.jar> <prefix|-> <extra-roots|-> <fixed.jar>...
+      // prefix is the relocation the bundling jar applied (com/hazelcast/shaded/), or - when the
+      // copy is not relocated. Each fixed jar's package root (com/fasterxml/jackson/core/) is
+      // relocated under prefix in class references and in string constants, as maven-shade does;
+      // extra-roots names roots the bundle relocated without being replaced here (comma list).
+      // Classes under prefix+root are dropped from the target (multi-release copies included),
+      // with the fixed jar's META-INF/maven coordinates; the fixed classes are added. Fails when
+      // a dropped top-level class has no replacement outside internal/shaded (nested and
+      // anonymous classes are private to the library and come and go between patches).
+      import java.io.*;
+      import java.nio.file.*;
+      import java.util.*;
+      import java.util.zip.*;
+      import org.objectweb.asm.*;
+      import org.objectweb.asm.commons.*;
+
+      public class Shade {
+        static String pre;
+        static final List<String> roots = new ArrayList<>();
+
+        static String reloc(String n) {
+          for (String r : roots) {
+            if (n.startsWith(r)) return pre + n;
+            String d = r.replace('/', '.');
+            if (n.startsWith(d)) return pre.replace('/', '.') + n;
+          }
+          return n;
+        }
+
+        static String unversioned(String e) {
+          return e.startsWith("META-INF/versions/") ? e.replaceFirst("^META-INF/versions/[0-9]+/", "") : e;
+        }
+
+        static String root(Collection<String> names) {
+          String p = null;
+          for (String n : names) {
+            if (!n.endsWith(".class") || n.startsWith("META-INF/") || n.endsWith("module-info.class")) continue;
+            String d = n.substring(0, n.lastIndexOf('/') + 1);
+            if (p == null) p = d;
+            while (!d.startsWith(p)) p = p.substring(0, p.lastIndexOf('/', p.length() - 2) + 1);
+          }
+          if (p == null || p.chars().filter(c -> c == '/').count() < 2) throw new IllegalStateException("no package root: " + p);
+          return p;
+        }
+
+        static byte[] read(ZipFile z, ZipEntry e) throws IOException {
+          try (InputStream in = z.getInputStream(e)) { return in.readAllBytes(); }
+        }
+
+        static String version(byte[] pom) throws IOException {
+          Properties p = new Properties();
+          p.load(new ByteArrayInputStream(pom));
+          return p.getProperty("version");
+        }
+
+        // numeric compare of dotted versions: 2.21.10 > 2.21.8
+        static int cmp(String x, String y) {
+          String[] a = x.split("[.-]"), b = y.split("[.-]");
+          for (int i = 0; i < Math.max(a.length, b.length); i++) {
+            String p = i < a.length ? a[i] : "0", q = i < b.length ? b[i] : "0";
+            int c = p.matches("\\d+") && q.matches("\\d+") ? Long.compare(Long.parseLong(p), Long.parseLong(q)) : p.compareTo(q);
+            if (c != 0) return c;
+          }
+          return 0;
+        }
+
+        public static void main(String[] a) throws Exception {
+          Path target = Path.of(a[0]);
+          pre = a[1].equals("-") ? "" : a[1];
+          if (!a[2].equals("-")) roots.addAll(List.of(a[2].split(",")));
+          List<String> replaced = new ArrayList<>(), coords = new ArrayList<>();
+          List<ZipFile> fixed = new ArrayList<>();
+          ZipFile tz = new ZipFile(target.toFile());
+          for (int i = 3; i < a.length; i++) {
+            ZipFile z = new ZipFile(a[i]);
+            List<String> names = z.stream().map(ZipEntry::getName).toList();
+            String r = root(names), pom = names.stream()
+                .filter(n -> n.startsWith("META-INF/maven/") && n.endsWith("/pom.properties")).findFirst().orElseThrow();
+            roots.add(r);
+            ZipEntry have = tz.getEntry(pom);
+            if (have == null) throw new IllegalStateException(target + " bundles no " + pom);
+            String hv = version(read(tz, have)), fv = version(read(z, z.getEntry(pom)));
+            if (cmp(hv, fv) >= 0) { System.out.println("shade: " + target.getFileName() + ": keeps " + pom + " " + hv + " (>= " + fv + ")"); continue; }
+            fixed.add(z);
+            replaced.add(r);
+            coords.add(pom.substring(0, pom.length() - "pom.properties".length()));
+          }
+          tz.close();
+          if (fixed.isEmpty()) return;
+          Remapper rm = new Remapper() {
+            @Override public String map(String n) { return reloc(n); }
+            @Override public Object mapValue(Object v) { return v instanceof String s ? reloc(s) : super.mapValue(v); }
+          };
+          Path out = Path.of(a[0] + ".new");
+          Set<String> dropped = new TreeSet<>(), added = new HashSet<>(), seen = new HashSet<>();
+          try (ZipFile t = new ZipFile(target.toFile());
+               ZipOutputStream zo = new ZipOutputStream(new BufferedOutputStream(Files.newOutputStream(out)))) {
+            for (ZipEntry e : Collections.list(t.entries())) {
+              String n = e.getName(), u = unversioned(n);
+              boolean drop = coords.stream().anyMatch(n::startsWith);
+              for (String r : replaced) if (u.startsWith(pre + r)) drop = true;
+              if (drop) { if (n.endsWith(".class") && n.equals(u)) dropped.add(n); continue; }
+              seen.add(n);
+              zo.putNextEntry(new ZipEntry(n));
+              if (!e.isDirectory()) try (InputStream in = t.getInputStream(e)) { in.transferTo(zo); }
+              zo.closeEntry();
+            }
+            for (ZipFile z : fixed) {
+              for (ZipEntry e : Collections.list(z.entries())) {
+                String n = e.getName();
+                if (e.isDirectory() || n.endsWith("module-info.class")) continue;
+                byte[] b;
+                if (n.endsWith(".class")) {
+                  String u = unversioned(n);
+                  n = n.substring(0, n.length() - u.length()) + pre + u;
+                  b = read(z, e);
+                  if (!pre.isEmpty()) {
+                    ClassWriter w = new ClassWriter(0);
+                    new ClassReader(b).accept(new ClassRemapper(w, rm), 0);
+                    b = w.toByteArray();
+                  }
+                  if (n.equals(pre + u)) added.add(n);
+                } else if (n.startsWith("META-INF/maven/")) {
+                  b = read(z, e);
+                } else continue;
+                if (!seen.add(n)) continue;
+                zo.putNextEntry(new ZipEntry(n));
+                zo.write(b);
+                zo.closeEntry();
+              }
+            }
+          }
+          List<String> missing = dropped.stream().filter(n -> !added.contains(n) && !n.contains("/internal/shaded/") && !n.contains("$")).toList();
+          if (!missing.isEmpty()) {
+            Files.delete(out);
+            throw new IllegalStateException(target + ": no replacement for " + missing.size() + " classes, e.g. " + missing.subList(0, Math.min(5, missing.size())));
+          }
+          Files.move(out, target, StandardCopyOption.REPLACE_EXISTING);
+          System.out.println("shade: " + target.getFileName() + ": " + dropped.size() + " bundled classes -> " + added.size() + " from " + replaced);
+        }
+      }
+      JAVA
+      # ---- shared by the three DataHub recipes (datahub-gms, datahub-frontend, datahub-upgrade) ----
+      # fetch <maven path> <sha256>: a fixed jar from Maven Central into $J, sha256-pinned
+      # (each pin computed from a download, 2026-10-20).
+      J="$PWD/fixed"; mkdir -p "$J"
+      fetch() {
+        f="$J/$(basename "$1")"
+        [ -s "$f" ] || curl -fsSL -o "$f" "https://repo1.maven.org/maven2/$1"
+        echo "$2  $f" | sha256sum -c - >/dev/null
+      }
+      # swap <name prefix> <maven path> <sha256>: replace every $L/<prefix><version>.jar OLDER
+      # than the fixed one (a release that already ships the fix keeps its jar); fails when no
+      # jar matches, so a moved dist stops the build. Renames are mirrored into cp.txt.
+      swap() {
+        new="$(basename "$2")"; want="${new#"$1"}"; want="${want%.jar}"; n=0
+        for j in "$L/$1"[0-9]*.jar; do
+          [ -e "$j" ] || continue
+          n=$((n+1)); old="${j##*/}"; v="${old#"$1"}"; v="${v%.jar}"
+          if [ "$(printf '%s\n%s\n' "$v" "$want" | sort -V | head -1)" = "$want" ]; then
+            echo "  keep $old"; continue
+          fi
+          fetch "$2" "$3"
+          install -m 0644 "$J/$new" "$L/$new"; rm -f "$j"
+          sed -i "s|/$old\$|/$new|" cp.txt
+          echo "  $old -> $new"
+        done
+        [ "$n" -gt 0 ] || { echo "FATAL: no $1*.jar in $L; re-audit the swaps"; exit 1; }
+      }
+      # shade <bundling jar> <relocation prefix|-> <extra roots|-> <fixed jar basename>...:
+      # rebuild a library copy bundled INSIDE another jar (hazelcast relocates jackson under
+      # com/hazelcast/shaded/, parquet-jackson under shaded/parquet/, auth-api.jar carries it
+      # unrelocated) from the fixed releases, relocated the way the bundle did it. Shade.java
+      # skips a copy already at or above the fix and fails when the bundle no longer carries it.
+      ASM=""
+      for a in "org/ow2/asm/asm/9.9.1/asm-9.9.1.jar 6f3828a215c920059a5efa2fb55c233d6c54ec5cadca99ce1b1bdd10077c7ddd" \
+               "org/ow2/asm/asm-commons/9.9.1/asm-commons-9.9.1.jar c2319e014ce7199f2b7f7d56d6bb991863168c3f4b6cd6c9f542a4937ef7ef88" \
+               "org/ow2/asm/asm-tree/9.9.1/asm-tree-9.9.1.jar 0f3555096b720b820bbacab0b515589bee0200bee099bda14c561738ae837ba1"; do
+        set -- $a; fetch "$1" "$2"; ASM="$ASM${ASM:+:}$J/$(basename "$1")"
+      done
+      shade() {
+        t="$L/$1"; test -f "$t" || { echo "FATAL: $1 not shipped; re-audit the shading"; exit 1; }
+        pre="$2"; extra="$3"; shift 3
+        fx=""; for f in "$@"; do fx="$fx $J/$f"; done
+        if ! /usr/lib/jvm/java-25-openjdk/bin/java -cp "$ASM" Shade.java "$t" "$pre" "$extra" $fx > shade.log 2>&1; then
+          cat shade.log; exit 1
+        fi
+        grep '^shade: ' shade.log || true
+        chmod 0644 "$t"
+      }
+      # finish <main class> [jvm flags...]: check cp.txt names every jar exactly once and
+      # nothing else, then write the launcher argfile the entrypoint runs (java @java.args).
+      finish() {
+        main="$1"; shift
+        while read -r p; do test -e "${{targets.destdir}}$p" || { echo "FATAL: classpath entry $p missing"; exit 1; }; done < cp.txt
+        [ "$(grep -c '\.jar$' cp.txt)" = "$(find "$L" -maxdepth 1 -name '*.jar' | wc -l)" ] || { echo "FATAL: $L and the classpath disagree"; exit 1; }
+        { for f in "$@"; do echo "$f"; done; echo -cp; paste -sd: cp.txt; echo "$main"; } > "$ARGS"
+        chmod -R a+rX "${{targets.destdir}}"
+      }
+      # The fixed releases the bundled copies are rebuilt from.
+      fetch com/fasterxml/jackson/core/jackson-core/2.21.8/jackson-core-2.21.8.jar 604ef7765013daf5cde192e40bc4c8412c4ca93f4aaf7bf8e9a62fad1e1026bb
+      fetch com/fasterxml/jackson/core/jackson-databind/2.21.8/jackson-databind-2.21.8.jar ad77f2285717e2f34c319d988b7c85783a47d0b33f33a501d1fcbf196e61bbaa
+      fetch tools/jackson/core/jackson-core/3.1.8/jackson-core-3.1.8.jar 762caa009970e8c35527fcc2cfbde50afed0d6a195ee4a7fac22d80fea72c471
+      fetch tools/jackson/core/jackson-databind/3.1.8/jackson-databind-3.1.8.jar 2e7583c96f3eaf11591a727c75278b25a0f1227d29a7c5e8306f252f441bfb58
+      # Fixes, measured 2026-10-20 with trivy rootfs (comprehensive, ignore-unfixed) on the
+      # v1.7.0.1 lib/: 58 findings, 1 CRITICAL (bcprov). jackson 2.21.5 -> 2.21.8 (also the copy
+      # inside auth-api.jar), lz4-java 1.11.4, bcprov 1.85 (bcpkix and bcutil move with it);
+      # hazelcast 5.7.0 (the newest release) relocates jackson 2.21.2 and 3.1.2, rebuilt from
+      # 2.21.8 and 3.1.8.
+      swap jackson-core-           com/fasterxml/jackson/core/jackson-core/2.21.8/jackson-core-2.21.8.jar 604ef7765013daf5cde192e40bc4c8412c4ca93f4aaf7bf8e9a62fad1e1026bb
+      swap jackson-databind-       com/fasterxml/jackson/core/jackson-databind/2.21.8/jackson-databind-2.21.8.jar ad77f2285717e2f34c319d988b7c85783a47d0b33f33a501d1fcbf196e61bbaa
+      swap lz4-java-               at/yawk/lz4/lz4-java/1.11.4/lz4-java-1.11.4.jar 58c8e0b813960d2a248e050c353baea73139b48a2ffc55382d42c69707e17325
+      swap bcprov-jdk18on-         org/bouncycastle/bcprov-jdk18on/1.85/bcprov-jdk18on-1.85.jar 20af26bf6060bb8005cc2389916812c1e0e998dc48d2ced7131b89461b54cff7
+      swap bcpkix-jdk18on-         org/bouncycastle/bcpkix-jdk18on/1.85/bcpkix-jdk18on-1.85.jar c9f82b2d4e99c4bbdfccf684e52cc06ea06a0b567bfd0d08f9c5a3f417055996
+      swap bcutil-jdk18on-         org/bouncycastle/bcutil-jdk18on/1.85/bcutil-jdk18on-1.85.jar 590f55ed5d68529239898a4a5c4f730b6e37f45d1cfa3fbe51f8485abe32c42d
+      shade hazelcast-5.7.0.jar com/hazelcast/shaded/ - jackson-core-2.21.8.jar jackson-databind-2.21.8.jar jackson-core-3.1.8.jar jackson-databind-3.1.8.jar
+      shade auth-api.jar - - jackson-core-2.21.8.jar jackson-databind-2.21.8.jar
+      # The JVM flags upstream start.sh passes; -Dhttp.port is the Play listener.
+      finish play.core.server.ProdServerStart -XX:MaxRAMPercentage=75.0 -Dhttp.port=9002 \
+        -Dconfig.file=/datahub-frontend/conf/application.conf \
+        -Djava.security.auth.login.config=/datahub-frontend/conf/jaas.conf \
+        -Dlogback.configurationFile=/datahub-frontend/conf/logback.xml -Dlogback.debug=false -Dpidfile.path=/dev/null
+
+test:
+  pipeline:
+    - runs: |
+        test -f /datahub-frontend/java.args
+        test -f /datahub-frontend/conf/application.conf
+        grep -q ProdServerStart /datahub-frontend/java.args
+        test ! -s /datahub-frontend/conf/user.props

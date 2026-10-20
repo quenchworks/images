@@ -1,0 +1,56 @@
+# Assembles the DataHub upgrade image: nonroot uid 1001, multi-arch, SBOM by apko.
+# The entrypoint is the upgrade CLI; pass the task as arguments (`-u SystemUpdate`).
+# Configure it with DataHub's environment (EBEAN_DATASOURCE_*, KAFKA_BOOTSTRAP_SERVER,
+# ELASTICSEARCH_*, SCHEMA_REGISTRY_TYPE); extra JVM flags go in JDK_JAVA_OPTIONS.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-datahub-upgrade@local
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+      homedir: /home/nonroot
+  run-as: 1001
+
+environment:
+  JAVA_HOME: /usr/lib/jvm/java-25-openjdk
+  HOME: /home/nonroot
+  LANG: C.UTF-8
+  ENTITY_REGISTRY_CONFIG_PATH: /datahub/datahub-gms/resources/entity-registry.yml
+
+paths:
+  - path: /home/nonroot
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+work-dir: /home/nonroot
+
+# openjdk-25-jre has no /usr/bin/java symlink, so the path is the JDK's own.
+entrypoint:
+  command: /usr/lib/jvm/java-25-openjdk/bin/java @/datahub/datahub-upgrade/java.args
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-datahub-upgrade"
+  org.opencontainers.image.licenses: "Apache-2.0"
