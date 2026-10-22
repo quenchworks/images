@@ -12,7 +12,6 @@ package:
     runtime:
       - python-3.13
       - py3.13-cryptography
-      - py3.13-pillow
       - py3.13-lxml
       - py3.13-psycopg2
       - py3.13-gevent
@@ -22,6 +21,10 @@ package:
       - py3.13-pyopenssl
       - py3.13-cffi
       - libpq-18
+      - libjpeg-turbo           # Pillow, built from sdist in the pipeline
+      - libwebp
+      - freetype
+      - zlib
       - postgresql-18-client    # pg_dump and pg_restore for the database manager
       - libstdc++               # libsass
       - ca-certificates-bundle
@@ -41,7 +44,6 @@ environment:
       - py3.13-setuptools
       - py3.13-wheel
       - py3.13-cryptography
-      - py3.13-pillow
       - py3.13-lxml
       - py3.13-psycopg2
       - py3.13-gevent
@@ -51,6 +53,10 @@ environment:
       - py3.13-pyopenssl
       - py3.13-cffi
       - libpq-18
+      - libjpeg-turbo-dev      # Pillow from sdist
+      - libwebp-dev
+      - freetype-dev
+      - zlib-dev
       - build-base
       - rust-1.98              # cbor2 6.x is a Rust extension; built here so no prebuilt wheel hides its crates
 
@@ -78,16 +84,26 @@ pipeline:
           print("pypdf" if name.lower() == "pypdf2" else r)
       PY
       cat requirements.txt
+      # Pillow 12.3.0 (Wolfi's newest) carries 28 CVEs fixed in 13.0.0 (2026-10-22), so it
+      # builds from sdist against Wolfi's image libraries before the requirements, which it
+      # then satisfies. The manylinux wheel would bundle its own libs in pillow.libs.
+      "$PIP" install --no-cache-dir --no-binary pillow "Pillow==13.0.0"
       "$PIP" install --no-cache-dir --no-binary libsass,cbor2,rjsmin,zope.interface,zope.event -r requirements.txt
       site="$VENV/lib/python3.13/site-packages"
       if ls -d "$site"/*.libs 2>/dev/null | grep -q .; then echo "bundled native libs:"; ls -d "$site"/*.libs; exit 1; fi
-      for p in cryptography PIL lxml psycopg2 gevent greenlet psutil markupsafe OpenSSL cffi PyPDF2; do
+      for p in cryptography lxml psycopg2 gevent greenlet psutil markupsafe OpenSSL cffi PyPDF2; do
         test ! -e "$site/$p" || { echo "$p installed into the venv instead of from Wolfi (or at all)"; exit 1; }
       done
       "$VENV/bin/python" -c "
-      import cryptography, PIL, lxml, psycopg2, gevent, greenlet, psutil, markupsafe, OpenSSL
-      for mod in (cryptography, PIL, lxml, psycopg2, gevent, greenlet, psutil, markupsafe, OpenSSL):
+      import cryptography, lxml, psycopg2, gevent, greenlet, psutil, markupsafe, OpenSSL
+      for mod in (cryptography, lxml, psycopg2, gevent, greenlet, psutil, markupsafe, OpenSSL):
           assert mod.__file__.startswith('/usr/lib/python3.13/site-packages/'), mod.__file__
+      import importlib.metadata as md, PIL
+      from PIL import features
+      assert md.version('pillow') == '13.0.0' and PIL.__file__.startswith('$VENV/'), (md.version('pillow'), PIL.__file__)
+      for codec in ('jpg', 'webp', 'zlib', 'freetype2'):
+          assert features.check(codec), codec
+      print('certifi', md.version('certifi'), 'Pillow', PIL.__version__)
       import odoo.release, pypdf
       print('odoo', odoo.release.version, 'pypdf', pypdf.__version__, '; native deps from Wolfi')
       "

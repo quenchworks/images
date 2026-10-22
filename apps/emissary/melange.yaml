@@ -72,10 +72,11 @@ pipeline:
       VENV=/opt/ambassador/emissary
       # upstream's runtime pins (pyproject.toml [dependency-groups] runtime) as constraints,
       # each raised to its 0-CVE floor when it pins lower (orjson CVE-2025-67221, requests
-      # CVE-2026-25645 at 4.1.0's pins). A pin already at or above its floor is kept.
+      # CVE-2026-25645 at 4.1.0's pins; certifi GHSA-6q48-6c7w-9gw2 CRITICAL at 2026.7.22,
+      # 2026-10-22). A pin already at or above its floor is kept.
       python3.13 - <<'PY' > /tmp/constraints.txt
       import tomllib
-      floors = {"orjson": "3.11.6", "requests": "2.33.0"}
+      floors = {"orjson": "3.11.6", "requests": "2.33.0", "certifi": "2026.10.19"}
       key = lambda v: tuple(int(x) for x in v.split("."))
       for pin in tomllib.load(open("pyproject.toml", "rb"))["dependency-groups"]["runtime"]:
           name, ver = pin.split("==")
@@ -92,6 +93,15 @@ pipeline:
       python3.13 -m venv "$VENV"
       "$VENV/bin/pip" install --no-cache-dir -c /tmp/constraints.txt ./python/ambassador ./python/ambassador-diag
       "$VENV/bin/python" -c "import ambassador, ambassador_diag.diagd; print('ambassador packages import')"
+      # the floors must take effect: each installed version is at least its floor
+      "$VENV/bin/python" -c "
+      import importlib.metadata as m
+      key = lambda v: tuple(int(x) for x in v.split('.'))
+      for n, want in (('orjson', '3.11.6'), ('requests', '2.33.0'), ('certifi', '2026.10.19')):
+          got = m.version(n)
+          assert key(got) >= key(want), (n, got, want)
+          print(n, got)
+      "
       SITE="$VENV/lib/python3.13/site-packages"
       if ls -d "$SITE"/*.libs 2>/dev/null | grep -q .; then echo "bundled native libs:"; ls -d "$SITE"/*.libs; exit 1; fi
       "$VENV/bin/pip" uninstall -y pip

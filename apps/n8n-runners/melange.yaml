@@ -371,9 +371,12 @@ pipeline:
       # move the pin and re-lock urllib3 alone, so every other locked version stays put.
       grep -q '"urllib3==2.7.0"' pyproject.toml || { echo "urllib3 pin moved; review this bump"; exit 1; }
       sed -i 's/"urllib3==2.7.0"/"urllib3==2.8.0"/' pyproject.toml
-      uv lock --upgrade-package urllib3
+      # certifi (sentry-sdk's, locked at 2025.8.3) bundles emSign roots with compromised
+      # intermediate keys: GHSA-6q48-6c7w-9gw2, CRITICAL, fixed 2026.10.19 (2026-10-22).
+      uv lock --upgrade-package urllib3 --upgrade-package certifi==2026.10.19
       uv sync --frozen --no-dev --all-extras --no-editable
       .venv/bin/python -c "import urllib3; assert urllib3.__version__ == '2.8.0', urllib3.__version__"
+      .venv/bin/python -c "import importlib.metadata as m; v = m.version('certifi'); assert v == '2026.10.19', v; print('certifi', v)"
       # Prune caches/bytecode that bloat the image.
       find . -type d -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
       rm -rf .venv/share 2>/dev/null || true
