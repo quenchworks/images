@@ -68,11 +68,12 @@ pipeline:
       if find modules -name 'opentelemetry-*-1.48.0*.jar' | grep -q .; then
         echo "an opentelemetry 1.48.0 jar was not swapped:" >&2; find modules -name 'opentelemetry-*-1.48.0*.jar' >&2; exit 1
       fi
-      if grep -rl 'opentelemetry-[a-z-]*-1\.48\.0' --include=module.xml modules | grep -q .; then
+      # busybox grep has no --include; an unknown option exits 2 and made this check a no-op.
+      if find modules -name module.xml -exec grep -l 'opentelemetry-[a-z-]*-1\.48\.0' {} + | grep -q .; then
         echo "a module.xml still names a 1.48.0 jar" >&2; exit 1
       fi
 
-  - name: Swap jackson-databind and jackson-core 2.21.5 to 2.21.7
+  - name: Swap jackson-databind and jackson-core below 2.21.7 to 2.21.7
     runs: |
       set -eu
       # databind: CVE-2026-68497 (HIGH), -19032 and -83557 (MEDIUM), fixed in 2.21.6, and
@@ -80,17 +81,24 @@ pipeline:
       # (2026-10-04). Same line for both. JBoss Modules loads the jar by the filename in
       # module.xml, so the swap renames the jar AND rewrites its resource-root, as the
       # OpenTelemetry swap does. The sha256s are from Maven Central downloads.
+      # 41.0.1 ships 2.21.5; 42.0.0 already ships 2.21.7, so match any older 2.21.x and
+      # leave 2.21.7 alone; any other version fails so it gets looked at.
       for spec in "jackson-databind 1290c2795e93e8a6861a6c4d9ff0d844d32f5ea178362cb2721edf5561e828b1" \
                   "jackson-core 8c5623b98f32d5f7e1287ff61ed50e08ab7b11381e991fff89327faabba42261"; do
         set -- $spec; a="$1"; sha="$2"
-        old="$(find modules -name "$a-2.21.5.jar")"
-        [ "$(printf '%s\n' "$old" | grep -c .)" = 1 ] || { echo "expected one $a-2.21.5.jar, found: $old" >&2; exit 1; }
-        dir="$(dirname "$old")"
-        grep -q "path=\"$a-2.21.5.jar\"" "$dir/module.xml" || { echo "module.xml in $dir does not name $a-2.21.5.jar" >&2; exit 1; }
+        old="$(find modules -name "$a-2.*.jar")"
+        [ "$(printf '%s\n' "$old" | grep -c .)" = 1 ] || { echo "expected one $a jar, found: $old" >&2; exit 1; }
+        o="$(basename "$old")"; dir="$(dirname "$old")"
+        case "$o" in
+          "$a-2.21.7.jar") echo "$o already fixed, nothing to swap"; continue ;;
+          "$a"-2.21.[0-6].jar) ;;
+          *) echo "unexpected $o; check it against the CVEs above" >&2; exit 1 ;;
+        esac
+        grep -q "path=\"$o\"" "$dir/module.xml" || { echo "module.xml in $dir does not name $o" >&2; exit 1; }
         curl -fsSL -o "$dir/$a-2.21.7.jar" "https://repo1.maven.org/maven2/com/fasterxml/jackson/core/$a/2.21.7/$a-2.21.7.jar"
         echo "$sha  $dir/$a-2.21.7.jar" | sha256sum -c -
         rm -f "$old"
-        sed -i "s|path=\"$a-2.21.5.jar\"|path=\"$a-2.21.7.jar\"|" "$dir/module.xml"
+        sed -i "s|path=\"$o\"|path=\"$a-2.21.7.jar\"|" "$dir/module.xml"
         if find modules -name "$a-*.jar" ! -name "$a-2.21.7.jar" | grep -q .; then
           echo "another $a jar is shipped:" >&2; find modules -name "$a-*.jar" >&2; exit 1
         fi
