@@ -1,0 +1,35 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/rustfs/2026-10-22",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-10-22T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-111061"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/russh@0.63.3"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "russh 0.63.3 is listed only because the image ships the 1.0.1 tag Cargo.lock at /usr/share/doc/rustfs/Cargo.lock (so Trivy can see the crates of the prebuilt binary, which has no cargo-auditable section); the crate is not compiled into /usr/bin/rustfs. In tag 1.0.1 (commit 6de965ae3c965a78ff819fbcd7acd4aa44177d92) russh is optional: crates/protocols/Cargo.toml:180 declares russh = { workspace = true, optional = true } and crates/protocols/Cargo.toml:110 enables it only through the sftp feature; rustfs/Cargo.toml:60 sets default = [ftps, webdav, gcs] and rustfs/Cargo.toml:66 is the only route to rustfs-protocols/sftp. The musl release jobs build with features empty (.github/workflows/build.yml:216-217) via cargo build --release -p rustfs (build.yml:439), so sftp is off; the other russh user is the e2e_test test crate, not part of that build. Verified 2026-10-22: grep -aoE over the sha256-pinned 1.0.1 musl binaries found 383 (x86_64) and 382 (aarch64) registry/src crate-version paths, tokio-1.53.1 among them, and 0 matching russh, so the russh SSH agent handling code is not present. The recipe fails the build if any russh crate path appears in the binary or if the binary stops carrying crate paths. Versions 1.0.2 and 1.0.3 lock russh 0.64.1 and need no statement."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-111062"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/russh@0.63.3"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "russh 0.63.3 is listed only because the image ships the 1.0.1 tag Cargo.lock at /usr/share/doc/rustfs/Cargo.lock (so Trivy can see the crates of the prebuilt binary, which has no cargo-auditable section); the crate is not compiled into /usr/bin/rustfs. In tag 1.0.1 (commit 6de965ae3c965a78ff819fbcd7acd4aa44177d92) russh is optional: crates/protocols/Cargo.toml:180 declares russh = { workspace = true, optional = true } and crates/protocols/Cargo.toml:110 enables it only through the sftp feature; rustfs/Cargo.toml:60 sets default = [ftps, webdav, gcs] and rustfs/Cargo.toml:66 is the only route to rustfs-protocols/sftp. The musl release jobs build with features empty (.github/workflows/build.yml:216-217) via cargo build --release -p rustfs (build.yml:439), so sftp is off; the other russh user is the e2e_test test crate, not part of that build. Verified 2026-10-22: grep -aoE over the sha256-pinned 1.0.1 musl binaries found 383 (x86_64) and 382 (aarch64) registry/src crate-version paths, tokio-1.53.1 among them, and 0 matching russh, so the russh server publickey authentication code is not present. The recipe fails the build if any russh crate path appears in the binary or if the binary stops carrying crate paths. Versions 1.0.2 and 1.0.3 lock russh 0.64.1 and need no statement."
+    }
+  ]
+}

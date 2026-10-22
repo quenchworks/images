@@ -73,6 +73,10 @@ pipeline:
       curl -fsSL -o rustfs.zip "$url"
       echo "${sha}  rustfs.zip" | sha256sum -c -
       unzip -o rustfs.zip
+      # vex.openvex.json says russh (sftp feature, off in the musl release build) is not
+      # compiled in. Keep that true: crate paths must be present, russh must not.
+      grep -qE 'registry/src/[^/]+/tokio-[0-9]' rustfs || { echo "no crate paths in binary; russh check is blind" >&2; exit 1; }
+      if grep -qE 'registry/src/[^/]+/russh' rustfs; then echo "russh is compiled in; revisit the VEX" >&2; exit 1; fi
       install -Dm0755 rustfs "${{targets.destdir}}/usr/bin/rustfs"
       # the tag Cargo.lock, so Trivy sees the crates the binary hides (no .dep-v0)
       curl -fsSL -o Cargo.lock "https://raw.githubusercontent.com/rustfs/rustfs/${VER}/Cargo.lock"
