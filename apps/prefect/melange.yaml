@@ -40,7 +40,10 @@ pipeline:
       python3.13 -m venv --system-site-packages "$VENV"
       "$VENV/bin/pip" install --no-cache-dir --upgrade pip
       # pydantic 2.13 pins pydantic-core 2.46, built on pyo3 0.28.3 (GHSA-36hh)
-      "$VENV/bin/pip" install --no-cache-dir "prefect==${VER}" "pydantic>=2.14.1"
+      # fastapi 0.155.0 (2026-10-20) dropped Body(**extra), and prefect 3.8.8 still passes
+      # Body(..., min_items=1) at import (concurrency_limits_v2.py:305): the server dies with
+      # a TypeError. Lift the cap once a prefect release stops passing extra kwargs.
+      "$VENV/bin/pip" install --no-cache-dir "prefect==${VER}" "pydantic>=2.14.1" "fastapi<0.155"
       "$VENV/bin/python" -c "import importlib.metadata as m, sys; v = m.version('prefect'); assert v == sys.argv[1], v; print('prefect', v)" "${VER}"
       # the UI build ships in the wheel; without it the server serves the API only
       test -f "$VENV"/lib/python3.13/site-packages/prefect/server/ui/index.html
