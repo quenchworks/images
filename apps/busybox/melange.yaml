@@ -31,8 +31,9 @@ environment:
 pipeline:
   - uses: fetch
     with:
-      # Official busybox.net release tarball; checksum from busybox.net/downloads.
-      uri: https://busybox.net/downloads/busybox-${{package.version}}.tar.bz2
+      # busybox.net release tarball, fetched from the buildroot mirror: busybox.net refused TLS
+      # from GitHub runners on 2026-10-22 (3 runs). The pinned sha256 is the busybox.net one.
+      uri: https://sources.buildroot.net/busybox/busybox-${{package.version}}.tar.bz2
       expected-sha256: "__SHA256__"
   - runs: |
       # Some environments leave a stray `.config` directory in the tree which makes
