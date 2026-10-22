@@ -45,7 +45,9 @@ pipeline:
       ! grep -q '^overrides:' pnpm-workspace.yaml || exit 1
       # source-map-js 1.2.2: CVE-2026-93749 (2026-10-06); sharp 0.35.5: GHSA-wq5f-xc86-pv6w
       # (2026-10-07). pnpm installs, so npm 12's cooldown does not apply.
-      printf '\noverrides:\n  next: 16.3.8\n  source-map-js: 1.2.2\n  sharp: 0.35.5\n' >> pnpm-workspace.yaml
+      # vite 8.2.1 (CVE-2026-112942 HIGH, -112943/-112944, launch-editor; 2026-10-22) reaches 2.4.0's
+      # standalone bundle; fixed on the same line in 8.2.4. A range selector, so no other line moves.
+      printf '\noverrides:\n  next: 16.3.8\n  source-map-js: 1.2.2\n  sharp: 0.35.5\n  "vite@>=8.2.0 <8.2.4": 8.2.4\n' >> pnpm-workspace.yaml
       pnpm install --no-frozen-lockfile
       test "$(node -p 'require("next/package.json").version')" = 16.3.8
       pnpm run build
@@ -85,5 +87,7 @@ pipeline:
       swap_pnpm undici 8.10.2 740638ae32d78d2646a6727950e365fa26b6fa87913fa096e60ed4afeb4634aa
       # @grpc/grpc-js 1.14.4 (CVE-2026-101916 HIGH, -101915 LOW), fixed 1.14.5
       swap_pnpm @grpc/grpc-js 1.14.5 7619fe0a86a59de7ff47f12cb7416d024d51a1356a260a50b72df6fd0ed34b54
+      # follow-redirects 1.16.0 (CVE-2026-111755/-111756 HIGH), fixed 1.16.1; no deps, CJS as before
+      swap_pnpm follow-redirects 1.16.1 6e075d999dc5ff568916954508397b11a537b18bde615986d7bd8b3d3fa1799f
       test -f "$app/server.js"
       grep -q "\"version\": \"${{package.version}}\"" "$app/package.json"

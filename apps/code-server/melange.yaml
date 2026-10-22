@@ -149,6 +149,16 @@ pipeline:
         n=$((n+1))
       done
       [ "$n" -gt 0 ] || { echo "no basic-ftp in the tree; drop this patch"; exit 1; }
+      # follow-redirects 1.16.0 -> 1.16.1 (CVE-2026-111755/-111756, 2026-10-22; no deps, CJS as
+      # before). Every copy older than the fix; the build fails if none is found.
+      n=0
+      for d in $(find "$dest" -type d -path '*/node_modules/follow-redirects'); do
+        v=$(grep -o '"version": *"[^"]*"' "$d/package.json" | head -1 | cut -d'"' -f4)
+        [ "$(printf '%s\n' "$v" 1.16.1 | sort -V | head -1)" = 1.16.1 ] && continue
+        patch_pkg "$(dirname "$d")" follow-redirects https://registry.npmjs.org/follow-redirects/-/follow-redirects-1.16.1.tgz 6e075d999dc5ff568916954508397b11a537b18bde615986d7bd8b3d3fa1799f
+        n=$((n+1))
+      done
+      [ "$n" -gt 0 ] || { echo "no follow-redirects older than 1.16.1 in the tree; drop this patch"; exit 1; }
 
       # GHSA-wx77-rp39-c6vg (ReDoS in the `markdown` npm package, fixed: null) is
       # a name-collision false positive, same shape as the npm-extension FP above:

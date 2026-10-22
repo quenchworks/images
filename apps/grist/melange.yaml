@@ -135,11 +135,11 @@ pipeline:
         p.resolutions = Object.assign(p.resolutions || {}, {
           "basic-ftp": "6.2.3", "socks": "2.8.10", "ip-address": "10.7.4", "dompurify": "3.4.17",
           "decode-uri-component": "0.5.0", "js-yaml": "4.3.2", "on-headers": "1.1.0", "qs": "6.16.0",
-          "ws": "8.22.0", "uuid": "11.1.1", "moment": "2.31.0",
+          "ws": "8.22.0", "uuid": "11.1.1", "moment": "2.31.0", "follow-redirects": "1.16.1",
         });
         fs.writeFileSync("package.json", JSON.stringify(p, null, 2) + "\n");
         const refresh = new Set(["bn.js", "body-parser", "brace-expansion", "diff", "fast-uri", "form-data",
-          "jws", "path-to-regexp", "pbkdf2", "proxy-addr", "shell-quote", "undici", "on-headers", "qs",
+          "jws", "path-to-regexp", "follow-redirects", "pbkdf2", "proxy-addr", "shell-quote", "undici", "on-headers", "qs",
           "dompurify", "js-yaml", "uuid", "moment"]);
         const blocks = fs.readFileSync("yarn.lock", "utf8").split(/\n\n/);
         fs.writeFileSync("yarn.lock", blocks.filter(b => {
@@ -178,7 +178,7 @@ pipeline:
       node -e '
         const want = { dompurify: "3.4.17", "js-yaml": "4.3.2", moment: "2.31.0", "image-size": "2.0.4",
           uuid: "11.1.1", "basic-ftp": "6.2.3", "ip-address": "10.7.4", "decode-uri-component": "0.5.0",
-          qs: "6.16.0", ws: "8.22.0", minio: "8.0.7", express: "4.22.3" };
+          qs: "6.16.0", ws: "8.22.0", minio: "8.0.7", express: "4.22.3", "follow-redirects": "1.16.1" };
         for (const [k, v] of Object.entries(want)) {
           const got = require("./node_modules/" + k + "/package.json").version;
           if (got !== v) { console.error(k, "is", got, "not", v); process.exit(1); }
