@@ -60,6 +60,10 @@ pipeline:
 
       # Lean server: InnoDB stays; the X protocol, router, and tests are off to cut
       # build time and image size. CMake uses the pre-fetched Boost in ./boost.
+      # WebAuthn stays off as before: 9.7.4 turned WITH_AUTHENTICATION_WEBAUTHN on by default
+      # (off on Solaris only), which builds the bundled FIDO 1.15.0 and needs libudev; the
+      # aarch64 build stopped at "WEBAUTHN=ON, but missing required libraries". With both
+      # options off WITH_FIDO resolves to none, the same as 9.7.2 and 8.4.
       cmake -B build -G "Unix Makefiles" \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX=/usr \
@@ -78,6 +82,8 @@ pipeline:
         -DWITH_ROUTER=OFF \
         -DWITH_MYSQLX=OFF \
         -DWITH_NDBCLUSTER=OFF \
+        -DWITH_AUTHENTICATION_WEBAUTHN=OFF \
+        -DWITH_AUTHENTICATION_CLIENT_PLUGINS=OFF \
         -DINSTALL_MYSQLTESTDIR=
       make -C build -j"$(nproc)"
       make -C build DESTDIR="${{targets.destdir}}" install
