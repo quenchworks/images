@@ -49,6 +49,12 @@ echo "healthz: $(cat /tmp/peer-health.$$)"; rm -f /tmp/peer-health.$$
 ver="$(curl -fsS "http://127.0.0.1:$port/version")"
 echo "version endpoint: $ver"
 [ -z "$WANT" ] || grep -q "\"Version\":\"$WANT\"" <<<"$ver" || { echo "operations /version mismatch"; exit 1; }
-logs="$(docker logs "$NAME" 2>&1)"
+# The operations server answers /healthz before the ledger init finishes and the peer logs
+# "Started peer"; a single read raced it on arm64 (CI 39740937102, 2026-10-22). Wait for it.
+for _ in $(seq 1 30); do
+  logs="$(docker logs "$NAME" 2>&1)"
+  grep -q 'Started peer with ID' <<<"$logs" && break
+  sleep 1
+done
 grep -q 'Started peer with ID' <<<"$logs" || { echo "peer did not report started"; tail -60 <<<"$logs"; exit 1; }
 echo "smoke test passed (nonroot user: $user)"

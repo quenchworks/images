@@ -163,6 +163,10 @@ pipeline:
       done
       echo "raising:${need:- nothing}"
       [ -z "$need" ] || go get $need
+      # klauspost/compress enters the graph only through the floats above (client_golang@v1.20.5 above brings v1.17.9),
+      # so the absent-module skip passed it by: floor it now it is there (CVE-2026-63209, 2026-10-22).
+      kc="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' github.com/klauspost/compress 2>/dev/null)"
+      case "$kc" in v[0-9]*) vlt "$kc" v1.18.7 && go get github.com/klauspost/compress@v1.18.7 ;; esac
       # grpc@v1.82.1 clears GHSA-hrxh-6v49-42gf; pin its coherent otel cascade so
       # MVS resolves compatible versions (go mod tidy prunes any not imported).
       # oauth2 is already floated @latest above (>= 0.36.0).
