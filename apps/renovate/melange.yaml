@@ -191,6 +191,41 @@ pipeline:
       '
       rm -rf .qs-stage
 
+      # --- markdown-it CVE-2026-111758 (HIGH, unclosed link reference DoS): 15.0.2 -> 15.0.3,
+      # staged like qs above (global install, no overrides). 15.0.3 raised its own ranges
+      # (argparse ^3.0.3, entities ^8.1.0, linkify-it ^6.1.0), so the staged dependencies are
+      # nested under each replaced copy, as balanced-match is for brace-expansion. 15.0.3 was
+      # published 2026-10-16, inside npm 12's 14-day cooldown, so this one staging install
+      # exempts markdown-it only (its dependencies still follow the cooldown).
+      mkdir -p .md-stage
+      echo '{"name":"quench-md-stage","private":true}' > .md-stage/package.json
+      ( cd .md-stage && npm install --no-audit --no-fund --no-package-lock --min-release-age-exclude=markdown-it markdown-it@15.0.3 )
+      find "${destdir}/usr/lib/node_modules" -type d -name markdown-it -path '*/node_modules/markdown-it' -print0 > "${PWD}/.md-copies"
+      MD_STAGE="${PWD}/.md-stage/node_modules" NM_ROOT="${destdir}/usr/lib/node_modules" \
+      MD_COPIES="${PWD}/.md-copies" node -e '
+        const fs=require("fs"), path=require("path");
+        const stage=process.env.MD_STAGE, root=process.env.NM_ROOT;
+        const ver=d=>JSON.parse(fs.readFileSync(path.join(d,"package.json"),"utf8")).version;
+        const copies=fs.readFileSync(process.env.MD_COPIES,"utf8").split("\0").filter(Boolean);
+        if(!copies.length) throw new Error("no markdown-it copy under "+root);
+        const deps=Object.keys(JSON.parse(fs.readFileSync(path.join(stage,"markdown-it","package.json"),"utf8")).dependencies||{});
+        let rep=0;
+        for(const d of copies){
+          if(!ver(d).startsWith("15.")) continue;
+          if(ver(d)!=="15.0.3"){
+            fs.rmSync(d,{recursive:true}); fs.cpSync(path.join(stage,"markdown-it"),d,{recursive:true});
+            for(const dep of deps) fs.cpSync(path.join(stage,dep),path.join(d,"node_modules",dep),{recursive:true});
+            rep++;
+          }
+          if(ver(d)!=="15.0.3") throw new Error("markdown-it still "+ver(d)+" at "+d);
+          const md=require(d); const r=(md.default||md)().render("[a]: <b");
+          if(typeof r!=="string") throw new Error("markdown-it does not render at "+d);
+        }
+        if(!rep) throw new Error("no markdown-it 15.x below 15.0.3; drop this block");
+        console.log("markdown-it: "+copies.length+" copies, "+rep+" replaced");
+      '
+      rm -rf .md-stage
+
       # Sanity: the launcher symlink must exist (build fails loudly otherwise).
       test -L "${destdir}/usr/bin/renovate"
       test -f "${destdir}/usr/lib/node_modules/renovate/dist/renovate.js"
