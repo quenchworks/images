@@ -121,7 +121,8 @@ pipeline:
                                           // agrees with this spec (same value), so it only
                                           // moves the TRANSITIVE 3.x copies.
           "ws":"8.21.0",                  // direct 8.20.1 < 8.21.0 (fix)
-          "@modelcontextprotocol/sdk":"1.31.0", // direct 1.26.0, CVE-2026-104850 HIGH; npm 12 cooldown
+          "@modelcontextprotocol/sdk":"1.32.0", // direct 1.26.0, CVE-2026-104850 HIGH, then the 1.31.0 pin itself (2026-10-22 scan)
+          "@modelcontextprotocol/server":"2.3.0", // direct 2.0.0 (2026-10-22 scan); ESM like 2.0.0, deps zod + core 2.3.0
                                           // clears 2026-10-12 19:00 UTC (published 09-28 18:59)
           "handlebars":"4.7.10",          // direct 4.7.9, CVE-2026-106444/106445/106446 (2 CRIT); same
                                           // deps, CJS; cooldown clears 2026-10-19 22:37 UTC
@@ -152,7 +153,8 @@ pipeline:
           "nanoid@3":"3.3.18",            // transitive 3.3.8 flagged; scoped @3 so any 5.x
                                           // copy is not dragged DOWN across majors. Value
                                           // matches the direct-dep bump above (npm rule)
-          "@modelcontextprotocol/sdk":"1.31.0", // transitive copies; same value as the direct bump (npm rule)
+          "@modelcontextprotocol/sdk":"1.32.0", // transitive copies; same value as the direct bump (npm rule)
+          "@modelcontextprotocol/server":"2.3.0", // transitive copies; same value as the direct bump (npm rule)
           "handlebars":"4.7.10",          // transitive copies; same value as the direct bump (npm rule)
           "@langchain/mongodb":"1.3.1",   // transitive 1.0.1, CVE-2026-106119; same ESM shape, deps
           "@langchain/redis":"1.1.3",     // transitive 1.0.1, CVE-2026-105799 (fix 1.1.1); newest 1.1.x
@@ -190,7 +192,7 @@ pipeline:
           "js-yaml":"4.3.2",              // transitive; CVE-2026-84375 (was completely unpinned)
           "langsmith":"0.6.0",
           "linkify-it":"5.0.2",           // transitive (CVE-2026-59887 HIGH; was 5.0.1)
-          "markdown-it":"14.3.2",         // transitive via @n8n/design-system, which declares
+          "markdown-it":"14.3.3",         // transitive via @n8n/design-system, which declares
                                           // ^13.0.2 -- the tree has exactly ONE copy, at 13.0.2.
                                           // CVE-2026-2327 (ReDoS) fixes at 14.1.1 and
                                           // CVE-2026-48988 (quadratic smartquotes/typographer)
@@ -212,7 +214,7 @@ pipeline:
           "@opentelemetry/propagator-jaeger":"2.9.0",  // transitive (CVE-2026-59892 HIGH)
           "protobufjs":"8.6.6",           // transitive 8.6.0 < 8.6.6 (CVE-2026-59876/59877)
           "qs":"6.16.0",                  // CVE-2026-82417/82562 landed on the prior 6.15.2 pin
-          "sanitize-html":"2.17.7",       // transitive. CVE-2026-63670/84371 landed on the
+          "sanitize-html":"2.18.0",       // transitive. 2.18.0 (2026-10-22 scan; 2.18.1 is inside the npm 12 cooldown). CVE-2026-63670/84371 landed on the
                                           // prior 2.17.5 pin (two more advisories after it).
                                           // Not a direct dep of n8n, so it belongs in
                                           // overrides, not dependencies.
@@ -265,13 +267,13 @@ pipeline:
       # This build is hermetic (sha-pinned tarball, no network mutation of the pinned tree), so
       # running the pinned deps' install scripts is exactly the pre-npm-12 behavior we need.
       # --min-release-age-exclude (user decision 2026-10-11): npm 12's 14-day release-age
-      # cooldown is lifted for these two packages ONLY, on this one install command. Both are
-      # CVE fixes pinned exactly above (@modelcontextprotocol/sdk 1.31.0, published 2026-09-28;
-      # handlebars 4.7.10, published 2026-10-05). npm exempts only the named package; its own
-      # dependencies still follow the cooldown. A dry run with --min-release-age=14 on the
-      # 2.40.7 tree needed exactly these two. Drop each entry once its version is 14 days old.
+      # cooldown is lifted, on this one install command, ONLY for a CVE fix pinned exactly
+      # above that is still inside it. npm exempts only the named package; its own
+      # dependencies still follow the cooldown. Drop each entry once its version is 14 days old.
+      # 2026-10-22: the sdk and handlebars entries aged out and were dropped; markdown-it 14.3.3
+      # (CVE-2026-111758 HIGH, published 2026-10-16, same deps as 14.3.2) is the one exemption.
       npm install --omit=dev --no-audit --no-fund --legacy-peer-deps --dangerously-allow-all-scripts \
-        --min-release-age-exclude=@modelcontextprotocol/sdk --min-release-age-exclude=handlebars
+        --min-release-age-exclude=markdown-it
 
       # --- brace-expansion CVE-2026-14257: 5.0.8 + the CJS interop it broke ---------------
       # Why the blunt `"brace-expansion":"5.0.8"` override above is the ONLY option: the
@@ -398,7 +400,7 @@ pipeline:
       // value = floor for every copy; {major: floor} = floor only for copies on that major
       const FLOOR = {
         "nodemailer": "10.0.10", "nanoid": { 3: "3.3.18" }, "ws": "8.21.0",
-        "@modelcontextprotocol/sdk": "1.31.0", "handlebars": "4.7.10", "compression": "1.8.2",
+        "@modelcontextprotocol/sdk": "1.32.0", "@modelcontextprotocol/server": "2.3.0", "handlebars": "4.7.10", "compression": "1.8.2",
         "multer": "2.4.0", "xlsx": "0.20.3", "adm-zip": "0.6.1", "@anthropic-ai/sdk": "0.91.1",
         "@langchain/mongodb": "1.3.1", "@langchain/redis": "1.1.1", "vm2": "3.12.2",
         "@azure/identity": { 3: "4.2.1" }, "@opentelemetry/core": { 1: "2.8.0", 2: "2.8.0" },
@@ -406,9 +408,9 @@ pipeline:
         "@tiptap/core": "3.31.3", "@tootallnate/once": "2.0.1", "ajv": { 7: "8.18.0" },
         "axios": "1.20.0", "fast-xml-parser": "5.7.0", "form-data": "4.0.6",
         "@hono/node-server": "2.0.10", "js-yaml": "4.3.2", "langsmith": "0.6.0",
-        "linkify-it": "5.0.2", "markdown-it": "14.3.2", "mysql2": "3.23.1",
+        "linkify-it": "5.0.2", "markdown-it": "14.3.3", "mysql2": "3.23.1",
         "@opentelemetry/propagator-jaeger": "2.9.0", "protobufjs": "8.6.6", "qs": "6.16.0",
-        "sanitize-html": "2.17.7", "semver": { 4: "5.7.2", 5: "5.7.2" }, "stream-json": "3.6.0",
+        "sanitize-html": "2.18.0", "semver": { 4: "5.7.2", 5: "5.7.2" }, "stream-json": "3.6.0",
         "tar": { 6: "7.5.22", 7: "7.5.22" }, "snowflake-sdk": "3.3.0", "toml": "4.2.0", "uuid": "11.1.1",
       };
       const parse = v => v.split("-")[0].split(".").map(Number);

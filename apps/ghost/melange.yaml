@@ -129,7 +129,7 @@ pipeline:
         # match. Only ONE hono major exists in this tree (every declared spec is 4.x), so
         # a blanket override cannot drag anything across a major. The assertion below
         # proves every installed copy landed on it.
-        "  hono: 4.13.8",                        # CVE-2026-54290 HIGH + 18 more, see above
+        "  hono: 4.13.11",                       # CVE-2026-54290 HIGH + 18 more, see above; 4.13.11 (2026-10-22 scan)
         "  'jsonwebtoken@<9.0.0': 9.0.3",        # CVE-2022-23539/23540/23541
         "  'multer@<2.4.0': 2.4.0",              # CVE-2026-5079/5038 fixed at 2.2.0, then
                                                  # CVE-2026-77037/77078/82333 HIGH + 77063 LOW
@@ -146,7 +146,7 @@ pipeline:
         "  'postcss@<8.5.23': 8.5.23",           # GHSA-r28c-9q8g-f849 (fix 8.5.18; newest 8.5.x)
         "  'qs@<6.16.0': 6.16.0",                # direct dep 6.15.3; CVE-2026-82417/82562
                                                  # (stringify-function DoS + array-limit bypass)
-        "  'sanitize-html@<2.17.7': 2.17.7",     # direct dep 2.17.5; CVE-2026-63670 (textarea
+        "  'sanitize-html@<2.18.1': 2.18.1",     # direct dep 2.17.5; CVE-2026-63670 (textarea
                                                  # solidus-close mXSS, needs >= 2.17.6) +
                                                  # CVE-2026-84371 (SVG SMIL scheme-policy bypass,
                                                  # needs >= 2.17.7)
@@ -197,7 +197,8 @@ pipeline:
         "  'uuid@<11': 11.1.1",                  # CVE-2026-41907 (3.x + 9.x copies)
         "  'validator@<13.15.20': 13.15.35",     # CVE-2025-12758/56200/2021-3765 (7.x + 13.12 copies)
         "  'vite@<7.3.5': 7.3.5",                # CVE-2026-53571/53632
-        "  'markdown-it@<14.3.1': 14.3.1",       # GHSA-253c-mchw-3w2r (linkify quadratic paths)
+        "  'markdown-it@<14.3.3': 14.3.3",       # GHSA-253c-mchw-3w2r (linkify quadratic paths); CVE-2026-111758 (14.3.3, 2026-10-22)
+        "  'follow-redirects@<1.16.1': 1.16.1",  # CVE-2026-111755/-111756 HIGH (2026-10-22 scan; no deps, CJS)
         "  'proxy-addr@<2.0.8': 2.0.8",          # CVE-2026-90711 CRITICAL (2026-10-06 scan)
         "  'compression@<1.8.2': 1.8.2",         # CVE-2026-87776 HIGH (2026-10-06 scan)
         "  'source-map-js@<1.2.2': 1.2.2",       # CVE-2026-93749 HIGH (2026-10-06 scan; pnpm, no npm-12 cooldown)
@@ -264,7 +265,7 @@ pipeline:
           if m:
               have.setdefault(m.group(1).replace("+", "/"), set()).add(m.group(2))
       # (package, version that must NOT survive) for every exact-version override above
-      banned = [("undici", "6.27.0"), ("undici", "6.28.0"), ("undici", "7.28.0"), ("undici", "7.29.0"), ("undici", "8.10.0"), ("fast-uri", "3.1.6"), ("axios", "1.18.1"), ("dompurify", "3.4.13"), ("handlebars", "4.7.9")]
+      banned = [("undici", "6.27.0"), ("undici", "6.28.0"), ("undici", "7.28.0"), ("undici", "7.29.0"), ("undici", "8.10.0"), ("fast-uri", "3.1.6"), ("axios", "1.18.1"), ("dompurify", "3.4.13"), ("handlebars", "4.7.9"), ("follow-redirects", "1.16.0"), ("markdown-it", "14.3.2"), ("sanitize-html", "2.17.7")]
       bad = [f"{p}@{v}" for p, v in banned if v in have.get(p, ())]
       if bad:
           print("FATAL: override did not apply, these resolved versions survived:", ", ".join(bad))
@@ -275,7 +276,7 @@ pipeline:
       # (package, the ONLY version allowed to exist) for every UNSCOPED override, where the
       # pin has to reach EVERY installed copy -- not just "the flagged one is gone". A
       # second copy at a stale version is exactly how a pin reads correct and does nothing.
-      pinned = [("hono", "4.13.8")]
+      pinned = [("hono", "4.13.11")]
       drift = [(p, sorted(have.get(p, ()))) for p, v in pinned if have.get(p, set()) != {v}]
       if drift:
           for p, got in drift:
