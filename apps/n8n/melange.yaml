@@ -214,7 +214,7 @@ pipeline:
           "@opentelemetry/propagator-jaeger":"2.9.0",  // transitive (CVE-2026-59892 HIGH)
           "protobufjs":"8.6.6",           // transitive 8.6.0 < 8.6.6 (CVE-2026-59876/59877)
           "qs":"6.16.0",                  // CVE-2026-82417/82562 landed on the prior 6.15.2 pin
-          "sanitize-html":"2.18.0",       // transitive. 2.18.0 (2026-10-22 scan; 2.18.1 is inside the npm 12 cooldown). CVE-2026-63670/84371 landed on the
+          "sanitize-html":"2.18.1",       // transitive. 2.18.1 (CVE-2026-113650 on 2.18.0; 2026-10-22). CVE-2026-63670/84371 landed on the
                                           // prior 2.17.5 pin (two more advisories after it).
                                           // Not a direct dep of n8n, so it belongs in
                                           // overrides, not dependencies.
@@ -271,9 +271,10 @@ pipeline:
       # above that is still inside it. npm exempts only the named package; its own
       # dependencies still follow the cooldown. Drop each entry once its version is 14 days old.
       # 2026-10-22: the sdk and handlebars entries aged out and were dropped; markdown-it 14.3.3
-      # (CVE-2026-111758 HIGH, published 2026-10-16, same deps as 14.3.2) is the one exemption.
+      # (CVE-2026-111758 HIGH, published 2026-10-16, same deps as 14.3.2) and sanitize-html 2.18.1
+      # (CVE-2026-113650 on 2.18.0, published 2026-10-14, drops only deepmerge) are the exemptions.
       npm install --omit=dev --no-audit --no-fund --legacy-peer-deps --dangerously-allow-all-scripts \
-        --min-release-age-exclude=markdown-it
+        --min-release-age-exclude=markdown-it --min-release-age-exclude=sanitize-html
 
       # --- brace-expansion CVE-2026-14257: 5.0.8 + the CJS interop it broke ---------------
       # Why the blunt `"brace-expansion":"5.0.8"` override above is the ONLY option: the
@@ -410,7 +411,7 @@ pipeline:
         "@hono/node-server": "2.0.10", "js-yaml": "4.3.2", "langsmith": "0.6.0",
         "linkify-it": "5.0.2", "markdown-it": "14.3.3", "mysql2": "3.23.1",
         "@opentelemetry/propagator-jaeger": "2.9.0", "protobufjs": "8.6.6", "qs": "6.16.0",
-        "sanitize-html": "2.18.0", "semver": { 4: "5.7.2", 5: "5.7.2" }, "stream-json": "3.6.0",
+        "sanitize-html": "2.18.1", "semver": { 4: "5.7.2", 5: "5.7.2" }, "stream-json": "3.6.0",
         "tar": { 6: "7.5.22", 7: "7.5.22" }, "snowflake-sdk": "3.3.0", "toml": "4.2.0", "uuid": "11.1.1",
       };
       const parse = v => v.split("-")[0].split(".").map(Number);
