@@ -45,10 +45,18 @@ pipeline:
         *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
       esac
 
-      url="https://github.com/duckdb/duckdb/releases/download/v${VER}/duckdb_cli-linux-${ducharch}.zip"
-      curl -fsSL -o duckdb.zip "$url"
-      echo "${sha}  duckdb.zip" | sha256sum -c -
-      unzip -o duckdb.zip
+      # 2.0 renamed the asset: duckdb-cli-linux-<arch>.tar.gz instead of duckdb_cli-linux-<arch>.zip.
+      base="https://github.com/duckdb/duckdb/releases/download/v${VER}"
+      case "$VER" in
+        0.*|1.*)
+          curl -fsSL -o duckdb.zip "$base/duckdb_cli-linux-${ducharch}.zip"
+          echo "${sha}  duckdb.zip" | sha256sum -c -
+          unzip -o duckdb.zip ;;
+        *)
+          curl -fsSL -o duckdb.tar.gz "$base/duckdb-cli-linux-${ducharch}.tar.gz"
+          echo "${sha}  duckdb.tar.gz" | sha256sum -c -
+          tar -xzf duckdb.tar.gz duckdb ;;
+      esac
       install -Dm0755 duckdb "${{targets.destdir}}/usr/bin/duckdb"
 
 test:
