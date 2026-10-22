@@ -70,9 +70,18 @@ pipeline:
         if ((p.dependencies || {}).nodemailer) p.dependencies.nodemailer = "10.0.12"; else p.overrides.nodemailer = "10.0.12";
         // basic-ftp 5.3.1 (transitive) carries GHSA-c475-qrg2-pj4r, fixed only on 6.x (2026-10-04).
         p.overrides["basic-ftp"] = "6.2.1";
+        // sanitize-html 2.17.7 -> 2.18.1 (2026-10-22 scan; CommonJS like 2.17.7, drops only deepmerge).
+        if ((p.dependencies || {})["sanitize-html"]) p.dependencies["sanitize-html"] = "2.18.1"; else p.overrides["sanitize-html"] = "2.18.1";
         fs.writeFileSync("package.json", JSON.stringify(p, null, 2));
       '
       npm install --omit=dev --no-audit --no-fund
+      # the pin is only real if every installed copy carries it
+      node -e '
+        const lock = JSON.parse(require("fs").readFileSync("package-lock.json")).packages;
+        const got = Object.entries(lock).filter(([k]) => k.endsWith("node_modules/sanitize-html")).map(([k, e]) => k + "@" + e.version);
+        if (!got.length || got.some(g => !g.endsWith("@2.18.1"))) { console.error("sanitize-html pin not installed:", got); process.exit(1); }
+        console.log("sanitize-html:", got.join(" "));
+      '
 
       # Upstream Dockerfile fixes a non-readable file shipped by useragent-ng.
       chmod 644 node_modules/useragent-ng/lib/regexps.js 2>/dev/null || true

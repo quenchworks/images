@@ -54,6 +54,8 @@ pipeline:
         const fs = require("fs"), p = JSON.parse(fs.readFileSync("package.json"));
         p.overrides = p.overrides || {};
         if ((p.dependencies || {}).nodemailer) p.dependencies.nodemailer = "10.0.12"; else p.overrides.nodemailer = "10.0.12";
+        // sanitize-html 2.18.1 (2026-10-22 scan; CommonJS like 2.18.0, drops only deepmerge)
+        if ((p.dependencies || {})["sanitize-html"]) p.dependencies["sanitize-html"] = "2.18.1"; else p.overrides["sanitize-html"] = "2.18.1";
         fs.writeFileSync("package.json", JSON.stringify(p, null, 2));
       '
       # --ignore-scripts: the only install scripts are ssh2/cpu-features (optional native
@@ -65,7 +67,7 @@ pipeline:
         const fs = require("fs"), path = require("path");
         const v = s => s.split(".").map(Number);
         const lt = (a, b) => { a = v(a); b = v(b); for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] < b[i]; return false; };
-        const floor = [["path-to-regexp", "0.1.", "0.1.13"], ["ip-address", "10.", "10.7.1"]];
+        const floor = [["path-to-regexp", "0.1.", "0.1.13"], ["ip-address", "10.", "10.7.1"], ["sanitize-html", "2.", "2.18.1"]];
         const bad = [];
         (function walk(d) {
           for (const e of fs.readdirSync(d, { withFileTypes: true })) {
