@@ -31,7 +31,9 @@ cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
 # --- 1. the binary runs and reports its version ----------------------------
-ver_out="$(docker run --rm --entrypoint /usr/bin/varnishd "$IMAGE" -V 2>&1 | head -1)"
+# capture first: `| head -1` under pipefail SIGPIPEs docker (exit 141) when head exits early
+ver_out="$(docker run --rm --entrypoint /usr/bin/varnishd "$IMAGE" -V 2>&1)"
+ver_out="${ver_out%%$'\n'*}"
 echo "$ver_out"
 printf '%s\n' "$ver_out" | grep -qE 'varnish-[0-9]+\.[0-9]+\.[0-9]+' || {
   echo "varnishd -V did not report a version"; exit 1; }
