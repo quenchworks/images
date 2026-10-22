@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/guacamole/2026-10-22",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-10-22T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-113730"
+      },
+      "products": [
+        {
+          "@id": "pkg:maven/ognl/ognl@3.4.4"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
+      "impact_statement": "CVE-2026-113730 (GHSA-crwc-vw2r-qr6m) lets an OGNL EXPRESSION reach blocked methods through java.lang.reflect proxies, bypassing the stricter-invocation block list. It needs the attacker to author the expression text. Here ognl 3.4.4 exists only relocated to org/apache/ibatis/ognl inside mybatis-3.5.19.jar, nested in /etc/guacamole/extensions/guacamole-auth-jdbc-postgresql-1.6.0.jar (checked with unzip -l on the published 1.6.0 image: META-INF/maven/ognl/ognl/pom.properties version=3.4.4; no other ognl copy in any of the image's 83 jars). MyBatis evaluates OGNL only for expressions written in mapper XML: the 21 *Mapper.xml files shipped in that jar hold the only expressions, all constant, e.g. UserPermissionMapper.xml:76 test=\"caseSensitivity.caseSensitiveUsernames()\"; the ${caseSensitivity}/${entityID}/${groups}/${column} placeholders are <include> properties fixed at parse time (SystemPermissionMapper.xml:42-43). Request data reaches MyBatis only as #{...} bound parameter values, never as expression text, and no Guacamole class references org.apache.ibatis.ognl directly (grep of guacamole-auth-jdbc-base-1.6.0.jar). The fix is unreleased for this path: mybatis 3.5.19 is the newest release on Maven Central and still shades ognl 3.4.4 (master moved to 3.4.16, not yet released). Drop this statement when a mybatis release ships ognl 3.4.13 or later inside a Guacamole JDBC extension."
+    }
+  ]
+}

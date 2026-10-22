@@ -161,7 +161,7 @@ pipeline:
           # pin below; two selectors for one package is ambiguous.
           # Same for axios and qs (upstream: ">=1.17.0", ">=6.14.2"); a second key for one
           # package is a duplicated mapping key and pnpm refuses the file.
-          if ln.startswith(("  fast-uri:", "  axios:", "  qs:")):
+          if ln.startswith(("  fast-uri:", "  axios:", "  qs:", "  follow-redirects:")):
               dropped = dropped or ln.startswith("  fast-uri:")
               continue
           out.append(ln)
@@ -174,6 +174,7 @@ pipeline:
                   "  axios: 1.20.0",                   # 11 advisories, high (fixed >=1.20.0; pnpm audit 2026-10-08)
                   "  proxy-addr: 2.0.8",               # critical advisory (fixed >=2.0.8; pnpm audit 2026-10-08)
                   "  qs: 6.16.0",                      # moderate advisories (fixed >=6.16.0; pnpm audit 2026-10-08)
+                  "  follow-redirects: 1.16.1",        # 2 high advisories (fixed >=1.16.1; pnpm audit 2026-10-22)
               ]
               added = True
       assert added, "overrides: block not found in pnpm-workspace.yaml"
