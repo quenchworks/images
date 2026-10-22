@@ -121,7 +121,9 @@ def fetch_sha(url: str, algo: str = "sha256") -> str:
     # Some CDNs (fastdl.mongodb.org among them) 403 the default urllib agent.
     req = urllib.request.Request(url, headers={"User-Agent": "curl/8.0"})
     n = 0
-    with urllib.request.urlopen(req, timeout=900) as r:
+    # The timeout bounds each socket read, not the whole download: 900 s let a stalled
+    # socket hang a wildfly bump for 30 minutes (2026-10-22).
+    with urllib.request.urlopen(req, timeout=60) as r:
         for chunk in iter(lambda: r.read(1 << 20), b""):
             h.update(chunk); n += len(chunk)
     # An empty body still hashes to a valid-looking 64-hex value
@@ -354,8 +356,23 @@ def main() -> int:
 
     text = re.sub(r"^VERSIONS=\(.*\)$", "VERSIONS=(" + " ".join(versions) + ")",
                   text, count=1, flags=re.M)
+    # Another app may render this recipe at a version this app no longer builds
+    # (trivy-scanner renders trivy at 0.75.0). Rewriting the maps to exactly VERSIONS
+    # dropped that sha and failed trivy-scanner (2026-10-22, run 39797058389), so a
+    # recipe referenced from another app keeps its existing entries.
+    borrowed = any(f"apps/{app}/" in f.read_text()
+                   for d in (ROOT / "apps").iterdir() if d.name != app
+                   for f in (d / "build.conf", d / "melange.yaml") if f.exists())
     for m in maps:
-        body = "\n".join(f"  [{v}]={entries[m][v]}" for v in versions)
+        keys = list(versions)
+        if borrowed:
+            old = re.search(rf"declare -A {m}=\(([^)]*)\)", text)
+            for k, val in re.findall(r"\[([^\]]+)\]=(\S+)", old.group(1) if old else ""):
+                if k not in entries[m]:
+                    entries[m][k] = val
+                    keys.append(k)
+            keys.sort(key=lambda k: [(0, int(x), "") if x.isdigit() else (1, 0, x) for x in re.split(r"[.-]", k)])
+        body = "\n".join(f"  [{v}]={entries[m][v]}" for v in keys)
         block = f"declare -A {m}=(\n{body}\n)"
         # Maps come in BOTH layouts and only rewriting one of them is silently fatal:
         # VERSIONS moves, the map keeps its old keys, and the build dies later on
