@@ -55,7 +55,7 @@ pipeline:
       # FLOOR is a floor, not a pin: only modules below it are raised, and the
       # shipped binaries are asserted at or above it after the build. 6.1.2 needs
       # only x/net; 6.0.2 also carries runc v1.4.2 and fulcio v1.8.5.
-      FLOOR="golang.org/x/net@v0.60.0 golang.org/x/text@v0.42.0 golang.org/x/crypto@v0.57.0 golang.org/x/sys@v0.48.0 golang.org/x/mod@v0.41.0 golang.org/x/oauth2@v0.36.0 google.golang.org/grpc@v1.83.2 github.com/moby/buildkit@v0.31.1 github.com/moby/go-archive@v0.3.0 github.com/opencontainers/runc@v1.4.3 github.com/sigstore/fulcio@v1.8.6 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0"
+      FLOOR="golang.org/x/net@v0.60.0 golang.org/x/text@v0.42.0 golang.org/x/crypto@v0.57.0 golang.org/x/sys@v0.48.0 golang.org/x/mod@v0.41.0 golang.org/x/oauth2@v0.36.0 google.golang.org/grpc@v1.83.2 github.com/moby/buildkit@v0.31.1 github.com/moby/go-archive@v0.3.0 github.com/opencontainers/runc@v1.4.3 github.com/sigstore/fulcio@v1.8.6 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0 github.com/klauspost/compress@v1.18.7"
       MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
       below_floor() {
         awk -v floor="$FLOOR" -v tag="$1" '
