@@ -23,7 +23,7 @@ if [ -n "${2:-}" ]; then need "--version" "$out" "Falco version: $2"; fi
 out="$(run --list-plugins || true)"
 echo "$out" | head -20
 need "--list-plugins" "$out" "Name: container"
-need "--list-plugins" "$out" "Version: 0.7.5"
+need "--list-plugins" "$out" "Version: 0.7.6"
 
 out="$(run -L || true)"
 echo "$out" | head -5
