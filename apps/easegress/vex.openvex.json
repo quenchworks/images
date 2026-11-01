@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/easegress/2026-11-01",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-01T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "GHSA-2hw4-c9m4-f2fj"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/knative.dev/pkg@v0.0.0-20231102061027-a6c730fd81f7"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The advisory is the missing http.MaxBytesReader in the admission webhook handler, knative.dev/pkg/webhook/admission.go:109-117. Easegress reaches knative.dev/pkg only indirectly (go.mod line 382, via knative.dev/serving and knative.dev/client for the FaaS controller) and links API, logging, controller and injection packages of it. Verified with `go list -deps ./cmd/server ./cmd/client` at v2.9.4, v2.10.1 and v2.11.0: 30 knative.dev/pkg packages each, zero under knative.dev/pkg/webhook. The recipe runs the same go list after the build and fails if knative.dev/pkg/webhook is ever linked."
+    }
+  ]
+}
