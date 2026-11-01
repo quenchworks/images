@@ -1,9 +1,9 @@
 {
   "@context": "https://openvex.dev/ns/v0.2.0",
-  "@id": "https://quench-works.com/vex/vector/2026-10-13",
+  "@id": "https://quench-works.com/vex/vector/2026-11-01",
   "author": "QuenchWorks <info@quench-works.com>",
-  "timestamp": "2026-10-13T00:00:00Z",
-  "version": 2,
+  "timestamp": "2026-11-01T00:00:00Z",
+  "version": 3,
   "statements": [
     {
       "vulnerability": {
@@ -95,6 +95,84 @@
       "status": "not_affected",
       "justification": "vulnerable_code_not_in_execute_path",
       "impact_statement": "The wildcard name constraint bug needs certificate path validation by a rustls 0.21 verifier. rustls-webpki 0.101.7 (vector 0.58.0 only) comes in through rustls 0.21.12 <- hyper-rustls 0.24.2 <- aws-smithy-http-client 1.2.0 legacy-rustls-ring, the default hyper-0.14 client of aws-smithy-runtime 1.12.1, measured with `cargo tree -e all -i rustls-webpki@0.101.7` with this recipe's features. Vector never sends AWS traffic through it: src/aws/mod.rs:109-125 (fn connector, documented as the connector all AWS requests use because vector keeps TLS on OpenSSL) wraps vector's hyper-openssl connector (src/http.rs:260 build_tls_connector) in HyperClientBuilder, and every SDK config and credential provider is given that client: src/aws/mod.rs:143-144 and :224, src/aws/auth.rs:254, :334 and :419-421. grep for aws_config::defaults|load_defaults|load_from_env|from_env over src and lib returned 0 matches, so no config falls back to the default client. No rustls 0.21 verifier ever validates a certificate. The 0.101.x line has no fixed release (0.103.13). The recipe fails the build if a default loader appears or the OpenSSL connector changes. Verified 2026-10-13."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-c8m5-c952-6cm4"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/rustls@0.22.4"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The advisory: Debug formatting of client session values (Tls12/Tls13ClientSessionValue) leaks the master secret or resumption PSK through a custom ClientSessionStore. rustls 0.22.4 (vector 0.58.0 and 0.60.0; 0.61.0 ships only 0.23.46) is linked only through tokio-rustls 0.25.0 <- tonic 0.11.0 (feature tls), measured 2026-11-01 with cargo tree --locked -e normal,build --target all --no-default-features --features <this recipe's FEATURES> -i rustls@0.22.4 on the v0.58.0 and v0.60.0 tags. tonic 0.11.0 creates a rustls connection only in Endpoint::tls_config (src/transport/channel/endpoint.rs:242) and Server::tls_config (src/transport/server/mod.rs:151); Endpoint::new leaves tls None (endpoint.rs:425-426). grep for ClientTlsConfig|ServerTlsConfig|.tls_config( over vector src/ and lib/ matches only src/sources/gcp_pubsub.rs (feature sources-gcp_pubsub, not built here); vector terminates its own TLS with OpenSSL. No rustls 0.22 client or server connection is ever constructed, so no handshake or session store runs on this copy. The recipe fails the build if a gcp/greptime feature or any other tonic TLS caller appears. The advisory has no fixed 0.22.x release (fix 0.23.46)."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-c8m5-c952-6cm4"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/rustls@0.21.12"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The advisory: Debug formatting of client session values (Tls12/Tls13ClientSessionValue) leaks the master secret or resumption PSK through a custom ClientSessionStore. rustls 0.21.12 (vector 0.58.0 only) comes in only through hyper-rustls 0.24.2 <- aws-smithy-http-client 1.2.0, the default hyper-0.14 client of aws-smithy-runtime, measured 2026-11-01 with cargo tree --locked -e all --target all --no-default-features --features <this recipe's FEATURES> -i rustls@0.21.12 on v0.58.0 (with -e normal,build it prints nothing). Vector never sends traffic through that client: src/aws/mod.rs:109-125 (fn connector) wraps vector's hyper-openssl connector (src/http.rs:260 build_tls_connector) and every SDK config and credential provider gets that client (src/aws/mod.rs:143-144 and :224, src/aws/auth.rs:254, :334, :419-421); grep for aws_config::defaults|load_defaults|load_from_env|from_env over src and lib returned 0 matches. No rustls 0.21 connection is ever constructed, so no handshake or session store runs on this copy. The recipe fails the build if a default AWS loader appears or the OpenSSL connector changes. No fixed 0.21.x release exists (fix 0.23.46)."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-h2v8-394m-p7vv"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/rustls@0.22.4"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The advisory: Brotli certificate decompression during a client or server handshake can allocate up to 1 GiB. rustls 0.22.4 (vector 0.58.0 and 0.60.0; 0.61.0 ships only 0.23.46) is linked only through tokio-rustls 0.25.0 <- tonic 0.11.0 (feature tls), measured 2026-11-01 with cargo tree --locked -e normal,build --target all --no-default-features --features <this recipe's FEATURES> -i rustls@0.22.4 on the v0.58.0 and v0.60.0 tags. tonic 0.11.0 creates a rustls connection only in Endpoint::tls_config (src/transport/channel/endpoint.rs:242) and Server::tls_config (src/transport/server/mod.rs:151); Endpoint::new leaves tls None (endpoint.rs:425-426). grep for ClientTlsConfig|ServerTlsConfig|.tls_config( over vector src/ and lib/ matches only src/sources/gcp_pubsub.rs (feature sources-gcp_pubsub, not built here); vector terminates its own TLS with OpenSSL. No rustls 0.22 client or server connection is ever constructed, so no handshake or session store runs on this copy. The recipe fails the build if a gcp/greptime feature or any other tonic TLS caller appears. The advisory has no fixed 0.22.x release (fix 0.23.46)."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-h2v8-394m-p7vv"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/rustls@0.21.12"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The advisory: Brotli certificate decompression during a client or server handshake can allocate up to 1 GiB. rustls 0.21.12 (vector 0.58.0 only) comes in only through hyper-rustls 0.24.2 <- aws-smithy-http-client 1.2.0, the default hyper-0.14 client of aws-smithy-runtime, measured 2026-11-01 with cargo tree --locked -e all --target all --no-default-features --features <this recipe's FEATURES> -i rustls@0.21.12 on v0.58.0 (with -e normal,build it prints nothing). Vector never sends traffic through that client: src/aws/mod.rs:109-125 (fn connector) wraps vector's hyper-openssl connector (src/http.rs:260 build_tls_connector) and every SDK config and credential provider gets that client (src/aws/mod.rs:143-144 and :224, src/aws/auth.rs:254, :334, :419-421); grep for aws_config::defaults|load_defaults|load_from_env|from_env over src and lib returned 0 matches. No rustls 0.21 connection is ever constructed, so no handshake or session store runs on this copy. The recipe fails the build if a default AWS loader appears or the OpenSSL connector changes. No fixed 0.21.x release exists (fix 0.23.46)."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-w44r-93j7-qv28"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/rustls@0.22.4"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The advisory: a client records the server-selected key-exchange group from an unauthenticated ServerHello. rustls 0.22.4 (vector 0.58.0 and 0.60.0; 0.61.0 ships only 0.23.46) is linked only through tokio-rustls 0.25.0 <- tonic 0.11.0 (feature tls), measured 2026-11-01 with cargo tree --locked -e normal,build --target all --no-default-features --features <this recipe's FEATURES> -i rustls@0.22.4 on the v0.58.0 and v0.60.0 tags. tonic 0.11.0 creates a rustls connection only in Endpoint::tls_config (src/transport/channel/endpoint.rs:242) and Server::tls_config (src/transport/server/mod.rs:151); Endpoint::new leaves tls None (endpoint.rs:425-426). grep for ClientTlsConfig|ServerTlsConfig|.tls_config( over vector src/ and lib/ matches only src/sources/gcp_pubsub.rs (feature sources-gcp_pubsub, not built here); vector terminates its own TLS with OpenSSL. No rustls 0.22 client or server connection is ever constructed, so no handshake or session store runs on this copy. The recipe fails the build if a gcp/greptime feature or any other tonic TLS caller appears. The advisory has no fixed 0.22.x release (fix 0.23.46)."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-w44r-93j7-qv28"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/rustls@0.21.12"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The advisory: a client records the server-selected key-exchange group from an unauthenticated ServerHello. rustls 0.21.12 (vector 0.58.0 only) comes in only through hyper-rustls 0.24.2 <- aws-smithy-http-client 1.2.0, the default hyper-0.14 client of aws-smithy-runtime, measured 2026-11-01 with cargo tree --locked -e all --target all --no-default-features --features <this recipe's FEATURES> -i rustls@0.21.12 on v0.58.0 (with -e normal,build it prints nothing). Vector never sends traffic through that client: src/aws/mod.rs:109-125 (fn connector) wraps vector's hyper-openssl connector (src/http.rs:260 build_tls_connector) and every SDK config and credential provider gets that client (src/aws/mod.rs:143-144 and :224, src/aws/auth.rs:254, :334, :419-421); grep for aws_config::defaults|load_defaults|load_from_env|from_env over src and lib returned 0 matches. No rustls 0.21 connection is ever constructed, so no handshake or session store runs on this copy. The recipe fails the build if a default AWS loader appears or the OpenSSL connector changes. No fixed 0.21.x release exists (fix 0.23.46)."
     }
   ]
 }
