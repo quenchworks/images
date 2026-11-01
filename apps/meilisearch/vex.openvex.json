@@ -1,0 +1,74 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/meilisearch/2026-11-01",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-01T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-115905"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/zip@7.2.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The advisory: ZipStreamReader (src/read/stream.rs) extracts by Local File Header names while ZipArchive trusts the Central Directory; exploitation needs the streaming reader, which nothing here calls. zip 7.2.0 is linked into /usr/bin/meilisearch only through candle-core 0.9.2 (checksum c15b675b80d994b2eadb20a4bbe434eabeb454eac3ee5e2b4cf6f147ee9be091), the sole dependent of zip 7.2.0 in the v1.53.3, v1.55.0 and v1.56.0 Cargo.lock files (meilisearch's own zip 6.0.0 is a build-dependency of crates/meilisearch/build.rs for the mini-dashboard and is not in the binary). candle-core declares zip ^7.2.0 with default-features = false and no features (crates.io dependency table for 0.9.2), so the unified feature set of this copy is empty. candle-core reads archives only with zip::ZipArchive::new plus by-name entry reads (src/npy.rs:286, :308, :383, :411, :425; src/pickle.rs:677, :773) and writes with zip::ZipWriter (src/npy.rs:359). Verified 2026-11-01 on the crates.io 0.9.2 source: grep -rnE 'ZipStreamReader|read_zipfile_from_stream|\\.extract|extract_unwrapped' over src returned nothing. No fixed 7.x release exists (fix 9.x); candle-core 0.11.1 still requires zip ^7.2.0. "
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-115906"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/zip@7.2.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The advisory: the AES entry reader (src/aes.rs) skips its HMAC check on premature EOF. That reader exists only with the aes-crypto feature, which is not enabled on this copy, so the AES code is not compiled in. zip 7.2.0 is linked into /usr/bin/meilisearch only through candle-core 0.9.2 (checksum c15b675b80d994b2eadb20a4bbe434eabeb454eac3ee5e2b4cf6f147ee9be091), the sole dependent of zip 7.2.0 in the v1.53.3, v1.55.0 and v1.56.0 Cargo.lock files (meilisearch's own zip 6.0.0 is a build-dependency of crates/meilisearch/build.rs for the mini-dashboard and is not in the binary). candle-core declares zip ^7.2.0 with default-features = false and no features (crates.io dependency table for 0.9.2), so the unified feature set of this copy is empty. candle-core reads archives only with zip::ZipArchive::new plus by-name entry reads (src/npy.rs:286, :308, :383, :411, :425; src/pickle.rs:677, :773) and writes with zip::ZipWriter (src/npy.rs:359). Verified 2026-11-01 on the crates.io 0.9.2 source: grep -rnE 'ZipStreamReader|read_zipfile_from_stream|\\.extract|extract_unwrapped' over src returned nothing. No fixed 7.x release exists (fix 9.x); candle-core 0.11.1 still requires zip ^7.2.0. "
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-115907"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/zip@7.2.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The advisory: the Shrink/Reduce/Implode decoders of the legacy-zip feature preallocate from an attacker-controlled size. legacy-zip is not enabled on this copy (it is not even a zip 7.2.0 default), so those decoders are not compiled in. zip 7.2.0 is linked into /usr/bin/meilisearch only through candle-core 0.9.2 (checksum c15b675b80d994b2eadb20a4bbe434eabeb454eac3ee5e2b4cf6f147ee9be091), the sole dependent of zip 7.2.0 in the v1.53.3, v1.55.0 and v1.56.0 Cargo.lock files (meilisearch's own zip 6.0.0 is a build-dependency of crates/meilisearch/build.rs for the mini-dashboard and is not in the binary). candle-core declares zip ^7.2.0 with default-features = false and no features (crates.io dependency table for 0.9.2), so the unified feature set of this copy is empty. candle-core reads archives only with zip::ZipArchive::new plus by-name entry reads (src/npy.rs:286, :308, :383, :411, :425; src/pickle.rs:677, :773) and writes with zip::ZipWriter (src/npy.rs:359). Verified 2026-11-01 on the crates.io 0.9.2 source: grep -rnE 'ZipStreamReader|read_zipfile_from_stream|\\.extract|extract_unwrapped' over src returned nothing. No fixed 7.x release exists (fix 9.x); candle-core 0.11.1 still requires zip ^7.2.0. "
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-115908"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/zip@7.2.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The advisory: ZipArchive::extract and extract_unwrapped_root_dir validate symlink targets lexically and can write outside the extraction directory. Neither extraction function is called here. zip 7.2.0 is linked into /usr/bin/meilisearch only through candle-core 0.9.2 (checksum c15b675b80d994b2eadb20a4bbe434eabeb454eac3ee5e2b4cf6f147ee9be091), the sole dependent of zip 7.2.0 in the v1.53.3, v1.55.0 and v1.56.0 Cargo.lock files (meilisearch's own zip 6.0.0 is a build-dependency of crates/meilisearch/build.rs for the mini-dashboard and is not in the binary). candle-core declares zip ^7.2.0 with default-features = false and no features (crates.io dependency table for 0.9.2), so the unified feature set of this copy is empty. candle-core reads archives only with zip::ZipArchive::new plus by-name entry reads (src/npy.rs:286, :308, :383, :411, :425; src/pickle.rs:677, :773) and writes with zip::ZipWriter (src/npy.rs:359). Verified 2026-11-01 on the crates.io 0.9.2 source: grep -rnE 'ZipStreamReader|read_zipfile_from_stream|\\.extract|extract_unwrapped' over src returned nothing. No fixed 7.x release exists (fix 9.x); candle-core 0.11.1 still requires zip ^7.2.0. "
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-115909"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/zip@7.2.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The advisory: ZipArchive::extract preallocates a symlink target from an attacker-controlled ZIP64 size. ZipArchive::extract is never called here. zip 7.2.0 is linked into /usr/bin/meilisearch only through candle-core 0.9.2 (checksum c15b675b80d994b2eadb20a4bbe434eabeb454eac3ee5e2b4cf6f147ee9be091), the sole dependent of zip 7.2.0 in the v1.53.3, v1.55.0 and v1.56.0 Cargo.lock files (meilisearch's own zip 6.0.0 is a build-dependency of crates/meilisearch/build.rs for the mini-dashboard and is not in the binary). candle-core declares zip ^7.2.0 with default-features = false and no features (crates.io dependency table for 0.9.2), so the unified feature set of this copy is empty. candle-core reads archives only with zip::ZipArchive::new plus by-name entry reads (src/npy.rs:286, :308, :383, :411, :425; src/pickle.rs:677, :773) and writes with zip::ZipWriter (src/npy.rs:359). Verified 2026-11-01 on the crates.io 0.9.2 source: grep -rnE 'ZipStreamReader|read_zipfile_from_stream|\\.extract|extract_unwrapped' over src returned nothing. No fixed 7.x release exists (fix 9.x); candle-core 0.11.1 still requires zip ^7.2.0. "
+    }
+  ]
+}
