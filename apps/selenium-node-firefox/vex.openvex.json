@@ -1,0 +1,48 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/selenium-node-firefox/2026-11-01",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-01T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-115905"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/zip@2.4.2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The advisory: ZipStreamReader (src/read/stream.rs) extracts by Local File Header names while ZipArchive trusts the Central Directory; exploitation needs the streaming reader, which geckodriver never uses. geckodriver here is Wolfi's geckodriver 0.37.1 apk (/usr/bin/geckodriver); 0.37.1 is the newest upstream release (2026-07-20). Its Cargo.toml:49 declares zip with default-features = false and features [\"deflate-flate2\", \"flate2\"], Cargo.lock resolves zip 2.4.2 with geckodriver as its only dependent, and the crate is used only by unzip_buffer in src/capabilities.rs:819 (called at :579 for the moz:firefoxOptions profile): zip::ZipArchive::new over an in-memory Cursor (:821), then by_index (:829), an explicit rejection of symlink entries, enclosed_name(), and its own file writes. Verified 2026-11-01 on the v0.37.1 source: grep -rnE 'zip::|ZipArchive|ZipWriter|\\.extract\\(|read_zipfile_from_stream|ZipStreamReader|by_index|by_name' src returns only capabilities.rs:821 and :829."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-115906"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/zip@2.4.2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The advisory: the AES entry reader (src/aes.rs) skips its HMAC check on premature EOF. That reader exists only with zip's aes-crypto feature, which geckodriver does not enable, so the AES code is not compiled in. geckodriver here is Wolfi's geckodriver 0.37.1 apk (/usr/bin/geckodriver); 0.37.1 is the newest upstream release (2026-07-20). Its Cargo.toml:49 declares zip with default-features = false and features [\"deflate-flate2\", \"flate2\"], Cargo.lock resolves zip 2.4.2 with geckodriver as its only dependent, and the crate is used only by unzip_buffer in src/capabilities.rs:819 (called at :579 for the moz:firefoxOptions profile): zip::ZipArchive::new over an in-memory Cursor (:821), then by_index (:829), an explicit rejection of symlink entries, enclosed_name(), and its own file writes. Verified 2026-11-01 on the v0.37.1 source: grep -rnE 'zip::|ZipArchive|ZipWriter|\\.extract\\(|read_zipfile_from_stream|ZipStreamReader|by_index|by_name' src returns only capabilities.rs:821 and :829."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-115909"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/zip@2.4.2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The advisory: ZipArchive::extract preallocates a symlink target from an attacker-controlled ZIP64 size. ZipArchive::extract is never called, and geckodriver refuses symlink entries outright. geckodriver here is Wolfi's geckodriver 0.37.1 apk (/usr/bin/geckodriver); 0.37.1 is the newest upstream release (2026-07-20). Its Cargo.toml:49 declares zip with default-features = false and features [\"deflate-flate2\", \"flate2\"], Cargo.lock resolves zip 2.4.2 with geckodriver as its only dependent, and the crate is used only by unzip_buffer in src/capabilities.rs:819 (called at :579 for the moz:firefoxOptions profile): zip::ZipArchive::new over an in-memory Cursor (:821), then by_index (:829), an explicit rejection of symlink entries, enclosed_name(), and its own file writes. Verified 2026-11-01 on the v0.37.1 source: grep -rnE 'zip::|ZipArchive|ZipWriter|\\.extract\\(|read_zipfile_from_stream|ZipStreamReader|by_index|by_name' src returns only capabilities.rs:821 and :829."
+    }
+  ]
+}
