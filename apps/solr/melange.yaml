@@ -63,13 +63,14 @@ pipeline:
       # -alpha modules), grpc-netty-shaded 1.65.1->1.75.0, opennlp 2.5.6->2.5.9,
       # zookeeper 3.9.4->3.9.5. netty-tcnative (2.0.70) and the otel 2.x instrumentation/
       # semconv trains are NOT flagged and left as-is. SHA256-pinned from Maven Central.
-      if [ "${{package.version}}" = "10.0.0" ]; then
       # Drop the optional cross-dc module: it bundles lz4-java 1.8.0 whose only fix
       # (1.8.1) is a POM-only release with NO jar on Maven Central, so it is not
       # swappable; the module (Kafka-based cross-datacenter mirror) is niche/optional.
+      # 10.1.0 still ships it, now with lz4-java 1.10.2.
       rm -rf "$dest/modules/cross-dc"
       M=https://repo1.maven.org/maven2
       MCV="https://repo1.maven.org/maven2"
+      if [ "${{package.version}}" = "10.0.0" ]; then
       swap() { # reldir newfile sha256 url oldfile
         local rd="$1" nf="$2" sha="$3" url="$4" old="$5"
         rm -f "$dest/$rd/$old"
@@ -192,6 +193,7 @@ pipeline:
       # ACC_FINAL class patch (see apps/opensearch/melange.yaml).
       swap modules/sql/lib calcite-core-1.42.0.jar 2ed5489201baab842001c95f939a0829849cf3cdaed9cdbf4b9078633c35792b "https://repo1.maven.org/maven2/org/apache/calcite/calcite-core/1.42.0/calcite-core-1.42.0.jar" calcite-core-1.37.0.jar
       swap modules/sql/lib calcite-linq4j-1.42.0.jar 6f54fa9f24a07ad961e0e1af499a58cfc2374a93ee280283beafe9035de3fa45 "https://repo1.maven.org/maven2/org/apache/calcite/calcite-linq4j/1.42.0/calcite-linq4j-1.42.0.jar" calcite-linq4j-1.37.0.jar
+      fi  # end 10.0.0-only exact-name swaps; everything below runs on every version
       # --- 2026-11-01: every copy below the fix, wherever it sits: guava 33.7.2-jre
       # (CVE-2026-102554; 33.4.8 ships), the OTel core set at 1.67.0 (below) and snappy-java
       # 1.1.10.9 (1.1.10.8 ships). A glob that matches nothing stops the build.
@@ -255,7 +257,51 @@ pipeline:
       done || exit 1
       rm -rf "$DL"
       swapbelow 'snappy-java-[0-9]*.jar' snappy-java-1.1.10.9.jar 35228628442e4b9797681c7cbd3b26594f6da3379159dbd0cb07094ed3aece0d "$M/org/xerial/snappy/snappy-java/1.1.10.9/snappy-java-1.1.10.9.jar"
-      fi  # end 10.0.0-only jar swap
+      # 10.1.0's sql module ships httpclient5 5.5 / httpcore5 5.3.5 / h2 5.3.4; the s3
+      # module already has 5.6.4 / 5.4.3 and is left alone.
+      swapbelow 'httpclient5-[0-9]*.jar' httpclient5-5.6.3.jar 80712ff129210d7c73d9fcc1195cbee5c3c34744965c7a05ea107b3648922f18 "$M/org/apache/httpcomponents/client5/httpclient5/5.6.3/httpclient5-5.6.3.jar"
+      swapbelow 'httpcore5-[0-9]*.jar' httpcore5-5.4.3.jar 18bfbbabb478dfb67f31aeaf428c387f3c3df654582e1309f708ee1f3086830a "$M/org/apache/httpcomponents/core5/httpcore5/5.4.3/httpcore5-5.4.3.jar"
+      swapbelow 'httpcore5-h2-[0-9]*.jar' httpcore5-h2-5.4.3.jar c7db7026b8e2dea39132b04a6069f6671e2858309b20a146ec5c7dd6ed73a0b6 "$M/org/apache/httpcomponents/core5/httpcore5-h2/5.4.3/httpcore5-h2-5.4.3.jar"
+      # Jetty moves as one set: every jetty-*-12.0.x jar below 12.0.36 becomes the same
+      # module at 12.0.36 (10.1.0 ships 12.0.34). An unknown module stops the build.
+      jetty36() { case "$1" in
+          http) echo 2b5c6ee1303aa979b99afb27e3c602096c344e06da9bdc0057938d1c47f8f1f2 ;;
+          http2-common) echo 932eda552ee275de70c8abda848bbe1947ac936caab81d9f1feada592c6761d9 ;;
+          http2-hpack) echo f29eb0364cb1e8acd28271c07f86428f1f9633cddbae9f889e028bb7c96f58ff ;;
+          io) echo b191d45e3c48711cc784d509a8dec50112816af392b2b7c76d9e42324b5064da ;;
+          security) echo e6fb70974291312c58ac84d8bf28c909d1800d1b3104020e7cd4db77391f9fb2 ;;
+          server) echo f0eb8d1e71d67d0f937c45752546cf479ba55ad3135cf600d3bf723f52cd53fe ;;
+          util) echo e16c145dd761168133d1505b6f7cf05343f5e3e3ff03333757c8a6312896ab48 ;;
+          alpn-java-server) echo d46db822f70867aec7c53c57b0b85334a583528671a01f250776cfc1c542aab3 ;;
+          alpn-server) echo 16dd7e329a951f46b6f60e8952144b982bd6591de7c628af79570d5561567a2d ;;
+          deploy) echo 0a2f555b29ac99cfc6d1bb767dfe30c9fe2bf2f9072ddbb9a10447918ec8ecac ;;
+          ee10-servlet) echo 64d42fc2e1c3fd6b7e7a77c1165626bce3a52ef3ed89a7cf00163d11b42201c8 ;;
+          ee10-servlets) echo e4bc43fbe7ddb1f7658a935b9ad0329d9cf4eae446533bfed7822e6183fe933e ;;
+          ee10-webapp) echo 6ace184be22d8b257b935fbbeddf4795a8f93f332618bc61d4d5246e75135e45 ;;
+          ee) echo 11252c30b20e5429cdea8058ca4e6d1794503d8662c340c6329f664b55cd1720 ;;
+          http2-server) echo 357e2b07d6513128cda42d6ee6b0e15e0dc97c589efeb302c33369f21fd185bf ;;
+          jmx) echo 700adb00d9432aaea13ee7e633cb6455dc2f28607ba17a53afa2210d0c63429c ;;
+          rewrite) echo 5e754ef23984ea50b7d05cacab819b9c0d793bff95194370a39d4ce39b83fb07 ;;
+          session) echo 5b6dc693b9e3d87d309027a5f506b57225b6450444a3f276d9089f2c663cbcc4 ;;
+          xml) echo 44e3f870d6c74c2f1199e43b1bf994a94f6b1e4f4460c0ea6d69cd0d466642fc ;;
+          alpn-client) echo 6b0e03b545fa49fc82cf3149dafb3849e6e0827b3756c31b0e1f5324d86816d2 ;;
+          alpn-java-client) echo 42be908a29d1306547652695d70ad7ce43375a384ea5f0b341da4b30fe94130e ;;
+          client) echo 1e188b18e8ff6b60ca743e9c9cc39c35f8b6b1b6a7dc07cbdd06800672a1ee02 ;;
+          http2-client) echo c63277d48780b9b8f17be7fafe0f772ebb54f90032bcfc7c7513df111be785b1 ;;
+          http2-client-transport) echo 82801f3803ac0018d6f28f41db74b316154f5a3e3b797960fff957435351b700 ;;
+          *) return 1 ;;
+        esac; }
+      find "$dest" -name 'jetty-*-12.0.*.jar' > "$dest.jetty"
+      while IFS= read -r j; do
+        b="$(basename "$j" .jar)"; a="${b#jetty-}"; a="${a%-12.0.*}"; v="${b##*-}"
+        [ "$(printf '%s\n12.0.36\n' "$v" | sort -V | head -1)" = 12.0.36 ] && continue
+        h="$(jetty36 "$a")" || { echo "FATAL: jetty-$a has no pinned 12.0.36 sha"; exit 1; }
+        case "$a" in http2-*) g=org/eclipse/jetty/http2 ;; ee10-*) g=org/eclipse/jetty/ee10 ;; *) g=org/eclipse/jetty ;; esac
+        n="$(dirname "$j")/jetty-$a-12.0.36.jar"
+        curl -fsSL -o "$n" "$M/$g/jetty-$a/12.0.36/jetty-$a-12.0.36.jar"; echo "$h  $n" | sha256sum -c - >/dev/null
+        rm -f "$j"; echo "  $j -> jetty-$a-12.0.36.jar"
+      done < "$dest.jetty"
+      rm -f "$dest.jetty"
 
       # the dist ships configs/launchers with restrictive perms; the nonroot runtime
       # user must read the default SOLR_HOME (to seed the writable mount) and exec the
