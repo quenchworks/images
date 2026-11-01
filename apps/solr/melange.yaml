@@ -192,6 +192,69 @@ pipeline:
       # ACC_FINAL class patch (see apps/opensearch/melange.yaml).
       swap modules/sql/lib calcite-core-1.42.0.jar 2ed5489201baab842001c95f939a0829849cf3cdaed9cdbf4b9078633c35792b "https://repo1.maven.org/maven2/org/apache/calcite/calcite-core/1.42.0/calcite-core-1.42.0.jar" calcite-core-1.37.0.jar
       swap modules/sql/lib calcite-linq4j-1.42.0.jar 6f54fa9f24a07ad961e0e1af499a58cfc2374a93ee280283beafe9035de3fa45 "https://repo1.maven.org/maven2/org/apache/calcite/calcite-linq4j/1.42.0/calcite-linq4j-1.42.0.jar" calcite-linq4j-1.37.0.jar
+      # --- 2026-11-01: every copy below the fix, wherever it sits: guava 33.7.2-jre
+      # (CVE-2026-102554; 33.4.8 ships), the OTel core set at 1.67.0 (below) and snappy-java
+      # 1.1.10.9 (1.1.10.8 ships). A glob that matches nothing stops the build.
+      swapbelow() { # <glob> <new-basename> <sha256> <url>
+        t="$(mktemp)"; curl -fsSL -o "$t" "$4"; echo "$3  $t" | sha256sum -c - >/dev/null
+        want="$(echo "$2" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)"
+        find "$dest" -name "$1" > "$t.list"
+        test -s "$t.list" || { echo "FATAL: no jar matched $1 -- the dist moved"; exit 1; }
+        while IFS= read -r j; do
+          v="$(basename "$j" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)"
+          [ "$(printf '%s\n%s\n' "$v" "$want" | sort -V | head -1)" = "$want" ] && continue
+          cp "$t" "$(dirname "$j")/$2"; rm -f "$j"; echo "  $j -> $2"
+        done < "$t.list"
+        rm -f "$t" "$t.list"
+      }
+      swapbelow 'guava-[0-9]*-jre.jar' guava-33.7.2-jre.jar b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c "$M/com/google/guava/guava/33.7.2-jre/guava-33.7.2-jre.jar"
+      DL="$(mktemp -d)"
+      # OpenTelemetry core moves as ONE set (the flagged opentelemetry-api fix is 1.67.0):
+      # the 1.x SDK reaches into api internals that move between releases (1.67 moved
+      # api.internal.ConfigUtil into opentelemetry-common), so an api-only swap boots and
+      # then dies with NoClassDefFoundError once telemetry is turned on. Every core jar
+      # below 1.67.0 becomes the same artifact at 1.67.0; instrumentation 2.x, semconv and
+      # contrib jars are not core and stay; so does the alpha exporter-prometheus, whose
+      # API Solr calls directly (1.67 removed PrometheusMetricReader(boolean, Predicate)).
+      # Fails if any core jar is left behind.
+      otel167() { case "$1" in
+          api) echo "1.67.0 538d1dff2f9a37aecbc0ef98fd17273a3affb058e734e6763a3a07a38a5fdc59" ;;
+          api-incubator) echo "1.67.0-alpha fea3d78726e49620168c3f6194ff491edfd1ec89b2df06fd5d5b73e55d74a342" ;;
+          common) echo "1.67.0 da97bdb395418e16ecdcbe7ad3497f45b9e767ceda4ae7e86133e7a757ac377f" ;;
+          context) echo "1.67.0 40fb813fb5e27ec2691daa29c81b572b5b1541ef9b41e62490c3ee3e6407c55e" ;;
+          exporter-common) echo "1.67.0 eb61aab6d20bf105102dfa061b478b659cec17e82a50969898046456768ba09b" ;;
+          exporter-otlp) echo "1.67.0 6724a9c8f9f42de757682c6194c48d9fee4670cd19a85c37954eba526c58b836" ;;
+          exporter-otlp-common) echo "1.67.0 75530ab4d93e6fdef478d3e112713337625e70a63df357e6e7b9060c13788015" ;;
+          sdk) echo "1.67.0 52a8f599a368a3d62185e37053f6a53175d6fbe3ecc1d565baba13b1a854267f" ;;
+          sdk-common) echo "1.67.0 628a4c00db9561ff4c608a650d5e7fd66a1e153ccdf1ba3cdc5ac0b7c6518fea" ;;
+          sdk-extension-autoconfigure) echo "1.67.0 09021cf4e41f081e11e1c00577fe03b98db0ae7fd5f73eaf4020e760fa0edb7e" ;;
+          sdk-extension-autoconfigure-spi) echo "1.67.0 41eb19f6caf2c655ac3139d331f5c34283f2efdb0f0b0e58765a6cc9e27f66bc" ;;
+          sdk-logs) echo "1.67.0 dd0f0b625e08787af49d7e270abc6def4c2eabc2f18f5f145b7924024a3311e3" ;;
+          sdk-metrics) echo "1.67.0 c157ff10da59a87a57e5236d9f3290792d9b749433be5e5b449a7d1604c320a9" ;;
+          sdk-trace) echo "1.67.0 14d9615c8a5dcf471dcbb74902b771dcfa8656b755ac38dce904042289ccd198" ;;
+          exporter-sender-okhttp) echo "1.67.0 0ccb54e5e1db24680b0b7b818299552477dcc7114de7ca0f7b054e6e20958b83" ;;
+          sdk-testing) echo "1.67.0 c3d74c825e423e7bf28f0e3f22f10bbf7fe3b00984d0d9ea6ef1327b05c274e2" ;;
+          *) return 1 ;;
+        esac; }
+      find "$dest" -name 'opentelemetry-*.jar' > "$DL/otel.list"
+      while IFS= read -r j; do
+        b="$(basename "$j" .jar)"
+        a="$(echo "$b" | sed -E 's/^opentelemetry-(.+)-[0-9]+\.[0-9]+\.[0-9]+(-alpha)?$/\1/')"
+        v="$(echo "$b" | sed -E 's/^.*-([0-9]+\.[0-9]+\.[0-9]+)(-alpha)?$/\1/')"
+        r="$(otel167 "$a")" || continue; set -- $r
+        [ "$(printf '%s\n1.67.0\n' "$v" | sort -V | head -1)" = 1.67.0 ] && continue
+        n="$DL/opentelemetry-$a-$1.jar"
+        [ -f "$n" ] || { curl -fsSL -o "$n" "https://repo1.maven.org/maven2/io/opentelemetry/opentelemetry-$a/$1/opentelemetry-$a-$1.jar"; echo "$2  $n" | sha256sum -c - >/dev/null; }
+        cp "$n" "$(dirname "$j")/"; rm -f "$j"; echo "  $j -> opentelemetry-$a-$1.jar"
+      done < "$DL/otel.list"
+      find "$dest" -name 'opentelemetry-*.jar' | while IFS= read -r j; do
+        b="$(basename "$j" .jar)"; a="$(echo "$b" | sed -E 's/^opentelemetry-(.+)-[0-9]+\.[0-9]+\.[0-9]+(-alpha)?$/\1/')"
+        v="$(echo "$b" | sed -E 's/^.*-([0-9]+\.[0-9]+\.[0-9]+)(-alpha)?$/\1/')"
+        otel167 "$a" >/dev/null || continue
+        [ "$(printf '%s\n1.67.0\n' "$v" | sort -V | head -1)" = 1.67.0 ] || { echo "FATAL: $j below the 1.67.0 OTel set"; exit 1; }
+      done || exit 1
+      rm -rf "$DL"
+      swapbelow 'snappy-java-[0-9]*.jar' snappy-java-1.1.10.9.jar 35228628442e4b9797681c7cbd3b26594f6da3379159dbd0cb07094ed3aece0d "$M/org/xerial/snappy/snappy-java/1.1.10.9/snappy-java-1.1.10.9.jar"
       fi  # end 10.0.0-only jar swap
 
       # the dist ships configs/launchers with restrictive perms; the nonroot runtime
