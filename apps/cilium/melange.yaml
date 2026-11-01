@@ -93,7 +93,8 @@ pipeline:
       install -d "${{targets.destdir}}/cni"
       go build -trimpath -ldflags "-s -w -X github.com/containernetworking/plugins/pkg/utils/buildversion.BuildVersion=v1.9.1" \
         -o "${{targets.destdir}}/cni/loopback" ./plugins/main/loopback
-      [ "$(go version -m "${{targets.destdir}}/cni/loopback" | awk '$2 == "golang.org/x/sys" { print $3 }')" = v0.47.0 ]
+      v="$(go version -m "${{targets.destdir}}/cni/loopback" | awk '$2 == "golang.org/x/sys" { print $3 }')"
+      [ "$v" = v0.49.0 ] || { echo "loopback links golang.org/x/sys $v, not v0.49.0"; exit 1; }
 
 test:
   pipeline:
