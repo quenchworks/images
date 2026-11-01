@@ -1,0 +1,30 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/grist/2026-11-01",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-01T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": { "name": "CVE-2026-118764" },
+      "products": [ { "@id": "pkg:npm/minimatch@3.1.5" } ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The advisory: minimatch before 11.0.1 expands attacker-controlled **/.. segments in firstPhasePreProcess() and compares them pairwise in secondPhasePreProcess(), run at optimizationLevel 2 or higher. Those functions and the optimizationLevel option arrived with the minimatch 7+ rewrite; 3.1.5 is the old single-file implementation. Verified 2026-11-01 on the npm tarball minimatch-3.1.5.tgz: grep -c 'firstPhasePreProcess\\|optimizationLevel' package/minimatch.js returned 0. The 3.1.5 copy in grist 1.7.21 is pulled by glob 7 and readdir-glob 1.1.1 (yarn.lock)."
+    },
+    {
+      "vulnerability": { "name": "CVE-2026-118773" },
+      "products": [ { "@id": "pkg:npm/glob@10.5.0" } ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The advisory: in glob 9.0.0 to 14.0.1 the abort branches of walkCB/walkCB2/walkCBSync/walkCB2Sync (src/walker.ts) invoke callbacks without returning after an AbortSignal fires, so traversal continues past the timeout. The branches are reached only when a caller passes the signal option. In grist 1.7.21 glob 10.5.0 is required by typeorm 0.3.31 and archiver-utils 5.0.2 (yarn.lock; mocha is a dev dependency, removed by yarn install --production). typeorm calls glob.sync(dir) with no options (util/DirectoryExportedClassesLoader.js:32 and :58); archiver-utils calls glob.sync(pattern, options) in file.js:65 and the word signal appears nowhere in that package; its only consumer here, zip-stream 6.0.1, uses util.defaults, sanitizePath and dateify (index.js:62, :77, :91) and never file.expand. Grist does not depend on glob directly. Verified 2026-11-01 with grep over the npm tarballs of typeorm 0.3.31, archiver-utils 5.0.2 and zip-stream 6.0.1."
+    },
+    {
+      "vulnerability": { "name": "CVE-2026-118764" },
+      "products": [ { "@id": "pkg:npm/minimatch@9.0.9" } ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
+      "impact_statement": "The advisory needs an attacker-controlled glob pattern with **/.. segments. In the grist 1.7.21 production tree minimatch 9.0.9 is reached only through glob 10.5.0 (its other dependents, typescript-estree and mocha, are dev dependencies). glob 10.5.0 is called by typeorm with the TypeORM entity, migration and subscriber globs built from a code constant in app/server/lib/dbUtils.ts:183-191 (`${codeRoot}/app/gen-server/entity/*.js` and siblings), and archiver-utils' glob path is never called (zip-stream 6.0.1 uses only defaults, sanitizePath and dateify). No request or document value reaches a glob pattern. Verified 2026-11-01 by grep over the grist v1.7.21 source and the npm tarballs of typeorm 0.3.31, archiver-utils 5.0.2 and zip-stream 6.0.1."
+    }
+  ]
+}
