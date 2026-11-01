@@ -34,9 +34,9 @@ pipeline:
       export CGO_ENABLED=0 GOFLAGS=-mod=mod GOTOOLCHAIN=local
       # 0-CVE float (docs/go-module-float.md), a floor: raise a module only where the
       # line links an older one.
-      for want in github.com/klauspost/compress@v1.18.7 golang.org/x/crypto@v0.57.0 golang.org/x/net@v0.60.0 golang.org/x/text@v0.42.0 \
+      for want in github.com/klauspost/compress@v1.18.7 golang.org/x/crypto@v0.58.0 golang.org/x/net@v0.62.0 golang.org/x/text@v0.43.0 \
                   golang.org/x/mod@v0.41.0 google.golang.org/grpc@v1.83.2 github.com/sigstore/sigstore-go@v1.2.1 \
-                  github.com/sigstore/cosign/v2@v2.6.2; do
+                  github.com/sigstore/cosign/v2@v2.6.2 github.com/go-jose/go-jose/v4@v4.1.6; do
         m="${want%@*}"; w="${want#*@}"
         have="$(go list -m -f '{{.Version}}' "$m" 2>/dev/null || true)"
         [ -n "$have" ] || continue
@@ -46,7 +46,7 @@ pipeline:
       go build -trimpath -ldflags "-s -w -X github.com/google/ko/pkg/commands.Version=${{package.version}}" \
         -o "${{targets.destdir}}/usr/bin/ko" .
       "${{targets.destdir}}/usr/bin/ko" version | grep -qx "${{package.version}}"
-      bad="$(go version -m "${{targets.destdir}}/usr/bin/ko" | awk '$1 == "dep" && ($2 == "golang.org/x/crypto" && $3 < "v0.56.0" || $2 == "golang.org/x/net" && $3 < "v0.58.0" || $2 == "golang.org/x/text" && $3 < "v0.41.0" || $2 == "golang.org/x/mod" && $3 < "v0.40.0") { print $2, $3 }')"
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/ko" | awk '$1 == "dep" && ($2 == "golang.org/x/crypto" && $3 < "v0.56.0" || $2 == "golang.org/x/net" && $3 < "v0.62.0" || $2 == "golang.org/x/text" && $3 < "v0.41.0" || $2 == "golang.org/x/mod" && $3 < "v0.40.0") { print $2, $3 }')"
       [ -z "$bad" ] || { echo "float did not reach the binary: $bad"; exit 1; }
 
 test:
