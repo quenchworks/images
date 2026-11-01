@@ -243,6 +243,40 @@ pipeline:
       getj "$MC/io/opentelemetry/opentelemetry-api/1.62.0/opentelemetry-api-1.62.0.jar" opentelemetry-api-1.62.0.jar d58143928c049233653e6bf1282ff8a767ebdd5e6a82b3f336158c30e40b431d
       find "$dest/modules" -name 'opentelemetry-api-1.47.0.jar' -exec sh -c 'cp "$1" "$(dirname "$2")/opentelemetry-api-1.62.0.jar"; rm -f "$2"' _ "$DL/opentelemetry-api-1.62.0.jar" {} \;
 
+      # --- (d2) every copy below the 2026-11-01 fixes: guava 33.7.2-jre (CVE-2026-102554;
+      #     32.0.1 and 33.4.0 ship), opentelemetry-api 1.67.0 (1.62.0 ships), snappy-java
+      #     1.1.10.9 (1.1.10.8 ships). Copies at or above the fix are left alone; a glob that
+      #     matches nothing stops the build, because the library moved.
+      swapbelow() {  # <glob> <new-basename>   (the new jar is already in $DL)
+        local n=0 kept=0 want v
+        want="$(echo "$2" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)"
+        while IFS= read -r j; do
+          v="$(basename "$j" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)"
+          if [ "$(printf '%s\n%s\n' "$v" "$want" | sort -V | head -1)" = "$want" ]; then
+            kept=$((kept+1)); continue
+          fi
+          cp "$DL/$2" "$(dirname "$j")/$2"; rm -f "$j"; n=$((n+1))
+        done < <(find "$dest" -name "$1")
+        test "$((n + kept))" -gt 0 || { echo "FATAL: no jar matched $1 -- the dist moved"; exit 1; }
+        echo "  $1 -> $2 ($n replaced, $kept already at or above it)"
+      }
+      getj "$MC/com/google/guava/guava/33.7.2-jre/guava-33.7.2-jre.jar" guava-33.7.2-jre.jar b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c
+      getj "$MC/io/opentelemetry/opentelemetry-api/1.67.0/opentelemetry-api-1.67.0.jar" opentelemetry-api-1.67.0.jar 538d1dff2f9a37aecbc0ef98fd17273a3affb058e734e6763a3a07a38a5fdc59
+      getj "$MC/org/xerial/snappy/snappy-java/1.1.10.9/snappy-java-1.1.10.9.jar" snappy-java-1.1.10.9.jar 35228628442e4b9797681c7cbd3b26594f6da3379159dbd0cb07094ed3aece0d
+      # snappy-java 1.1.10.9 adds Automatic-Module-Name org.xerial.snappy; the bundled
+      # 1.1.10.8 had none, so ES's esql compression module was compiled against the
+      # filename-derived name (module-info `requires snappy.java`) and boot dies on
+      # "Module snappy.java not found". Drop that one manifest line so the swapped jar
+      # keeps the old name; the sha256 above was checked on the untouched download.
+      (cd "$DL" && mkdir -p mf/META-INF && unzip -p snappy-java-1.1.10.9.jar META-INF/MANIFEST.MF \
+        | sed '/^Automatic-Module-Name:/d' > mf/META-INF/MANIFEST.MF \
+        && cd mf && zip -q ../snappy-java-1.1.10.9.jar META-INF/MANIFEST.MF)
+      ! unzip -p "$DL/snappy-java-1.1.10.9.jar" META-INF/MANIFEST.MF | grep -q '^Automatic-Module-Name:' \
+        || { echo "FATAL: snappy-java still declares Automatic-Module-Name"; exit 1; }
+      swapbelow 'guava-[0-9]*-jre.jar'          guava-33.7.2-jre.jar
+      swapbelow 'opentelemetry-api-[0-9]*.jar'  opentelemetry-api-1.67.0.jar
+      swapbelow 'snappy-java-[0-9]*.jar'        snappy-java-1.1.10.9.jar
+
       # --- (e) reactor-netty CVE-2025-22227 (fixed in 1.2.5). Up to ES 9.5.2 this block
       #     swapped the bundled 1.0.45 for 1.2.8. ES 9.5.4 bundles 1.2.18 itself, which is
       #     already past the fix, so the swap is DROPPED: the `rm -f` for 1.0.45 matched
