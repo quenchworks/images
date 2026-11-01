@@ -24,6 +24,10 @@ environment:
     packages:
       - busybox
       - ca-certificates-bundle
+      - maven-3.9               # rebuild hadoop-shaded-guava, re-shade guava (see below)
+      - openjdk-21-default-jdk
+      - unzip
+      - zip
 
 pipeline:
   - uses: fetch
@@ -69,6 +73,70 @@ pipeline:
       # packages (one added class) and the same Automatic-Module-Name.
       M=https://repo1.maven.org/maven2/com/rabbitmq
       fixjar amqp-client 5.37.0 b27134820890c5e56ed57d27cc50b70742fa2c31b36a6e9e28e14a43f34ff96f 5.
+      # guava below 33.7.2-jre (CVE-2026-102554; 3.1.0 ships 33.4.8 and 33.7.1 copies).
+      M=https://repo1.maven.org/maven2/com/google/guava
+      fixjar guava 33.7.2-jre b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c 3
+      # lib/hadoop-shaded-guava-1.5.0.jar is guava 33.4.8 relocated to org.apache.hadoop.thirdparty
+      # (hadoop-auth links it), which no plain swap reaches; 1.5.0 is the newest release. Rebuild
+      # it from the hadoop-thirdparty 1.5.0 source (sha512 verified against Apache) on guava
+      # 33.7.2-jre and keep the filename. Same rebuild as apps/spark.
+      hsg="$(find "$dest" -name 'hadoop-shaded-guava-*.jar')"
+      test "$(echo "$hsg" | grep -c .)" -eq 1 || { echo "expected one hadoop-shaded-guava jar: $hsg"; exit 1; }
+      wget -q -O /tmp/htp.tgz https://archive.apache.org/dist/hadoop/thirdparty/thirdparty-1.5.0/hadoop-thirdparty-1.5.0-src.tar.gz
+      echo "b9495bc00e17bcc4faabc77b040be81c7cd55a50c8d0eed333655e52710b19b9  /tmp/htp.tgz" | sha256sum -c -
+      mkdir -p /tmp/htp && tar -xzf /tmp/htp.tgz -C /tmp/htp --strip-components=1
+      (export JAVA_HOME=/usr/lib/jvm/java-21-openjdk PATH="/usr/lib/jvm/java-21-openjdk/bin:$PATH"
+       cd /tmp/htp && mvn -B -ntp -q -C -DskipTests -Drat.skip=true -Denforcer.skip=true -Dlicense.skip=true \
+         -Dmaven.javadoc.skip=true -Dmaven.repo.local=/tmp/m2 -pl hadoop-shaded-guava -am -Dguava.version=33.7.2-jre package)
+      new=/tmp/htp/hadoop-shaded-guava/target/hadoop-shaded-guava-1.5.0.jar
+      unzip -p "$new" META-INF/maven/com.google.guava/guava/pom.properties | grep -qx 'version=33.7.2-jre'
+      cp "$new" "$hsg"; chmod 644 "$hsg"
+      # storm-shaded-deps relocates guava twice: Storm's own copy under org.apache.storm.shade.com.google
+      # (33.7.1, the one Trivy reads through its pom.properties) and Curator's under
+      # org.apache.storm.shade.org.apache.curator.shaded.com.google (no metadata, same code).
+      # Relocate guava 33.7.2-jre + failureaccess to both prefixes with maven-shade and overlay the
+      # classes in place; the jar is unsigned. Removed-in-33.7.2 classes stay, unreferenced.
+      ssd="$(find "$dest" -name 'storm-shaded-deps-*.jar')"
+      test "$(echo "$ssd" | grep -c .)" -eq 1 || { echo "expected one storm-shaded-deps jar: $ssd"; exit 1; }
+      mkdir -p /tmp/sg && cat > /tmp/sg/pom.xml <<'POM'
+      <project xmlns="http://maven.apache.org/POM/4.0.0">
+        <modelVersion>4.0.0</modelVersion>
+        <groupId>quench</groupId><artifactId>sg</artifactId><version>1</version>
+        <dependencies>
+          <dependency><groupId>com.google.guava</groupId><artifactId>guava</artifactId><version>33.7.2-jre</version></dependency>
+          <dependency><groupId>com.google.guava</groupId><artifactId>failureaccess</artifactId><version>1.0.3</version></dependency>
+        </dependencies>
+        <build><plugins><plugin>
+          <groupId>org.apache.maven.plugins</groupId><artifactId>maven-shade-plugin</artifactId><version>3.6.2</version>
+          <configuration>
+            <createDependencyReducedPom>false</createDependencyReducedPom>
+            <shadedArtifactAttached>true</shadedArtifactAttached>
+            <artifactSet><includes><include>com.google.guava:guava</include><include>com.google.guava:failureaccess</include></includes></artifactSet>
+            <filters><filter><artifact>*:*</artifact><excludes><exclude>META-INF/versions/9/module-info.class</exclude></excludes></filter></filters>
+          </configuration>
+          <executions>
+            <execution><id>storm</id><phase>package</phase><goals><goal>shade</goal></goals><configuration>
+              <shadedClassifierName>storm</shadedClassifierName>
+              <relocations><relocation><pattern>com.google</pattern><shadedPattern>org.apache.storm.shade.com.google</shadedPattern></relocation></relocations>
+            </configuration></execution>
+            <execution><id>curator</id><phase>package</phase><goals><goal>shade</goal></goals><configuration>
+              <shadedClassifierName>curator</shadedClassifierName>
+              <relocations><relocation><pattern>com.google</pattern><shadedPattern>org.apache.storm.shade.org.apache.curator.shaded.com.google</shadedPattern></relocation></relocations>
+            </configuration></execution>
+          </executions>
+        </plugin></plugins></build>
+      </project>
+      POM
+      (export JAVA_HOME=/usr/lib/jvm/java-21-openjdk PATH="/usr/lib/jvm/java-21-openjdk/bin:$PATH"
+       cd /tmp/sg && mvn -B -ntp -q -C -Dmaven.repo.local=/tmp/m2 package)
+      echo "b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c  /tmp/m2/com/google/guava/guava/33.7.2-jre/guava-33.7.2-jre.jar" | sha256sum -c -
+      for c in storm curator; do
+        mkdir -p "/tmp/sg/$c" && (cd "/tmp/sg/$c" && unzip -qo "/tmp/sg/target/sg-1-$c.jar" 'org/*')
+        (cd "/tmp/sg/$c" && zip -qr "$ssd" org)
+      done
+      (cd /tmp/sg/storm && unzip -qo "/tmp/sg/target/sg-1-storm.jar" META-INF/maven/com.google.guava/guava/pom.properties META-INF/maven/com.google.guava/guava/pom.xml && zip -q "$ssd" META-INF/maven/com.google.guava/guava/pom.properties META-INF/maven/com.google.guava/guava/pom.xml)
+      unzip -p "$ssd" META-INF/maven/com.google.guava/guava/pom.properties | grep -qx 'version=33.7.2-jre'
+      chmod 644 "$ssd"
 
       # lib-webapp pins some Jetty 12.1 modules older than the copies the dist ships in
       # lib/ (3.1.0: server, security, util at 12.1.9 vs 12.1.12; 12.1.9 is flagged).
