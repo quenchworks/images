@@ -1,5 +1,6 @@
 # Builds ExternalDNS (kubernetes-sigs) from source onto Wolfi. Single static Go
-# binary, no CGO. The version is stamped via -X so `external-dns --version`
+# binary, no CGO. The version is stamped via -X (0.24 moved it from pkg/apis/externaldns to pkg/version;
+# both are passed, the linker ignores the one that does not exist) so `external-dns --version`
 # reports the real release. Output is a signed APK in Quenchworks' own repo. No
 # upstream distro binaries. Image-only (controller, no chart).
 package:
@@ -70,5 +71,5 @@ pipeline:
       export GOFLAGS=-mod=mod
       export GOTOOLCHAIN=local
       go build -trimpath -buildvcs=false \
-        -ldflags "-s -w -X sigs.k8s.io/external-dns/pkg/apis/externaldns.Version=v${{package.version}}" \
+        -ldflags "-s -w -X sigs.k8s.io/external-dns/pkg/apis/externaldns.Version=v${{package.version}} -X sigs.k8s.io/external-dns/pkg/version.Version=v${{package.version}}" \
         -o "${{targets.destdir}}/usr/bin/external-dns" .
