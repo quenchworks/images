@@ -38,7 +38,7 @@ jobs:
           set -euo pipefail
           source "apps/${APP}/build.conf"
           echo "blocked=$([ "${BLOCKED:-0}" = "1" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          n=${#VERSIONS[@]}; start=$(( n > 3 ? n - 3 : 0 ))   # last up-to-3 (negative slice breaks for n<3)
+          n=${#VERSIONS[@]}; start=0  # build every entry: a 4th kept for a chart pin never rebuilt and drifted (2026-11-02)   # last up-to-3 (negative slice breaks for n<3)
           latest3=("${VERSIONS[@]:start}")
           echo "building: ${latest3[*]}"
           echo "vers=$(printf '%s\n' "${latest3[@]}" | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
