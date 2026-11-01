@@ -196,6 +196,10 @@ pipeline:
       ( cd ddcompat && go mod tidy )
       ( cd third_party/drone-runner-docker && go mod tidy )
       go mod tidy
+      # The replaced subtrees can pull a module in below its floor after the first pass
+      # (3.3.0: go-jose/v4 4.1.4 via drone-runner-docker), so run the floor pass again.
+      need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then echo "second floor pass: $need"; go get $need; go mod tidy; fi
       # The sever is only real if docker/docker left the BINARY; assert that below,
       # next to the float assertion.
       V="${{package.version}}"
