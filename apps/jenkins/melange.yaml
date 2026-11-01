@@ -26,6 +26,9 @@ environment:
     packages:
       - busybox
       - ca-certificates-bundle
+      - curl                  # fetch the fixed guava jar from Maven Central
+      - unzip                 # unzip -Z1 (busybox unzip has no -Z)
+      - zip                   # swap the jar inside the war
 
 pipeline:
   - uses: fetch
@@ -34,6 +37,23 @@ pipeline:
       uri: https://get.jenkins.io/__WARPATH__/${{package.version}}/jenkins.war
       expected-sha256: "__SHA256__"
       extract: false       # a bare noarch .war, not an archive: keep it as-is
+  - runs: |
+      # guava 33.6.0-jre (2.572) and 33.7.1-jre (2.580.x, still in 2.580.2) carry
+      # CVE-2026-102554; 33.7.2-jre fixes it. The war is unsigned and Jetty loads every
+      # WEB-INF/lib jar, so swap the jar in place under its own versioned name (2026-11-01).
+      set -eu
+      old="$(unzip -Z1 jenkins.war | grep -E '^WEB-INF/lib/guava-[0-9.]+-jre\.jar$')"
+      if [ "$old" != WEB-INF/lib/guava-33.7.2-jre.jar ]; then
+        mkdir -p swap/WEB-INF/lib
+        curl -fsSL -o swap/WEB-INF/lib/guava-33.7.2-jre.jar \
+          https://repo1.maven.org/maven2/com/google/guava/guava/33.7.2-jre/guava-33.7.2-jre.jar
+        echo "b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c  swap/WEB-INF/lib/guava-33.7.2-jre.jar" | sha256sum -c -
+        zip -qd jenkins.war "$old"
+        (cd swap && zip -q0 ../jenkins.war WEB-INF/lib/guava-33.7.2-jre.jar)
+        rm -rf swap
+      fi
+      [ "$(unzip -Z1 jenkins.war | grep -cE '^WEB-INF/lib/guava-[0-9.]+-jre\.jar$')" = 1 ]
+      unzip -Z1 jenkins.war | grep -qx WEB-INF/lib/guava-33.7.2-jre.jar
   - runs: |
       # install the noarch war under /usr/share/jenkins
       install -d "${{targets.destdir}}/usr/share/jenkins"
