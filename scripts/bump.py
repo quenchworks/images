@@ -248,7 +248,8 @@ def chart_line_dropped(app: str, versions: list[str]) -> str | None:
     if not m:
         return None
     line = ".".join(m.group(1).split(".")[:2]) + "."
-    if any(v.lstrip("v").startswith(line) for v in versions):
+    # Compare with a trailing dot so two-part versions (pgadmin 9.18) match their own line too.
+    if any((v.lstrip("v") + ".").startswith(line) for v in versions):
         return None
     return m.group(1)
 

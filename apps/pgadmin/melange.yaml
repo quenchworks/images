@@ -69,8 +69,10 @@ pipeline:
               continue
           name = re.split(r"[\s\[<>=!~;]", r, 1)[0].lower()
           if name == "certifi":
-              assert r == "certifi==2026.7.22", r  # a new pin: re-check the raise below
-              r = "certifi==2026.10.19"
+              # floor 2026.10.19 (GHSA-6q48-6c7w-9gw2); 9.19 already pins 2026.10.23, which stays
+              assert r.startswith("certifi=="), r
+              if tuple(map(int, r.split("==")[1].split("."))) < (2026, 10, 19):
+                  r = "certifi==2026.10.19"
           if name == "psycopg":
               marker = r.split(";", 1)[1] if ";" in r else ""
               r = "psycopg>=3.3" + (";" + marker if marker else "")
@@ -85,8 +87,8 @@ pipeline:
       "$PIP" install --no-cache-dir -r requirements.txt gunicorn
       "$VENV/bin/python" -c "
       import importlib.metadata as m, PIL, PIL.Image, io, qrcode
-      for n, v in (('certifi', '2026.10.19'), ('pillow', '13.0.0')):
-          assert m.version(n) == v, (n, m.version(n))
+      assert tuple(map(int, m.version('certifi').split('.'))) >= (2026, 10, 19), m.version('certifi')
+      assert m.version('pillow') == '13.0.0', m.version('pillow')
       assert PIL.__file__.startswith('/opt/pgadmin/venv/'), PIL.__file__
       b = io.BytesIO(); qrcode.make('x').save(b); PIL.Image.open(io.BytesIO(b.getvalue())).load()
       print('certifi', m.version('certifi'), 'Pillow', PIL.__version__)
