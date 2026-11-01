@@ -40,6 +40,9 @@ environment:
       - ca-certificates-bundle
       - curl                # build-only: fetch same-major patched jars for the 0-CVE gate
       - zip                 # build-only: replace the BC jars nested in the bouncy-castle-bc bundle
+      - unzip               # build-only: unzip -Z1 (busybox has no -Z)
+      - maven-3.9           # build-only: re-shade curator-client's relocated guava
+      - openjdk-21-default-jdk
 
 pipeline:
   # Apache's CDN (dlcdn) serves only CURRENT releases and is fast; archive.apache.org keeps
@@ -251,6 +254,95 @@ pipeline:
       ;;
       *) echo "pulsar ${{package.version}}: no 4.x jar remediation" ;;
       esac
+      # ---- every line: libraries below their 2026-11-01 fixes, whatever version ships ----
+      # guava 33.7.2-jre (CVE-2026-102554; 5.0.0 ships 33.7.1), snappy-java 1.1.10.9 (1.1.10.8)
+      # and the OpenTelemetry core set at 1.67.0 (api 1.66.0 ships). bin/pulsar puts lib/* on
+      # the classpath, so filenames are free; they keep the dist's <group>-<artifact>-<ver> form.
+      # OTel moves as one set because the SDK reaches into api internals that 1.67 moved; the
+      # alpha exporter-prometheus stays on the line the broker was compiled against.
+      MC="https://repo1.maven.org/maven2"
+      below() { [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" != "$2" ]; }  # <have> <fix>
+      libswap() { # <old jar> <group path> <artifact> <new version> <sha256>
+        n="$dest/lib/$(echo "$2" | tr / .)-$3-$4.jar"
+        curl -fsSL -o "$n" "$MC/$2/$3/$4/$3-$4.jar"
+        echo "$5  $n" | sha256sum -c - >/dev/null
+        rm -f "$1"; echo "  ${1##*/} -> ${n##*/}"
+      }
+      for j in "$dest"/lib/com.google.guava-guava-*-jre.jar; do
+        [ -f "$j" ] || { echo "FATAL: no guava jar in lib/; re-audit"; exit 1; }
+        v="${j##*/com.google.guava-guava-}"; v="${v%-jre.jar}"
+        below "$v" 33.7.2 && libswap "$j" com/google/guava guava 33.7.2-jre b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c
+      done
+      for j in "$dest"/lib/org.xerial.snappy-snappy-java-*.jar; do
+        [ -f "$j" ] || { echo "FATAL: no snappy-java jar in lib/; re-audit"; exit 1; }
+        v="${j##*/org.xerial.snappy-snappy-java-}"; v="${v%.jar}"
+        below "$v" 1.1.10.9 && libswap "$j" org/xerial/snappy snappy-java 1.1.10.9 35228628442e4b9797681c7cbd3b26594f6da3379159dbd0cb07094ed3aece0d
+      done
+      otel167() { case "$1" in
+          api) echo "1.67.0 538d1dff2f9a37aecbc0ef98fd17273a3affb058e734e6763a3a07a38a5fdc59" ;;
+          api-incubator) echo "1.67.0-alpha fea3d78726e49620168c3f6194ff491edfd1ec89b2df06fd5d5b73e55d74a342" ;;
+          common) echo "1.67.0 da97bdb395418e16ecdcbe7ad3497f45b9e767ceda4ae7e86133e7a757ac377f" ;;
+          context) echo "1.67.0 40fb813fb5e27ec2691daa29c81b572b5b1541ef9b41e62490c3ee3e6407c55e" ;;
+          exporter-common) echo "1.67.0 eb61aab6d20bf105102dfa061b478b659cec17e82a50969898046456768ba09b" ;;
+          exporter-otlp) echo "1.67.0 6724a9c8f9f42de757682c6194c48d9fee4670cd19a85c37954eba526c58b836" ;;
+          exporter-otlp-common) echo "1.67.0 75530ab4d93e6fdef478d3e112713337625e70a63df357e6e7b9060c13788015" ;;
+          sdk) echo "1.67.0 52a8f599a368a3d62185e37053f6a53175d6fbe3ecc1d565baba13b1a854267f" ;;
+          sdk-common) echo "1.67.0 628a4c00db9561ff4c608a650d5e7fd66a1e153ccdf1ba3cdc5ac0b7c6518fea" ;;
+          sdk-extension-autoconfigure) echo "1.67.0 09021cf4e41f081e11e1c00577fe03b98db0ae7fd5f73eaf4020e760fa0edb7e" ;;
+          sdk-extension-autoconfigure-spi) echo "1.67.0 41eb19f6caf2c655ac3139d331f5c34283f2efdb0f0b0e58765a6cc9e27f66bc" ;;
+          sdk-logs) echo "1.67.0 dd0f0b625e08787af49d7e270abc6def4c2eabc2f18f5f145b7924024a3311e3" ;;
+          sdk-metrics) echo "1.67.0 c157ff10da59a87a57e5236d9f3290792d9b749433be5e5b449a7d1604c320a9" ;;
+          sdk-trace) echo "1.67.0 14d9615c8a5dcf471dcbb74902b771dcfa8656b755ac38dce904042289ccd198" ;;
+          exporter-sender-okhttp) echo "1.67.0 0ccb54e5e1db24680b0b7b818299552477dcc7114de7ca0f7b054e6e20958b83" ;;
+          sdk-testing) echo "1.67.0 c3d74c825e423e7bf28f0e3f22f10bbf7fe3b00984d0d9ea6ef1327b05c274e2" ;;
+          exporter-logging) echo "1.67.0 cc5edf7dde86b301908d40a7de5b121119c110a6ee453bc41179af84b19b794a" ;;
+          *) return 1 ;;
+        esac; }
+      ls "$dest"/lib/io.opentelemetry-opentelemetry-*.jar > /tmp/otel.list
+      while IFS= read -r j; do
+        b="${j##*/io.opentelemetry-}"; b="${b%.jar}"
+        a="$(echo "$b" | sed -E 's/^opentelemetry-(.+)-[0-9]+\.[0-9]+\.[0-9]+(-alpha)?$/\1/')"
+        v="$(echo "$b" | sed -E 's/^.*-([0-9]+\.[0-9]+\.[0-9]+)(-alpha)?$/\1/')"
+        r="$(otel167 "$a")" || continue; set -- $r
+        below "$v" 1.67.0 || continue
+        libswap "$j" io/opentelemetry "opentelemetry-$a" "$1" "$2"
+      done < /tmp/otel.list
+      grep -q 'opentelemetry-api-[0-9]' /tmp/otel.list || { echo "FATAL: no opentelemetry-api jar in lib/"; exit 1; }
+      # curator-client 5.9.0 (the newest release) relocates guava to org.apache.curator.shaded.com.google.common
+      # and keeps no guava metadata, so scanners never report it; the code is the vulnerable one.
+      # Relocate guava 33.7.2-jre + failureaccess to that prefix with maven-shade and overlay it
+      # in place (the jar is unsigned); the overlay adds guava's metadata. Same as apps/skywalking.
+      cj="$(ls "$dest"/lib/org.apache.curator-curator-client-*.jar)"
+      test "$(echo "$cj" | grep -c .)" -eq 1 || { echo "FATAL: expected one curator-client jar: $cj"; exit 1; }
+      ! unzip -Z1 "$cj" | grep -qE '^META-INF/[^/]+\.(SF|RSA|DSA|EC)$' || { echo "FATAL: $cj is signed"; exit 1; }
+      w=/tmp/rs; mkdir -p "$w/x"
+      cat > "$w/pom.xml" <<'POM'
+      <project xmlns="http://maven.apache.org/POM/4.0.0">
+        <modelVersion>4.0.0</modelVersion>
+        <groupId>quench</groupId><artifactId>rs</artifactId><version>1</version>
+        <dependencies>
+          <dependency><groupId>com.google.guava</groupId><artifactId>guava</artifactId><version>33.7.2-jre</version></dependency>
+          <dependency><groupId>com.google.guava</groupId><artifactId>failureaccess</artifactId><version>1.0.3</version></dependency>
+        </dependencies>
+        <build><plugins><plugin>
+          <groupId>org.apache.maven.plugins</groupId><artifactId>maven-shade-plugin</artifactId><version>3.6.2</version>
+          <executions><execution><phase>package</phase><goals><goal>shade</goal></goals><configuration>
+            <createDependencyReducedPom>false</createDependencyReducedPom>
+            <artifactSet><includes><include>com.google.guava:guava</include><include>com.google.guava:failureaccess</include></includes></artifactSet>
+            <filters><filter><artifact>*:*</artifact><excludes><exclude>com/google/thirdparty/**</exclude><exclude>META-INF/versions/9/module-info.class</exclude></excludes></filter></filters>
+            <relocations><relocation><pattern>com.google.common</pattern><shadedPattern>org.apache.curator.shaded.com.google.common</shadedPattern></relocation></relocations>
+          </configuration></execution></executions>
+        </plugin></plugins></build>
+      </project>
+      POM
+      (export JAVA_HOME=/usr/lib/jvm/java-21-openjdk PATH="/usr/lib/jvm/java-21-openjdk/bin:$PATH"
+       cd "$w" && mvn -B -ntp -q -C -Dmaven.repo.local=/tmp/m2 package)
+      echo "b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c  /tmp/m2/com/google/guava/guava/33.7.2-jre/guava-33.7.2-jre.jar" | sha256sum -c -
+      (cd "$w/x" && unzip -qo "$w/target/rs-1.jar" 'org/*' META-INF/maven/com.google.guava/guava/pom.properties META-INF/maven/com.google.guava/guava/pom.xml \
+        && ! find . -path './com/google/*' | grep -q . && zip -qr "$cj" org META-INF)
+      unzip -p "$cj" META-INF/maven/com.google.guava/guava/pom.properties | grep -qx 'version=33.7.2-jre'
+      chmod 644 "$cj"
+      true
       chmod -R a+rX "$dest"
 
       # Bake a config-from-env entrypoint. A read-only rootfs means ALL of standalone's
