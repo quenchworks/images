@@ -44,6 +44,7 @@ pipeline:
       #   freemarker 2.3.35: CVE-2026-84939 (path traversal via a malformed locale)
       #   jackson-databind 2.22.3: CVE-2026-91776/-91777
       #   jackson-core 2.22.3: CVE-2026-89407/-89425 (2026-10-04)
+      #   guava 33.7.2-jre: CVE-2026-102554; snappy-java 1.1.10.9 (2026-11-01)
       swap() {  # <artifact> <fix version> <maven group path> <sha256>
         old="$(ls "$app"/lib/"$1"-[0-9]*.jar 2>/dev/null || true)"
         [ "$(printf '%s\n' "$old" | grep -c .)" = 1 ] || { echo "expected one $1 jar in lib/, got: $old"; exit 1; }
@@ -56,6 +57,8 @@ pipeline:
       swap freemarker 2.3.35 org/freemarker 0fac87dddd78f1223139e8ef88e819c7f483c0a3835cdf5982ad5e4576d1d896
       swap jackson-databind 2.22.3 com/fasterxml/jackson/core 556db5439e206114346043f68d200497dc96a0bca62a360a81784092ebd0e0a9
       swap jackson-core 2.22.3 com/fasterxml/jackson/core 8a501126a385b25841915d839508f8a66e2a0dbc8a6709d055ef3b3e852b094c
+      swap guava 33.7.2-jre com/google/guava b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c
+      swap snappy-java 1.1.10.9 org/xerial/snappy 35228628442e4b9797681c7cbd3b26594f6da3379159dbd0cb07094ed3aece0d
       chmod -R a+rX "$app"
 
 test:
