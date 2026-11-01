@@ -57,8 +57,8 @@ pipeline:
       # re-add these lines, they would DOWNGRADE:
       #   jline   3.30.14-jdk8 (was 3.25.1, dropped for GHSA-2r2c-cx56-8933), so zkCli keeps
       #           its line-editing/history. Swapped to 3.30.15-jdk8 below since 2026-09-24.
-      #   jackson 2.22/2.22.2  (was 2.15.2, swapped to 2.21.5) -- already newer.
-      #   netty   4.1.137.Final (was 4.1.130, swapped) -- already at the swap target.
+      #   jackson 2.22/2.22.3  (was 2.15.2, swapped to 2.21.5) -- 3.9.7 ships the fix.
+      #   netty   4.1.138.Final (was 4.1.130, swapped) -- already past the swap target.
       # SWAPPED (standalone same-line jar, SHA256-pinned from Maven Central; ZK globs lib/*.jar):
       #   logback 1.3.15 -> 1.5.38 (CVE-2025-11226, CVE-2026-1225/9828/10532; newest
       #     1.5.x, all four need >= 1.5.34). 1.3.x is the Java 8 line and 1.5.x targets
@@ -81,10 +81,9 @@ pipeline:
       # 3.x line). Same jdk8 classifier the dist ships.
       swap jline-3.30.15-jdk8.jar 73f6137bad794beefed4680dc7b6052ab2931e4a1e7fd5395c3478e7e08e6684 "$M/org/jline/jline/3.30.15/jline-3.30.15-jdk8.jar" jline-3.30.14-jdk8.jar
       swap logback-core-1.5.38.jar a855a0fc97b1d06f4efb1c3bba5ebd0eb508d8b58e68e89e4bbc23a85135c883 "$M/ch/qos/logback/logback-core/1.5.38/logback-core-1.5.38.jar" logback-core-1.3.15.jar
-      # jackson-databind 2.22.2 carries CVE-2026-91776/-91777; 2.22.3 is the same-line fix.
-      swap jackson-databind-2.22.3.jar 556db5439e206114346043f68d200497dc96a0bca62a360a81784092ebd0e0a9 "$M/com/fasterxml/jackson/core/jackson-databind/2.22.3/jackson-databind-2.22.3.jar" jackson-databind-2.22.2.jar
-      # jackson-core 2.22.2 carries CVE-2026-89407/-89425 (2026-10-04); 2.22.3 is the same-line fix.
-      swap jackson-core-2.22.3.jar 8a501126a385b25841915d839508f8a66e2a0dbc8a6709d055ef3b3e852b094c "$M/com/fasterxml/jackson/core/jackson-core/2.22.3/jackson-core-2.22.3.jar" jackson-core-2.22.2.jar
+      # 3.9.7 ships jackson-databind and jackson-core 2.22.3 itself; their swaps are gone.
+      # snappy-java 1.1.10.5 -> 1.1.10.9 (flagged 2026-11-01, fix 1.1.10.9).
+      swap snappy-java-1.1.10.9.jar 35228628442e4b9797681c7cbd3b26594f6da3379159dbd0cb07094ed3aece0d "$M/org/xerial/snappy/snappy-java/1.1.10.9/snappy-java-1.1.10.9.jar" snappy-java-1.1.10.5.jar
 
       # bake a config-from-env entrypoint. A read-only rootfs means zoo.cfg and the
       # data/log dirs live under writable mounts; ZOO_* env vars override every default.
