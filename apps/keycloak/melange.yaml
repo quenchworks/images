@@ -41,59 +41,50 @@ pipeline:
       expected-sha512: "__SHA512__"
       strip-components: 1
   - runs: |
-      # 26.7.5 bundles every fix the 26.7.4 swaps carried except OpenTelemetry (still 1.57.0;
-      # netty 4.1.138, databind/core 2.21.7, freemarker 2.3.35, Bouncy Castle 1.86 ship
-      # upstream), so only the otel set below remains. 26.8.0 bundles otel 1.62.0 itself
-      # and skips the step; the 0-CVE gate on the built image clears every version.
-      if [ "${{package.version}}" != 26.7.5 ]; then echo "no jar swaps for ${{package.version}}"; exit 0; fi
-      # --- CVE remediation: swap vulnerable bundled jars BEFORE `kc.sh build` so the
-      # Quarkus augmentation re-indexes the patched versions ---------------------------
-      # (1) OpenTelemetry stack 1.57.0 -> 1.62.0 IN LOCKSTEP (CVE-2026-45292, DoS via
-      #     unbounded memory in opentelemetry-api). OTel's versioning contract requires
-      #     api+sdk+exporters move together, so all 14 io.opentelemetry.opentelemetry-*
-      #     core jars are bumped as a set (sha256-pinned Maven Central). The separate
-      #     instrumentation-2.23.0 and semconv-1.37.0 lines use only stable OTel APIs and
-      #     are not flagged, so they stay. Quarkus 3.33's quarkus-opentelemetry extension
-      #     re-augments against the bumped set below.
-      #
-      # 26.7.2 SHIPS THE REST ALREADY. The swaps 26.7.1 needed for jackson-core/databind
-      # (2.21.5), micrometer-core (1.16.6), netty-codec/-haproxy/-http2/-dns (4.1.136),
-      # postgresql (42.7.13) and mariadb-java-client (3.5.9) are GONE from this recipe
-      # because upstream now bundles those exact fixed versions. Re-check on every bump:
-      # a swap whose target FILENAME no longer exists would silently create a stray jar
-      # the app-model never references instead of patching anything.
+      # --- CVE remediation: overwrite vulnerable bundled jars BEFORE `kc.sh build` so the
+      # Quarkus augmentation re-indexes the patched classes. Fixes as of 2026-11-01:
+      #   * OpenTelemetry core 1.67.0 (CVE in opentelemetry-api; 26.7.5 ships 1.57.0,
+      #     26.8.1 ships 1.62.0). OTel's versioning contract moves api+sdk+exporters
+      #     together, so all 14 core jars go as a set. instrumentation and semconv stay.
+      #   * guava 33.7.2-jre (CVE-2026-102554; 33.5.0 / 33.6.0 ship).
+      #   * mariadb-java-client 3.5.11 (3.5.9 / 3.5.10 ship).
       #
       # IMPORTANT: Keycloak's baked Quarkus app-model (lib/quarkus/quarkus-application.dat)
       # pins each dependency by its EXACT jar FILENAME (no checksum) and `kc.sh build`
-      # pre-flights their existence. So we must NOT rename: we overwrite the 1.57.0-named
-      # files with the 1.62.0 CONTENT. Augmentation then regenerates its bytecode against
-      # the 1.62.0 classes actually present, and Trivy reads the jar's internal
-      # pom.properties (= the fixed version), so the gate sees the patched version.
+      # pre-flights their existence. So we must NOT rename: the fixed CONTENT goes under
+      # the bundled filename. Augmentation then regenerates its bytecode against the
+      # classes actually present, and Trivy reads the jar's internal pom.properties.
       cd lib/lib/main
-      swap() { # url outfile-kept-name sha256(of downloaded content)
-        # the target MUST already exist: we overwrite a bundled jar in place, keeping its
-        # filename. If a version bump renames it, creating it fresh would add a stray jar
-        # the app-model never loads and quietly leave the vulnerable one in place -- so a
-        # missing target is a build failure, not a download.
-        [ -f "$2" ] || { echo "swap target missing: $2 (upstream renamed it?)" >&2; exit 1; }
-        curl -fsSL -o "$2" "$1"
-        echo "$3  $2" | sha256sum -c -
+      swap() { # <filename-prefix> <fixed-version> <url> <sha256>
+        # Exactly one bundled jar must match: none means upstream renamed it (overwriting
+        # nothing would leave the vulnerable copy), two means the glob is too loose.
+        set -- "$1" "$2" "$3" "$4" $(ls "$1"[0-9]*.jar 2>/dev/null)
+        [ "$#" -eq 5 ] || { echo "swap: expected one $1*.jar, found $(($# - 4))" >&2; exit 1; }
+        have="${5#"$1"}"; have="${have%.jar}"
+        if [ "$(printf '%s\n%s\n' "$have" "$2" | sort -V | head -1)" = "$2" ]; then
+          echo "  $5 already at or above $2"; return 0
+        fi
+        curl -fsSL -o "$5" "$3"
+        echo "$4  $5" | sha256sum -c -
+        echo "  $5 <- $2"
       }
       OT="https://repo1.maven.org/maven2/io/opentelemetry"
-      swap "$OT/opentelemetry-api/1.62.0/opentelemetry-api-1.62.0.jar" io.opentelemetry.opentelemetry-api-1.57.0.jar d58143928c049233653e6bf1282ff8a767ebdd5e6a82b3f336158c30e40b431d
-      swap "$OT/opentelemetry-api-incubator/1.62.0-alpha/opentelemetry-api-incubator-1.62.0-alpha.jar" io.opentelemetry.opentelemetry-api-incubator-1.57.0-alpha.jar 6b8dbe21aea973896555c65e94de694ff73f788bdf47c712f8b2267a57b5d0d8
-      swap "$OT/opentelemetry-common/1.62.0/opentelemetry-common-1.62.0.jar" io.opentelemetry.opentelemetry-common-1.57.0.jar d6310bebde67d65c1519696728d8604005315ed08ab14071956fc0826fd71815
-      swap "$OT/opentelemetry-context/1.62.0/opentelemetry-context-1.62.0.jar" io.opentelemetry.opentelemetry-context-1.57.0.jar 8ec86c3609222b9b6307bf40154c1f1c288d1f18ada0155409e7797adbdbe517
-      swap "$OT/opentelemetry-exporter-common/1.62.0/opentelemetry-exporter-common-1.62.0.jar" io.opentelemetry.opentelemetry-exporter-common-1.57.0.jar 50f84b5b58048f69bd684ec874413944209995e01c177200555c151dabfe1ec9
-      swap "$OT/opentelemetry-exporter-otlp/1.62.0/opentelemetry-exporter-otlp-1.62.0.jar" io.opentelemetry.opentelemetry-exporter-otlp-1.57.0.jar 59df47fdc4bef6866ed39eb6a04892c68e28d7938eaeaa21801ac5dd2dcb0d65
-      swap "$OT/opentelemetry-exporter-otlp-common/1.62.0/opentelemetry-exporter-otlp-common-1.62.0.jar" io.opentelemetry.opentelemetry-exporter-otlp-common-1.57.0.jar 79eaaaf044df15209ee1461b668f7c93547734a793d6cf6ad5e57290d3f8c0ea
-      swap "$OT/opentelemetry-sdk/1.62.0/opentelemetry-sdk-1.62.0.jar" io.opentelemetry.opentelemetry-sdk-1.57.0.jar 99d421ea0e5a1ca8e45cb67f1d5db7f0e8a718dd55eeb86c1323597e1f10aed3
-      swap "$OT/opentelemetry-sdk-common/1.62.0/opentelemetry-sdk-common-1.62.0.jar" io.opentelemetry.opentelemetry-sdk-common-1.57.0.jar bf9d13df9a50e49a5db664ba8ebfad79f73f03219d2ac6f6709d432f6896eba0
-      swap "$OT/opentelemetry-sdk-extension-autoconfigure/1.62.0/opentelemetry-sdk-extension-autoconfigure-1.62.0.jar" io.opentelemetry.opentelemetry-sdk-extension-autoconfigure-1.57.0.jar 4165984bdc3261486918a55815ae57d5e75ba08730d1e1ccf97908720659b619
-      swap "$OT/opentelemetry-sdk-extension-autoconfigure-spi/1.62.0/opentelemetry-sdk-extension-autoconfigure-spi-1.62.0.jar" io.opentelemetry.opentelemetry-sdk-extension-autoconfigure-spi-1.57.0.jar 220c22bcf420faae59b7225c789f572eaa22e7af2304d55508aaf2a3efcfecf8
-      swap "$OT/opentelemetry-sdk-logs/1.62.0/opentelemetry-sdk-logs-1.62.0.jar" io.opentelemetry.opentelemetry-sdk-logs-1.57.0.jar 51c94329bc8e335ed79027d29d49c075c11b91b39e48679edf590e784a392406
-      swap "$OT/opentelemetry-sdk-metrics/1.62.0/opentelemetry-sdk-metrics-1.62.0.jar" io.opentelemetry.opentelemetry-sdk-metrics-1.57.0.jar 50b057fbf063f6801f623212f4b51b6a3fefc77837314a1316b2f54894c8b5d4
-      swap "$OT/opentelemetry-sdk-trace/1.62.0/opentelemetry-sdk-trace-1.62.0.jar" io.opentelemetry.opentelemetry-sdk-trace-1.57.0.jar fb6c0953b229a6da1db813135ae11a621bf9da56b7356c1e93049ed4b088c232
+      swap io.opentelemetry.opentelemetry-api- 1.67.0 "$OT/opentelemetry-api/1.67.0/opentelemetry-api-1.67.0.jar" 538d1dff2f9a37aecbc0ef98fd17273a3affb058e734e6763a3a07a38a5fdc59
+      swap io.opentelemetry.opentelemetry-api-incubator- 1.67.0-alpha "$OT/opentelemetry-api-incubator/1.67.0-alpha/opentelemetry-api-incubator-1.67.0-alpha.jar" fea3d78726e49620168c3f6194ff491edfd1ec89b2df06fd5d5b73e55d74a342
+      swap io.opentelemetry.opentelemetry-common- 1.67.0 "$OT/opentelemetry-common/1.67.0/opentelemetry-common-1.67.0.jar" da97bdb395418e16ecdcbe7ad3497f45b9e767ceda4ae7e86133e7a757ac377f
+      swap io.opentelemetry.opentelemetry-context- 1.67.0 "$OT/opentelemetry-context/1.67.0/opentelemetry-context-1.67.0.jar" 40fb813fb5e27ec2691daa29c81b572b5b1541ef9b41e62490c3ee3e6407c55e
+      swap io.opentelemetry.opentelemetry-exporter-common- 1.67.0 "$OT/opentelemetry-exporter-common/1.67.0/opentelemetry-exporter-common-1.67.0.jar" eb61aab6d20bf105102dfa061b478b659cec17e82a50969898046456768ba09b
+      swap io.opentelemetry.opentelemetry-exporter-otlp- 1.67.0 "$OT/opentelemetry-exporter-otlp/1.67.0/opentelemetry-exporter-otlp-1.67.0.jar" 6724a9c8f9f42de757682c6194c48d9fee4670cd19a85c37954eba526c58b836
+      swap io.opentelemetry.opentelemetry-exporter-otlp-common- 1.67.0 "$OT/opentelemetry-exporter-otlp-common/1.67.0/opentelemetry-exporter-otlp-common-1.67.0.jar" 75530ab4d93e6fdef478d3e112713337625e70a63df357e6e7b9060c13788015
+      swap io.opentelemetry.opentelemetry-sdk- 1.67.0 "$OT/opentelemetry-sdk/1.67.0/opentelemetry-sdk-1.67.0.jar" 52a8f599a368a3d62185e37053f6a53175d6fbe3ecc1d565baba13b1a854267f
+      swap io.opentelemetry.opentelemetry-sdk-common- 1.67.0 "$OT/opentelemetry-sdk-common/1.67.0/opentelemetry-sdk-common-1.67.0.jar" 628a4c00db9561ff4c608a650d5e7fd66a1e153ccdf1ba3cdc5ac0b7c6518fea
+      swap io.opentelemetry.opentelemetry-sdk-extension-autoconfigure- 1.67.0 "$OT/opentelemetry-sdk-extension-autoconfigure/1.67.0/opentelemetry-sdk-extension-autoconfigure-1.67.0.jar" 09021cf4e41f081e11e1c00577fe03b98db0ae7fd5f73eaf4020e760fa0edb7e
+      swap io.opentelemetry.opentelemetry-sdk-extension-autoconfigure-spi- 1.67.0 "$OT/opentelemetry-sdk-extension-autoconfigure-spi/1.67.0/opentelemetry-sdk-extension-autoconfigure-spi-1.67.0.jar" 41eb19f6caf2c655ac3139d331f5c34283f2efdb0f0b0e58765a6cc9e27f66bc
+      swap io.opentelemetry.opentelemetry-sdk-logs- 1.67.0 "$OT/opentelemetry-sdk-logs/1.67.0/opentelemetry-sdk-logs-1.67.0.jar" dd0f0b625e08787af49d7e270abc6def4c2eabc2f18f5f145b7924024a3311e3
+      swap io.opentelemetry.opentelemetry-sdk-metrics- 1.67.0 "$OT/opentelemetry-sdk-metrics/1.67.0/opentelemetry-sdk-metrics-1.67.0.jar" c157ff10da59a87a57e5236d9f3290792d9b749433be5e5b449a7d1604c320a9
+      swap io.opentelemetry.opentelemetry-sdk-trace- 1.67.0 "$OT/opentelemetry-sdk-trace/1.67.0/opentelemetry-sdk-trace-1.67.0.jar" 14d9615c8a5dcf471dcbb74902b771dcfa8656b755ac38dce904042289ccd198
+      swap com.google.guava.guava- 33.7.2-jre "https://repo1.maven.org/maven2/com/google/guava/guava/33.7.2-jre/guava-33.7.2-jre.jar" b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c
+      swap org.mariadb.jdbc.mariadb-java-client- 3.5.11 "https://repo1.maven.org/maven2/org/mariadb/jdbc/mariadb-java-client/3.5.11/mariadb-java-client-3.5.11.jar" 42604178b9e57ec08ee0035079961516f086e455d0141f0b22c6eff29fb2fff4
       cd ../../..
   - runs: |
       # Run the augmentation (`kc.sh build`) at IMAGE BUILD time so runtime is optimized
