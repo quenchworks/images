@@ -128,13 +128,13 @@ pipeline:
       # shell-quote 1.11.0: CVE-2026-102422 (CRITICAL, 2026-10-07) on the 1.9.0 pin; no deps, CJS as before
       patch_pkg "$dest/lib/vscode/node_modules" shell-quote https://registry.npmjs.org/shell-quote/-/shell-quote-1.11.0.tgz 028be526afacb2bf5c6c008a95d5435b5d205135f68bb48afd0bb947610393f1
       patch_pkg "$dest/node_modules"            js-yaml     https://registry.npmjs.org/js-yaml/-/js-yaml-4.3.2.tgz c7b241d2224cf9253ff53854aa4cee87da91bd889c4d0fa3a3ffd1041ecee5b1
-      patch_pkg "$dest/node_modules"            qs          https://registry.npmjs.org/qs/-/qs-6.16.0.tgz                f7a1bfc96c3a0c1172f1f3ef3c280f5ce8054841922e715f0d686da62d7beba4
+      patch_pkg "$dest/node_modules"            qs          https://registry.npmjs.org/qs/-/qs-6.16.1.tgz                bdb0e06e5cde7b4d7e0117faa678416bbc2c9287b0672c35c04da2b9de1d3cbf
       # ip-address -> 10.7.1 and undici -> 7.29.1 (CVE-2026-101910/-101911/-101912/-101913, CVE-2026-85024), both vendored under
       # lib/vscode/node_modules (Trivy PkgPath named the exact tree).
-      patch_pkg "$dest/lib/vscode/node_modules" ip-address  https://registry.npmjs.org/ip-address/-/ip-address-10.7.1.tgz   7f99ac7abda701afe1fd1e36de462236fb4d1eb8c595d7ae0267bba7d8ee55f8
-      patch_pkg "$dest/node_modules"            ip-address  https://registry.npmjs.org/ip-address/-/ip-address-10.7.1.tgz   7f99ac7abda701afe1fd1e36de462236fb4d1eb8c595d7ae0267bba7d8ee55f8
-      patch_pkg "$dest/lib/vscode/node_modules" undici      https://registry.npmjs.org/undici/-/undici-7.29.1.tgz           93b3abe22a9d2858938b5f3829a9fd8952392348ffed9057662ae846e2e46d54
-      patch_pkg "$dest/node_modules"            body-parser https://registry.npmjs.org/body-parser/-/body-parser-2.3.0.tgz 031d7f6c5142e31be91d36a43f541f02a505943e3b871aa44ef5fb6939be258e
+      patch_pkg "$dest/lib/vscode/node_modules" ip-address  https://registry.npmjs.org/ip-address/-/ip-address-10.7.4.tgz   f9e1d0dd369c002f43770c6ee35942c8078e76d080a1e18e89113eef865f26ff
+      patch_pkg "$dest/node_modules"            ip-address  https://registry.npmjs.org/ip-address/-/ip-address-10.7.4.tgz   f9e1d0dd369c002f43770c6ee35942c8078e76d080a1e18e89113eef865f26ff
+      patch_pkg "$dest/lib/vscode/node_modules" undici      https://registry.npmjs.org/undici/-/undici-7.30.1.tgz           c98bd3881137c11341e8be8d2ec509ebf973b6f8b36d0a4c6d2afcda15e0d712
+      patch_pkg "$dest/node_modules"            body-parser https://registry.npmjs.org/body-parser/-/body-parser-2.4.0.tgz 3f6e22dc9710a8bd5942fee8dfbd4632b54980cc2f33854f1ec1e314b17b2357
       # compression 1.8.2 (CVE-2026-87776, HIGH) and katex 0.18.2 (CVE-2026-103923, LOW; same
       # dual CJS/ESM entry points as the vendored 0.16.22), 2026-10-06 scan.
       patch_pkg "$dest/node_modules"            compression https://registry.npmjs.org/compression/-/compression-1.8.2.tgz 15e46c301ad6468d3838cfc0dbfca3024220ef12f8a43b8156846691011537a6
@@ -149,16 +149,19 @@ pipeline:
         n=$((n+1))
       done
       [ "$n" -gt 0 ] || { echo "no basic-ftp in the tree; drop this patch"; exit 1; }
-      # follow-redirects 1.16.0 -> 1.16.1 (CVE-2026-111755/-111756, 2026-10-22; no deps, CJS as
+      # follow-redirects -> 1.16.2 (CVE-2026-111755/-111756 fixed 1.16.1, 2026-10-22; CVE-2026-116689
+      # fixed 1.16.2, 2026-11-01; no deps, CJS as
       # before). Every copy older than the fix; the build fails if none is found.
       n=0
       for d in $(find "$dest" -type d -path '*/node_modules/follow-redirects'); do
         v=$(grep -o '"version": *"[^"]*"' "$d/package.json" | head -1 | cut -d'"' -f4)
-        [ "$(printf '%s\n' "$v" 1.16.1 | sort -V | head -1)" = 1.16.1 ] && continue
-        patch_pkg "$(dirname "$d")" follow-redirects https://registry.npmjs.org/follow-redirects/-/follow-redirects-1.16.1.tgz 6e075d999dc5ff568916954508397b11a537b18bde615986d7bd8b3d3fa1799f
+        [ "$(printf '%s\n' "$v" 1.16.2 | sort -V | head -1)" = 1.16.2 ] && continue
+        patch_pkg "$(dirname "$d")" follow-redirects https://registry.npmjs.org/follow-redirects/-/follow-redirects-1.16.2.tgz 97926c99452df68ec21aa3d518101b6d93a803652d6e1e7d70b273a8930224c8
         n=$((n+1))
       done
-      [ "$n" -gt 0 ] || { echo "no follow-redirects older than 1.16.1 in the tree; drop this patch"; exit 1; }
+      # 4.144.0 ships 1.16.2 itself while 4.139.1 needs the swap: fail only when the library is gone.
+      [ -n "$(find "$dest" -type d -path '*/node_modules/follow-redirects')" ] || { echo "no follow-redirects in the tree; drop this patch"; exit 1; }
+      echo "follow-redirects: $n copy(ies) swapped to 1.16.2"
 
       # GHSA-wx77-rp39-c6vg (ReDoS in the `markdown` npm package, fixed: null) is
       # a name-collision false positive, same shape as the npm-extension FP above:
