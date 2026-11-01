@@ -39,6 +39,17 @@ pipeline:
       inst="${{targets.destdir}}/opt/artemis-instance"
       install -d "$home"
       cp -r lib web schema LICENSE NOTICE licenses "$home/"
+      # guava below 33.7.2-jre (CVE-2026-102554; 2.57.0 ships 33.6.0-jre in lib/): replace
+      # every copy below the fix, and fail if the dist stops shipping a guava jar.
+      g="$(find "$home" -name 'guava-*-jre.jar')"
+      [ -n "$g" ] || { echo "no guava jar in the dist; re-audit"; exit 1; }
+      wget -q -O /tmp/guava.jar https://repo1.maven.org/maven2/com/google/guava/guava/33.7.2-jre/guava-33.7.2-jre.jar
+      echo "b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c  /tmp/guava.jar" | sha256sum -c -
+      for j in $g; do
+        v="$(basename "$j" -jre.jar)"; v="${v#guava-}"
+        [ "$(printf '%s\n33.7.2\n' "$v" | sort -V | head -1)" = 33.7.2 ] && continue
+        rm -f "$j"; cp /tmp/guava.jar "$(dirname "$j")/guava-33.7.2-jre.jar"; echo "  $j -> guava-33.7.2-jre.jar"
+      done
       # CVE-2026-84218 (HIGH, fixed 2.6.2): JNDI denylist bypass in Jolokia's JSR-160 proxy
       # service, shipped in the console war at 2.4.3. The proxy forwards to OTHER JMX servers;
       # the console only reads the local broker, and Jolokia 2 loads services from
