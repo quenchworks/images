@@ -63,6 +63,15 @@ pipeline:
       grep -q '^Requires-Dist: pyjwt (>=2.13.0,<2.14.0)$\|^Requires-Dist: pyjwt<2.14.0,>=2.13.0$' "$md"
       sed -i 's/^Requires-Dist: pyjwt (>=2.13.0,<2.14.0)$/Requires-Dist: pyjwt (>=2.13.0,<2.16.0)/; s/^Requires-Dist: pyjwt<2.14.0,>=2.13.0$/Requires-Dist: pyjwt<2.16.0,>=2.13.0/' "$md"
       "$VENV/bin/python" -c "import importlib.metadata as m; v = m.version('PyJWT'); assert v == '2.15.0', v; print('PyJWT', v)"
+      # djangorestframework 3.17.2 carries CVE-2026-114136/-114137/-114138; the fixes exist only
+      # in 3.18.2+. label-studio 1.23.2 pins ==3.17.2 and runs Django >=5.2.16,<5.3, and the
+      # one breaking change in 3.18 is dropping Django 4.2-5.1. Same pattern as PyJWT: pin the
+      # fix, widen the recorded requirement to what was checked, assert the version.
+      "$VENV/bin/pip" install --no-cache-dir "djangorestframework==3.18.3"
+      md="$(ls -d "$VENV"/lib/python3.13/site-packages/label_studio-*.dist-info)/METADATA"
+      grep -q '^Requires-Dist: djangorestframework (==3.17.2)$' "$md"
+      sed -i 's/^Requires-Dist: djangorestframework (==3.17.2)$/Requires-Dist: djangorestframework (>=3.17.2,<3.19)/' "$md"
+      "$VENV/bin/python" -c "import importlib.metadata as m; v = m.version('djangorestframework'); assert v == '3.18.3', v; print('djangorestframework', v)"
       # the only broken requirement left is the opencv wheel removed on purpose above
       "$VENV/bin/pip" check | grep -v 'requires opencv-python-headless, which is not installed' | grep . && exit 1 || true
       # core/version.py asks git for the version through shell=True and catches
