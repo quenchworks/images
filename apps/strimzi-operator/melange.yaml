@@ -57,15 +57,18 @@ pipeline:
       #   tools.jackson.core 3.1.5 -> 3.1.7 (Jackson 3, transitive): CVE-2026-89407,
       #     CVE-2026-19032 (core 3.1.7), CVE-2026-68497 (databind 3.1.6).
       #   at.yawk.lz4:lz4-java 1.10.2 -> 1.11.4 (via kafka-clients): CVE-2026-106449/50/51.
-      if grep -q -e '<groupId>tools.jackson.core</groupId>' -e '<artifactId>lz4-java</artifactId>' pom.xml; then
+      #   org.xerial.snappy:snappy-java 1.1.10.7 -> 1.1.10.9 (via kafka-clients), 2026-11-01.
+      if grep -q -e '<groupId>tools.jackson.core</groupId>' -e '<artifactId>lz4-java</artifactId>' -e '<artifactId>snappy-java</artifactId>' pom.xml; then
         echo "root pom now declares a pinned GAV itself; revisit the pin"; exit 1
       fi
       PIN='<dependency><groupId>tools.jackson.core</groupId><artifactId>jackson-core</artifactId><version>3.1.7</version></dependency>'
       PIN="$PIN"'<dependency><groupId>tools.jackson.core</groupId><artifactId>jackson-databind</artifactId><version>3.1.7</version></dependency>'
       PIN="$PIN"'<dependency><groupId>at.yawk.lz4</groupId><artifactId>lz4-java</artifactId><version>1.11.4</version></dependency>'
+      PIN="$PIN"'<dependency><groupId>org.xerial.snappy</groupId><artifactId>snappy-java</artifactId><version>1.1.10.9</version></dependency>'
       sed -i "/<dependencyManagement>/{n;s|<dependencies>|<dependencies>$PIN|}" pom.xml
       test "$(grep -o '<version>3.1.7</version>' pom.xml | wc -l)" = 2
       grep -q '<version>1.11.4</version>' pom.xml
+      grep -q '<version>1.1.10.9</version>' pom.xml
       mvn $MVN_ARGS install -pl '!systemtest'
 
       bin=docker-images/artifacts/binaries
@@ -83,7 +86,7 @@ pipeline:
       done
       # the filtered scripts must name a real classpath, not the raw @tokens@
       # every pin must have reached the shipped classpath
-      for j in jackson-databind-$J tools.jackson.core.jackson-databind-3.1.7 tools.jackson.core.jackson-core-3.1.7 lz4-java-1.11.4; do
+      for j in jackson-databind-$J tools.jackson.core.jackson-databind-3.1.7 tools.jackson.core.jackson-core-3.1.7 lz4-java-1.11.4 snappy-java-1.1.10.9; do
         ls "$dest"/lib/*"$j".jar >/dev/null || { echo "pin $j missing from lib/"; ls "$dest/lib"; exit 1; }
       done
       if grep -l '@project\.' "$dest"/bin/*.sh; then echo "unfiltered run script"; exit 1; fi
