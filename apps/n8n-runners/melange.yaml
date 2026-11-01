@@ -165,8 +165,11 @@ pipeline:
           "ip-address":"10.7.1",
           "nanoid@3":"3.3.18",
           "nanoid@5":"5.1.6",
-          "qs":"6.16.0",
-          "stream-json":"3.6.0",
+          "qs":"6.16.1",
+          "follow-redirects":"1.16.2",
+          "glob@>=10 <14":"14.0.2",
+          "minimatch@10":"11.0.1",
+          "stream-json":"3.7.0",
           "tar":"7.5.22",
           "uuid":"11.1.1"
         });
@@ -244,7 +247,7 @@ pipeline:
                         for r, dirs, _ in os.walk('node_modules')
                         if name in dirs and os.path.basename(r) == 'node_modules')
 
-      for name, want in (('qs', '6.16.0'), ('stream-json', '3.6.0')):
+      for name, want in (('qs', '6.16.1'), ('stream-json', '3.7.0'), ('follow-redirects', '1.16.2')):
           found = [(p, json.load(open(p))['version']) for p in copies(name)]
           stale = [(p, v) for p, v in found if v != want]
           assert not stale, "%s override missing or incompatible: %s" % (name, stale)
