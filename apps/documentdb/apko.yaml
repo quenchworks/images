@@ -1,7 +1,7 @@
 # Assembles the standalone DocumentDB runtime image: PostgreSQL 17 + the
 # documentdb extension + the Rust MongoDB-wire gateway. No Dockerfile. Minimal,
-# nonroot, multi-arch, SBOM by apko. PostgreSQL 17, pg_cron and pgvector come
-# from Wolfi; our package adds documentdb + rum + postgis extensions, the
+# nonroot, multi-arch, SBOM by apko. Our package carries PostgreSQL 17, pg_cron,
+# pgvector, documentdb + rum + postgis extensions (all built from source), the
 # documentdb_gateway binary, and the bootstrap entrypoint. A mongo client
 # connects directly to the gateway on the MongoDB wire-protocol port.
 contents:
@@ -17,11 +17,6 @@ contents:
     - tzdata
     - bash                         # the bootstrap entrypoint is a bash script
     - busybox
-    - postgresql-17
-    - postgresql-17-client
-    - postgresql-17-contrib
-    - pg_cron-17
-    - pgvector-17
     - openssl                      # the gateway links libssl/libcrypto
     - quench-documentdb@local      # documentdb + rum + postgis extensions, gateway binary, entrypoint
 
