@@ -267,6 +267,10 @@ pipeline:
       import re, pathlib
       p = pathlib.Path('pyproject.toml')
       t = p.read_text()
+      # 2026-11-01: djangorestframework 3.18.2 (CVE-2026-114136), dnspython 2.9.0 (CVE-2026-114605),
+      # msgpack 1.2.3 (CVE-2026-114613), pyasn1 0.6.5 (CVE-2026-119194), setuptools 84.1.0
+      # (GHSA-xmj3-9gf7-h52w), and the OTel api/sdk/semconv set at 1.45.1/0.66b1 (CVE-2026-114603;
+      # sdk 1.45.1 requires exactly api 1.45.1 and semantic-conventions 0.66b1).
       overrides = (
           '[tool.uv]\n'
           'override-dependencies = [\n'
@@ -275,15 +279,15 @@ pipeline:
           '  "aiohttp==3.14.4",\n'
           '  "multidict==6.9.1",\n'
           '  "idna==3.15",\n'
-          '  "msgpack==1.2.1",\n'
+          '  "msgpack==1.2.3",\n'
           '  "urllib3==2.8.0",\n'
-          '  "pyasn1==0.6.4",\n'
-          '  "setuptools==83.0.0",\n'
+          '  "pyasn1==0.6.5",\n'
+          '  "setuptools==84.1.0",\n'
           '  "httplib2==0.32.0",\n'
           '  "django==5.2.17",\n'
           '  "h2==4.4.1",\n'
           '  "sqlparse==0.6.0",\n'
-          '  "djangorestframework==3.17.2",\n'
+          '  "djangorestframework==3.18.2",\n'
           '  "anyio==4.14.2",\n'
           '  "oauthlib==4.0.0",\n'
           '  "pydantic[email]==2.14.1",\n'
@@ -292,6 +296,10 @@ pipeline:
           '  "rpds-py==2026.9.1",\n'
           '  "python-kadmin-rs==0.7.4",\n'
           '  "certifi==2026.10.19",\n'
+          '  "dnspython==2.9.0",\n'
+          '  "opentelemetry-api==1.45.1",\n'
+          '  "opentelemetry-sdk==1.45.1",\n'
+          '  "opentelemetry-semantic-conventions==0.66b1",\n'
           ']\n'
       )
       t, n = re.subn(r'(?m)^\[tool\.uv\]\s*$', overrides, t, count=1)
