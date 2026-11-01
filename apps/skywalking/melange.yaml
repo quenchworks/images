@@ -30,6 +30,10 @@ environment:
       - ca-certificates-bundle
       - curl        # build-only: fetch same-major patched jars from Maven Central
       - python-3    # build-only: the post-swap classpath audit below
+      - maven-3.9   # build-only: re-shade nacos-client's relocated guava (see below)
+      - openjdk-21-default-jdk
+      - unzip
+      - zip
 
 pipeline:
   # Apache's CDN (dlcdn) serves only CURRENT releases and is fast; archive.apache.org
@@ -140,6 +144,53 @@ pipeline:
       swap org/postgresql postgresql 42.7.11 42.7.13
       # freemarker 2.3.31 -> 2.3.35: CVE-2026-84939 (CRITICAL), same 2.3 line.
       swap org/freemarker freemarker 2.3.31 2.3.35
+      # guava CVE-2026-102554 (fix 33.7.2-jre) and snappy-java (fix 1.1.10.9), 2026-11-01.
+      swap com/google/guava guava 32.0.1-jre 33.7.2-jre
+      swap org/xerial/snappy snappy-java 1.1.10.5 1.1.10.9
+      # Three jars relocate guava inside themselves, out of reach of a jar swap: nacos-client
+      # (com.alibaba.nacos.shaded.com.google.common, 32.0.1-android in 2.3.2; even 3.2.0 ships
+      # 33.5.0) and graphql-java (graphql.com.google.common, 32.1.2-jre in 21.5; 25.0 too).
+      # reshade relocates guava 33.7.2 + failureaccess to the jar's prefix with maven-shade and
+      # overlays the classes and guava's pom metadata in place (both jars are unsigned). Other
+      # libraries the jars shade under com/google (gson, protobuf) are untouched.
+      reshade() { # <jar name glob> <relocated package> <guava version> <its sha256>
+        j="$(find "$dest/oap-libs" -name "$1")"
+        test "$(echo "$j" | grep -c .)" -eq 1 || { echo "FATAL: expected one $1: $j"; exit 1; }
+        ! unzip -Z1 "$j" | grep -qE '^META-INF/[^/]+\.(SF|RSA|DSA|EC)$' || { echo "FATAL: $j is signed"; exit 1; }
+        w="/tmp/rs-$2"; rm -rf "$w"; mkdir -p "$w/x"
+        cat > "$w/pom.xml" <<POM
+      <project xmlns="http://maven.apache.org/POM/4.0.0">
+        <modelVersion>4.0.0</modelVersion>
+        <groupId>quench</groupId><artifactId>rs</artifactId><version>1</version>
+        <dependencies>
+          <dependency><groupId>com.google.guava</groupId><artifactId>guava</artifactId><version>$3</version></dependency>
+          <dependency><groupId>com.google.guava</groupId><artifactId>failureaccess</artifactId><version>1.0.3</version></dependency>
+        </dependencies>
+        <build><plugins><plugin>
+          <groupId>org.apache.maven.plugins</groupId><artifactId>maven-shade-plugin</artifactId><version>3.6.2</version>
+          <executions><execution><phase>package</phase><goals><goal>shade</goal></goals><configuration>
+            <createDependencyReducedPom>false</createDependencyReducedPom>
+            <artifactSet><includes><include>com.google.guava:guava</include><include>com.google.guava:failureaccess</include></includes></artifactSet>
+            <filters><filter><artifact>*:*</artifact><excludes><exclude>com/google/thirdparty/**</exclude><exclude>META-INF/versions/9/module-info.class</exclude></excludes></filter></filters>
+            <relocations><relocation><pattern>com.google.common</pattern><shadedPattern>$2</shadedPattern></relocation></relocations>
+          </configuration></execution></executions>
+        </plugin></plugins></build>
+      </project>
+      POM
+        (export JAVA_HOME=/usr/lib/jvm/java-21-openjdk PATH="/usr/lib/jvm/java-21-openjdk/bin:$PATH"
+         cd "$w" && mvn -B -ntp -q -C -Dmaven.repo.local=/tmp/m2 package)
+        echo "$4  /tmp/m2/com/google/guava/guava/$3/guava-$3.jar" | sha256sum -c -
+        top="$(echo "$2" | cut -d. -f1)"
+        (cd "$w/x" && unzip -qo "$w/target/rs-1.jar" "$top/*" META-INF/maven/com.google.guava/guava/pom.properties META-INF/maven/com.google.guava/guava/pom.xml \
+          && ! find . -path './com/google/*' | grep -q . && zip -qr "$j" "$top" META-INF)
+        unzip -p "$j" META-INF/maven/com.google.guava/guava/pom.properties | grep -qx "version=$3"
+        chmod 644 "$j"; echo "reshaded guava $3 into ${j##*/} ($2)"
+      }
+      reshade 'nacos-client-[0-9]*.jar' com.alibaba.nacos.shaded.com.google.common 33.7.2-android b949fe975a32421c1a2633c07a4f1578b462f2f467668aa0a4023c5ff7c4a808
+      reshade 'graphql-java-[0-9]*.jar' graphql.com.google.common 33.7.2-jre b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c
+      # curator-client relocates guava too but keeps no guava metadata, so scanners never report it
+      # (same code, found by listing CompactHashMap classes); reshade also adds the metadata.
+      reshade 'curator-client-[0-9]*.jar' org.apache.curator.shaded.com.google.common 33.7.2-jre b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c
 
       # ---- (3) POST-SWAP CLASSPATH AUDIT: one version per swapped artifact ----------
       # A swap that left two versions of one artifact on the classpath would still load
@@ -149,7 +200,7 @@ pipeline:
 
       libs, netty_new = sys.argv[1], sys.argv[2]
       jars = sorted(f for f in os.listdir(libs) if f.endswith(".jar"))
-      swapped = """jackson-databind jackson-core jackson-annotations
+      swapped = """guava snappy-java jackson-databind jackson-core jackson-annotations
                    log4j-api log4j-core log4j-slf4j-impl lz4-java postgresql
                    micrometer-core micrometer-commons micrometer-observation
                    freemarker""".split()
