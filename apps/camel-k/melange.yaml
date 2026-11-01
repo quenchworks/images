@@ -34,10 +34,10 @@ pipeline:
       # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
       # FLOOR is a FLOOR, not a pin: only modules below it are floated, and the shipped
       # binary is asserted to carry nothing below it. Measured 2026-10-19: 2.11.0 ships
-      # x/crypto 0.54.0 and x/net 0.57.0. 2.10.2 also ships go-git 5.17.2, go-billy 5.8.0,
+      # x/crypto 0.54.0 and x/net 0.57.0 (x/net floor 0.62.0 since 2026-11-01). 2.10.2 also ships go-git 5.17.2, go-billy 5.8.0,
       # spdystream 0.5.0 and otel 1.40.0; those floors are 2.11.0's own versions (a no-op there),
       # and the otel family moves together (core, metric, trace, otelhttp).
-      FLOOR="golang.org/x/crypto@v0.57.0 golang.org/x/net@v0.60.0 golang.org/x/text@v0.42.0 golang.org/x/sys@v0.48.0 golang.org/x/mod@v0.41.0 github.com/go-git/go-git/v5@v5.19.2 github.com/go-git/go-billy/v5@v5.9.0 github.com/moby/spdystream@v0.5.1 go.opentelemetry.io/otel@v1.44.0 go.opentelemetry.io/otel/metric@v1.44.0 go.opentelemetry.io/otel/trace@v1.44.0 go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp@v0.69.0"
+      FLOOR="golang.org/x/crypto@v0.58.0 golang.org/x/net@v0.62.0 golang.org/x/text@v0.43.0 golang.org/x/sys@v0.49.0 golang.org/x/mod@v0.41.0 github.com/go-git/go-git/v5@v5.19.2 github.com/go-git/go-billy/v5@v5.9.0 github.com/moby/spdystream@v0.5.1 go.opentelemetry.io/otel@v1.44.0 go.opentelemetry.io/otel/metric@v1.44.0 go.opentelemetry.io/otel/trace@v1.44.0 go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp@v0.69.0"
       MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
       below_floor() {
         awk -v floor="$FLOOR" -v tag="$1" '
@@ -54,11 +54,22 @@ pipeline:
       go list -m -e $MODS
       need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
       if [ -n "$need" ]; then go get $need; fi
+      # knative.dev/pkg is a pseudo-version, which below_floor cannot order: compare the
+      # timestamp. GHSA-2hw4-c9m4-f2fj (webhook request-body limit) is fixed on 2.10.2's
+      # release-1.21 branch by 011b23bf6dfe; its pseudo-version sorts below the advisory's
+      # fixed 20260531000007-52dbd5ece63f, so the floor is the next branch commit,
+      # c085a76e54cc (dependency bump only: knative.dev/hack). 2.11.0 is past it already.
+      KN=v0.0.0-20260531000707-c085a76e54cc
+      kn_ts() { echo "$1" | awk -F- '{ print $2 }'; }
+      kn="$(go list -m -f '{{.Version}}' knative.dev/pkg)"
+      if [ "$(kn_ts "$kn")" -lt "$(kn_ts "$KN")" ]; then go get knative.dev/pkg@$KN; fi
       go mod tidy
       go build -trimpath -ldflags "-s -w" -o "${{targets.destdir}}/usr/local/bin/kamel" ./cmd/kamel
       bad="$(go version -m "${{targets.destdir}}/usr/local/bin/kamel" \
         | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor kamel)"
       [ -z "$bad" ] || { echo "0-CVE float did not reach kamel:"; echo "$bad"; exit 1; }
+      knb="$(go version -m "${{targets.destdir}}/usr/local/bin/kamel" | awk '$1 == "dep" && $2 == "knative.dev/pkg" { print $3 }')"
+      [ "$(kn_ts "$knb")" -ge "$(kn_ts "$KN")" ] || { echo "knative.dev/pkg $knb below $KN"; exit 1; }
       # The operator copies /usr/share/maven/mvnw/. into each build dir and runs ./mvnw when
       # MAVEN_CMD is unset (pkg/util/maven/maven_command.go). Keep that path working without
       # upstream's wrapper jar, which would download Maven at runtime.
