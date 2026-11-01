@@ -39,6 +39,9 @@ environment:
       - ca-certificates-bundle
       - curl
       - go
+      - maven-3.9               # 483: regenerate iceberg's relocated guava (see below)
+      - unzip                   # unzip -Z1 (busybox unzip has no -Z)
+      - openjdk-25-default-jdk
 
 pipeline:
   - uses: fetch
@@ -89,12 +92,15 @@ pipeline:
       # Content swap, filename kept; the name prefix varies (group-prefixed in most plugins, bare
       # in others), so match the suffix. lz4-java 1.11.1 -> 1.11.4 (CVE-2026-106449..106453) rides
       # the same loop: 1.11.4 has the identical file list and module name (diffed against 1.11.1).
+      # guava 33.6.0 -> 33.7.2-jre (CVE-2026-102554) and snappy-java 1.1.10.8 -> 1.1.10.9 too (2026-11-01).
       M=https://repo1.maven.org/maven2
       for spec in "jackson-databind-2.22.1.jar com/fasterxml/jackson/core/jackson-databind/2.22.3/jackson-databind-2.22.3.jar 556db5439e206114346043f68d200497dc96a0bca62a360a81784092ebd0e0a9" \
                   "jackson-databind-3.2.1.jar tools/jackson/core/jackson-databind/3.2.3/jackson-databind-3.2.3.jar 235b72436af983857e44efa42449f4f0a2c571e69d6c5d9dd1253ae7d192dcf2" \
                   "jackson-core-2.22.1.jar com/fasterxml/jackson/core/jackson-core/2.22.3/jackson-core-2.22.3.jar 8a501126a385b25841915d839508f8a66e2a0dbc8a6709d055ef3b3e852b094c" \
                   "jackson-core-3.2.1.jar tools/jackson/core/jackson-core/3.2.3/jackson-core-3.2.3.jar a0c17e7e665a5e95c82f5fb45c0fec2ae3dc556c80f0016452c9c84cd23f3817" \
-                  "lz4-java-1.11.1.jar at/yawk/lz4/lz4-java/1.11.4/lz4-java-1.11.4.jar 58c8e0b813960d2a248e050c353baea73139b48a2ffc55382d42c69707e17325"; do
+                  "lz4-java-1.11.1.jar at/yawk/lz4/lz4-java/1.11.4/lz4-java-1.11.4.jar 58c8e0b813960d2a248e050c353baea73139b48a2ffc55382d42c69707e17325" \
+                  "guava-33.6.0-jre.jar com/google/guava/guava/33.7.2-jre/guava-33.7.2-jre.jar b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c" \
+                  "snappy-java-1.1.10.8.jar org/xerial/snappy/snappy-java/1.1.10.9/snappy-java-1.1.10.9.jar 35228628442e4b9797681c7cbd3b26594f6da3379159dbd0cb07094ed3aece0d"; do
         set -- $spec
         test -n "$(find "$dest" -name "*$1")" || { echo "$1 missing; dist moved"; exit 1; }
         j=$(mktemp)
@@ -104,10 +110,84 @@ pipeline:
         find "$dest" -name "*$1" -exec cp "$j" {} \;
         rm -f "$j"
       done
+      # OpenTelemetry core moves as ONE set to 1.67.0 (the opentelemetry-api fix): the 1.x SDK
+      # reaches into api internals that move between releases (1.67 moved api.internal.ConfigUtil
+      # into opentelemetry-common). Content swap with the filename kept, like the loop above.
+      # instrumentation, semconv and the alpha exporter-prometheus are not in the set.
+      otel167() { case "$1" in
+          api) echo "1.67.0 538d1dff2f9a37aecbc0ef98fd17273a3affb058e734e6763a3a07a38a5fdc59" ;;
+          api-incubator) echo "1.67.0-alpha fea3d78726e49620168c3f6194ff491edfd1ec89b2df06fd5d5b73e55d74a342" ;;
+          common) echo "1.67.0 da97bdb395418e16ecdcbe7ad3497f45b9e767ceda4ae7e86133e7a757ac377f" ;;
+          context) echo "1.67.0 40fb813fb5e27ec2691daa29c81b572b5b1541ef9b41e62490c3ee3e6407c55e" ;;
+          exporter-common) echo "1.67.0 eb61aab6d20bf105102dfa061b478b659cec17e82a50969898046456768ba09b" ;;
+          exporter-otlp) echo "1.67.0 6724a9c8f9f42de757682c6194c48d9fee4670cd19a85c37954eba526c58b836" ;;
+          exporter-otlp-common) echo "1.67.0 75530ab4d93e6fdef478d3e112713337625e70a63df357e6e7b9060c13788015" ;;
+          sdk) echo "1.67.0 52a8f599a368a3d62185e37053f6a53175d6fbe3ecc1d565baba13b1a854267f" ;;
+          sdk-common) echo "1.67.0 628a4c00db9561ff4c608a650d5e7fd66a1e153ccdf1ba3cdc5ac0b7c6518fea" ;;
+          sdk-extension-autoconfigure) echo "1.67.0 09021cf4e41f081e11e1c00577fe03b98db0ae7fd5f73eaf4020e760fa0edb7e" ;;
+          sdk-extension-autoconfigure-spi) echo "1.67.0 41eb19f6caf2c655ac3139d331f5c34283f2efdb0f0b0e58765a6cc9e27f66bc" ;;
+          sdk-logs) echo "1.67.0 dd0f0b625e08787af49d7e270abc6def4c2eabc2f18f5f145b7924024a3311e3" ;;
+          sdk-metrics) echo "1.67.0 c157ff10da59a87a57e5236d9f3290792d9b749433be5e5b449a7d1604c320a9" ;;
+          sdk-trace) echo "1.67.0 14d9615c8a5dcf471dcbb74902b771dcfa8656b755ac38dce904042289ccd198" ;;
+          exporter-sender-okhttp) echo "1.67.0 0ccb54e5e1db24680b0b7b818299552477dcc7114de7ca0f7b054e6e20958b83" ;;
+          sdk-testing) echo "1.67.0 c3d74c825e423e7bf28f0e3f22f10bbf7fe3b00984d0d9ea6ef1327b05c274e2" ;;
+          *) return 1 ;;
+        esac; }
+      find "$dest" -name '*opentelemetry-*.jar' > /tmp/otel.list
+      while IFS= read -r j; do
+        b="$(basename "$j" .jar)"; b="opentelemetry-${b##*opentelemetry-}"
+        a="$(echo "$b" | sed -E 's/^opentelemetry-(.+)-[0-9]+\.[0-9]+\.[0-9]+(-alpha)?$/\1/')"
+        v="$(echo "$b" | sed -E 's/^.*-([0-9]+\.[0-9]+\.[0-9]+)(-alpha)?$/\1/')"
+        r="$(otel167 "$a")" || continue; set -- $r
+        [ "$(printf '%s\n1.67.0\n' "$v" | sort -V | head -1)" = 1.67.0 ] && continue
+        n="/tmp/opentelemetry-$a-$1.jar"
+        [ -f "$n" ] || { curl -fsSL -o "$n" "$M/io/opentelemetry/opentelemetry-$a/$1/opentelemetry-$a-$1.jar"; echo "$2  $n" | sha256sum -c - >/dev/null; chmod 644 "$n"; }
+        cp "$n" "$j"; echo "  $j <- $a $1"
+      done < /tmp/otel.list
+      grep -q . /tmp/otel.list || { echo "no opentelemetry jars found; dist moved"; exit 1; }
       # iceberg bundles netty 4.2.16 (CVE-2026-75595 CRITICAL and three more),
       # httpclient5 5.6.2 and libthrift 0.23.0. The whole netty family moves to
       # 4.2.17 together; natives for other operating systems are dropped.
       ice="$dest/plugin/iceberg"
+      # iceberg-bundled-guava-1.11.0 is guava 33.6.0 (+ failureaccess) relocated to
+      # org.apache.iceberg.relocated.com.google.common, so a plain jar swap cannot reach it,
+      # and CVE-2026-102554 (CompactHashMap/CompactHashSet/MapMakerInternalMap readObject) is
+      # in it. No Iceberg release ships 33.7.2 yet (1.12.0 bundles 33.7.1; main bumped it on
+      # 2026-10-11). Regenerate the jar from guava 33.7.2-jre with the same relocation via
+      # maven-shade; upstream's is a minimized subset, so the full set is a superset of what
+      # iceberg links. Iceberg's own anchor class GuavaClasses is carried over, filename kept.
+      ibg="$(find "$ice" -name '*iceberg-bundled-guava-*.jar')"
+      test "$(echo "$ibg" | grep -c .)" -eq 1 || { echo "expected one iceberg-bundled-guava jar: $ibg"; exit 1; }
+      export JAVA_HOME=/usr/lib/jvm/java-25-openjdk PATH="/usr/lib/jvm/java-25-openjdk/bin:$PATH"
+      mkdir -p /tmp/ibg && cat > /tmp/ibg/pom.xml <<'POM'
+      <project xmlns="http://maven.apache.org/POM/4.0.0">
+        <modelVersion>4.0.0</modelVersion>
+        <groupId>quench</groupId><artifactId>ibg</artifactId><version>1</version>
+        <dependencies>
+          <dependency><groupId>com.google.guava</groupId><artifactId>guava</artifactId><version>33.7.2-jre</version></dependency>
+          <dependency><groupId>com.google.guava</groupId><artifactId>failureaccess</artifactId><version>1.0.3</version></dependency>
+        </dependencies>
+        <build><plugins><plugin>
+          <groupId>org.apache.maven.plugins</groupId><artifactId>maven-shade-plugin</artifactId><version>3.6.2</version>
+          <executions><execution><phase>package</phase><goals><goal>shade</goal></goals><configuration>
+            <createDependencyReducedPom>false</createDependencyReducedPom>
+            <artifactSet><includes><include>com.google.guava:guava</include><include>com.google.guava:failureaccess</include></includes></artifactSet>
+            <filters><filter><artifact>*:*</artifact><excludes>
+              <exclude>com/google/thirdparty/**</exclude><exclude>META-INF/versions/9/module-info.class</exclude>
+            </excludes></filter></filters>
+            <relocations><relocation><pattern>com.google.common</pattern><shadedPattern>org.apache.iceberg.relocated.com.google.common</shadedPattern></relocation></relocations>
+          </configuration></execution></executions>
+        </plugin></plugins></build>
+      </project>
+      POM
+      (cd /tmp/ibg && mvn -B -q -C -Dmaven.repo.local=/tmp/m2 package)
+      echo "b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c  /tmp/m2/com/google/guava/guava/33.7.2-jre/guava-33.7.2-jre.jar" | sha256sum -c -
+      (cd /tmp/ibg && unzip -q "$ibg" org/apache/iceberg/GuavaClasses.class && jar uf target/ibg-1.jar org/apache/iceberg/GuavaClasses.class)
+      v="$(unzip -p /tmp/ibg/target/ibg-1.jar META-INF/maven/com.google.guava/guava/pom.properties | sed -n 's/^version=//p')"
+      [ "$v" = 33.7.2-jre ] || { echo "regenerated bundle reports guava $v"; exit 1; }
+      ! unzip -Z1 /tmp/ibg/target/ibg-1.jar | grep -q '^com/google/common/' || { echo "unrelocated guava in the bundle"; exit 1; }
+      unzip -Z1 /tmp/ibg/target/ibg-1.jar | grep -qx 'org/apache/iceberg/relocated/com/google/common/util/concurrent/internal/InternalFutureFailureAccess.class'
+      cp /tmp/ibg/target/ibg-1.jar "$ibg"; chmod 644 "$ibg"
       jswap() {  # <old jar> <maven group path> <artifact> <version> <new jar name> <sha256>
         test -f "$ice/$1" || { echo "swap target $1 missing"; exit 1; }
         rm "$ice/$1"
