@@ -36,10 +36,10 @@ pipeline:
       cp -a lib drivers conf licenses "$dest/"
       drivers="$dest/drivers"
       M=https://repo1.maven.org/maven2
-      # swap <shipped jar> <maven path of the fixed jar> <its sha256, from a download>
+      # swap <shipped jar, relative to drivers/> <maven path of the fixed jar> <its sha256, from a download>
       swap() {
         test -f "$drivers/$1" || { echo "FATAL: $1 not shipped; re-audit the swaps"; exit 1; }
-        new="$(basename "$2")"
+        new="$(dirname "$1")/$(basename "$2")"
         curl -fsSL -o "$drivers/$new" "$M/$2"
         echo "$3  $drivers/$new" | sha256sum -c -
         rm -f "$drivers/$1"
@@ -57,6 +57,8 @@ pipeline:
       ls "$drivers"/couchbase/core-io-*.jar "$dest"/lib/flyway/flyway-database-nc-couchbase-*.jar >/dev/null || { echo "FATAL: no couchbase driver to drop; re-audit"; exit 1; }
       rm -rf "$drivers/couchbase" "$dest"/lib/flyway/flyway-database-nc-couchbase-*.jar
       swap mssql-jdbc-12.10.2.jre11.jar com/microsoft/sqlserver/mssql-jdbc/13.6.0.jre11/mssql-jdbc-13.6.0.jre11.jar 4c566e4022c4dcf1489aeb639fe49a0f6ffae3d796fdc2f56b5b8882d4c3bf5a
+      # guava 33.5.0 in the GCP driver set: CVE-2026-102554, fixed 33.7.2 (2026-11-01)
+      swap gcp/guava-33.5.0-jre.jar com/google/guava/guava/33.7.2-jre/guava-33.7.2-jre.jar b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c
       chmod -R a+rX "$dest"
 
 test:
