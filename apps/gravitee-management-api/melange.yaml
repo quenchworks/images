@@ -135,10 +135,53 @@ pipeline:
       org/mongodb mongodb-driver-reactivestreams 5.5.2 3d23854272071425ae03ef621723ff479d36afa7948f82e7c0a07b96e8aa601a mongodb-driver-reactivestreams-[0-9]*.jar
       org/springframework/ldap spring-ldap-core 3.3.8 98a335eb795d59d264c820c87ed877bde8d792cfc5de7992097c9a611eac758d spring-ldap-core-[0-9]*.jar
       org/postgresql postgresql 42.7.12 31fbf6f06b2217fb51d5100cee51b22625cc81640da0679b47914e54c1e6377c postgresql-[0-9]*.jar
-      org/mariadb/jdbc mariadb-java-client 3.5.9 11e3bb5bbf8ef0e806ae4d6c5d5033fedf7262cc777f0190bde8a2f3c8e6bd8d mariadb-java-client-[0-9]*.jar
-      io/opentelemetry opentelemetry-api 1.62.0 d58143928c049233653e6bf1282ff8a767ebdd5e6a82b3f336158c30e40b431d opentelemetry-api-[0-9]*.jar
-      io/opentelemetry opentelemetry-context 1.62.0 8ec86c3609222b9b6307bf40154c1f1c288d1f18ada0155409e7797adbdbe517 opentelemetry-context-[0-9]*.jar
+      org/mariadb/jdbc mariadb-java-client 3.5.11 42604178b9e57ec08ee0035079961516f086e455d0141f0b22c6eff29fb2fff4 mariadb-java-client-[0-9]*.jar
+      io/opentelemetry opentelemetry-api 1.67.0 538d1dff2f9a37aecbc0ef98fd17273a3affb058e734e6763a3a07a38a5fdc59 opentelemetry-api-[0-9]*.jar
+      io/opentelemetry opentelemetry-context 1.67.0 40fb813fb5e27ec2691daa29c81b572b5b1541ef9b41e62490c3ee3e6407c55e opentelemetry-context-[0-9]*.jar
+      com/google/guava guava 33.7.2-jre b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c guava-[0-9]*-jre.jar
+      org/xerial/snappy snappy-java 1.1.10.9 35228628442e4b9797681c7cbd3b26594f6da3379159dbd0cb07094ed3aece0d snappy-java-[0-9]*.jar
       LIST
+      # netty: this dist ships a subset of the modules the gateway has, so walk what is present (each
+      # below 4.2.17.Final moves to it) instead of listing globs that must all match.
+      netty_sha() { case "$1" in
+          buffer) echo 0d249178ec0204b35a6ad3e5ac8a6c2ecb3eb496c6cdae40b8eca4fa3cb6a0c7 ;;
+          codec-base) echo 3b92bc3b7d231fa6f4889b2b9281cae6b634428b8121fb1b9b5fccba1543d352 ;;
+          codec-compression) echo 425b287a1f36986a5c8edd76379a49decdf99d284f3454f3fa607a073bfb2c18 ;;
+          codec-dns) echo 394f4649a824683735f28b299d0a48caff059ae30e654e2abf8b3f392af4d374 ;;
+          codec-haproxy) echo 6650894f9c429fc29ad7876092a25cc973e8435d13fa70c0e48aab1ca73a6d37 ;;
+          codec-http2) echo 450af97424cf58d2d72ad4d476d9e290f2fdf69fa181c289a6e6dd176bb86a7b ;;
+          codec-http) echo a5bde91ac82ab90579df6559c0bd7ea6ae37460e3f18116ab4122194283b3669 ;;
+          codec-socks) echo 6b5760cc512cee1f7515e25010892471f3995045f84cd6c1d1b6e6cee534733c ;;
+          common) echo 502aae2a6680e9bca3558a3fa098f06dc4d87340b8b714e925a6d690871c092a ;;
+          handler) echo 4df11c7520b556c5e2c84b939182699d48fcbb09e97a6bb5e1c0b6835227d126 ;;
+          handler-proxy) echo 94089bea6ba6f3248725f2bf233aa2bc70ac1547c21b9bdfc7548f710a845aa0 ;;
+          resolver) echo 7a4b599b9c0c29a505d3b7311f142df883fb27d0f67495a7cbaf533b0e456623 ;;
+          resolver-dns) echo d332481c22136a68c2ee9e45e86212174932587d93a5dd4d201e196828bf9f91 ;;
+          transport) echo d2409ce3a735cbab4188d0ea5d82abed823a6a07a8389f49af4a9e1243a562bc ;;
+          transport-classes-epoll) echo 4e21d8a2e3429d9de967a716d58119f57585786bd2f7213bf5b27770425269de ;;
+          transport-classes-kqueue) echo f0b2dd4757a22345b0b28e2856dc7ee44e5dea256cc520ddc27e4dce4ea9efb3 ;;
+          transport-native-unix-common) echo e01aa467b9104de54a57c08c290f70b22e53ec97cf5583c87c112170ef5832cc ;;
+          *) return 1 ;;
+        esac; }
+      find "$home/lib" "$home/plugins" "$home/plugins-expanded" -name 'netty-*-4.2.*.Final.jar' > "$m/netty.list"
+      grep -q . "$m/netty.list" || { echo "FATAL: no netty 4.2 jar; the dist moved"; exit 1; }
+      while IFS= read -r j; do
+        b="${j##*/}"; a="${b#netty-}"; a="${a%-4.2.*}"; v="${b#netty-$a-}"; v="${v%.Final.jar}"
+        [ "$(printf '%s\n4.2.17\n' "$v" | sort -V | head -1)" = 4.2.17 ] && continue
+        h="$(netty_sha "$a")" || { echo "FATAL: netty-$a has no pinned 4.2.17 sha"; exit 1; }
+        get io/netty "netty-$a" 4.2.17.Final "$h"
+        rm -f "$j"; cp "$m/netty-$a-4.2.17.Final.jar" "$(dirname "$j")/"; echo "  $b -> netty-$a-4.2.17.Final.jar"
+      done < "$m/netty.list"
+      # netty native epoll jars carry a per-arch classifier, so they swap outside the list (4.2.17.Final).
+      for spec in "linux-aarch_64 def0629c9e99f0d896e810d94252e5eb0227e3dd660a5ec8b7b4bbf3a8b25d41" "linux-x86_64 c295b1d7f46e3c7375c93fa4c8abcc3944398c5e4eb53e31587cbbf0bf559d4f"; do
+        set -- $spec
+        f="netty-transport-native-epoll-4.2.17.Final-$1.jar"
+        [ -s "$m/$f" ] || curl -fsSL -o "$m/$f" "https://repo1.maven.org/maven2/io/netty/netty-transport-native-epoll/4.2.17.Final/$f"
+        echo "$2  $m/$f" | sha256sum -c - >/dev/null
+        find "$home/lib" "$home/plugins" "$home/plugins-expanded" -name "netty-transport-native-epoll-4.2.*.Final-$1.jar" ! -name "$f" | while IFS= read -r j; do
+          rm -f "$j"; cp "$m/$f" "$(dirname "$j")/"; echo "  ${j##*/} -> $f"
+        done
+      done
       # OpenTelemetry: only opentelemetry-api (CVE-2026-45292, baggage propagation, which
       # gravitee-node-opentelemetry wires in) and its opentelemetry-context move to 1.62.
       # The SDK, exporters and api-incubator stay on the dist's 1.39 line on purpose:
@@ -149,9 +192,9 @@ pipeline:
       # binary compatible); the boot test runs with tracing on to prove it.
       # opentelemetry-context 1.62 depends on the opentelemetry-common artifact, which
       # the 1.39 set did not have: add it beside every context jar
-      get io/opentelemetry opentelemetry-common 1.62.0 d6310bebde67d65c1519696728d8604005315ed08ab14071956fc0826fd71815
-      find "$home/lib" "$home/plugins-expanded" -name 'opentelemetry-context-1.62.0.jar' | while IFS= read -r j; do
-        ls "$(dirname "$j")"/opentelemetry-common-[0-9]*.jar >/dev/null 2>&1 || cp "$m/opentelemetry-common-1.62.0.jar" "$(dirname "$j")/"
+      get io/opentelemetry opentelemetry-common 1.67.0 da97bdb395418e16ecdcbe7ad3497f45b9e767ceda4ae7e86133e7a757ac377f
+      find "$home/lib" "$home/plugins-expanded" -name 'opentelemetry-context-1.67.0.jar' | while IFS= read -r j; do
+        ls "$(dirname "$j")"/opentelemetry-common-[0-9]*.jar >/dev/null 2>&1 || cp "$m/opentelemetry-common-1.67.0.jar" "$(dirname "$j")/"
       done
       # 3. Rebuild every plugin zip from its expanded (swapped) tree.
       for x in "$home"/plugins-expanded/*/; do
