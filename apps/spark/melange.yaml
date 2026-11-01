@@ -74,6 +74,14 @@ pipeline:
       mvn $SKIP -f /tmp/parquet/parquet-jackson/pom.xml \
         -Djackson.version=__JACKSON__ -Djackson-databind.version=__JACKSON__ install
 
+      # --- hadoop-shaded-guava (hadoop-thirdparty __HTP__) rebuilt on guava __GUAVA__ ---
+      # Hadoop relocates guava into org.apache.hadoop.thirdparty; the newest release (1.5.0)
+      # carries 33.4.8 (CVE-2026-102554), which no jar swap reaches. Installing the rebuild
+      # under the same coordinates makes hadoop-client-runtime below shade the fixed one.
+      get https://archive.apache.org/dist/hadoop/thirdparty/thirdparty-__HTP__/hadoop-thirdparty-__HTP__-src.tar.gz __HTP_SHA256__ /tmp/htp.tgz
+      mkdir -p /tmp/htp && tar -xzf /tmp/htp.tgz -C /tmp/htp --strip-components=1
+      mvn $SKIP -f /tmp/htp/pom.xml -pl hadoop-shaded-guava -am -Dguava.version=__GUAVA__ install
+
       # --- hadoop-client-runtime __HADOOP__ re-shaded ---
       get https://archive.apache.org/dist/hadoop/common/hadoop-__HADOOP__/hadoop-__HADOOP__-src.tar.gz __HADOOP_SHA256__ /tmp/hadoop.tgz
       mkdir -p /tmp/hadoop
@@ -98,7 +106,8 @@ pipeline:
       grep -q '<version>__JLINE__</version><classifier>jdk8</classifier>' pom.xml
       ./dev/make-distribution.sh --mvn mvn --name quench -Pkubernetes -T 2 $SKIP \
         -Dfasterxml.jackson.version=__JACKSON__ -Djetty.version=__JETTY__ -Dnetty.version=__NETTY__ \
-        -Dlog4j.version=__LOG4J__ -Dvertx.version=__VERTX__
+        -Dlog4j.version=__LOG4J__ -Dvertx.version=__VERTX__ \
+        -Dguava.version=__GUAVA__ -Dsnappy.version=__SNAPPY__
 
       S="${{targets.destdir}}/opt/spark"
       install -d "$S" "$S/work-dir"
@@ -140,6 +149,8 @@ pipeline:
           io.vertx:vertx-core) echo "__VERTX__" ;;
           org.apache.commons:commons-configuration2) echo "__CONFIG2__" ;;
           org.jline:*) echo "__JLINE__" ;;
+          com.google.guava:guava) echo "__GUAVA__" ;;
+          org.xerial.snappy:snappy-java) echo "__SNAPPY__" ;;
           org.apache.derby:derby|org.apache.hive:hive-exec|org.apache.thrift:libthrift) echo "none" ;;
         esac
       }
