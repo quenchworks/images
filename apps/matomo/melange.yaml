@@ -173,6 +173,63 @@ pipeline:
       ! grep -rq "3\.11\.3" "$app/vendor/twig/twig/" || {
         echo "twig tree still references 3.11.3"; exit 1; }
 
+  - name: Replace the vendored symfony/http-foundation with 6.4.46 (0-CVE gate)
+    runs: |
+      set -eu
+      app="${{targets.destdir}}/var/www/html"
+      # Matomo vendors symfony/http-foundation v5.4.x; CVE-2026-108082 (HIGH) is fixed
+      # only in 6.4.46 / 7.x / 8.x, the 5.4 line gets no fix (measured 2026-11-01).
+      # Same source-swap idiom as twig above, for the same reason (no composer.json
+      # in the tarball). Coherence, from the 5.4 components that use it: http-kernel
+      # 5.4.53 requires http-foundation ^5.4.21|^6.2.7, and monolog-bridge, error-handler,
+      # var-dumper and event-dispatcher reach it only through http-kernel. Matomo core
+      # code does not reference HttpFoundation. 6.4.46 requires php >= 8.1 (image runs
+      # 8.3), deprecation-contracts ^2.5|^3 (vendored 2.5.4), polyfill-mbstring (vendored)
+      # and polyfill-php83, which is a no-op on PHP 8.3 and so is not added. Its only
+      # conflict is symfony/cache, which Matomo does not vendor.
+      HF_VER=6.4.46
+      HF_SHA=fbb4dda00fcb254f40b4966dbdd77a826c7f11673ef03bbbd4fc0db5bfb42ff2
+      HF_REF=08bbdd5cf09248785442c41929aabe42f8ef5cfd
+      cd "$(mktemp -d)"
+      curl -fsSL -o hf.tar.gz \
+        "https://github.com/symfony/http-foundation/archive/refs/tags/v${HF_VER}.tar.gz"
+      echo "${HF_SHA}  hf.tar.gz" | sha256sum -c -
+      tar xzf hf.tar.gz
+      src="$PWD/http-foundation-${HF_VER}"
+      test -f "$src/Request.php"
+      dst="$app/vendor/symfony/http-foundation"
+      test -f "$dst/Request.php"   # fail loudly if Matomo stops vendoring it
+      rm -rf "$dst"
+      cp -a "$src" "$dst"
+      rm -rf "$dst/Tests"
+
+      # Drop the classmap rows (5.4 file paths) and let PSR-4 resolve the new tree,
+      # then rewrite installed.php, the inventory the scan composer.lock comes from.
+      python3 - "$app" "$HF_VER" "$HF_REF" <<'PY'
+      import re, sys
+      app, ver, ref = sys.argv[1], sys.argv[2], sys.argv[3]
+      for name in ("autoload_classmap.php", "autoload_static.php"):
+          p = f"{app}/vendor/composer/{name}"
+          lines = open(p).readlines()
+          keep = [l for l in lines if "/symfony/http-foundation/" not in l]
+          if len(keep) == len(lines):
+              sys.exit(f"{name}: expected http-foundation classmap rows, found none")
+          open(p, "w").write("".join(keep))
+      if "/symfony/http-foundation" not in open(f"{app}/vendor/composer/autoload_psr4.php").read():
+          sys.exit("autoload_psr4.php no longer maps symfony/http-foundation, swap is unsafe")
+      f = f"{app}/vendor/composer/installed.php"
+      s = open(f).read()
+      new, n = re.subn(
+          r"(?s)('symfony/http-foundation' => array\(\s*'pretty_version' => ')v[0-9.]+"
+          r"(',\s*'version' => ')[0-9.]+(',\s*'reference' => ')[0-9a-f]+(')",
+          lambda m: f"{m.group(1)}v{ver}{m.group(2)}{ver}.0{m.group(3)}{ref}{m.group(4)}",
+          s, count=1)
+      if n != 1:
+          sys.exit("installed.php: could not rewrite the symfony/http-foundation entry")
+      open(f, "w").write(new)
+      PY
+      grep -q "'pretty_version' => 'v${HF_VER}'" "$app/vendor/composer/installed.php"
+
   - name: Emit composer.lock from vendor/composer/installed.php (makes the vendored PHP deps scannable)
     runs: |
       set -eu
