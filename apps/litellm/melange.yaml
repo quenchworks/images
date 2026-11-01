@@ -86,10 +86,14 @@ pipeline:
       # psycopg-binary (1.105.0+) bundles libpq + OpenSSL in psycopg_binary.libs; psycopg
       # falls back to its python impl on Wolfi's libpq-18. pip skips it when absent.
       "$VENV/bin/pip" uninstall -y polars polars-runtime-32 pyroscope-io numpy cryptography hf-xet psycopg-binary
-      # litellm-proxy-extras requires psycopg-binary by name; that one line is expected,
-      # anything else pip check reports still fails the build.
+      # filelock: litellm caps it <4.0, and 3.32.7 carries CVE-2026-112940 (HIGH) plus 12
+      # more, all fixed only in 4.x. litellm calls FileLock(path, timeout=10, mode=0o600) in
+      # two proxy CLI commands, a form 4.x keeps (checked below); huggingface_hub has no cap.
+      "$VENV/bin/pip" install --no-cache-dir --no-deps "filelock==4.2.6"
+      # litellm-proxy-extras requires psycopg-binary by name, and litellm's filelock cap
+      # is overridden above; those lines are expected, anything else still fails the build.
       CHK=$("$VENV/bin/pip" check 2>&1) || {
-        REST=$(printf '%s\n' "$CHK" | grep -v '^litellm-proxy-extras [^ ]* requires psycopg-binary, which is not installed\.$' || true)
+        REST=$(printf '%s\n' "$CHK" | grep -v '^litellm-proxy-extras [^ ]* requires psycopg-binary, which is not installed\.$' | grep -v '^litellm [^ ]* has requirement filelock[^ ]*, but you have filelock 4\.2\.6\.$' || true)
         if [ -n "$REST" ]; then printf '%s\n' "$REST"; exit 1; fi
       }
       SITE="$VENV/lib/python3.13/site-packages"
@@ -102,6 +106,14 @@ pipeline:
       for m in (numpy, cryptography, hf_xet):
           assert m.__file__.startswith('/usr/lib/python3.13/site-packages/'), m.__file__
       print('numpy', numpy.__version__, 'cryptography', cryptography.__version__, 'hf_xet from Wolfi')
+      "
+      "$VENV/bin/python" -c "
+      import filelock, tempfile, os
+      assert filelock.__version__ == '4.2.6', filelock.__version__
+      p = os.path.join(tempfile.mkdtemp(), 'x.lock')
+      with filelock.FileLock(p, timeout=10, mode=0o600):
+          pass
+      print('filelock', filelock.__version__, 'FileLock(path, timeout, mode) ok')
       "
       if "$VENV/bin/pip" show psycopg >/dev/null 2>&1; then
         "$VENV/bin/python" -c "import psycopg; assert psycopg.pq.__impl__ == 'python', psycopg.pq.__impl__; print('psycopg python impl, libpq', psycopg.pq.version())"
