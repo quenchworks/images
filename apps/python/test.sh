@@ -61,7 +61,7 @@ fi
 echo "== vendored msgpack really executes the fixed version =="
 vend="$(docker run --rm --read-only --tmpfs /tmp "$IMAGE" \
   -c 'from pip._vendor import msgpack; print(msgpack.__version__)')"
-[ "$vend" = "1.2.1" ] || { echo "vendored msgpack is '$vend', expected 1.2.1 (stale bytecode?)"; exit 1; }
+[ "$vend" = "1.2.3" ] || { echo "vendored msgpack is '$vend', expected 1.2.3 (stale bytecode?)"; exit 1; }
 
 echo "== pip's msgpack code path still round-trips =="
 docker run --rm --read-only --tmpfs /tmp "$IMAGE" -c '
@@ -78,6 +78,6 @@ venv.create("/tmp/v", with_pip=True)
 print(subprocess.run(["/tmp/v/bin/python", "-c",
     "from pip._vendor import msgpack; print(msgpack.__version__)"],
     capture_output=True, text=True).stdout.strip())')"
-[ "$seeded" = "1.2.1" ] || { echo "venv-seeded msgpack is '$seeded', expected 1.2.1"; exit 1; }
+[ "$seeded" = "1.2.3" ] || { echo "venv-seeded msgpack is '$seeded', expected 1.2.3"; exit 1; }
 
 echo "smoke test passed (Python $MINOR, nonroot uid: $uid, read-only rootfs, vendored msgpack $vend)"
