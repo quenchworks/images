@@ -1,9 +1,9 @@
 {
   "@context": "https://openvex.dev/ns/v0.2.0",
-  "@id": "https://quench-works.com/vex/rustfs/2026-10-22",
+  "@id": "https://quench-works.com/vex/rustfs/2026-11-01",
   "author": "QuenchWorks <info@quench-works.com>",
-  "timestamp": "2026-10-22T00:00:00Z",
-  "version": 1,
+  "timestamp": "2026-11-01T00:00:00Z",
+  "version": 2,
   "statements": [
     {
       "vulnerability": {
@@ -30,6 +30,125 @@
       "status": "not_affected",
       "justification": "component_not_present",
       "impact_statement": "russh 0.63.3 is listed only because the image ships the 1.0.1 tag Cargo.lock at /usr/share/doc/rustfs/Cargo.lock (so Trivy can see the crates of the prebuilt binary, which has no cargo-auditable section); the crate is not compiled into /usr/bin/rustfs. In tag 1.0.1 (commit 6de965ae3c965a78ff819fbcd7acd4aa44177d92) russh is optional: crates/protocols/Cargo.toml:180 declares russh = { workspace = true, optional = true } and crates/protocols/Cargo.toml:110 enables it only through the sftp feature; rustfs/Cargo.toml:60 sets default = [ftps, webdav, gcs] and rustfs/Cargo.toml:66 is the only route to rustfs-protocols/sftp. The musl release jobs build with features empty (.github/workflows/build.yml:216-217) via cargo build --release -p rustfs (build.yml:439), so sftp is off; the other russh user is the e2e_test test crate, not part of that build. Verified 2026-10-22: grep -aoE over the sha256-pinned 1.0.1 musl binaries found 383 (x86_64) and 382 (aarch64) registry/src crate-version paths, tokio-1.53.1 among them, and 0 matching russh, so the russh server publickey authentication code is not present. The recipe fails the build if any russh crate path appears in the binary or if the binary stops carrying crate paths. Versions 1.0.2 and 1.0.3 lock russh 0.64.1 and need no statement."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-116794"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/russh@0.63.3"
+        },
+        {
+          "@id": "pkg:cargo/russh@0.64.1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "russh 0.63.3 (1.0.1) and 0.64.1 (1.0.4) is listed only because the image ships the tag Cargo.lock at /usr/share/doc/rustfs/Cargo.lock (the prebuilt binary has no cargo-auditable section); the crate is not compiled into /usr/bin/rustfs. russh is optional in the rustfs-protocols crate and enabled only by the sftp feature (tag 1.0.4 commit 46337942d55f3a8e6a97b147ca98d9ea8115555d: crates/protocols/Cargo.toml:179 russh = { workspace = true, optional = true }, crates/protocols/Cargo.toml:109 sftp = [dep:russh, ...]; rustfs/Cargo.toml:60 default = [ftps, webdav, gcs], rustfs/Cargo.toml:66 the only route to rustfs-protocols/sftp); the 1.0.1 tag has the same shape (see the CVE-2026-111061 statement). The other russh user, e2e_test, is a test crate outside the release build. Verified 2026-11-01: grep -aoE over the sha256-pinned musl binaries found 383 (1.0.4 x86_64), 379 (1.0.4 aarch64) and 383 (1.0.1 x86_64) registry/src crate-version paths and 0 matching russh or pageant, so the russh SSH agent server confirm-constraint handling code is not present. The recipe fails the build if any russh crate path appears in the binary or if the binary stops carrying crate paths."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-116696"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/russh@0.63.3"
+        },
+        {
+          "@id": "pkg:cargo/russh@0.64.1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "russh 0.63.3 (1.0.1) and 0.64.1 (1.0.4) is listed only because the image ships the tag Cargo.lock at /usr/share/doc/rustfs/Cargo.lock (the prebuilt binary has no cargo-auditable section); the crate is not compiled into /usr/bin/rustfs. russh is optional in the rustfs-protocols crate and enabled only by the sftp feature (tag 1.0.4 commit 46337942d55f3a8e6a97b147ca98d9ea8115555d: crates/protocols/Cargo.toml:179 russh = { workspace = true, optional = true }, crates/protocols/Cargo.toml:109 sftp = [dep:russh, ...]; rustfs/Cargo.toml:60 default = [ftps, webdav, gcs], rustfs/Cargo.toml:66 the only route to rustfs-protocols/sftp); the 1.0.1 tag has the same shape (see the CVE-2026-111061 statement). The other russh user, e2e_test, is a test crate outside the release build. Verified 2026-11-01: grep -aoE over the sha256-pinned musl binaries found 383 (1.0.4 x86_64), 379 (1.0.4 aarch64) and 383 (1.0.1 x86_64) registry/src crate-version paths and 0 matching russh or pageant, so the russh SSH agent server constraint parsing code is not present. The recipe fails the build if any russh crate path appears in the binary or if the binary stops carrying crate paths."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-116775"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/pageant@0.2.3"
+        },
+        {
+          "@id": "pkg:cargo/pageant@0.2.4"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "pageant is in the shipped tag Cargo.lock only as a dependency of russh (Cargo.lock 1.0.4: russh 0.64.1 -> pageant; no other package depends on it), and russh is not compiled into /usr/bin/rustfs. russh (the only route to pageant) is listed only because the image ships the tag Cargo.lock at /usr/share/doc/rustfs/Cargo.lock (the prebuilt binary has no cargo-auditable section); the crate is not compiled into /usr/bin/rustfs. russh is optional in the rustfs-protocols crate and enabled only by the sftp feature (tag 1.0.4 commit 46337942d55f3a8e6a97b147ca98d9ea8115555d: crates/protocols/Cargo.toml:179 russh = { workspace = true, optional = true }, crates/protocols/Cargo.toml:109 sftp = [dep:russh, ...]; rustfs/Cargo.toml:60 default = [ftps, webdav, gcs], rustfs/Cargo.toml:66 the only route to rustfs-protocols/sftp); the 1.0.1 tag has the same shape (see the CVE-2026-111061 statement). The other russh user, e2e_test, is a test crate outside the release build. Verified 2026-11-01: grep -aoE over the sha256-pinned musl binaries found 383 (1.0.4 x86_64), 379 (1.0.4 aarch64) and 383 (1.0.1 x86_64) registry/src crate-version paths and 0 matching russh or pageant, so the pageant PageantStream frame buffering code is not present. The recipe fails the build if any russh crate path appears in the binary or if the binary stops carrying crate paths."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-c8m5-c952-6cm4"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/rustls@0.23.45"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Applies to 1.0.1 only (1.0.4 ships rustls 0.23.46). The advisory: the derived Debug formatting of Tls12ClientSessionValue / Tls13ClientSessionValue exposes the master secret or resumption PSK, reachable only through a custom ClientSessionStore implementation that Debug-formats those values; built-in caches stay redacted (rustls-0.23.45/src/client/handy.rs:183 implements a redacting fmt::Debug for ClientSessionMemoryCache, handy.rs:12 NoClientSessionStorage stores nothing). Verified 2026-11-01: cargo fetch --locked of the 1.0.1 tag, cargo tree -p rustfs -e normal --target all -i rustls@0.23.45 lists 77 dependents; grep -rlE 'ClientSessionStore|ClientSessionValue' over the registry source of every one and over all workspace .rs files returned only rustls-0.23.45 itself, and its only implementations are handy.rs:12 and handy.rs:101. No custom session store exists in the binary, so the secret-bearing Debug impls are never called."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-115905"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/zip@8.6.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Applies to 1.0.1 only (1.0.4 ships zip 9.1.0). The advisory: ZipStreamReader (zip src/read/stream.rs) extracts by Local File Header names while ZipArchive trusts the Central Directory, so a crafted archive differs between the two readers. Exploitation needs a streaming extractor. Verified 2026-11-01 in the 1.0.1 tag source: grep -rnE 'ZipStreamReader|read_zipfile_from_stream|zip::read::stream' over every .rs file returned nothing; the rustfs crate reads archives only through zip::ZipArchive::new (rustfs/src/connect/diagnostics/trace_runtime.rs:2532, job.rs:1831, environment.rs:848) and otherwise writes with ZipWriter; the only other dependents are rustfs-log-analyzer and the e2e_test test crate (Cargo.lock). The streaming reader code is never called."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-115907"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/zip@8.6.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "Applies to 1.0.1 only (1.0.4 ships zip 9.1.0). The advisory affects only builds with the legacy-zip feature (Shrink/Reduce/Implode decoders, src/legacy/). Verified 2026-11-01: the 1.0.1 tag declares zip = \"8.6.0\" with default features (Cargo.toml:349) and every member uses zip = { workspace = true } with no extra features (rustfs/Cargo.toml:360, crates/log-analyzer/Cargo.toml:52); zip 8.6.0 default = [aes-crypto, bzip2, deflate64, deflate, lzma, ppmd, time, zstd, xz] (crates.io feature table) does not include legacy-zip, so the legacy decoders are not compiled in."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-116773"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/russh@0.63.3"
+        },
+        {
+          "@id": "pkg:cargo/russh@0.64.1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "russh 0.63.3 (1.0.1) and 0.64.1 (1.0.4) is listed only because the image ships the tag Cargo.lock at /usr/share/doc/rustfs/Cargo.lock (the prebuilt binary has no cargo-auditable section); the crate is not compiled into /usr/bin/rustfs. russh is optional in the rustfs-protocols crate and enabled only by the sftp feature (tag 1.0.4 commit 46337942d55f3a8e6a97b147ca98d9ea8115555d: crates/protocols/Cargo.toml:179 russh = { workspace = true, optional = true }, crates/protocols/Cargo.toml:109 sftp = [dep:russh, ...]; rustfs/Cargo.toml:60 default = [ftps, webdav, gcs], rustfs/Cargo.toml:66 the only route to rustfs-protocols/sftp); the 1.0.1 tag has the same shape (see the CVE-2026-111061 statement). The other russh user, e2e_test, is a test crate outside the release build. Verified 2026-11-01: grep -aoE over the sha256-pinned musl binaries found 383 (1.0.4 x86_64), 379 (1.0.4 aarch64) and 383 (1.0.1 x86_64) registry/src crate-version paths and 0 matching russh or pageant, so the russh extension-handling allocation code is not present. The recipe fails the build if any russh crate path appears in the binary or if the binary stops carrying crate paths."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-116774"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/russh@0.63.3"
+        },
+        {
+          "@id": "pkg:cargo/russh@0.64.1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "russh 0.63.3 (1.0.1) and 0.64.1 (1.0.4) is listed only because the image ships the tag Cargo.lock at /usr/share/doc/rustfs/Cargo.lock (the prebuilt binary has no cargo-auditable section); the crate is not compiled into /usr/bin/rustfs. russh is optional in the rustfs-protocols crate and enabled only by the sftp feature (tag 1.0.4 commit 46337942d55f3a8e6a97b147ca98d9ea8115555d: crates/protocols/Cargo.toml:179 russh = { workspace = true, optional = true }, crates/protocols/Cargo.toml:109 sftp = [dep:russh, ...]; rustfs/Cargo.toml:60 default = [ftps, webdav, gcs], rustfs/Cargo.toml:66 the only route to rustfs-protocols/sftp); the 1.0.1 tag has the same shape (see the CVE-2026-111061 statement). The other russh user, e2e_test, is a test crate outside the release build. Verified 2026-11-01: grep -aoE over the sha256-pinned musl binaries found 383 (1.0.4 x86_64), 379 (1.0.4 aarch64) and 383 (1.0.1 x86_64) registry/src crate-version paths and 0 matching russh or pageant, so the russh channel maximum-packet-size handling code is not present. The recipe fails the build if any russh crate path appears in the binary or if the binary stops carrying crate paths."
     }
   ]
 }
