@@ -30,6 +30,7 @@ environment:
       - busybox
       - ca-certificates-bundle
       - curl
+      - zip     # build-time only: repackage the extension jars after the guava swap
 
 pipeline:
   - runs: |
@@ -78,6 +79,8 @@ pipeline:
       swap jackson-databind-2.19.0.jar com/fasterxml/jackson/core/jackson-databind/2.21.7/jackson-databind-2.21.7.jar 1290c2795e93e8a6861a6c4d9ff0d844d32f5ea178362cb2721edf5561e828b1
       swap jackson-annotations-2.19.0.jar com/fasterxml/jackson/core/jackson-annotations/2.21/jackson-annotations-2.21.jar 53ca085f4a150f703f49e1aabd935bd03b43e1ea3d55d135438292af22cef56b
       swap jackson-module-jaxb-annotations-2.19.0.jar com/fasterxml/jackson/module/jackson-module-jaxb-annotations/2.21.5/jackson-module-jaxb-annotations-2.21.5.jar 795ac3ea3b2ac0b91722b14e0a3cec4816163053fba469a5974bb1b3ff5e3ae8
+      # guava 32.1.3-jre: CVE-2026-102554 (2026-11-01), fixed in 33.7.2-jre
+      swap guava-32.1.3-jre.jar com/google/guava/guava/33.7.2-jre/guava-33.7.2-jre.jar b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c
 
       # GUACAMOLE_HOME: the PostgreSQL auth extension and its driver, plus the
       # schema SQL (Guacamole does not create its own tables).
@@ -87,6 +90,23 @@ pipeline:
         97bc5fd3d67d25c0e98a475d1dfd308a037859f549fac47171c723b7a7039366
       tar xzf /tmp/jdbc.tgz -C /tmp
       cp "/tmp/guacamole-auth-jdbc-$V/postgresql/guacamole-auth-jdbc-postgresql-$V.jar" "$home/extensions/"
+      # The extension NESTS guava-32.1.3-jre.jar (CVE-2026-102554, 2026-11-01) at its root and
+      # again inside its nested guacamole-auth-jdbc-base jar; Guacamole loads nested jars, so
+      # each copy is swapped for 33.7.2-jre in place. Each level asserts the old jar first.
+      get /tmp/guava-new.jar "$M/com/google/guava/guava/33.7.2-jre/guava-33.7.2-jre.jar" \
+        b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c
+      nswap() {  # <dir holding an exploded jar>
+        test -f "$1/guava-32.1.3-jre.jar" || { echo "FATAL: $1 no longer nests guava-32.1.3-jre.jar; re-derive the swap"; exit 1; }
+        rm -f "$1/guava-32.1.3-jre.jar"; cp /tmp/guava-new.jar "$1/guava-33.7.2-jre.jar"
+      }
+      ext="$home/extensions/guacamole-auth-jdbc-postgresql-$V.jar"; w=/tmp/ext-x; b=/tmp/base-x
+      rm -rf "$w" "$b"; mkdir -p "$w" "$b"
+      (cd "$w" && unzip -q "$ext")
+      nswap "$w"
+      (cd "$b" && unzip -q "$w/guacamole-auth-jdbc-base-$V.jar")
+      nswap "$b"
+      rm -f "$w/guacamole-auth-jdbc-base-$V.jar"; (cd "$b" && zip -qrX "$w/guacamole-auth-jdbc-base-$V.jar" .)
+      rm -f "$ext"; (cd "$w" && zip -qrX "$ext" .); rm -rf "$w" "$b"
       cp /tmp/guacamole-auth-jdbc-$V/postgresql/schema/*.sql "${{targets.destdir}}/usr/share/guacamole/schema/"
       get "$home/lib/postgresql-42.7.13.jar" "$M/org/postgresql/postgresql/42.7.13/postgresql-42.7.13.jar" \
         6e0e4cc2d8cae902084f8a2b18728b073a6fd9d1f87c9d8bff8f298c18185b93
