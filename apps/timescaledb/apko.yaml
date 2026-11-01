@@ -1,5 +1,5 @@
 # Assembles the PostgreSQL 17 + TimescaleDB runtime image. No Dockerfile. Minimal,
-# nonroot, multi-arch, SBOM by apko. PostgreSQL 17 comes from Wolfi; our package adds
+# nonroot, multi-arch, SBOM by apko. Our package carries PostgreSQL 17 (built from source),
 # the timescaledb extension and the bootstrap entrypoint that preloads it and runs
 # CREATE EXTENSION timescaledb CASCADE.
 contents:
@@ -14,13 +14,10 @@ contents:
     - ca-certificates-bundle
     - tzdata
     - busybox                      # the bootstrap entrypoint needs a tiny shell
-    - postgresql-17
-    - postgresql-17-client
-    - postgresql-17-contrib
     - python-3.13                  # interpreter for the Patroni venv (/opt/patroni/venv)
     - libgcc                       # C runtime for the psycopg / PyYAML manylinux wheels
     - glibc
-    - quench-timescaledb@local     # carries the timescaledb extension and the bootstrap entrypoint
+    - quench-timescaledb@local     # PostgreSQL 17 (built from source), the timescaledb extension and the bootstrap entrypoint
 
 accounts:
   groups:
