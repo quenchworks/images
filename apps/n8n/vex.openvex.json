@@ -3,7 +3,7 @@
   "@id": "https://quench-works.com/vex/n8n/2026-11-01",
   "author": "QuenchWorks <info@quench-works.com>",
   "timestamp": "2026-11-01T00:00:00Z",
-  "version": 2,
+  "version": 3,
   "statements": [
     {
       "vulnerability": {
@@ -69,6 +69,84 @@
       "status": "not_affected",
       "justification": "vulnerable_code_not_in_execute_path",
       "impact_statement": "The advisory (GHSA for @azure/msal-node >=5.0.0-beta.0 <7.1.0): an origin validation error in the authorization code flow can disclose parameters passed to acquireTokenByCode to an attacker-controlled endpoint; the stated workaround is to pass only the auth code to acquireTokenByCode. In n8n 2.40.7 this 5.1.5 copy is nested under node_modules/@microsoft/agents-hosting (1.6.1, pulled by @n8n/n8n-nodes-langchain 2.40.3), so only agents-hosting can load it. Its single importer is dist/src/auth/msalTokenProvider.js (require at line 11), which uses only acquireTokenByClientCredential (:228), acquireTokenOnBehalfOf (:201) and its certificate, managed-identity and agentic wrappers (:118-336). Verified 2026-11-01 on the npm tarball agents-hosting-1.6.1.tgz: grep -rlE 'acquireTokenByCode|getAuthCodeUrl|AuthorizationCodeRequest' over the package returned no file. The other msal-node copies in the image move to 7.1.0 through @azure/identity 4.14.1. No agents-hosting release moves past msal-node 5.6.0 (1.9.1, 2026-11-01)."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-115905"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/zip@8.2.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The advisory: ZipStreamReader (src/read/stream.rs) extracts by Local File Header names while ZipArchive trusts the Central Directory; exploitation needs the streaming reader, which agent-browser never uses. zip 8.2.0 is linked only into the prebuilt agent-browser binaries (opt/n8n/node_modules/agent-browser/bin/agent-browser-linux-x64 and -arm64, agent-browser 0.26.0, pulled by @n8n/mcp-browser). In the v0.26.0 source (tag 717d1b09e1c841a4c0206033886a1a861e3ca5d9) cli/Cargo.toml:31 declares zip 8.2.0 with default-features = false and features = [\"deflate\"], and cli/Cargo.lock lists agent-browser as its only dependent, so no other crate turns on more features. The crate is used only by extract_zip in cli/src/install.rs:334-380 (the `agent-browser install` Chrome download): zip::ZipArchive::new over an in-memory cursor (:340), then by_index (:344) with enclosed_name() and its own starts_with(dest) containment check. Verified 2026-11-01: grep -rnE 'zip::|ZipArchive|ZipWriter|\\.extract\\(|by_index|by_name' cli/src returns only install.rs:340 and :344, and grep for ZipStreamReader|read_zipfile_from_stream|extract_unwrapped returns nothing. Even agent-browser 0.41.0 (newest, 2026-10-29) still locks zip 8.2.0."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-115906"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/zip@8.2.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The advisory: the AES entry reader (src/aes.rs) skips its HMAC check on premature EOF. That reader exists only with the aes-crypto feature, which this copy does not enable, so the AES code is not compiled in. zip 8.2.0 is linked only into the prebuilt agent-browser binaries (opt/n8n/node_modules/agent-browser/bin/agent-browser-linux-x64 and -arm64, agent-browser 0.26.0, pulled by @n8n/mcp-browser). In the v0.26.0 source (tag 717d1b09e1c841a4c0206033886a1a861e3ca5d9) cli/Cargo.toml:31 declares zip 8.2.0 with default-features = false and features = [\"deflate\"], and cli/Cargo.lock lists agent-browser as its only dependent, so no other crate turns on more features. The crate is used only by extract_zip in cli/src/install.rs:334-380 (the `agent-browser install` Chrome download): zip::ZipArchive::new over an in-memory cursor (:340), then by_index (:344) with enclosed_name() and its own starts_with(dest) containment check. Verified 2026-11-01: grep -rnE 'zip::|ZipArchive|ZipWriter|\\.extract\\(|by_index|by_name' cli/src returns only install.rs:340 and :344, and grep for ZipStreamReader|read_zipfile_from_stream|extract_unwrapped returns nothing. Even agent-browser 0.41.0 (newest, 2026-10-29) still locks zip 8.2.0."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-115907"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/zip@8.2.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The advisory: the Shrink/Reduce/Implode decoders of the legacy-zip feature preallocate from an attacker-controlled size. legacy-zip is not enabled on this copy, so those decoders are not compiled in. zip 8.2.0 is linked only into the prebuilt agent-browser binaries (opt/n8n/node_modules/agent-browser/bin/agent-browser-linux-x64 and -arm64, agent-browser 0.26.0, pulled by @n8n/mcp-browser). In the v0.26.0 source (tag 717d1b09e1c841a4c0206033886a1a861e3ca5d9) cli/Cargo.toml:31 declares zip 8.2.0 with default-features = false and features = [\"deflate\"], and cli/Cargo.lock lists agent-browser as its only dependent, so no other crate turns on more features. The crate is used only by extract_zip in cli/src/install.rs:334-380 (the `agent-browser install` Chrome download): zip::ZipArchive::new over an in-memory cursor (:340), then by_index (:344) with enclosed_name() and its own starts_with(dest) containment check. Verified 2026-11-01: grep -rnE 'zip::|ZipArchive|ZipWriter|\\.extract\\(|by_index|by_name' cli/src returns only install.rs:340 and :344, and grep for ZipStreamReader|read_zipfile_from_stream|extract_unwrapped returns nothing. Even agent-browser 0.41.0 (newest, 2026-10-29) still locks zip 8.2.0."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-115908"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/zip@8.2.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The advisory: ZipArchive::extract and extract_unwrapped_root_dir validate symlink targets lexically and can write outside the extraction directory. Neither is called; agent-browser writes each entry itself after enclosed_name() and a containment check. zip 8.2.0 is linked only into the prebuilt agent-browser binaries (opt/n8n/node_modules/agent-browser/bin/agent-browser-linux-x64 and -arm64, agent-browser 0.26.0, pulled by @n8n/mcp-browser). In the v0.26.0 source (tag 717d1b09e1c841a4c0206033886a1a861e3ca5d9) cli/Cargo.toml:31 declares zip 8.2.0 with default-features = false and features = [\"deflate\"], and cli/Cargo.lock lists agent-browser as its only dependent, so no other crate turns on more features. The crate is used only by extract_zip in cli/src/install.rs:334-380 (the `agent-browser install` Chrome download): zip::ZipArchive::new over an in-memory cursor (:340), then by_index (:344) with enclosed_name() and its own starts_with(dest) containment check. Verified 2026-11-01: grep -rnE 'zip::|ZipArchive|ZipWriter|\\.extract\\(|by_index|by_name' cli/src returns only install.rs:340 and :344, and grep for ZipStreamReader|read_zipfile_from_stream|extract_unwrapped returns nothing. Even agent-browser 0.41.0 (newest, 2026-10-29) still locks zip 8.2.0."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-115909"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/zip@8.2.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The advisory: ZipArchive::extract preallocates a symlink target from an attacker-controlled ZIP64 size. ZipArchive::extract is never called. zip 8.2.0 is linked only into the prebuilt agent-browser binaries (opt/n8n/node_modules/agent-browser/bin/agent-browser-linux-x64 and -arm64, agent-browser 0.26.0, pulled by @n8n/mcp-browser). In the v0.26.0 source (tag 717d1b09e1c841a4c0206033886a1a861e3ca5d9) cli/Cargo.toml:31 declares zip 8.2.0 with default-features = false and features = [\"deflate\"], and cli/Cargo.lock lists agent-browser as its only dependent, so no other crate turns on more features. The crate is used only by extract_zip in cli/src/install.rs:334-380 (the `agent-browser install` Chrome download): zip::ZipArchive::new over an in-memory cursor (:340), then by_index (:344) with enclosed_name() and its own starts_with(dest) containment check. Verified 2026-11-01: grep -rnE 'zip::|ZipArchive|ZipWriter|\\.extract\\(|by_index|by_name' cli/src returns only install.rs:340 and :344, and grep for ZipStreamReader|read_zipfile_from_stream|extract_unwrapped returns nothing. Even agent-browser 0.41.0 (newest, 2026-10-29) still locks zip 8.2.0."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-118764"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/minimatch@3.1.5"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The advisory: minimatch before 11.0.1 expands attacker-controlled **/.. segments in firstPhasePreProcess() and compares them pairwise in secondPhasePreProcess(), run at optimizationLevel 2 or higher. Those functions and the optimizationLevel option arrived with the minimatch 7+ rewrite; 3.1.5 is the old single-file implementation. Verified 2026-11-01 on the npm tarball minimatch-3.1.5.tgz: grep -c 'firstPhasePreProcess\\|optimizationLevel' package/minimatch.js returned 0. The minimatch 10 copies are overridden to 11.0.1 instead (melange.yaml)."
     }
   ]
 }
