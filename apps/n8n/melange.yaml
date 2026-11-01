@@ -474,11 +474,11 @@ pipeline:
                       for r, dirs, _ in os.walk('node_modules')
                       if 'stream-json' in dirs and os.path.basename(r) == 'node_modules')
       found = [(p, json.load(open(p))['version']) for p in copies]
-      stale = [(p, v) for p, v in found if v != '3.6.0']
+      stale = [(p, v) for p, v in found if v != '3.7.0']
       assert not stale, "stream-json override missing or incompatible: %s" % stale
       # Absence is legitimate (a later n8n may drop the dep); the override is then a no-op.
       # What must fail is a copy that EXISTS and escaped the pin -- caught above.
-      print("stream-json: %d copy(ies) at 3.6.0" % len(found))
+      print("stream-json: %d copy(ies) at 3.7.0" % len(found))
 
       migrated = []
       for root, dirs, files in os.walk('node_modules'):
