@@ -189,6 +189,9 @@ def per_arch(url: str, arch: str) -> str:
 def tag_commit(app: str, version: str) -> str | None:
     mel = (ROOT / "apps" / app / "melange.yaml").read_text()
     m = re.search(r"repository:\s*https://github\.com/([^\s/]+/[^\s/.]+)", mel)
+    # Recipes that fetch a source archive (oras: uri: .../archive/refs/tags/v...) have no git-checkout
+    # repository line; their COMMIT map still needs the tag's commit, so read the repo from the uri.
+    m = m or re.search(r"uri:\s*https://github\.com/([^\s/]+/[^\s/.]+)/archive/", mel)
     if not m:
         return None
     repo = m.group(1)
