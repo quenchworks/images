@@ -100,7 +100,7 @@ pipeline:
       # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
       # FLOOR is a FLOOR, not a pin: float only what is below it, then assert the
       # shipped binary carries nothing below it.
-      FLOOR="golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.2 github.com/prometheus/prometheus@v0.311.3"
+      FLOOR="golang.org/x/net@v0.62.0 google.golang.org/grpc@v1.83.2 github.com/prometheus/prometheus@v0.311.3"
       MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
       below_floor() {
         awk -v floor="$FLOOR" -v tag="$1" '
@@ -165,7 +165,7 @@ pipeline:
       DESTDIR="$d" cmake --install build
 
       # The float is only real if it reached the binaries.
-      FLOOR="golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.2 github.com/prometheus/prometheus@v0.311.3"
+      FLOOR="golang.org/x/net@v0.62.0 google.golang.org/grpc@v1.83.2 github.com/prometheus/prometheus@v0.311.3"
       for b in "$d/usr/libexec/netdata/plugins.d/go.d.plugin"; do
         [ -x "$b" ] || { echo "missing $b"; exit 1; }
         bad="$(go version -m "$b" | awk -v floor="$FLOOR" '
