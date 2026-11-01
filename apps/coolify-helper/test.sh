@@ -21,14 +21,14 @@ cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
 # Versions pinned in melange.yaml / tracked from Wolfi -- assert the bundled tools match.
-MISE_VERSION="2026.9.15"
-RAILPACK_VERSION="0.40.1"
+MISE_VERSION="2026.10.14"
+RAILPACK_VERSION="0.43.0"
 NIXPACKS_VERSION="1.41.0"
 # Must equal vars.pack-version in melange.yaml, which is what the build actually
 # checks out and stamps. This said 0.38.2 (the version upstream bundles) long after
 # the recipe moved to 0.40.9 for the lifecycle v0.21.19 line, so the boot test failed
 # a correct image on both arches in run 35490170007.
-PACK_VERSION="0.40.9"
+PACK_VERSION="0.40.10"
 
 echo "starting $IMAGE (long-lived build-engine container; runs as root by design)"
 docker run -d --name "$NAME" "$IMAGE" >/dev/null
