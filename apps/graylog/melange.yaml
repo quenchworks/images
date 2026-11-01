@@ -75,7 +75,7 @@ pipeline:
       ROOT="$(pwd)"
       MC="https://repo1.maven.org/maven2"
       PW="$ROOT/.patchwork"; DL="$PW/dl"; ST="$PW/stage"
-      mkdir -p "$DL" "$ST/jackson" "$ST/shiro" "$ST/mail" "$ST/lz4" "$ST/log4j" "$ST/jsoup" "$ST/amqp" "$ST/hc" "$ST/osj"
+      mkdir -p "$DL" "$ST/jackson" "$ST/shiro" "$ST/mail" "$ST/lz4" "$ST/log4j" "$ST/jsoup" "$ST/amqp" "$ST/hc" "$ST/osj" "$ST/guava"
       getj() { curl -fsSL -o "$DL/$2" "$1"; echo "$3  $DL/$2" | sha256sum -c -; }
 
       # --- jackson (databind + core) 2.21.5: overlay class trees + maven metadata ---
@@ -209,6 +209,16 @@ pipeline:
           'org/opensearch/client/transport/httpclient5/ApacheHttpClient5Transport*' \
           'org/opensearch/client/transport/httpclient5/internal/NodeState.class' )
 
+      # --- guava 33.6.0-jre -> 33.7.2-jre (CVE-2026-102554, 2026-11-01), graylog.jar only ---
+      #     A MINOR bump that drops 13 classes (ImmutableSet$Indexed, AggregateFutureState
+      #     helpers, ...), so an overlay alone would leave them as stale bytecode. apply()
+      #     first deletes exactly the files guava 33.6.0 ships (its own jar is the list, so
+      #     failureaccess's classes in the same package stay), then overlays 33.7.2.
+      getj "$MC/com/google/guava/guava/33.6.0-jre/guava-33.6.0-jre.jar" guava-33.6.0-jre.jar dc573e1fca4fd5454f4a5fd3d7da2df03002876a4175bafc14a95980dd7713b3
+      getj "$MC/com/google/guava/guava/33.7.2-jre/guava-33.7.2-jre.jar" guava-33.7.2-jre.jar b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c
+      unzip -Z1 "$DL/guava-33.6.0-jre.jar" | grep -E '^(com/google/|META-INF/maven/com\.google\.guava/)' | grep -v '/$' > "$PW/guava-old.files"
+      ( cd "$ST/guava" && unzip -qo "$DL/guava-33.7.2-jre.jar" 'com/google/*' 'META-INF/maven/com.google.guava/*' )
+
       # --- apply: explode each uber-jar, overlay the patched trees, repackage ---
       apply() {
         jarp="$1"; shift
@@ -237,12 +247,23 @@ pipeline:
                  "$w/META-INF/maven/org.apache.httpcomponents.core5"
           rm -f "$w"/org/opensearch/client/transport/httpclient5/ApacheHttpClient5Transport*.class
         fi
+        if [ -n "${PRUNE_GUAVA:-}" ]; then
+          grep -qx 'version=33.6.0-jre' "$w/META-INF/maven/com.google.guava/guava/pom.properties" \
+            || { echo "FATAL: $jarp no longer bundles guava 33.6.0-jre; re-derive the guava swap"; exit 1; }
+          ( cd "$w" && xargs rm -f < "$PRUNE_GUAVA" )
+        fi
         for s in "$@"; do cp -a "$s/." "$w/"; done
+        if [ -n "${PRUNE_GUAVA:-}" ]; then
+          grep -qx 'version=33.7.2-jre' "$w/META-INF/maven/com.google.guava/guava/pom.properties"
+          [ ! -e "$w/com/google/common/collect/ImmutableSet\$Indexed.class" ]
+        fi
         rm -f "$jarp"
         ( cd "$w" && zip -qrX "$jarp" . )
         rm -rf "$w"
       }
-      apply "$ROOT/graylog.jar" "$ST/jackson" "$ST/shiro" "$ST/mail" "$ST/lz4" "$ST/log4j" "$ST/jsoup" "$ST/amqp"
+      PRUNE_GUAVA="$PW/guava-old.files"
+      apply "$ROOT/graylog.jar" "$ST/jackson" "$ST/shiro" "$ST/mail" "$ST/lz4" "$ST/log4j" "$ST/jsoup" "$ST/amqp" "$ST/guava"
+      unset PRUNE_GUAVA
       PRUNE_HC=1
       apply "$ROOT/plugin/graylog-storage-opensearch3-${{package.version}}.jar" "$ST/jackson" "$ST/hc" "$ST/osj"
       rm -rf "$PW"
