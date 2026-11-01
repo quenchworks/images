@@ -68,4 +68,13 @@ pipeline:
       (cd dns && zip -q -r ../metabase.jar io META-INF)
       v="$(unzip -p metabase.jar META-INF/maven/io.netty/netty-codec-dns/pom.properties | sed -n 's/^version=//p')"
       [ "$v" = "__NETTY_DNS_VER__" ] || { echo "netty-codec-dns is $v after the swap"; exit 1; }
+      # guava 33.7.2-jre (CVE-2026-102554; both lines bundle 33.5.0-jre): same in-place swap.
+      curl -fsSL -o guava.jar "https://repo1.maven.org/maven2/com/google/guava/guava/__GUAVA_VER__/guava-__GUAVA_VER__.jar"
+      echo "__GUAVA_SHA256__  guava.jar" | sha256sum -c -
+      v="$(unzip -p metabase.jar META-INF/maven/com.google.guava/guava/pom.properties | sed -n 's/^version=//p')"
+      [ -n "$v" ] || { echo "no guava in the uberjar; re-audit"; exit 1; }
+      mkdir guava && unzip -q guava.jar 'com/google/common/*' 'com/google/thirdparty/*' 'META-INF/maven/com.google.guava/guava/*' -d guava
+      (cd guava && zip -q -r ../metabase.jar com META-INF)
+      v="$(unzip -p metabase.jar META-INF/maven/com.google.guava/guava/pom.properties | sed -n 's/^version=//p')"
+      [ "$v" = "__GUAVA_VER__" ] || { echo "guava is $v after the swap"; exit 1; }
       install -Dm644 metabase.jar "${{targets.destdir}}/usr/share/metabase/metabase.jar"
