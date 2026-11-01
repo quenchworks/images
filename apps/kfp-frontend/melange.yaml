@@ -46,11 +46,12 @@ pipeline:
       node -e '
         const fs = require("fs");
         const p = JSON.parse(fs.readFileSync("package.json"));
-        p.dependencies["js-yaml"] = "4.3.2";
+        // 2.18 moved to js-yaml ^5.5.0 (mergeTag import); the 4.3.2 CVE pin is for the 4.x line only.
+        if (/^[\^~]?4\./.test(p.dependencies["js-yaml"])) p.dependencies["js-yaml"] = "4.3.2";
         p.dependencies["protobufjs"] = "8.6.6";
         Object.assign(p.overrides, {
-          "qs": "6.16.0",
-          "follow-redirects": "1.16.1",
+          "qs": "6.16.1",
+          "follow-redirects": "1.16.2",
           "proto3-json-serializer": { "protobufjs": "7.6.6" },
           "ts-proto": { "protobufjs": "7.6.6" },
         });
@@ -86,13 +87,27 @@ pipeline:
         const fs = require("fs");
         const p = JSON.parse(fs.readFileSync("package.json"));
         p.dependencies["axios"] = "1.20.0";
-        p.dependencies["js-yaml"] = "4.3.2";
-        p.overrides = Object.assign(p.overrides || {}, {
-          "body-parser": "2.3.0", "decode-uri-component": "0.5.0", "ip-address": "10.7.2",
-          "proxy-addr": "2.0.8", "qs": "6.16.0", "stream-json": "3.7.0", "follow-redirects": "1.16.1",
-        });
+        // 2.18 moved to js-yaml ^5.5.0 (mergeTag import); the 4.3.2 CVE pin is for the 4.x line only.
+        if (/^[\^~]?4\./.test(p.dependencies["js-yaml"])) p.dependencies["js-yaml"] = "4.3.2";
+        const pins = {
+          "body-parser": "2.4.0", "decode-uri-component": "0.5.1", "ip-address": "10.7.4",
+          "proxy-addr": "2.0.8", "qs": "6.16.1", "stream-json": "3.7.0", "follow-redirects": "1.16.2",
+          "node-forge": "1.4.1",
+        };
+        // 2.18 nests its own pins (minio > query-string > decode-uri-component: 0.5.0), and npm lets the
+        // more specific nested override win, so rewrite a pinned name at any depth as well.
+        const deep = o => { for (const k of Object.keys(o)) {
+          if (o[k] && typeof o[k] === "object") deep(o[k]); else if (k in pins) o[k] = pins[k]; } };
+        p.overrides = p.overrides || {}; deep(p.overrides);
+        Object.assign(p.overrides, pins);
         fs.writeFileSync("package.json", JSON.stringify(p, null, 2));
       '
+      # 2.18's postinstall scripts/patch-minio.mjs refuses any decode-uri-component but exactly 0.5.0;
+      # 0.5.1 (CVE-2026-118664) is the same API, so its expectation follows our pin.
+      if [ -f scripts/patch-minio.mjs ]; then
+        sed -i "s|'0.5.0',|'0.5.1',|" scripts/patch-minio.mjs
+        grep -q "'0.5.1'," scripts/patch-minio.mjs || { echo "FATAL: patch-minio.mjs expectation not updated"; exit 1; }
+      fi
       npm install --engine-strict=false --no-audit --no-fund
       ./node_modules/.bin/tsc --project .
       npm prune --omit=dev --no-audit --no-fund
@@ -102,18 +117,20 @@ pipeline:
       # require() ESM, so take the default export and use the 3.x API; same {key, value} records.
       qs=node_modules/query-string/index.js
       sed -i "s|^const decodeComponent = require('decode-uri-component');|const decodeComponent = (m => m.default \|\| m)(require('decode-uri-component'));|" "$qs"
-      grep -q "m.default || m)(require('decode-uri-component'))" "$qs" || { echo "FATAL: query-string patch did not apply"; exit 1; }
+      # 2.18 ships scripts/patch-minio.mjs (postinstall) making the same fixes in its own form, so check
+      # the invariant, not our wording: no CommonJS require of the ESM-only module may stay unwrapped.
+      ! grep -q "require('decode-uri-component');" "$qs" || { echo "FATAL: query-string patch did not apply"; exit 1; }
       cjs=node_modules/minio/dist/main/notification.js
       esm=node_modules/minio/dist/esm/notification.mjs
       sed -i 's|require("stream-json/jsonl/Parser.js")|require("stream-json/jsonl/parser.js")|; s|_Parser.make()|_Parser.default.asStream()|' "$cjs"
       sed -i "s|from 'stream-json/jsonl/Parser.js'|from 'stream-json/jsonl/parser.js'|; s|jsonLineParser.make()|jsonLineParser.asStream()|" "$esm"
-      grep -q '_Parser.default.asStream()' "$cjs" && grep -q 'jsonLineParser.asStream()' "$esm" \
-        && ! grep -q 'Parser.js' "$cjs" "$esm" || { echo "FATAL: minio stream-json patch did not apply"; exit 1; }
+      ! grep -qE 'Parser\.js|_Parser\.make\(\)' "$cjs" && ! grep -qE 'Parser\.js|jsonLineParser\.make\(\)' "$esm" \
+        || { echo "FATAL: minio stream-json patch did not apply"; exit 1; }
       # every pinned copy, nested ones too, at or above its pin
       node -e '
         const lock = JSON.parse(require("fs").readFileSync("package-lock.json")).packages;
-        const want = { "axios": "1.20.0", "js-yaml": "4.3.2", "body-parser": "2.3.0", "decode-uri-component": "0.5.0",
-          "ip-address": "10.7.2", "proxy-addr": "2.0.8", "qs": "6.16.0", "stream-json": "3.7.0", "follow-redirects": "1.16.1" };
+        const want = { "axios": "1.20.0", "js-yaml": "4.3.2", "body-parser": "2.4.0", "decode-uri-component": "0.5.1",
+          "ip-address": "10.7.4", "proxy-addr": "2.0.8", "qs": "6.16.1", "stream-json": "3.7.0", "follow-redirects": "1.16.2" };
         const older = (a, b) => { const x = a.split(".").map(Number), y = b.split(".").map(Number); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i]; return false; };
         for (const [k, v] of Object.entries(want))
           for (const [path, e] of Object.entries(lock))
