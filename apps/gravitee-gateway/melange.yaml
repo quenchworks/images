@@ -115,7 +115,10 @@ pipeline:
         test "$((n + kept))" -gt 0 || { echo "FATAL: no jar matched $1 -- the dist moved"; exit 1; }
         echo "  $1 -> $3 ($n replaced, $kept already at or above it)"
       }
+      # 4.11 ships netty 4.1.139 (already past the 4.1 fixes); only a 4.2 dist takes the netty rows.
+      netty42="$(find "$home/lib" "$home/plugins" "$home/plugins-expanded" -name 'netty-common-4.2.*.Final.jar' -print -quit)"
       while read -r path a ver sum glob; do
+        case "$a" in netty-*) [ -n "$netty42" ] || continue ;; esac
         get "$path" "$a" "$ver" "$sum"
         swapjar "$glob" "$a" "$ver"
       done <<'LIST'
