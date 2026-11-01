@@ -390,6 +390,15 @@ pipeline:
       cargo update -p ubi
       cfloor rustls 0.23.46   # GHSA-c8m5-c952-6cm4, -h2v8-394m-p7vv, -vp88-798v-h67f, -w44r-93j7-qv28
       cfloor zip 9.0.5        # CVE-2026-115905
+      # gix 0.89.0 carries GHSA-q54r-jf2p-rfr2 (fix 0.90.0, a new 0.x minor so cfloor cannot reach it);
+      # mise requires gix "<1", so moving within that range keeps its manifest as written.
+      # gix 0.90 dropped the max-performance-safe feature; in 0.89 it was exactly ["max-control"],
+      # which 0.90 still has, so every workspace crate asks for that instead (same features enabled).
+      mp="$(find . -name Cargo.toml -exec grep -l '"max-performance-safe"' {} + || true)"
+      [ -n "$mp" ] || { echo "no crate requests gix max-performance-safe any more; revisit"; exit 1; }
+      for f in $mp; do sed -i 's/"max-performance-safe"/"max-control"/' "$f"; done
+      cargo update -p gix --precise 0.90.0
+      [ "$(grep -A1 -x 'name = "gix"' Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p')" = 0.90.0 ] || { echo "gix is not 0.90.0"; exit 1; }
       if grep -A1 -x 'name = "zip"' Cargo.lock | grep -qE '^version = "[0-8]\.'; then echo "a zip below 9 is still locked"; exit 1; fi
       cargo auditable build --release --bin mise
       readelf -S target/release/mise | grep -q dep-v0 || { echo "mise has no .dep-v0 section"; exit 1; }
