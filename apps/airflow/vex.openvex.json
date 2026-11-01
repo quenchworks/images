@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/airflow/2026-11-01",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-01T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-111943"
+      },
+      "products": [
+        {
+          "@id": "pkg:apk/wolfi/py3.12-grpcio-1.83"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "PROVEN false-positive. Measured 2026-11-01. CVE-2026-111943 is a Go standard library flaw (crypto/x509 accepts untrusted intermediate certificates); Wolfi's secdb files it against the grpc-1.83 origin, so every subpackage inherits it and the fix revision 1.83.1-r6 is not in the public index (newest py3.12-grpcio-1.83 is 1.83.1-r0). The subpackage this image ships contains no Go code: extracting py3.12-grpcio-1.83-1.83.1-r0.apk gives 140 files, all Python sources, dist-info, BUILD.bazel files and one native module, grpc/_cython/cygrpc.cpython-312-x86_64-linux-gnu.so, a Cython/C++ extension whose .PKGINFO depends only on abseil, c-ares, re2, OpenSSL, zlib and libstdc++. readelf -S on that .so lists no .go.buildinfo, .gopclntab or .note.go.buildid section and strings finds no crypto/x509. or runtime.goexit symbol, so the Go crypto/x509 code the advisory names is not present."
+    }
+  ]
+}
