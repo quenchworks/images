@@ -96,3 +96,17 @@ pipeline:
       if ls "$LIB"/jackson-*-2.18.8.jar >/dev/null 2>&1; then
         echo "FATAL: a jackson-2.18.8 jar survived the swap"; exit 1
       fi
+
+      # 4) guava 33.4.6-jre carries CVE-2026-102554; 33.7.2-jre fixes it. Same descriptor
+      #    rewrite as jackson, and only for the line this was measured against (2026-11-01).
+      if [ -f "$LIB/guava-33.4.6-jre.jar" ]; then
+        curl -fsSL -o "$LIB/guava-33.7.2-jre.jar" "$M/com/google/guava/guava/33.7.2-jre/guava-33.7.2-jre.jar"
+        echo "b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c  $LIB/guava-33.7.2-jre.jar" | sha256sum -c -
+        rm -f "$LIB/guava-33.4.6-jre.jar"
+        sed -i -e 's/^alias\.version=33\.4\.6-jre$/alias.version=33.7.2-jre/' \
+               -e 's/^jarFile=guava-33\.4\.6-jre\.jar$/jarFile=guava-33.7.2-jre.jar/' "$LIB/guava.properties"
+        grep -q '^jarFile=guava-33.7.2-jre.jar$' "$LIB/guava.properties"
+      fi
+      if ls "$LIB"/guava-33.4.6-jre.jar >/dev/null 2>&1; then
+        echo "FATAL: guava 33.4.6-jre survived the swap"; exit 1
+      fi
