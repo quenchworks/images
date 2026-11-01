@@ -1,13 +1,13 @@
 # Builds the FerretDB DocumentDB PostgreSQL extension (and its from-source
-# dependencies) onto Wolfi's PostgreSQL 17. This is the backend FerretDB v2 needs:
+# dependencies) onto PostgreSQL 17, built from source on Wolfi. This is the backend FerretDB v2 needs:
 # a PostgreSQL with the `documentdb` extension that adds BSON types and the Mongo
 # CRUD API. Output is a signed APK in Quenchworks' own repo.
 #
-# From-source here: Intel decimal floating-point math (libbid), libbson (static),
-# rum index, and documentdb itself (pg_documentdb_core + pg_documentdb). PostgreSQL
-# 17, pg_cron, pgvector and PostGIS come from Wolfi (themselves built from source,
-# 0-CVE) and are layered in by apko — building all of those from source too would
-# add the geos/proj/gdal and PG server stacks for no security gain.
+# From-source here: PostgreSQL 17 itself, pg_cron, pgvector, Intel decimal
+# floating-point math (libbid), libbson (static), rum index, PostGIS, and documentdb
+# itself (pg_documentdb_core + pg_documentdb). PostgreSQL 17 moved to source on
+# 2026-11-01 because Wolfi stopped carrying postgresql-17 (see step 0). PostGIS's
+# geos/proj/libxml2/json-c libraries still come from Wolfi.
 package:
   name: quench-postgres-documentdb
   version: __VER__
@@ -18,11 +18,7 @@ package:
   dependencies:
     runtime:
       - ca-certificates-bundle
-      - postgresql-17
-      - postgresql-17-client
-      - postgresql-17-contrib
-      - pg_cron-17
-      - pgvector-17
+      - tzdata                 # postgres is built --with-system-tzdata and reads it at runtime
       - pcre2
       # PostGIS is built from source here (without raster), so its runtime libs are
       # GEOS/PROJ/libxml2/json-c only — no GDAL, which is what carries the CVEs in
@@ -48,14 +44,25 @@ environment:
       - cmake
       - pkgconf
       - python-3.13
-      - postgresql-17
-      - postgresql-17-dev
-      - postgresql-17-client
       - pcre2-dev
       - openssl-dev
       - zlib-dev
       - icu-dev
-      - krb5-dev      # Wolfi's PG17 has GSSAPI, so libpq-be.h pulls gssapi/gssapi.h
+      # PostgreSQL 17 build deps (with openssl/zlib/icu/libxml2 above): the configure
+      # flags match the feature set of the Wolfi postgresql-17 this image used to ship,
+      # minus LLVM JIT and PL/Perl, which the image never installed
+      - krb5-dev        # --with-gssapi
+      - openldap-dev    # --with-ldap
+      - linux-pam-dev   # --with-pam
+      - libxslt-dev     # --with-libxslt (contrib/xml2)
+      - lz4-dev         # --with-lz4
+      - zstd-dev        # --with-zstd
+      - readline-dev
+      - util-linux-dev  # libuuid headers, for --with-uuid=e2fs (uuid-ossp)
+      - linux-headers
+      - perl            # required by the build for some generated headers
+      - bison
+      - flex
       - geos-3.14-dev # PostGIS build deps (no gdal — built without raster)
       - proj-dev
       - libxml2-dev
@@ -69,6 +76,68 @@ environment:
     GIT_HTTP_LOW_SPEED_TIME: "60"
 
 pipeline:
+  # 0. PostgreSQL __PG_VER__ from the official release tarball (same tarball and sha256
+  #    as apps/postgresql; bump PG_VERSION/PG_SHA256 in build.conf together with it).
+  #    Wolfi stopped carrying postgresql-17: its last build is 17.10-r1 (2026-06-08),
+  #    the recipe left wolfi-dev/os in PR #111720 ("move-batch-001") and pg_cron-17 is
+  #    already gone from the public index, so 17.11 (released 2026-08-10) and every
+  #    later 17.x fix will never land there. Building it here keeps the image on the
+  #    17 major line (existing data directories stay valid) with every 17.x fix.
+  #    Installed twice: into the package, and into the build root so PGXS (pg_config
+  #    and the server headers) compiles every extension below against THIS server.
+  - runs: |
+      set -eu
+      curl -fsSL -o pg.tar.bz2 "https://ftp.postgresql.org/pub/source/v__PG_VER__/postgresql-__PG_VER__.tar.bz2"
+      echo "__PG_SHA256__  pg.tar.bz2" | sha256sum -c -
+      mkdir pgsrc && tar -xjf pg.tar.bz2 -C pgsrc --strip-components=1
+      cd pgsrc
+      ./configure \
+        --prefix=/usr \
+        --with-openssl \
+        --with-readline \
+        --with-zlib \
+        --with-icu \
+        --with-uuid=e2fs \
+        --with-libxml \
+        --with-libxslt \
+        --with-lz4 \
+        --with-zstd \
+        --with-gssapi \
+        --with-ldap \
+        --with-pam \
+        --with-system-tzdata=/usr/share/zoneinfo
+      make -j"$(nproc)"
+      make -C contrib -j"$(nproc)"
+      for d in . contrib; do
+        make -C "$d" DESTDIR="${{targets.destdir}}" install
+        make -C "$d" install >/dev/null
+      done
+      test "$(pg_config --version)" = "PostgreSQL __PG_VER__"
+
+  #    pg_cron and pgvector were Wolfi's pg_cron-17 / pgvector-17 apks, built against
+  #    Wolfi's server; they are compiled here against the server above instead.
+  - uses: git-checkout
+    with:
+      repository: https://github.com/citusdata/pg_cron
+      tag: __PGCRON_TAG__
+      expected-commit: __PGCRON_COMMIT__
+      destination: pg_cron
+  - runs: |
+      set -eu
+      make -C pg_cron -j"$(nproc)"
+      make -C pg_cron DESTDIR="${{targets.destdir}}" install
+      # pgvector: OPTFLAGS="" drops its default -march=native, which would tie the .so
+      # to the build runner's CPU and crash (SIGILL) on older hosts.
+      V=__PGVECTOR_VER__
+      curl -fsSL -o pgvector.tar.gz "https://github.com/pgvector/pgvector/archive/refs/tags/v$V.tar.gz"
+      echo "__PGVECTOR_SHA256__  pgvector.tar.gz" | sha256sum -c -
+      mkdir pgvector && tar -xzf pgvector.tar.gz -C pgvector --strip-components=1
+      make -C pgvector OPTFLAGS="" -j"$(nproc)"
+      make -C pgvector OPTFLAGS="" DESTDIR="${{targets.destdir}}" install
+      lib="${{targets.destdir}}$(pg_config --pkglibdir)"
+      test -f "$lib/pg_cron.so"
+      test -f "$lib/vector.so"
+
   # 1. Intel Decimal Floating-Point Math Library (libbid) — documentdb links it statically.
   #    Cloned from launchpad (no GitHub mirror carries this exact Ubuntu-patched
   #    commit); the host flakes intermittently, so retry harder than the default 3.
@@ -118,8 +187,8 @@ pipeline:
       expected-commit: 6a065fd8dfb280680304991aa30d7f72787fdb04
       destination: rum
   - runs: |
-      # with_llvm=no: Wolfi's PG17 enables JIT, so PGXS would emit LLVM bitcode with
-      # clang (absent from the build env). The extensions work fine without JIT bitcode.
+      # with_llvm=no: kept from when PG came from Wolfi with JIT (PGXS would emit LLVM bitcode with
+      # clang, absent here); a no-op now that PG is built without --with-llvm.
       make -C rum USE_PGXS=1 with_llvm=no -j"$(nproc)"
       make -C rum USE_PGXS=1 with_llvm=no install DESTDIR="${{targets.destdir}}"
 
@@ -231,4 +300,9 @@ pipeline:
 test:
   pipeline:
     - runs: |
-        test -f "/usr/lib/postgresql17/pg_documentdb.so" || ls -la /usr/lib/postgresql17/
+        lib="$(pg_config --pkglibdir)"
+        for so in pg_documentdb pg_documentdb_core pg_cron vector rum postgis-3; do
+          test -f "$lib/$so.so" || { echo "missing $lib/$so.so"; exit 1; }
+        done
+        test "$(pg_config --version)" = "PostgreSQL __PG_VER__"
+        postgres --version

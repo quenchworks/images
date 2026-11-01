@@ -1,7 +1,7 @@
 # Assembles the PostgreSQL 17 + DocumentDB runtime image. No Dockerfile. Minimal,
-# nonroot, multi-arch, SBOM by apko. PostgreSQL 17, pg_cron, pgvector and PostGIS
-# come from Wolfi; our package adds the documentdb + rum extensions and the
-# bootstrap entrypoint that preloads them and runs CREATE EXTENSION documentdb CASCADE.
+# nonroot, multi-arch, SBOM by apko. Our package carries PostgreSQL 17, pg_cron,
+# pgvector, PostGIS, documentdb + rum (all built from source) and the bootstrap
+# entrypoint that preloads them and runs CREATE EXTENSION documentdb CASCADE.
 contents:
   keyring:
     - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
@@ -14,12 +14,7 @@ contents:
     - ca-certificates-bundle
     - tzdata
     - busybox                      # the bootstrap entrypoint needs a tiny shell
-    - postgresql-17
-    - postgresql-17-client
-    - postgresql-17-contrib
-    - pg_cron-17
-    - pgvector-17
-    - quench-postgres-documentdb@local   # carries the documentdb + rum + postgis extensions and their runtime libs
+    - quench-postgres-documentdb@local   # PostgreSQL 17 + documentdb, rum, postgis, pg_cron, pgvector
 
 accounts:
   groups:
