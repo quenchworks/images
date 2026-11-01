@@ -59,15 +59,21 @@ pipeline:
       v="$(unzip -p metabase.jar META-INF/maven/com.fasterxml.jackson.core/jackson-core/pom.properties | sed -n 's/^version=//p')"
       [ "$v" = "__CORE_VER__" ] || { echo "jackson-core is $v after the swap"; exit 1; }
       # netty-codec-dns 4.1.135 (CVE-2026-73508): same in-place swap, on the 4.1 line the uberjar
-      # already runs it from (its netty core is 4.2.17).
-      curl -fsSL -o dns.jar "https://repo1.maven.org/maven2/io/netty/netty-codec-dns/__NETTY_DNS_VER__/netty-codec-dns-__NETTY_DNS_VER__.jar"
-      echo "__NETTY_DNS_SHA256__  dns.jar" | sha256sum -c -
-      v="$(unzip -p metabase.jar META-INF/maven/io.netty/netty-codec-dns/pom.properties | sed -n 's/^version=//p')"
-      [ -n "$v" ] || { echo "no netty-codec-dns in the uberjar; re-audit"; exit 1; }
-      mkdir dns && unzip -q dns.jar 'io/netty/handler/codec/dns/*' 'META-INF/maven/io.netty/netty-codec-dns/*' -d dns
-      (cd dns && zip -q -r ../metabase.jar io META-INF)
-      v="$(unzip -p metabase.jar META-INF/maven/io.netty/netty-codec-dns/pom.properties | sed -n 's/^version=//p')"
-      [ "$v" = "__NETTY_DNS_VER__" ] || { echo "netty-codec-dns is $v after the swap"; exit 1; }
+      # already runs it from (its netty core is 4.2.17). 0.65 dropped the codec (no
+      # io/netty/handler/codec/dns classes at all), so the swap only runs where it exists.
+      if grep -q 'io/netty/handler/codec/dns/' <<EOF_LIST
+      $(unzip -l metabase.jar)
+      EOF_LIST
+      then
+        curl -fsSL -o dns.jar "https://repo1.maven.org/maven2/io/netty/netty-codec-dns/__NETTY_DNS_VER__/netty-codec-dns-__NETTY_DNS_VER__.jar"
+        echo "__NETTY_DNS_SHA256__  dns.jar" | sha256sum -c -
+        v="$(unzip -p metabase.jar META-INF/maven/io.netty/netty-codec-dns/pom.properties | sed -n 's/^version=//p')"
+        [ -n "$v" ] || { echo "dns classes but no netty-codec-dns pom; re-audit"; exit 1; }
+        mkdir dns && unzip -q dns.jar 'io/netty/handler/codec/dns/*' 'META-INF/maven/io.netty/netty-codec-dns/*' -d dns
+        (cd dns && zip -q -r ../metabase.jar io META-INF)
+        v="$(unzip -p metabase.jar META-INF/maven/io.netty/netty-codec-dns/pom.properties | sed -n 's/^version=//p')"
+        [ "$v" = "__NETTY_DNS_VER__" ] || { echo "netty-codec-dns is $v after the swap"; exit 1; }
+      fi
       # guava 33.7.2-jre (CVE-2026-102554; both lines bundle 33.5.0-jre): same in-place swap.
       curl -fsSL -o guava.jar "https://repo1.maven.org/maven2/com/google/guava/guava/__GUAVA_VER__/guava-__GUAVA_VER__.jar"
       echo "__GUAVA_SHA256__  guava.jar" | sha256sum -c -
