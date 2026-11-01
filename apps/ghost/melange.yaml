@@ -102,17 +102,17 @@ pipeline:
                                                  # tree at 0.6.20. Floored at the fixed 0.8.2
                                                  # rather than npm latest (0.11.0), keeping the
                                                  # override the smallest move that clears both.
-        "  'body-parser@<1.20.6': 1.20.6",       # CVE-2026-12590 (only the express-4 1.x copy;
+        "  'body-parser@<1.20.9': 1.20.9",       # CVE-2026-12590 (only the express-4 1.x copy;
                                                  # the express-5 2.3.0 copy is already clean)
         "  'brace-expansion@<5.0.12': 5.0.12",     # CVE-2026-14257, then CVE-2026-69152 which
                                                  # landed ON 5.0.8 -- the version pinned to fix
                                                  # the first. See the interop step below.
         "  'axios@<1.20.0': 1.20.0",             # 2026-10-01 advisory on 1.18.1 (fixed 0.34.0 / 1.20.0)
-        "  'dompurify@<3.4.16': 3.4.16",         # GHSA-c2j3-45gr-mqc4, a further advisory ON
+        "  'dompurify@<3.4.17': 3.4.17",         # GHSA-c2j3-45gr-mqc4, a further advisory ON
                                                  # 3.4.12, then another on 3.4.13 (fixed 3.4.16)
         "  'esbuild@<0.28.1': 0.28.1",           # GHSA-g7r4-m6w7-qqqr
         "  'probe-image-size@<7.4.0': 7.4.0",    # CVE-2026-104861 (2026-10-04)
-        "  'fast-uri@<3.1.8': 3.1.8",            # CVE-2026-86472 (3.1.8), CVE-2026-84292/84394 (3.1.7); before that CVE-2026-13676/16221 fixed at 3.1.5, then FOUR
+        "  'fast-uri@<3.1.9': 3.1.9",            # CVE-2026-86472 (3.1.8), CVE-2026-84292/84394 (3.1.7); before that CVE-2026-13676/16221 fixed at 3.1.5, then FOUR
                                                  # more advisories (CVE-2026-75899/75931/75975/
                                                  # 76172, hostname/IDN/IPv6 SSRF confusion) landed
                                                  # ON 3.1.5 itself. 3.1.x is the only 3.x clearing
@@ -130,8 +130,13 @@ pipeline:
         # a blanket override cannot drag anything across a major. The assertion below
         # proves every installed copy landed on it.
         "  hono: 4.13.11",                       # CVE-2026-54290 HIGH + 18 more, see above; 4.13.11 (2026-10-22 scan)
+        "  'follow-redirects@<1.16.2': 1.16.2",  # CVE-2026-116689 (2026-11-01)
+        "  'glob@>=10.0.0 <14.0.2': 14.0.2",     # CVE-2026-118773 (abort branches keep walking; fix only 14.0.2). The range
+                                                 # intersects only the 10-13 specs (rimraf 5, js-beautify, npmcli,
+                                                 # unified-engine), never the glob 7 ones; 10 to 14 keeps glob()/globSync.
+        "  'minimatch@>=10.0.0 <11.0.1': 11.0.1",  # CVE-2026-118764 (fix only 11.0.1); readdir-glob 3, glob 13 (2026-11-01)
         "  'jsonwebtoken@<9.0.0': 9.0.3",        # CVE-2022-23539/23540/23541
-        "  'multer@<2.4.0': 2.4.0",              # CVE-2026-5079/5038 fixed at 2.2.0, then
+        "  'multer@<2.5.0': 2.5.0",              # CVE-2026-5079/5038 fixed at 2.2.0, then
                                                  # CVE-2026-77037/77078/82333 HIGH + 77063 LOW
                                                  # landed ON 2.2.0 itself (need >= 2.3.0), then
                                                  # CVE-2026-88932 landed on 2.3.x (need 2.4.0,
@@ -140,11 +145,11 @@ pipeline:
                                                  # (auth-plugin downgrade, needs >= 3.22.0) +
                                                  # GHSA-rgwj-5xj2-c3m3 MEDIUM (zlib-inflate
                                                  # decompression-bomb DoS, needs >= 3.23.1)
-        "  'nodemailer@<10.0.10': 10.0.10",      # GHSA-6vj9-mwq6-2f5v (fixed 10.0.2); earlier: GHSA-p6gq fixed at 9.0.1, then
+        "  'nodemailer@<10.1.4': 10.1.4",      # GHSA-6vj9-mwq6-2f5v (fixed 10.0.2); earlier: GHSA-p6gq fixed at 9.0.1, then
                                                  # GHSA-2x7j/cc9r/wmmp (need >= 9.1.0) and
                                                  # GHSA-8m3c (needs >= 9.1.1) landed on 9.0.1 itself
         "  'postcss@<8.5.23': 8.5.23",           # GHSA-r28c-9q8g-f849 (fix 8.5.18; newest 8.5.x)
-        "  'qs@<6.16.0': 6.16.0",                # direct dep 6.15.3; CVE-2026-82417/82562
+        "  'qs@<6.16.1': 6.16.1",                # direct dep 6.15.3; CVE-2026-82417/82562
                                                  # (stringify-function DoS + array-limit bypass)
         "  'sanitize-html@<2.18.1': 2.18.1",     # direct dep 2.17.5; CVE-2026-63670 (textarea
                                                  # solidus-close mXSS, needs >= 2.17.6) +
@@ -172,9 +177,10 @@ pipeline:
                                                  # 1.2.1. Its CJS API changed; see the shim below.
         "  'js-yaml@<4.3.2': 4.3.2",             # CVE on 4.3.0 (4.3.0 was itself a fix pin);
                                                  # CVE-2026-84375 then landed on the 4.3.1 fix too
-        "  'undici@<6.28.1': 6.28.1",           # CVE-2026-85024 needs 6.28.1 / 7.29.1 / 8.10.2. TWO undici majors coexist in this tree, so each
-        "  'undici@7.28.0': 7.29.1",            # line needs its own pin -- a single
-        "  'undici@8.10.0': 8.10.2",            # 8.x copy, exact for the same reason as the 7.x pin
+        "  'undici@<6.29.1': 6.29.1",           # CVE-2026-85024 needs 6.28.1 / 7.29.1 / 8.10.2. TWO undici majors coexist in this tree, so each
+        "  'undici@7.28.0': 7.30.1",            # line needs its own pin -- a single
+        "  'undici@8.10.0': 8.12.2",
+        "  'undici@^8.9.0': 8.12.2",            # jsdom 30.0.1 declares ^8.9.0 (resolved 8.11.0); pnpm matches the declared spec            # 8.x copy, exact for the same reason as the 7.x pin
                                                  # `undici@<7.29.0` would drag the 6.x copy
                                                  # forward across a major.
                                                  # 2026-08-26 (2nd fix): the 6.x line WAS the exact
