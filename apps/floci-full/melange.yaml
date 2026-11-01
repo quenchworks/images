@@ -33,6 +33,8 @@ environment:
       - openjdk-25          # full JDK to compile the Quarkus app
       - openjdk-25-default-jvm
       - maven-3.9
+      - unzip       # graphql-java guava reshade (see the build step)
+      - zip
       - git                 # quarkus git-info build step reads the checkout metadata
       - python-3.13         # build-env only (not in the apko runtime) — runs the jackson CVE pin patch below
 
@@ -101,6 +103,18 @@ pipeline:
              '                <groupId>org.apache.httpcomponents.core5</groupId>\n'
              '                <artifactId>httpcore5-h2</artifactId>\n'
              '                <version>5.4.3</version>\n'
+             '            </dependency>\n'
+             '            <dependency>\n'
+             '                <!-- QuenchWorks CVE-2026-102554 pin (2026-11-01): guava from the Quarkus BOM. -->\n'
+             '                <groupId>com.google.guava</groupId>\n'
+             '                <artifactId>guava</artifactId>\n'
+             '                <version>33.7.2-jre</version>\n'
+             '            </dependency>\n'
+             '            <dependency>\n'
+             '                <!-- QuenchWorks snappy-java pin (1.1.10.9, 2026-11-01); floci declares it versionless. -->\n'
+             '                <groupId>org.xerial.snappy</groupId>\n'
+             '                <artifactId>snappy-java</artifactId>\n'
+             '                <version>1.1.10.9</version>\n'
              '            </dependency>\n'
              '            <dependency>\n'
              '                <!-- QuenchWorks CVE-2026-59949 + CVE-2026-106449..106453 pin (1.11.4): lz4-java native XXHash can crash\n'
@@ -186,12 +200,53 @@ pipeline:
       grep -q '<version>42.7.12</version>' pom.xml || { echo "postgresql pin FAILED to apply"; exit 1; }
       grep -q '<artifactId>lz4-java</artifactId>' pom.xml || { echo "lz4-java pin FAILED to apply"; exit 1; }
       grep -q '<version>2.5.2</version>' pom.xml || { echo "json-smart pin FAILED to apply"; exit 1; }
+      grep -q '<version>33.7.2-jre</version>' pom.xml || { echo "guava pin FAILED to apply"; exit 1; }
+      grep -q '<version>1.1.10.9</version>' pom.xml || { echo "snappy-java pin FAILED to apply"; exit 1; }
       ! grep -q '<version>5.3.6</version>' pom.xml || { echo "httpcore5 5.3.6 survived the pin"; exit 1; }
       # -----------------------------------------------------------------------
       # Build the Quarkus fast-jar. Skip tests (they need Docker + network); the
       # released bytecode is identical to upstream's `mvn clean package`.
       mvn -B -ntp clean package -DskipTests
       test -f target/quarkus-app/quarkus-run.jar
+      # graphql-java relocates guava to graphql.com.google.common (32.1.2-jre in 26.1, which floci
+      # 2.1.0 ships; even 25.0 does), out of reach of the guava pin above (CVE-2026-102554). When the
+      # shipped jar carries a guava below 33.7.2, relocate 33.7.2-jre + failureaccess to its prefix
+      # with maven-shade and overlay the classes in place (unsigned jar; guava 33.7.2 adds no packages,
+      # so the fast-jar package index still matches). Same reshade as apps/skywalking.
+      gq="$(find target/quarkus-app/lib -name '*graphql-java-[0-9]*.jar')"
+      if [ -n "$gq" ]; then
+        test "$(echo "$gq" | grep -c .)" -eq 1 || { echo "expected one graphql-java jar: $gq"; exit 1; }
+        have="$(unzip -p "$gq" META-INF/maven/com.google.guava/guava/pom.properties | sed -n 's/^version=//p')"
+        if [ -n "$have" ] && [ "$(printf '%s\n33.7.2-jre\n' "$have" | sort -V | head -1)" != 33.7.2-jre ]; then
+          w=/tmp/rs; mkdir -p "$w/x"
+          cat > "$w/pom.xml" <<'POM'
+      <project xmlns="http://maven.apache.org/POM/4.0.0">
+        <modelVersion>4.0.0</modelVersion>
+        <groupId>quench</groupId><artifactId>rs</artifactId><version>1</version>
+        <dependencies>
+          <dependency><groupId>com.google.guava</groupId><artifactId>guava</artifactId><version>33.7.2-jre</version></dependency>
+          <dependency><groupId>com.google.guava</groupId><artifactId>failureaccess</artifactId><version>1.0.3</version></dependency>
+        </dependencies>
+        <build><plugins><plugin>
+          <groupId>org.apache.maven.plugins</groupId><artifactId>maven-shade-plugin</artifactId><version>3.6.2</version>
+          <executions><execution><phase>package</phase><goals><goal>shade</goal></goals><configuration>
+            <createDependencyReducedPom>false</createDependencyReducedPom>
+            <artifactSet><includes><include>com.google.guava:guava</include><include>com.google.guava:failureaccess</include></includes></artifactSet>
+            <filters><filter><artifact>*:*</artifact><excludes><exclude>com/google/thirdparty/**</exclude><exclude>META-INF/versions/9/module-info.class</exclude></excludes></filter></filters>
+            <relocations><relocation><pattern>com.google.common</pattern><shadedPattern>graphql.com.google.common</shadedPattern></relocation></relocations>
+          </configuration></execution></executions>
+        </plugin></plugins></build>
+      </project>
+      POM
+          (cd "$w" && mvn -B -ntp -q -C -Dmaven.repo.local=/tmp/m2 package)
+          echo "b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c  /tmp/m2/com/google/guava/guava/33.7.2-jre/guava-33.7.2-jre.jar" | sha256sum -c -
+          gqa="$(cd "$(dirname "$gq")" && pwd)/$(basename "$gq")"
+          (cd "$w/x" && unzip -qo "$w/target/rs-1.jar" 'graphql/*' META-INF/maven/com.google.guava/guava/pom.properties META-INF/maven/com.google.guava/guava/pom.xml \
+            && zip -qr "$gqa" graphql META-INF)
+          unzip -p "$gq" META-INF/maven/com.google.guava/guava/pom.properties | grep -qx 'version=33.7.2-jre'
+          echo "reshaded guava 33.7.2-jre into $gq (was $have)"
+        fi
+      fi
       # lz4-java must resolve at or above 1.11.4 (CVE-2026-106449..106453) in the shipped tree
       bad="$(find target/quarkus-app -name '*lz4-java-1.10.*.jar' -o -name '*lz4-java-1.11.[0-3].jar' -o -name '*lz4-java-1.[0-9].*.jar')"
       test -z "$bad" || { echo "vulnerable lz4-java shipped: $bad"; exit 1; }
