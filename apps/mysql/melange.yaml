@@ -140,7 +140,8 @@ pipeline:
         wait "$pid" 2>/dev/null || true
       fi
 
-      exec mysqld --datadir="$DATADIR" --socket="$SOCK"
+      # extra args (the chart's `args`, e.g. --ssl-cert) reach the server
+      exec mysqld --datadir="$DATADIR" --socket="$SOCK" "$@"
       SCRIPT
       chmod 0755 "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh"
 
