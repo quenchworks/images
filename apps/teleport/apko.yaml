@@ -1,0 +1,59 @@
+# Teleport on Wolfi: nonroot uid 1001, no shell. The entrypoint is the teleport binary; tctl, tsh,
+# tbot and teleport-update sit next to it on PATH.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-teleport@local
+
+accounts:
+  groups:
+    - groupname: teleport
+      gid: 1001
+  users:
+    - username: teleport
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  HOME: /home/teleport
+
+paths:
+  - path: /home/teleport
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/lib/teleport
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+  - path: /etc/teleport
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+work-dir: /home/teleport
+
+entrypoint:
+  command: /usr/bin/teleport
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-teleport"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"
