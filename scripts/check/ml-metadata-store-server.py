@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# ml-metadata-store-server: the Wolfi apk (FROM_SOURCE=0), newest only. Held (see build.conf):
-# also watch google/ml-metadata releases for one that moves its bundled C dependencies.
-from _lib import wolfi, report
-report("ml-metadata-store-server", wolfi("ml-metadata-store-server"), n=1)
+# ml-metadata-store-server: held (see build.conf). Wolfi dropped the apk (2026-11-02), so watch
+# google/ml-metadata releases: an unblock now means a from-source build.
+from _lib import github, report
+report("ml-metadata-store-server", github("google/ml-metadata"), n=1)
