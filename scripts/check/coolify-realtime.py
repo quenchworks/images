@@ -11,10 +11,16 @@
 # 2026-10-07: Coolify 4.4.0 dropped the key (realtime replaced by Reverb + coolify-terminal),
 # so this reads the newest release that still pins it. coolify-app 4.4.0 is held for that
 # redesign; while it is, this pin cannot move.
+from urllib.error import HTTPError
+
 from _lib import github, json_get, report
 
+# 2026-11-03: 4.6.0 has no versions.json at all (404), so a release without the file is skipped too.
 def pin(tag):
-    vj = json_get(f"https://raw.githubusercontent.com/coollabsio/coolify/v{tag}/versions.json")
+    try:
+        vj = json_get(f"https://raw.githubusercontent.com/coollabsio/coolify/v{tag}/versions.json")
+    except HTTPError:
+        return None
     return next((o["realtime"]["version"] for o in vj.values() if isinstance(o, dict) and "realtime" in o), None)
 
 rt = next(v for v in map(pin, github("coollabsio/coolify")[:10]) if v)
