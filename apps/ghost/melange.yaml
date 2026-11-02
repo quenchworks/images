@@ -9,7 +9,7 @@
 #
 # Ghost has NATIVE modules (sqlite3, the default standalone DB driver, plus
 # @tryghost/html-to-mobiledoc) compiled via node-gyp, so the build env needs python3 +
-# build-base (make/g++) on top of nodejs-22 + pnpm. We prune dev/test cruft after install.
+# build-base (make/g++) on top of nodejs-24 + pnpm. We prune dev/test cruft after install.
 #
 # The tarball already ships a default content tree (content/themes/source +
 # content/themes/casper, adapters, data, images, logs, settings) — without an active theme
@@ -25,7 +25,7 @@ package:
     - license: MIT
   dependencies:
     runtime:
-      - nodejs-22              # Ghost 6 requires Node ^22.18.0 (core/package.json engines)
+      - nodejs-24              # Ghost 6 engines: node ^22.23.1 || ^24.20.0 (6.67+); 24 since 2026-11-02, nodejs-22 22.23.2 carries findings fixed only in the unpublished 22.23.4
       - ca-certificates-bundle # TLS to the external MySQL/MariaDB, SMTP, update checks
       - tzdata                 # Ghost schedules/publishes against the configured timezone
 
@@ -39,7 +39,7 @@ environment:
       - build-base             # make + g++ for node-gyp (native modules: sqlite3, bcrypt-ish)
       - busybox
       - ca-certificates-bundle
-      - nodejs-22
+      - nodejs-24
       - npm                    # re2/sharp probe a PREBUILT binary via npm FIRST; without npm
                                # that path fails and they fall back to a GCC-16 source compile
                                # (re2's vendored abseil won't compile under GCC 16). With npm
@@ -134,7 +134,7 @@ pipeline:
         "  'glob@>=10.0.0 <14.0.2': 14.0.2",     # CVE-2026-118773 (abort branches keep walking; fix only 14.0.2). The range
                                                  # intersects only the 10-13 specs (rimraf 5, js-beautify, npmcli,
                                                  # unified-engine), never the glob 7 ones; 10 to 14 keeps glob()/globSync.
-        "  'minimatch@>=10.0.0 <11.0.1': 11.0.1",  # CVE-2026-118764 (fix only 11.0.1); readdir-glob 3, glob 13 (2026-11-01)
+        "  'minimatch@>=9.0.0 <11.0.1': 11.0.1",  # CVE-2026-118764 (fix only 11.0.1); readdir-glob 3, glob 13 (2026-11-01); 9.x too since 6.73 (2026-11-02, named export since 9)
         "  'jsonwebtoken@<9.0.0': 9.0.3",        # CVE-2022-23539/23540/23541
         "  'multer@<2.5.0': 2.5.0",              # CVE-2026-5079/5038 fixed at 2.2.0, then
                                                  # CVE-2026-77037/77078/82333 HIGH + 77063 LOW
