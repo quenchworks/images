@@ -9,7 +9,7 @@
 # `FROM` it in CI or run `pnpm` directly (`docker run <img> install`).
 #
 # quench-pnpm ships pnpm as a node `.cjs` whose `#!/usr/bin/env node` shebang
-# resolves against the bundled Node runtime, so nodejs-22 is added explicitly to
+# resolves against the bundled Node runtime, so nodejs-24 is added explicitly to
 # give `node -v` and to back the launcher.
 contents:
   keyring:
@@ -21,7 +21,7 @@ contents:
   packages:
     - wolfi-baselayout
     - ca-certificates-bundle
-    - nodejs-22                   # LTS Node runtime backing pnpm's launcher
+    - nodejs-24                   # LTS Node runtime backing pnpm's launcher (2026-11-02: 22 -> 24, nodejs-22 22.23.2 carries 6 findings fixed only in the unpublished 22.23.4; pnpm 11 needs node >=22.13)
     # NO `npm` apk. It was here as a convenience, but Wolfi's npm apk vendors its own
     # node_modules tree (usr/lib/node_modules/npm/node_modules/...) which is the ONLY
     # remaining fixable-CVE surface in this image: brace-expansion 5.0.7 (CVE-2026-14257,

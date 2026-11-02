@@ -1,7 +1,7 @@
 # pnpm from-source: pnpm 11 ships on npm as a SELF-CONTAINED, prebuilt bundle
 # (bin/pnpm.cjs + a bundled dist/), so there is nothing to compile -- we just
 # fetch the exact npm release tarball (sha256-pinned) and lay it down under
-# /usr/lib/node_modules/pnpm on the Wolfi nodejs-22 runtime. This lets us pin
+# /usr/lib/node_modules/pnpm on the Wolfi nodejs-24 runtime. This lets us pin
 # EXACT upstream pnpm versions that Wolfi's own apk lags behind. __VER__ and
 # __SHA256__ are rendered in from apps/pnpm/build.conf.
 # pnpm 12 is a native Rust binary instead (@pnpm/exe.<os>-<arch> on npm); the first
@@ -15,7 +15,7 @@ package:
     - license: MIT
   dependencies:
     runtime:
-      - nodejs-22
+      - nodejs-24
 
 environment:
   contents:
@@ -77,7 +77,7 @@ pipeline:
       # (11.17.0 shipped 7.5.20, 11.18.0 already ships 7.5.22), so a BLIND replace would
       # silently DOWNGRADE the newer vendored copy and re-introduce whatever it fixed.
       # So: replace only a copy that is actually BELOW the floor, and leave anything at or
-      # above it alone. This env has no node (nodejs-22 is a RUNTIME dep, not a build one),
+      # above it alone. This env has no node (nodejs-24 is a RUNTIME dep, not a build one),
       # so the version is read out of package.json with sed and compared with the same
       # awk major.minor.patch comparator docs/go-module-float.md uses -- busybox awk is
       # present, whereas `sort -V` is not a feature this env guarantees.
