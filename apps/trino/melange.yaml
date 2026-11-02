@@ -39,9 +39,10 @@ environment:
       - ca-certificates-bundle
       - curl
       - go
-      - maven-3.9               # 483: regenerate iceberg's relocated guava (see below)
+      - maven-3.9               # regenerate iceberg's relocated guava and parquet-jackson (see below)
       - unzip                   # unzip -Z1 (busybox unzip has no -Z)
       - openjdk-25-default-jdk
+      - python-3                # parquet-jackson merge (zipfile)
 
 pipeline:
   - uses: fetch
@@ -85,6 +86,7 @@ pipeline:
       # 483 only: 484 already ships jackson 2.22.3 (no tools.jackson 3.x), lz4-java 1.12.0,
       # netty 4.2.19, httpclient5 5.6.5, libthrift 0.25.0 and snowflake-jdbc-thin 4.4.0
       # (listed from the 484 core tarball and plugin zips, 2026-10-19). The gate scans both.
+      M=https://repo1.maven.org/maven2
       if [ "$V" = 483 ]; then
       # jackson-databind 2.22.1 (CVE-2026-68497/-19032/-83557) (and tools.jackson 3.2.1) sit in lib/ and
       # every plugin; 2.22.3 and 3.2.3 fix them and CVE-2026-91776/-91777. jackson-core 2.22.1 and
@@ -92,15 +94,11 @@ pipeline:
       # Content swap, filename kept; the name prefix varies (group-prefixed in most plugins, bare
       # in others), so match the suffix. lz4-java 1.11.1 -> 1.11.4 (CVE-2026-106449..106453) rides
       # the same loop: 1.11.4 has the identical file list and module name (diffed against 1.11.1).
-      # guava 33.6.0 -> 33.7.2-jre (CVE-2026-102554) and snappy-java 1.1.10.8 -> 1.1.10.9 too (2026-11-01).
-      M=https://repo1.maven.org/maven2
       for spec in "jackson-databind-2.22.1.jar com/fasterxml/jackson/core/jackson-databind/2.22.3/jackson-databind-2.22.3.jar 556db5439e206114346043f68d200497dc96a0bca62a360a81784092ebd0e0a9" \
                   "jackson-databind-3.2.1.jar tools/jackson/core/jackson-databind/3.2.3/jackson-databind-3.2.3.jar 235b72436af983857e44efa42449f4f0a2c571e69d6c5d9dd1253ae7d192dcf2" \
                   "jackson-core-2.22.1.jar com/fasterxml/jackson/core/jackson-core/2.22.3/jackson-core-2.22.3.jar 8a501126a385b25841915d839508f8a66e2a0dbc8a6709d055ef3b3e852b094c" \
                   "jackson-core-3.2.1.jar tools/jackson/core/jackson-core/3.2.3/jackson-core-3.2.3.jar a0c17e7e665a5e95c82f5fb45c0fec2ae3dc556c80f0016452c9c84cd23f3817" \
-                  "lz4-java-1.11.1.jar at/yawk/lz4/lz4-java/1.11.4/lz4-java-1.11.4.jar 58c8e0b813960d2a248e050c353baea73139b48a2ffc55382d42c69707e17325" \
-                  "guava-33.6.0-jre.jar com/google/guava/guava/33.7.2-jre/guava-33.7.2-jre.jar b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c" \
-                  "snappy-java-1.1.10.8.jar org/xerial/snappy/snappy-java/1.1.10.9/snappy-java-1.1.10.9.jar 35228628442e4b9797681c7cbd3b26594f6da3379159dbd0cb07094ed3aece0d"; do
+                  "lz4-java-1.11.1.jar at/yawk/lz4/lz4-java/1.11.4/lz4-java-1.11.4.jar 58c8e0b813960d2a248e050c353baea73139b48a2ffc55382d42c69707e17325" ; do
         set -- $spec
         test -n "$(find "$dest" -name "*$1")" || { echo "$1 missing; dist moved"; exit 1; }
         j=$(mktemp)
@@ -110,6 +108,22 @@ pipeline:
         find "$dest" -name "*$1" -exec cp "$j" {} \;
         rm -f "$j"
       done
+      fi
+      # Every version from here to the next 483 block. guava -> 33.7.2-jre (CVE-2026-102554; 483 ships
+      # 33.6.0, 484's keystore secrets plugin 33.7.1) and snappy-java -> 1.1.10.9 (483's iceberg ships
+      # 1.1.10.8): content swap with the filename kept, only copies older than the fix.
+      lift() {  # <find -name glob> <sed giving the version from the file name> <fixed> <maven path> <sha256>
+        find "$dest" -name "$1" > /tmp/lift.list
+        while IFS= read -r j; do
+          v="$(basename "$j" | sed -E "$2")"
+          [ "$(printf '%s\n%s\n' "$v" "$3" | sort -V | head -1)" = "$3" ] && continue
+          n="/tmp/lift-$3.jar"
+          [ -f "$n" ] || { curl -fsSL -o "$n" "$M/$4"; echo "$5  $n" | sha256sum -c - >/dev/null; chmod 644 "$n"; }
+          cp "$n" "$j"; echo "  $j <- $3"
+        done < /tmp/lift.list
+      }
+      lift '*guava-[0-9]*-jre.jar' 's/.*guava-([0-9.]+)-jre\.jar$/\1/' 33.7.2 com/google/guava/guava/33.7.2-jre/guava-33.7.2-jre.jar b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c
+      lift '*snappy-java-1.1.10.*.jar' 's/.*snappy-java-([0-9.]+)\.jar$/\1/' 1.1.10.9 org/xerial/snappy/snappy-java/1.1.10.9/snappy-java-1.1.10.9.jar 35228628442e4b9797681c7cbd3b26594f6da3379159dbd0cb07094ed3aece0d
       # OpenTelemetry core moves as ONE set to 1.67.0 (the opentelemetry-api fix): the 1.x SDK
       # reaches into api internals that move between releases (1.67 moved api.internal.ConfigUtil
       # into opentelemetry-common). Content swap with the filename kept, like the loop above.
@@ -149,7 +163,7 @@ pipeline:
       # httpclient5 5.6.2 and libthrift 0.23.0. The whole netty family moves to
       # 4.2.17 together; natives for other operating systems are dropped.
       ice="$dest/plugin/iceberg"
-      # iceberg-bundled-guava-1.11.0 is guava 33.6.0 (+ failureaccess) relocated to
+      # iceberg-bundled-guava (1.11.0: guava 33.6.0, 1.12.0: 33.7.1, + failureaccess) is relocated to
       # org.apache.iceberg.relocated.com.google.common, so a plain jar swap cannot reach it,
       # and CVE-2026-102554 (CompactHashMap/CompactHashSet/MapMakerInternalMap readObject) is
       # in it. No Iceberg release ships 33.7.2 yet (1.12.0 bundles 33.7.1; main bumped it on
@@ -188,6 +202,58 @@ pipeline:
       ! unzip -Z1 /tmp/ibg/target/ibg-1.jar | grep -q '^com/google/common/' || { echo "unrelocated guava in the bundle"; exit 1; }
       unzip -Z1 /tmp/ibg/target/ibg-1.jar | grep -qx 'org/apache/iceberg/relocated/com/google/common/util/concurrent/internal/InternalFutureFailureAccess.class'
       cp /tmp/ibg/target/ibg-1.jar "$ibg"; chmod 644 "$ibg"
+      # parquet-jackson (484 iceberg: 1.18.1, the newest) shades jackson-core/databind 2.22.2 under
+      # shaded.parquet (CVE-2026-89407/-89425/-91776/-91777, fixed 2.22.3). Re-shade 2.22.3 with the same
+      # relocation into the original jar: its pom, manifest, licenses and module-info stay. maven-shade
+      # 3.6.2 rewrites multi-release classes but leaves their paths unrelocated, so the merge moves them
+      # under shaded/parquet. Upstream's copy is the full jackson set (class lists diffed, 2026-11-02).
+      find "$dest" -name '*parquet-jackson-*.jar' > /tmp/pj.list
+      while IFS= read -r pj; do
+        v="$(unzip -p "$pj" META-INF/maven/com.fasterxml.jackson.core/jackson-databind/pom.properties | sed -n 's/^version=//p')"
+        [ "$(printf '%s\n2.22.3\n' "$v" | sort -V | head -1)" = 2.22.3 ] && continue
+        if [ ! -f /tmp/pj/target/pj-1.jar ]; then
+          mkdir -p /tmp/pj && cat > /tmp/pj/pom.xml <<'POM'
+      <project xmlns="http://maven.apache.org/POM/4.0.0">
+        <modelVersion>4.0.0</modelVersion>
+        <groupId>quench</groupId><artifactId>pj</artifactId><version>1</version>
+        <dependencies>
+          <dependency><groupId>com.fasterxml.jackson.core</groupId><artifactId>jackson-databind</artifactId><version>2.22.3</version></dependency>
+        </dependencies>
+        <build><plugins><plugin>
+          <groupId>org.apache.maven.plugins</groupId><artifactId>maven-shade-plugin</artifactId><version>3.6.2</version>
+          <executions><execution><phase>package</phase><goals><goal>shade</goal></goals><configuration>
+            <createDependencyReducedPom>false</createDependencyReducedPom>
+            <artifactSet><includes><include>com.fasterxml.jackson.core:*</include></includes></artifactSet>
+            <relocations><relocation><pattern>com.fasterxml.jackson</pattern><shadedPattern>shaded.parquet.com.fasterxml.jackson</shadedPattern></relocation></relocations>
+            <transformers><transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/></transformers>
+          </configuration></execution></executions>
+        </plugin></plugins></build>
+      </project>
+      POM
+          (cd /tmp/pj && mvn -B -q -C -Dmaven.repo.local=/tmp/m2 package)
+          echo "556db5439e206114346043f68d200497dc96a0bca62a360a81784092ebd0e0a9  /tmp/m2/com/fasterxml/jackson/core/jackson-databind/2.22.3/jackson-databind-2.22.3.jar" | sha256sum -c -
+          echo "8a501126a385b25841915d839508f8a66e2a0dbc8a6709d055ef3b3e852b094c  /tmp/m2/com/fasterxml/jackson/core/jackson-core/2.22.3/jackson-core-2.22.3.jar" | sha256sum -c -
+        fi
+        python3 -I - "$pj" /tmp/pj/target/pj-1.jar <<'PY'
+      import os, re, sys, zipfile
+      old, new = sys.argv[1], sys.argv[2]
+      def mine(n):
+          if n.startswith("META-INF/versions/"): return "/module-info.class" not in n
+          return n.startswith(("shaded/parquet/", "META-INF/maven/com.fasterxml.jackson.core/", "META-INF/services/shaded.parquet."))
+      with zipfile.ZipFile(old) as zo, zipfile.ZipFile(new) as zn, zipfile.ZipFile(old + ".new", "w", zipfile.ZIP_DEFLATED) as w:
+          for e in zo.infolist():
+              if not mine(e.filename): w.writestr(e, zo.read(e.filename))
+          for e in zn.infolist():
+              n = re.sub(r"^(META-INF/versions/\d+/)com/fasterxml/", r"\1shaded/parquet/com/fasterxml/", e.filename)
+              if mine(n) and not n.endswith("/"): w.writestr(n, zn.read(e.filename))
+      os.replace(old + ".new", old)
+      PY
+        chmod 644 "$pj"
+        [ "$(unzip -p "$pj" META-INF/maven/com.fasterxml.jackson.core/jackson-databind/pom.properties | sed -n 's/^version=//p')" = 2.22.3 ]
+        ! unzip -Z1 "$pj" | grep -qE '^com/fasterxml/|^META-INF/versions/[0-9]+/com/' || { echo "unrelocated jackson in $pj"; exit 1; }
+        echo "  $pj <- shaded jackson 2.22.3"
+      done < /tmp/pj.list
+      if [ "$V" = 483 ]; then
       jswap() {  # <old jar> <maven group path> <artifact> <version> <new jar name> <sha256>
         test -f "$ice/$1" || { echo "swap target $1 missing"; exit 1; }
         rm "$ice/$1"
