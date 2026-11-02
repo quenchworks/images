@@ -116,9 +116,45 @@ pipeline:
         echo "standaloneEnabled=${ZOO_STANDALONE_ENABLED:-true}"
         # ensemble members, e.g. ZOO_SERVERS="server.1=zk1:2888:3888 server.2=zk2:2888:3888"
         if [ -n "${ZOO_SERVERS:-}" ]; then for s in ${ZOO_SERVERS}; do echo "$s"; done; fi
+        # Optional native TLS (the chart sets ZOO_TLS_DIR=/tls for tls.enabled): a Netty secure
+        # client port beside the plain one. The PEM key store wants key and certificate in one
+        # file, and the Secret mount is read-only, so they are joined below into the conf dir.
+        if [ -n "${ZOO_TLS_DIR:-}" ]; then
+          echo "serverCnxnFactory=org.apache.zookeeper.server.NettyServerCnxnFactory"
+          echo "secureClientPort=${ZOO_SECURE_CLIENT_PORT:-2281}"
+          echo "ssl.keyStore.location=$CONF_DIR/tls-keystore.pem"
+          echo "ssl.keyStore.type=PEM"
+          echo "ssl.trustStore.location=$ZOO_TLS_DIR/ca.crt"
+          echo "ssl.trustStore.type=PEM"
+          echo "ssl.clientAuth=none"
+        fi
         # any extra raw lines
         if [ -n "${ZOO_CFG_EXTRA:-}" ]; then printf '%s\n' "${ZOO_CFG_EXTRA}"; fi
       } > "$CFG"
+      if [ -n "${ZOO_TLS_DIR:-}" ]; then
+        # ZooKeeper's PEM key store reads PKCS#8 only; Helm's genSignedCert and cert-manager's
+        # RSA default write PKCS#1. Wrap PKCS#1 in the fixed PKCS#8 header (version 0 +
+        # rsaEncryption) with busybox base64/od; PKCS#8 passes through unchanged.
+        derlen() { if [ "$1" -lt 128 ]; then printf '%02x' "$1"; elif [ "$1" -lt 256 ]; then printf '81%02x' "$1"; else printf '82%04x' "$1"; fi; }
+        key="$ZOO_TLS_DIR/tls.key"
+        (
+          umask 077
+          if grep -q 'BEGIN RSA PRIVATE KEY' "$key"; then
+            hex="$(sed '/-----/d' "$key" | base64 -d | od -An -v -tx1 | tr -d ' \n')"
+            oct="04$(derlen $(( ${#hex} / 2 )))$hex"
+            inner="020100300d06092a864886f70d0101010500$oct"
+            der="30$(derlen $(( ${#inner} / 2 )))$inner"
+            {
+              echo "-----BEGIN PRIVATE KEY-----"
+              printf "$(printf '%s' "$der" | sed 's/../\\x&/g')" | base64 | tr -d '\n' | fold -w 64; echo
+              echo "-----END PRIVATE KEY-----"
+            } > "$CONF_DIR/tls-keystore.pem"
+          else
+            cat "$key" > "$CONF_DIR/tls-keystore.pem"
+          fi
+          cat "$ZOO_TLS_DIR/tls.crt" >> "$CONF_DIR/tls-keystore.pem"
+        )
+      fi
 
       # node identity for an ensemble (ignored in standalone)
       echo "${ZOO_MY_ID:-1}" > "$DATA_DIR/myid"
