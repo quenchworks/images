@@ -128,7 +128,8 @@ pipeline:
         fi
       fi
 
-      exec postgres -D "$PGDATA" -k "$SOCKET_DIR"
+      # extra args (the chart's `args`, e.g. -c ssl=on) reach the server
+      exec postgres -D "$PGDATA" -k "$SOCKET_DIR" "$@"
       SCRIPT
       chmod 0755 "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh"
   # --- Patroni HA add-on -----------------------------------------------------
