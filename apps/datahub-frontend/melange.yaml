@@ -41,8 +41,10 @@ pipeline:
       mkdir -p rootfs
       crane export --platform "$plat" "index.docker.io/acryldata/datahub-frontend-react@${dig}" - | tar -x -C rootfs datahub-frontend
       src=rootfs/datahub-frontend
-      # the app jar is named <major.minor.patch>-<build>: v1.7.0.1 ships datahub-frontend-1.7.0-1.jar
-      test -f "$src/lib/datahub-frontend-${VER%.*}-${VER##*.}.jar" || { echo "FATAL: not v$VER"; ls "$src/lib" | grep frontend; exit 1; }
+      # the app jar carries the version, a 4th part as -<build>: v1.7.0.1 ships datahub-frontend-1.7.0-1.jar,
+      # v1.8.0 datahub-frontend-1.8.0.jar
+      j="$VER"; case "$VER" in *.*.*.*) j="${VER%.*}-${VER##*.}" ;; esac
+      test -f "$src/lib/datahub-frontend-$j.jar" || { echo "FATAL: not v$VER"; ls "$src/lib" | grep frontend; exit 1; }
       D="${{targets.destdir}}"; APP=/datahub-frontend
       install -d "$D$APP"
       cp -a "$src/lib" "$src/conf" "$D$APP/"
