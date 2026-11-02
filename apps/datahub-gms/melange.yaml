@@ -141,8 +141,13 @@ pipeline:
                 .filter(n -> n.startsWith("META-INF/maven/") && n.endsWith("/pom.properties")).findFirst().orElseThrow();
             roots.addAll(rs);
             ZipEntry have = tz.getEntry(pom);
-            if (have == null) throw new IllegalStateException(target + " bundles no " + pom);
-            String hv = version(read(tz, have)), fv = version(read(z, z.getEntry(pom)));
+            // a bundle can carry a library's classes without its pom (hadoop-shaded-guava has
+            // failureaccess's); classes under the root then count as an older copy
+            String hv;
+            if (have != null) hv = version(read(tz, have));
+            else if (Collections.list(tz.entries()).stream().anyMatch(e -> rs.stream().anyMatch(r -> e.getName().startsWith(pre + r)))) hv = "0";
+            else throw new IllegalStateException(target + " bundles no " + pom);
+            String fv = version(read(z, z.getEntry(pom)));
             // a kept library nested under a replaced root (failureaccess in guava's
             // com/google/common/) must survive the drop below
             if (cmp(hv, fv) >= 0) { kept.addAll(rs); System.out.println("shade: " + target.getFileName() + ": keeps " + pom + " " + hv + " (>= " + fv + ")"); continue; }
