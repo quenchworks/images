@@ -6,7 +6,7 @@
 #
 # NATIVE module: better-sqlite3 (the default embedded storage engine) compiles via
 # node-gyp, so the build env needs python3 + build-base (make/g++) on top of
-# nodejs-22 + npm. npm is also what lets better-sqlite3 fetch its PREBUILT binary
+# nodejs-24 + npm. npm is also what lets better-sqlite3 fetch its PREBUILT binary
 # first (prebuild-install), avoiding a GCC-16 source compile. After install we run
 # `node bin/build.js dist`, which symlinks vendored assets into htdocs/ and
 # bundles + compresses the combined JS/CSS the web UI serves (uglify-js is a
@@ -24,7 +24,7 @@ package:
     - license: BSD-3-Clause
   dependencies:
     runtime:
-      - nodejs-22              # xyOps runs on Node (Dockerfile uses node:22; lib/main.js requires >=16)
+      - nodejs-24              # xyOps runs on Node (lib/main.js requires >=16); 24 since 2026-11-02, nodejs-22 22.23.2 carries findings fixed only in the unpublished 22.23.4
       - ca-certificates-bundle # TLS to external Postgres/Redis, SMTP, update + marketplace checks
       - tzdata                 # the scheduler runs cron-style events against the configured timezone
 
@@ -38,7 +38,7 @@ environment:
       - build-base             # make + g++ for node-gyp (native better-sqlite3)
       - busybox
       - ca-certificates-bundle
-      - nodejs-22
+      - nodejs-24
       - npm                    # better-sqlite3 probes a PREBUILT binary via npm/prebuild-install
                                # FIRST; without npm that path fails and it falls back to a
                                # GCC-16 source compile. With npm present the prebuilt is used.
