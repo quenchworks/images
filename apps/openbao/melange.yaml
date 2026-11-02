@@ -152,7 +152,7 @@ pipeline:
       # and UNINITIALIZED -- that is expected; `bao operator init` + unseal is an operator
       # step (the chart documents it). disable_mlock=true because mlock needs CAP_IPC_LOCK
       # which a nonroot/cap-dropped container cannot hold. TLS is OFF by default for the
-      # internal deployment (NetworkPolicy is the boundary); enabling TLS is a follow-up.
+      # internal deployment (NetworkPolicy is the boundary); BAO_TLS_CERT_FILE turns it on.
       NODE_ID="${BAO_NODE_ID:-$(hostname 2>/dev/null || echo node1)}"
       # api_addr / cluster_addr default to the container hostname so a node advertises a
       # routable address; override via BAO_API_ADDR / BAO_CLUSTER_ADDR.
@@ -160,6 +160,15 @@ pipeline:
       [ -n "$ADV" ] || ADV="127.0.0.1"
       API_ADDR="${BAO_API_ADDR:-http://${ADV}:8200}"
       CLUSTER_ADDR="${BAO_CLUSTER_ADDR:-http://${ADV}:8201}"
+
+      # Optional native TLS on the listener: the chart sets BAO_TLS_CERT_FILE/BAO_TLS_KEY_FILE
+      # (its /tls Secret mount) when tls.enabled; otherwise TLS stays off.
+      if [ -n "${BAO_TLS_CERT_FILE:-}" ]; then
+        LISTENER_TLS="tls_cert_file = \"$BAO_TLS_CERT_FILE\"
+        tls_key_file  = \"$BAO_TLS_KEY_FILE\""
+      else
+        LISTENER_TLS="tls_disable = true"
+      fi
 
       CONFIG_FILE="$BAO_CONFIG_DIR/bao.hcl"
       cat > "$CONFIG_FILE" <<HCL
@@ -173,7 +182,7 @@ pipeline:
 
       listener "tcp" {
         address     = "0.0.0.0:8200"
-        tls_disable = true
+        $LISTENER_TLS
       }
 
       api_addr     = "$API_ADDR"
