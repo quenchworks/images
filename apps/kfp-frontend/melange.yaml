@@ -107,6 +107,9 @@ pipeline:
       if [ -f scripts/patch-minio.mjs ]; then
         sed -i "s|'0.5.0',|'0.5.1',|" scripts/patch-minio.mjs
         grep -q "'0.5.1'," scripts/patch-minio.mjs || { echo "FATAL: patch-minio.mjs expectation not updated"; exit 1; }
+        # 2.17.3 backported the script expecting stream-json 3.6.0; our pin is 3.7.0 (2.18 expects it too).
+        sed -i "s|'3.6.0'\]|'3.7.0']|" scripts/patch-minio.mjs
+        grep -q "'3.7.0'\]" scripts/patch-minio.mjs || { echo "FATAL: patch-minio.mjs stream-json expectation not updated"; exit 1; }
       fi
       npm install --engine-strict=false --no-audit --no-fund
       ./node_modules/.bin/tsc --project .
