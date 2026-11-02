@@ -24,6 +24,8 @@ environment:
       - curl
       - python-3
       - zip
+      - maven-3.9              # regenerate iceberg-bundled-guava (see the pipeline)
+      - openjdk-25-default-jdk
       - unzip
 
 pipeline:
@@ -112,7 +114,15 @@ pipeline:
       for i, path in enumerate(jars):
           if path not in changed: continue
           extra = fully(zipfile.ZipFile(root + "/" + path).namelist()) - fi.get(i, set())
-          assert not extra, f"{path} gained fully-indexed resources {sorted(extra)}"
+          if extra:
+              # Quarkus never served these from this jar (its build-time index lacks them), so a
+              # swapped jar that carries them loses them; classes are untouched
+              src = root + "/" + path
+              with zipfile.ZipFile(src) as zi, zipfile.ZipFile(src + ".new", "w", zipfile.ZIP_DEFLATED) as zo:
+                  for e in zi.infolist():
+                      if e.filename not in extra: zo.writestr(e, zi.read(e.filename))
+              import os; os.replace(src + ".new", src)
+              print(f"dropped from {path}: {sorted(extra)}")
       out.write(b[s:])
       open(dat, "wb").write(out.getvalue())
       assert changed <= set(jars), f"not in the index: {sorted(changed - set(jars))}"
@@ -135,7 +145,13 @@ pipeline:
             curl -fsSL -o "/tmp/jswap-$3-${2##*/}.jar" "$M/$2/$3/${2##*/}-$3.jar"
             echo "$4  /tmp/jswap-$3-${2##*/}.jar" | sha256sum -c -
           }
+          # the Quarkus index cannot take new top-level or META-INF resources (guava 33.7 adds
+          # module-info.class): keep only those the replaced jar had; classes are untouched
+          rx='^[^/]+$|^META-INF/[^/]+$|^META-INF/(services|versions)/'
+          { unzip -Z1 "$j" | grep -E "$rx" || true; } | sort > /tmp/jswap.old
           cp "/tmp/jswap-$3-${2##*/}.jar" "$j"; chmod 644 "$j"
+          { unzip -Z1 "$j" | grep -E "$rx" || true; } | sort | comm -13 /tmp/jswap.old - > /tmp/jswap.extra
+          [ ! -s /tmp/jswap.extra ] || zip -q -d "$j" -@ < /tmp/jswap.extra
           CH="$CH $j"
           echo "swapped ${j#$D/} -> $3"
         done
@@ -183,6 +199,113 @@ pipeline:
         fi
         CH="$CH $j $api"; echo "stripped ${j#$D/}, metrics2 of ${api#$D/}"
       done
+
+      # 2026-11-02 scan: guava 33.7.2-jre (CVE-2026-102554; failureaccess stays 1.0.1: 1.0.3 has
+      # the same classes but adds META-INF resources the Quarkus index cannot take), snappy-java 1.1.10.9. Same file names;
+      # the re-index below adds any new package. OTel stays 1.62: see build.conf STATUS.
+      jswap com.google.guava.guava com/google/guava/guava 33.7.2-jre b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c
+      jswap org.xerial.snappy.snappy-java org/xerial/snappy/snappy-java 1.1.10.9 35228628442e4b9797681c7cbd3b26594f6da3379159dbd0cb07094ed3aece0d
+      # iceberg-bundled-guava relocates guava under org.apache.iceberg.relocated, out of a jar
+      # swap's reach; regenerate it from 33.7.2-jre with the same relocation (apps/trino does the
+      # same), keep Iceberg's GuavaClasses anchor and the file name.
+      export JAVA_HOME=/usr/lib/jvm/java-25-openjdk PATH="/usr/lib/jvm/java-25-openjdk/bin:$PATH"
+      mkdir -p /tmp/ibg && cat > /tmp/ibg/pom.xml <<'POM'
+      <project xmlns="http://maven.apache.org/POM/4.0.0">
+        <modelVersion>4.0.0</modelVersion>
+        <groupId>quench</groupId><artifactId>ibg</artifactId><version>1</version>
+        <dependencies>
+          <dependency><groupId>com.google.guava</groupId><artifactId>guava</artifactId><version>33.7.2-jre</version></dependency>
+          <dependency><groupId>com.google.guava</groupId><artifactId>failureaccess</artifactId><version>1.0.3</version></dependency>
+        </dependencies>
+        <build><plugins><plugin>
+          <groupId>org.apache.maven.plugins</groupId><artifactId>maven-shade-plugin</artifactId><version>3.6.2</version>
+          <executions><execution><phase>package</phase><goals><goal>shade</goal></goals><configuration>
+            <createDependencyReducedPom>false</createDependencyReducedPom>
+            <artifactSet><includes><include>com.google.guava:guava</include><include>com.google.guava:failureaccess</include></includes></artifactSet>
+            <filters><filter><artifact>*:*</artifact><excludes>
+              <exclude>com/google/thirdparty/**</exclude><exclude>META-INF/versions/9/module-info.class</exclude>
+            </excludes></filter></filters>
+            <relocations><relocation><pattern>com.google.common</pattern><shadedPattern>org.apache.iceberg.relocated.com.google.common</shadedPattern></relocation></relocations>
+          </configuration></execution></executions>
+        </plugin></plugins></build>
+      </project>
+      POM
+      (cd /tmp/ibg && mvn -B -q -C -Dmaven.repo.local=/tmp/m2 package)
+      echo "b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c  /tmp/m2/com/google/guava/guava/33.7.2-jre/guava-33.7.2-jre.jar" | sha256sum -c -
+      n=0
+      for ibg in "$D"/*/lib/main/org.apache.iceberg.iceberg-bundled-guava-*.jar; do
+        [ -f "$ibg" ] || continue; n=$((n+1))
+        rm -rf /tmp/ibg/w && mkdir /tmp/ibg/w && cp /tmp/ibg/target/ibg-1.jar /tmp/ibg/w/new.jar
+        (cd /tmp/ibg/w && unzip -q "$ibg" org/apache/iceberg/GuavaClasses.class && jar uf new.jar org/apache/iceberg/GuavaClasses.class)
+        v="$(unzip -p /tmp/ibg/w/new.jar META-INF/maven/com.google.guava/guava/pom.properties | sed -n 's/^version=//p')"
+        [ "$v" = 33.7.2-jre ] || { echo "regenerated bundle reports guava $v"; exit 1; }
+        # the Quarkus index cannot take new top-level or META-INF resources: drop any the
+        # original bundle did not have (licence files, multi-release trees), classes untouched
+        idx='^[^/]+$|^META-INF/[^/]+$|^META-INF/(services|versions)/'
+        unzip -Z1 "$ibg" | grep -E "$idx" | sort > /tmp/ibg/w/old.res || true
+        unzip -Z1 /tmp/ibg/w/new.jar | grep -E "$idx" | sort > /tmp/ibg/w/new.res || true
+        comm -13 /tmp/ibg/w/old.res /tmp/ibg/w/new.res > /tmp/ibg/w/extra.res
+        [ ! -s /tmp/ibg/w/extra.res ] || (cd /tmp/ibg/w && zip -q -d new.jar -@ < extra.res)
+        cp /tmp/ibg/w/new.jar "$ibg"; chmod 644 "$ibg"; CH="$CH $ibg"; echo "regenerated ${ibg#$D/} (dropped $(wc -l < /tmp/ibg/w/extra.res) extra resources)"
+      done
+      [ "$n" -gt 0 ] || { echo "no iceberg-bundled-guava jar in the dist; re-audit"; exit 1; }
+      # hadoop-client-runtime carries guava 33.4.8 three times, relocated under hadoop's thirdparty
+      # and shaded prefixes and Curator's own shaded copy, behind one guava pom. Each copy is
+      # rebuilt from 33.7.2 with the same relocation and replaced class for class.
+      for pre in org.apache.hadoop.thirdparty org.apache.hadoop.shaded org.apache.hadoop.shaded.org.apache.curator.shaded; do
+        rm -rf /tmp/hg && mkdir -p /tmp/hg
+        sed "s|<shadedPattern>org.apache.iceberg.relocated.com.google.common</shadedPattern>|<shadedPattern>$pre.com.google.common</shadedPattern>|" /tmp/ibg/pom.xml > /tmp/hg/pom.xml
+        grep -q "<shadedPattern>$pre.com.google.common</shadedPattern>" /tmp/hg/pom.xml
+        (cd /tmp/hg && mvn -B -q -C -o -Dmaven.repo.local=/tmp/m2 package)
+        cp /tmp/hg/target/ibg-1.jar "/tmp/hg-$pre.jar"
+      done
+      n=0
+      # hadoop-shaded-guava (server tree) is the thirdparty copy on its own
+      for hcr in "$D"/*/lib/main/org.apache.hadoop.hadoop-client-runtime-*.jar "$D"/*/lib/main/org.apache.hadoop.thirdparty.hadoop-shaded-guava-*.jar; do
+        [ -f "$hcr" ] || continue; n=$((n+1))
+        rm -rf /tmp/hw && mkdir /tmp/hw && (cd /tmp/hw && unzip -q "$hcr")
+        k=0
+        for pre in org.apache.hadoop.thirdparty org.apache.hadoop.shaded org.apache.hadoop.shaded.org.apache.curator.shaded; do
+          d="/tmp/hw/$(echo "$pre" | tr . /)/com/google/common"
+          [ -d "$d" ] || continue; k=$((k+1))
+          rm -rf "$d"
+          (cd /tmp/hw && unzip -qo "/tmp/hg-$pre.jar" "$(echo "$pre" | tr . /)/com/google/common/*")
+        done
+        [ "$k" -gt 0 ] || { echo "no relocated guava in ${hcr##*/}; re-audit"; exit 1; }
+        sed -i 's/^version=33\.4\.8-jre$/version=33.7.2-jre/' /tmp/hw/META-INF/maven/com.google.guava/guava/pom.properties
+        grep -qx 'version=33.7.2-jre' /tmp/hw/META-INF/maven/com.google.guava/guava/pom.properties
+        rm -f "$hcr" && (cd /tmp/hw && zip -qrX "$hcr" .) && chmod 644 "$hcr"
+        CH="$CH $hcr"; echo "rebuilt guava in ${hcr#$D/}"
+      done
+      [ "$n" -gt 0 ] || { echo "no hadoop-client-runtime jar in the dist; re-audit"; exit 1; }
+
+      # guava 33.7.2 dropped two anonymous classes that the server's build-time Hibernate
+      # Validator step recorded by name and loads with Class.forName into a LinkedHashSet; boot
+      # dies on ClassNotFoundException. Point those constants at a class already in the same set
+      # (a duplicate add is a no-op). Rewriting a CONSTANT_Utf8 in place is safe: the class file
+      # addresses the pool by index, never by byte offset. Exactly 2 hits or the build fails.
+      python3 -I - "$D/server/quarkus/generated-bytecode.jar" <<'PY'
+      import os, struct, sys, zipfile
+      jar = sys.argv[1]
+      to = b"com.google.common.base.Joiner$3"
+      dead = [b"com.google.common.collect.ImmutableSet$Indexed$1",
+              b"com.google.common.collect.ImmutableSortedMap$1EntrySet$1"]
+      u = lambda s: b"\x01" + struct.pack(">H", len(s)) + s
+      hits = 0
+      with zipfile.ZipFile(jar) as zi, zipfile.ZipFile(jar + ".new", "w", zipfile.ZIP_DEFLATED) as zo:
+          for e in zi.infolist():
+              d = zi.read(e.filename)
+              if e.filename.endswith(".class"):
+                  for n in dead:
+                      c = d.count(u(n))
+                      if c:
+                          assert u(to) in d, f"{e.filename}: {to} not already in the set"
+                          d = d.replace(u(n), u(to)); hits += c
+              zo.writestr(e, d)
+      assert hits == 2, f"expected 2 dead guava names in generated-bytecode.jar, found {hits}; re-audit"
+      os.replace(jar + ".new", jar)
+      print("generated-bytecode.jar: 2 dead guava names remapped")
+      PY
 
       for app in "$D"/*/quarkus/quarkus-application.dat; do
         a="${app%/quarkus/quarkus-application.dat}"
