@@ -31,6 +31,16 @@ export HOME="${MONGO_LOG_DIR:-/data/log}"
 mkdir -p "$DBPATH" "$LOGDIR"
 SOCKDIR="$LOGDIR"
 
+# Optional native TLS (the chart sets MONGO_TLS_DIR=/tls when tls.enabled). mongod wants
+# certificate and key in ONE file, and the Secret mount is read-only, so join them in the
+# writable log dir. preferTLS keeps plaintext working for clients that have not moved yet.
+TLS_ARGS=()
+if [ -n "${MONGO_TLS_DIR:-}" ]; then
+  ( umask 077; cat "$MONGO_TLS_DIR/tls.crt" "$MONGO_TLS_DIR/tls.key" > "$LOGDIR/tls.pem" )
+  TLS_ARGS=(--tlsMode preferTLS --tlsCertificateKeyFile "$LOGDIR/tls.pem"
+    --tlsCAFile "$MONGO_TLS_DIR/ca.crt" --tlsAllowConnectionsWithoutCertificates)
+fi
+
 ROOT_USER="${MONGO_INITDB_ROOT_USERNAME:-}"
 ROOT_PASS="${MONGO_INITDB_ROOT_PASSWORD:-}"
 INIT_DB="${MONGO_INITDB_DATABASE:-}"
@@ -100,12 +110,12 @@ if [ -n "$ROOT_USER" ] && [ -n "$ROOT_PASS" ]; then
   echo "[entrypoint] starting mongod WITH --auth on 0.0.0.0:$PORT"
   exec mongod --dbpath "$DBPATH" --bind_ip_all --port "$PORT" \
     --unixSocketPrefix "$SOCKDIR" \
-    --logpath "$LOGDIR/mongod.log" --logappend --auth
+    --logpath "$LOGDIR/mongod.log" --logappend --auth "${TLS_ARGS[@]}" "$@"
 else
   # No root creds configured: run open (NetworkPolicy is the boundary). Noted.
   echo "[entrypoint] NOTE: MONGO_INITDB_ROOT_USERNAME/PASSWORD unset — running WITHOUT auth."
   echo "[entrypoint] NetworkPolicy is the security boundary in this mode."
   exec mongod --dbpath "$DBPATH" --bind_ip_all --port "$PORT" \
     --unixSocketPrefix "$SOCKDIR" \
-    --logpath "$LOGDIR/mongod.log" --logappend
+    --logpath "$LOGDIR/mongod.log" --logappend "${TLS_ARGS[@]}" "$@"
 fi
