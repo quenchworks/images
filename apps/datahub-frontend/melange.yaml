@@ -26,6 +26,7 @@ environment:
       - curl
       - crane
       - unzip
+      - zip                  # drop the bundled OTel copy from auth-api.jar
       - openjdk-25           # a full JDK: Shade.java runs as a single-file source program
 
 pipeline:
@@ -54,15 +55,17 @@ pipeline:
 
       cat > Shade.java <<'JAVA'
       // Shade: replace a library copy bundled inside another jar with a fixed release.
-      // usage: java -cp asm:asm-commons Shade.java <target.jar> <prefix|-> <extra-roots|-> <fixed.jar>...
+      // usage: java -cp asm:asm-commons Shade.java <target.jar> <prefix|-> <extra-roots|-> <fixed.jar>[=root,root]...
+      // A fixed jar's root defaults to the common prefix of its classes; =roots names them when
+      // that prefix is too wide (guava's is com/google/, which also holds gson and google-cloud).
       // prefix is the relocation the bundling jar applied (com/hazelcast/shaded/), or - when the
       // copy is not relocated. Each fixed jar's package root (com/fasterxml/jackson/core/) is
       // relocated under prefix in class references and in string constants, as maven-shade does;
       // extra-roots names roots the bundle relocated without being replaced here (comma list).
       // Classes under prefix+root are dropped from the target (multi-release copies included),
       // with the fixed jar's META-INF/maven coordinates; the fixed classes are added. Fails when
-      // a dropped top-level class has no replacement outside internal/shaded (nested and
-      // anonymous classes are private to the library and come and go between patches).
+      // a dropped public top-level class has no replacement outside internal/shaded (nested,
+      // anonymous and package-private classes are private to the library and come and go).
       import java.io.*;
       import java.nio.file.*;
       import java.util.*;
@@ -124,21 +127,30 @@ pipeline:
           Path target = Path.of(a[0]);
           pre = a[1].equals("-") ? "" : a[1];
           if (!a[2].equals("-")) roots.addAll(List.of(a[2].split(",")));
-          List<String> replaced = new ArrayList<>(), coords = new ArrayList<>();
+          List<String> replaced = new ArrayList<>(), coords = new ArrayList<>(), kept = new ArrayList<>();
           List<ZipFile> fixed = new ArrayList<>();
           ZipFile tz = new ZipFile(target.toFile());
           for (int i = 3; i < a.length; i++) {
-            ZipFile z = new ZipFile(a[i]);
+            String[] spec = a[i].split("=", 2);
+            ZipFile z = new ZipFile(spec[0]);
             List<String> names = z.stream().map(ZipEntry::getName).toList();
-            String r = root(names), pom = names.stream()
+            List<String> rs = spec.length > 1 ? List.of(spec[1].split(",")) : List.of(root(names));
+            String pom = names.stream()
                 .filter(n -> n.startsWith("META-INF/maven/") && n.endsWith("/pom.properties")).findFirst().orElseThrow();
-            roots.add(r);
+            roots.addAll(rs);
             ZipEntry have = tz.getEntry(pom);
-            if (have == null) throw new IllegalStateException(target + " bundles no " + pom);
-            String hv = version(read(tz, have)), fv = version(read(z, z.getEntry(pom)));
-            if (cmp(hv, fv) >= 0) { System.out.println("shade: " + target.getFileName() + ": keeps " + pom + " " + hv + " (>= " + fv + ")"); continue; }
+            // a bundle can carry a library's classes without its pom (hadoop-shaded-guava has
+            // failureaccess's); classes under the root then count as an older copy
+            String hv;
+            if (have != null) hv = version(read(tz, have));
+            else if (Collections.list(tz.entries()).stream().anyMatch(e -> rs.stream().anyMatch(r -> e.getName().startsWith(pre + r)))) hv = "0";
+            else throw new IllegalStateException(target + " bundles no " + pom);
+            String fv = version(read(z, z.getEntry(pom)));
+            // a kept library nested under a replaced root (failureaccess in guava's
+            // com/google/common/) must survive the drop below
+            if (cmp(hv, fv) >= 0) { kept.addAll(rs); System.out.println("shade: " + target.getFileName() + ": keeps " + pom + " " + hv + " (>= " + fv + ")"); continue; }
             fixed.add(z);
-            replaced.add(r);
+            replaced.addAll(rs);
             coords.add(pom.substring(0, pom.length() - "pom.properties".length()));
           }
           tz.close();
@@ -155,7 +167,10 @@ pipeline:
               String n = e.getName(), u = unversioned(n);
               boolean drop = coords.stream().anyMatch(n::startsWith);
               for (String r : replaced) if (u.startsWith(pre + r)) drop = true;
-              if (drop) { if (n.endsWith(".class") && n.equals(u)) dropped.add(n); continue; }
+              for (String k : kept) if (u.startsWith(pre + k)) drop = false;
+              // only a PUBLIC class can be referenced from outside its package, so only a public
+              // dropped class needs a replacement (guava 33 removed package-private helpers)
+              if (drop) { if (n.endsWith(".class") && n.equals(u) && (new ClassReader(read(t, e)).getAccess() & Opcodes.ACC_PUBLIC) != 0) dropped.add(n); continue; }
               seen.add(n);
               zo.putNextEntry(new ZipEntry(n));
               if (!e.isDirectory()) try (InputStream in = t.getInputStream(e)) { in.transferTo(zo); }
@@ -271,6 +286,45 @@ pipeline:
       swap bcutil-jdk18on-         org/bouncycastle/bcutil-jdk18on/1.85/bcutil-jdk18on-1.85.jar 590f55ed5d68529239898a4a5c4f730b6e37f45d1cfa3fbe51f8485abe32c42d
       shade hazelcast-5.7.0.jar com/hazelcast/shaded/ - jackson-core-2.21.8.jar jackson-databind-2.21.8.jar jackson-core-3.1.8.jar jackson-databind-3.1.8.jar
       shade auth-api.jar - - jackson-core-2.21.8.jar jackson-databind-2.21.8.jar
+      # 2026-11-02 scan: guava 33.7.2 (CVE-2026-102554) for the standalone jar and two bundled
+      # copies (graphql-java relocates 32.1.2 under graphql/, auth-api carries 33.6.0 unrelocated
+      # next to failureaccess);
+      # guava's roots are named, since its common prefix com/google/ also holds gson and
+      # google-cloud. snappy-java 1.1.10.9; the OTel 1.62 core set moves to 1.67.0 together.
+      fetch com/google/guava/guava/33.7.2-jre/guava-33.7.2-jre.jar b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c
+      fetch com/google/guava/failureaccess/1.0.3/failureaccess-1.0.3.jar cbfc3906b19b8f55dd7cfd6dfe0aa4532e834250d7f080bd8d211a3e246b59cb
+      G="guava-33.7.2-jre.jar=com/google/common/,com/google/thirdparty/"
+      shade graphql-java-22.3.jar graphql/ - "$G"
+      shade auth-api.jar - - "$G" failureaccess-1.0.3.jar
+      swap guava-                  com/google/guava/guava/33.7.2-jre/guava-33.7.2-jre.jar b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c
+      swap snappy-java-            org/xerial/snappy/snappy-java/1.1.10.9/snappy-java-1.1.10.9.jar 35228628442e4b9797681c7cbd3b26594f6da3379159dbd0cb07094ed3aece0d
+      swap opentelemetry-api-incubator- io/opentelemetry/opentelemetry-api-incubator/1.67.0-alpha/opentelemetry-api-incubator-1.67.0-alpha.jar fea3d78726e49620168c3f6194ff491edfd1ec89b2df06fd5d5b73e55d74a342
+      swap opentelemetry-api- io/opentelemetry/opentelemetry-api/1.67.0/opentelemetry-api-1.67.0.jar 538d1dff2f9a37aecbc0ef98fd17273a3affb058e734e6763a3a07a38a5fdc59
+      swap opentelemetry-common- io/opentelemetry/opentelemetry-common/1.67.0/opentelemetry-common-1.67.0.jar da97bdb395418e16ecdcbe7ad3497f45b9e767ceda4ae7e86133e7a757ac377f
+      swap opentelemetry-context- io/opentelemetry/opentelemetry-context/1.67.0/opentelemetry-context-1.67.0.jar 40fb813fb5e27ec2691daa29c81b572b5b1541ef9b41e62490c3ee3e6407c55e
+      swap opentelemetry-exporter-common- io/opentelemetry/opentelemetry-exporter-common/1.67.0/opentelemetry-exporter-common-1.67.0.jar eb61aab6d20bf105102dfa061b478b659cec17e82a50969898046456768ba09b
+      swap opentelemetry-exporter-logging- io/opentelemetry/opentelemetry-exporter-logging/1.67.0/opentelemetry-exporter-logging-1.67.0.jar cc5edf7dde86b301908d40a7de5b121119c110a6ee453bc41179af84b19b794a
+      swap opentelemetry-exporter-otlp- io/opentelemetry/opentelemetry-exporter-otlp/1.67.0/opentelemetry-exporter-otlp-1.67.0.jar 6724a9c8f9f42de757682c6194c48d9fee4670cd19a85c37954eba526c58b836
+      swap opentelemetry-exporter-otlp-common- io/opentelemetry/opentelemetry-exporter-otlp-common/1.67.0/opentelemetry-exporter-otlp-common-1.67.0.jar 75530ab4d93e6fdef478d3e112713337625e70a63df357e6e7b9060c13788015
+      swap opentelemetry-exporter-sender-okhttp- io/opentelemetry/opentelemetry-exporter-sender-okhttp/1.67.0/opentelemetry-exporter-sender-okhttp-1.67.0.jar 0ccb54e5e1db24680b0b7b818299552477dcc7114de7ca0f7b054e6e20958b83
+      swap opentelemetry-extension-trace-propagators- io/opentelemetry/opentelemetry-extension-trace-propagators/1.67.0/opentelemetry-extension-trace-propagators-1.67.0.jar 6f3f0b5f6a7aa80e8efbaba50b2202b5de64cf670e7bf2b47834c4a708cac74e
+      swap opentelemetry-sdk- io/opentelemetry/opentelemetry-sdk/1.67.0/opentelemetry-sdk-1.67.0.jar 52a8f599a368a3d62185e37053f6a53175d6fbe3ecc1d565baba13b1a854267f
+      swap opentelemetry-sdk-common- io/opentelemetry/opentelemetry-sdk-common/1.67.0/opentelemetry-sdk-common-1.67.0.jar 628a4c00db9561ff4c608a650d5e7fd66a1e153ccdf1ba3cdc5ac0b7c6518fea
+      swap opentelemetry-sdk-extension-autoconfigure-spi- io/opentelemetry/opentelemetry-sdk-extension-autoconfigure-spi/1.67.0/opentelemetry-sdk-extension-autoconfigure-spi-1.67.0.jar 41eb19f6caf2c655ac3139d331f5c34283f2efdb0f0b0e58765a6cc9e27f66bc
+      swap opentelemetry-sdk-logs- io/opentelemetry/opentelemetry-sdk-logs/1.67.0/opentelemetry-sdk-logs-1.67.0.jar dd0f0b625e08787af49d7e270abc6def4c2eabc2f18f5f145b7924024a3311e3
+      swap opentelemetry-sdk-metrics- io/opentelemetry/opentelemetry-sdk-metrics/1.67.0/opentelemetry-sdk-metrics-1.67.0.jar c157ff10da59a87a57e5236d9f3290792d9b749433be5e5b449a7d1604c320a9
+      swap opentelemetry-sdk-trace- io/opentelemetry/opentelemetry-sdk-trace/1.67.0/opentelemetry-sdk-trace-1.67.0.jar 14d9615c8a5dcf471dcbb74902b771dcfa8656b755ac38dce904042289ccd198
+      # auth-api.jar bundles an unversioned OTel copy (no maven metadata, so no scanner sees it)
+      # that sits first on the classpath and shadowed the 1.67 set above: autoconfigure 1.67 called
+      # ResourceBuilder.addEntity on auth-api's older class and gms died at boot. Remove every OTel
+      # class the standalone jars also provide, so one coherent set loads; the rest (proto) stays.
+      for j in "$L"/opentelemetry-*.jar; do unzip -Z1 "$j"; done | grep '\.class$' | sort -u > otel.std
+      unzip -Z1 "$L/auth-api.jar" | grep '^io/opentelemetry/.*\.class$' | sort > otel.auth
+      comm -12 otel.std otel.auth > otel.drop
+      [ -s otel.drop ] || { echo "FATAL: auth-api.jar no longer bundles OTel; re-audit"; exit 1; }
+      zip -q -d "$L/auth-api.jar" -@ < otel.drop
+      echo "  auth-api.jar: dropped $(wc -l < otel.drop) bundled OTel classes"
+      if unzip -Z1 "$L/auth-api.jar" | grep -q '^io/opentelemetry/sdk/resources/ResourceBuilder.class$'; then echo "FATAL: auth-api still bundles ResourceBuilder"; exit 1; fi
       # The JVM flags upstream start.sh passes; -Dhttp.port is the Play listener.
       finish play.core.server.ProdServerStart -XX:MaxRAMPercentage=75.0 -Dhttp.port=9002 \
         -Dconfig.file=/datahub-frontend/conf/application.conf \
