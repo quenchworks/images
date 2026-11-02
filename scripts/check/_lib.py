@@ -47,8 +47,16 @@ def github(repo):
                '|select(test("[-.](alpha|beta|rc|pre|preview)[.0-9]*$"; "i")|not)')
 
 def github_tags(repo):
-    """Plain git tags (for repos that don't cut GitHub Releases)."""
-    return _gh(f"repos/{repo}/tags?per_page=40", '.[].name')
+    """Plain git tags (for repos that don't cut GitHub Releases), ALL of them.
+
+    The tags API pages in name order, so 40 tags of alphas and betas can push every
+    stable tag off the first page: cockroachdb read 26.2.10 as newest while 26.3.4
+    shipped (2026-11-02). git ls-remote lists the whole set in one call."""
+    r = subprocess.run(["git", "ls-remote", "--tags", "--refs", f"https://github.com/{repo}"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"git ls-remote {repo} failed ({r.returncode}): {r.stderr.strip()[:300]}")
+    return [l.split("refs/tags/", 1)[1].lstrip("v") for l in r.stdout.splitlines() if "refs/tags/" in l]
 
 def github_asset_releases(repo):
     """Release tags that actually ship a downloadable asset (prereleases included).
@@ -99,8 +107,17 @@ def report_lines(app, candidates, depth, keep=None, clean=None):
             wmap[lk] = cv
     behind = []
     print(app)
+    # Two shipped entries on one line (nextcloud 34.0.4 for the chart, 34.0.5): only the
+    # newest of the line is compared, or the older one reads as behind forever.
+    top = {}
     for c in cur:
         lk = ".".join(re.findall(r'\d+', c)[:depth])
+        if lk not in top or vkey(c) > vkey(top[lk]):
+            top[lk] = c
+    for c in cur:
+        lk = ".".join(re.findall(r'\d+', c)[:depth])
+        if top[lk] != c:
+            continue
         w = wmap.get(lk)
         upd = bool(w) and vkey(w) > vkey(c)
         if upd: behind.append(w)

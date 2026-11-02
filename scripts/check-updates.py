@@ -13,12 +13,15 @@ Usage:
 Exit code is the number of apps with an available update (0 = all current),
 so CI / cron can gate on it.
 """
+import datetime as dt
+import re
 import sys
 import subprocess
 import concurrent.futures as cf
 from pathlib import Path
 
 CHECK_DIR = Path(__file__).resolve().parent / "check"
+BASE = CHECK_DIR.parent.parent
 
 
 def run_one(py: Path) -> str:
@@ -57,6 +60,26 @@ def apps_without_checker(checks):
     )
 
 
+def hold_reason(app: str) -> str:
+    """Why an app with a newer upstream is not an update: BLOCKED=1 (BLOCKED_BY or the
+    STATUS line), or the newest STATUS line saying HELD/DEFERRED/BLOCKED. "DEFERRED to
+    YYYY-MM-DD" stops holding on that date. Empty means a real update."""
+    conf = BASE / "apps" / app / "build.conf"
+    if not conf.exists():
+        return ""
+    text = conf.read_text()
+    status = next((l[1:].strip() for l in text.splitlines() if re.match(r"#\s*STATUS", l)), "")
+    if re.search(r"^BLOCKED=1", text, re.M):
+        by = re.search(r"^BLOCKED_BY=(\S+)", text, re.M)
+        return "BLOCKED: " + (by.group(1) if by else status[:90])
+    if re.search(r"\b(HELD|DEFERRED|BLOCKED)\b", status):
+        until = re.search(r"DEFERRED to (\d{4}-\d{2}-\d{2})", status)
+        if until and until.group(1) <= dt.date.today().isoformat():
+            return ""
+        return status[:110]
+    return ""
+
+
 def main() -> int:
     argv = sys.argv[1:]
     quiet = False
@@ -90,6 +113,8 @@ def main() -> int:
         lines = list(ex.map(run_one, checks))
 
     updates = sorted(l for l in lines if "UPDATE ->" in l)
+    held = [(l, h) for l in updates if (h := hold_reason(l.split()[0]))]
+    updates = [l for l in updates if not hold_reason(l.split()[0])]
     errors = sorted(l for l in lines if "have=" not in l)
     current = sorted(l for l in lines if "have=" in l and "UPDATE ->" not in l)
 
@@ -98,6 +123,10 @@ def main() -> int:
     else:
         for l in current + updates:
             print(l)
+        if held:
+            print("\n-- held (newer upstream, not taken; reason from build.conf) --")
+            for l, h in held:
+                print(f"{l.split()[0]:24s} {h}")
         if errors:
             print("\n-- errors --")
             print("\n".join(errors))
@@ -118,7 +147,7 @@ def main() -> int:
 
     total = len(checks) + len(uncovered)
     print(
-        f"\nsummary: {len(checks)}/{total} apps checked · {len(updates)} updates"
+        f"\nsummary: {len(checks)}/{total} apps checked · {len(updates)} updates · {len(held)} held"
         f" · {len(errors)} errors · {len(blank)} blank · {len(uncovered)} unchecked"
     )
     return len(updates)
