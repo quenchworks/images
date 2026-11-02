@@ -84,7 +84,8 @@ pipeline:
       # json is a FLOOR: bundler otherwise keeps the json 2.9.1 the resolver first met,
       # and CVE-2026-54696 is fixed in 2.19.9. addressable and rack (2026-11-02 scan: 2.9.0, 3.2.7)
       # are direct gems in Redmine's own Gemfile, which Bundler will not let this file redeclare;
-      # the fresh resolve takes the newest, and the step after install asserts the floors.
+      # the fresh resolve takes the newest, and the step after install asserts the floors
+      # (2026-11-03 scan: loofah 2.25.2, rails-html-sanitizer 1.7.1, nokogiri 1.19.4 added).
       printf "gem 'puma'\ngem 'json', '>= 2.19.9'\n" > Gemfile.local
 
       export BUNDLE_APP_CONFIG="$APP/.bundle"
@@ -94,7 +95,7 @@ pipeline:
       bundle config set --local force_ruby_platform true
       bundle config set --local build.nokogiri '--use-system-libraries'
       bundle install --jobs 4 --retry 3
-      ruby -e 'l = File.read("Gemfile.lock"); { "addressable" => "2.9.1", "rack" => "3.2.8" }.each { |g, f| v = l[/^    #{g} \(([\d.]+)\)/, 1]; abort("#{g} #{v} below #{f}") if v.nil? || Gem::Version.new(v) < Gem::Version.new(f); puts "#{g} #{v}" }'
+      ruby -e 'l = File.read("Gemfile.lock"); { "addressable" => "2.9.1", "rack" => "3.2.8", "loofah" => "2.25.3", "rails-html-sanitizer" => "1.7.2", "nokogiri" => "1.19.5" }.each { |g, f| v = l[/^    #{g} \(([\d.]+)\)/, 1]; abort("#{g} #{v} below #{f}") if v.nil? || Gem::Version.new(v) < Gem::Version.new(f); puts "#{g} #{v}" }'
 
       # what the scan cannot see must not be there: nokogiri on the system libxml2, source
       # gems only, no bundled .libs directory
