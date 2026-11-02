@@ -10,7 +10,7 @@ package:
     - license: Apache-2.0
   dependencies:
     runtime:
-      - nodejs-22
+      - nodejs-24            # 2026-11-02: 22 -> 24; nodejs-22 22.23.2 carries findings fixed only in the unpublished 22.23.4
       - libstdc++            # @gristlabs/sqlite3 addon
       - python-3.13          # the data engine, run inside runsc from /grist/sandbox_venv3
       - procps               # pgrep: Grist finds and kills each sandbox's runsc processes
@@ -31,7 +31,7 @@ environment:
       - curl
       - go-1.27              # gvisor go.mod: go 1.27.2
       - linux-headers        # the freestanding prewarmer includes asm/unistd.h
-      - nodejs-22
+      - nodejs-24
       - npm                  # native modules probe their prebuilt through npm first
       - node-gyp
       - python-3.13          # node-gyp, and the sandbox venv
@@ -112,7 +112,8 @@ pipeline:
         -fno-unwind-tables -fno-pie -no-pie -static -nostdlib -nostartfiles \
         -Wl,--build-id=none -Wl,--gc-sections -Wl,-s -Wl,-n \
         -o "$bin/gvisor-bin/gvisor-sentry-prewarmer" /tmp/prewarmer.c
-      flags="$("$bin/runsc" flags 2>&1)"
+      # a failing $( ) assignment exits silently under set -e; say why
+      flags="$("$bin/runsc" flags 2>&1)" || { echo "runsc flags failed:"; echo "$flags" | tail -20; exit 1; }
       case "$flags" in *-unprivileged*) ;; *) echo "runsc lacks -unprivileged"; exit 1 ;; esac
       cd / && rm -rf "$src" /tmp/gvisor.tgz /tmp/prewarmer.c
   - runs: |
@@ -148,9 +149,12 @@ pipeline:
           return !(m && refresh.has(m[1]));
         }).join("\n\n"));
       '
-      # image-size 2 is buffer-only and has no default export (CVE-2025-71330 is fixed only in 2.x)
-      sed -i 's|^import imageSize from "image-size";|import { imageSize } from "image-size";|; s|await bluebird.fromCallback((cb: any) => imageSize(fileData.absPath, cb))|imageSize(await readFile(fileData.absPath))|' app/server/lib/ActiveDoc.ts
-      grep -q 'imageSize(await readFile(fileData.absPath))' app/server/lib/ActiveDoc.ts
+      # image-size 2 is buffer-only and has no default export (CVE-2025-71330 is fixed only in 2.x).
+      # 1.7.22 moved to image-size 2 upstream (imageSize(fileContents)); patch only the old callback form.
+      if grep -q 'bluebird.fromCallback((cb: any) => imageSize(' app/server/lib/ActiveDoc.ts; then
+        sed -i 's|^import imageSize from "image-size";|import { imageSize } from "image-size";|; s|await bluebird.fromCallback((cb: any) => imageSize(fileData.absPath, cb))|imageSize(await readFile(fileData.absPath))|' app/server/lib/ActiveDoc.ts
+        grep -q 'imageSize(await readFile(fileData.absPath))' app/server/lib/ActiveDoc.ts
+      fi
       # SubprocessControl finds the sandbox memory process as an "exe" child of "exe" (the
       # ptrace stub of old runsc). Current runsc (systrap) names its stubs gvisor_sentry, so
       # the scan never matched and every getUsage() call, made on each user action, waited
