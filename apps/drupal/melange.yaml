@@ -116,7 +116,14 @@ pipeline:
       # composer, not Drupal's full ext surface.
       composer update -d "$src" --with-dependencies --no-dev --no-scripts \
         --no-audit --no-progress --no-interaction --ignore-platform-reqs \
-        guzzlehttp/guzzle
+        guzzlehttp/guzzle symfony/mime
+      # symfony/mime 7.4.19 (CVE-2026-45070, fixed 7.4.22) is the same stale-lock case.
+      php -r '$j=json_decode(file_get_contents($argv[1]),true);
+        foreach(($j["packages"]??$j) as $p){ if($p["name"]==="symfony/mime"){
+          if(version_compare(ltrim($p["version"],"v"),"7.4.22","<")){
+            fwrite(STDERR,"symfony/mime still $p[version]\n"); exit(1);} exit(0);}}
+        fwrite(STDERR,"symfony/mime not found in lock\n"); exit(1);' \
+        "$src/vendor/composer/installed.json"
       # Assert the fixed guzzle actually landed in the vendored lock (parse the JSON so
       # we check guzzle specifically, not any package that happens to be 7.15).
       php -r '$j=json_decode(file_get_contents($argv[1]),true);
