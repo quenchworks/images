@@ -12,7 +12,7 @@ cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
 echo "starting $IMAGE"
-docker run -d --name "$NAME" "$IMAGE" >/dev/null
+docker run -d --name "$NAME" -e KAFKA_EXTRA_PROPERTIES="log.retention.hours=170" "$IMAGE" >/dev/null
 
 # KRaft format + broker boot takes a bit; wait for the API to answer
 for i in $(seq 1 60); do
@@ -22,6 +22,10 @@ for i in $(seq 1 60); do
   [ "$i" = 60 ] && { echo "kafka did not become ready"; docker logs "$NAME" | tail -40; exit 1; }
   sleep 2
 done
+
+# KAFKA_EXTRA_PROPERTIES lines land in server.properties (the chart's TLS wiring uses it)
+cfg="$(docker exec "$NAME" cat /var/lib/kafka/server.properties)"
+grep -qx 'log.retention.hours=170' <<<"$cfg" || { echo "KAFKA_EXTRA_PROPERTIES not applied"; exit 1; }
 
 echo "creating topic"
 docker exec "$NAME" "$K/kafka-topics.sh" --bootstrap-server "$BS" \

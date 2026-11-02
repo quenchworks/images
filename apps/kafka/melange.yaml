@@ -132,6 +132,8 @@ pipeline:
         "group.initial.rebalance.delay.ms=0" \
         "auto.create.topics.enable=${KAFKA_AUTO_CREATE_TOPICS_ENABLE:-true}" \
         > "$CFG"
+      # extra server.properties lines (TLS, SASL), one key=value per line; later keys win
+      if [ -n "${KAFKA_EXTRA_PROPERTIES:-}" ]; then printf '%s\n' "$KAFKA_EXTRA_PROPERTIES" >> "$CFG"; fi
 
       # persist the cluster id so restarts (and a re-format) reuse the same one
       CID_FILE="${DATA_DIR}/meta.cluster.id"
