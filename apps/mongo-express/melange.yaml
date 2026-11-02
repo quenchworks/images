@@ -37,10 +37,10 @@ pipeline:
       node -e '
         const fs = require("fs");
         const p = JSON.parse(fs.readFileSync("package.json"));
-        Object.assign(p.dependencies, { "@fastify/busboy": "3.2.2", "body-parser": "2.3.0", "morgan": "1.12.1" });
+        Object.assign(p.dependencies, { "@fastify/busboy": "3.2.2", "body-parser": "2.4.0", "morgan": "1.12.1" });
         p.resolutions = {
-          "express/body-parser": "1.20.6", "path-to-regexp@~0.1.12": "0.1.13",
-          "qs": "6.16.0", "lodash": "4.18.0", "csurf/cookie": "0.7.2", "proxy-addr": "2.0.8",
+          "express/body-parser": "1.20.9", "path-to-regexp@~0.1.12": "0.1.13",
+          "qs": "6.16.1", "lodash": "4.18.0", "csurf/cookie": "0.7.2", "proxy-addr": "2.0.8",
         };
         fs.writeFileSync("package.json", JSON.stringify(p, null, 2) + "\n");
       '
@@ -51,8 +51,8 @@ pipeline:
       $yarn workspaces focus --production
       # every pin must be what actually got installed
       node -e '
-        const want = { "body-parser": "2.3.0", "express/node_modules/body-parser": "1.20.6",
-          qs: "6.16.0", lodash: "4.18.0", cookie: "0.7.2", "path-to-regexp": "0.1.13",
+        const want = { "body-parser": "2.4.0", "express/node_modules/body-parser": "1.20.9",
+          qs: "6.16.1", lodash: "4.18.0", cookie: "0.7.2", "path-to-regexp": "0.1.13",
           morgan: "1.12.1", "@fastify/busboy": "3.2.2" };
         for (const [k, v] of Object.entries(want)) {
           const got = require("./node_modules/" + k + "/package.json").version;
