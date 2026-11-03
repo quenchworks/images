@@ -6,7 +6,7 @@ set -euo pipefail
 IMAGE="${1:?usage: test.sh <image-ref> [version]}"
 WANT="${2:-}"
 NAME="zipkin-smoke-$$"
-cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
+cleanup() { docker rm -f "$NAME" "$NAME-tls" >/dev/null 2>&1 || true; rm -rf "${TLSD:-}"; }
 trap cleanup EXIT
 
 user="$(docker inspect "$IMAGE" --format '{{.Config.User}}')"
@@ -31,4 +31,24 @@ curl -fsS http://127.0.0.1:19411/api/v2/services | grep -q quench-smoke || { ech
 curl -fsS http://127.0.0.1:19411/api/v2/trace/5af7183fb1d4cf5f | grep -q '"id":"6b221d5bc9e6496c"' || { echo "trace not returned"; exit 1; }
 curl -fsS http://127.0.0.1:19411/zipkin/ | grep -qi '<html' || { echo "UI not served"; exit 1; }
 if docker logs "$NAME" 2>&1 | grep -E ' ERROR |Exception'; then echo "server logged errors"; exit 1; fi
+# HTTPS through Armeria's OpenSSL engine: a netty swap that leaves netty-tcnative behind
+# boots clean and scans clean, then fails every TLS request with NoSuchMethodError.
+TLSD="$(mktemp -d)"
+openssl req -x509 -newkey rsa:2048 -nodes -keyout "$TLSD/k.pem" -out "$TLSD/c.pem" -subj /CN=localhost \
+  -addext subjectAltName=DNS:localhost -days 1 2>/dev/null
+openssl pkcs12 -export -in "$TLSD/c.pem" -inkey "$TLSD/k.pem" -out "$TLSD/ks.p12" -passout pass:changeit
+chmod 644 "$TLSD/ks.p12"
+docker create --name "$NAME-tls" -p 127.0.0.1:19443:9411 -e ARMERIA_SSL_ENABLED=true \
+  -e ARMERIA_SSL_KEY_STORE=file:/ks.p12 -e ARMERIA_SSL_KEY_STORE_PASSWORD=changeit \
+  -e ARMERIA_SSL_KEY_STORE_TYPE=PKCS12 -e ARMERIA_PORTS_0_PORT=9411 -e ARMERIA_PORTS_0_PROTOCOLS=https "$IMAGE" >/dev/null
+docker cp "$TLSD/ks.p12" "$NAME-tls:/ks.p12"
+docker start "$NAME-tls" >/dev/null
+ok=0
+for _ in $(seq 1 60); do
+  h="$(curl -s --cacert "$TLSD/c.pem" https://localhost:19443/health 2>/dev/null || true)"
+  grep -q '"status" *: *"UP"' <<<"$h" && { ok=1; break; }; sleep 1
+done
+[ "$ok" = 1 ] || { echo "HTTPS health failed"; docker logs "$NAME-tls" 2>&1 | grep -m3 -E 'Exception|Error'; exit 1; }
+echo "HTTPS serves /health with the OpenSSL engine"
+
 echo "smoke test passed (zipkin ${WANT:-?}, uid $user, span stored and queried)"

@@ -110,6 +110,15 @@ pipeline:
       swap netty-transport-native-unix-common-4.2.12.Final-osx-aarch_64.jar io/netty/netty-transport-native-unix-common/4.2.17.Final/netty-transport-native-unix-common-4.2.17.Final-osx-aarch_64.jar 4ce539ad4f6a3589cb5917229be258921fc0f2bbbcd29bd0c19426e410755b91
       swap netty-transport-native-unix-common-4.2.12.Final-osx-x86_64.jar io/netty/netty-transport-native-unix-common/4.2.17.Final/netty-transport-native-unix-common-4.2.17.Final-osx-x86_64.jar be93f2338a38d06156509aca3b5c2ba5c8f6cb5504a0b773f742a4a400a32da0
       swap netty-transport-native-unix-common-4.2.12.Final.jar io/netty/netty-transport-native-unix-common/4.2.17.Final/netty-transport-native-unix-common-4.2.17.Final.jar e01aa467b9104de54a57c08c290f70b22e53ec97cf5583c87c112170ef5832cc
+      # netty-tcnative moves with netty: handler 4.2.17 calls SSL.getGroupName (first in tcnative
+      # 2.0.81), and the dist's 2.0.75 lacks it, so any TLS through the OpenSSL engine died with
+      # NoSuchMethodError. 2.0.82 is the line netty 4.2.17 builds against (2026-11-03 sweep).
+      swap netty-tcnative-classes-2.0.75.Final.jar io/netty/netty-tcnative-classes/2.0.82.Final/netty-tcnative-classes-2.0.82.Final.jar 01a49ec157019e5cb33a4170a38b911026ed8edd99c83e64f5babcf5dff45f3f
+      swap netty-tcnative-boringssl-static-2.0.75.Final-linux-aarch_64.jar io/netty/netty-tcnative-boringssl-static/2.0.82.Final/netty-tcnative-boringssl-static-2.0.82.Final-linux-aarch_64.jar 9418ee674bc6c868a0cde0c475b20942735c1016aaaee2513f2f15dc1c533a22
+      swap netty-tcnative-boringssl-static-2.0.75.Final-linux-x86_64.jar io/netty/netty-tcnative-boringssl-static/2.0.82.Final/netty-tcnative-boringssl-static-2.0.82.Final-linux-x86_64.jar 1b1b506c0994f7adfd50936c8177ff4502838cd72d9bc384ebbd5306402eeb58
+      swap netty-tcnative-boringssl-static-2.0.75.Final-osx-aarch_64.jar io/netty/netty-tcnative-boringssl-static/2.0.82.Final/netty-tcnative-boringssl-static-2.0.82.Final-osx-aarch_64.jar a352422fe725bc9854cf2269bebbb1f18ddaa465f26bc7b59e221615653850fb
+      swap netty-tcnative-boringssl-static-2.0.75.Final-osx-x86_64.jar io/netty/netty-tcnative-boringssl-static/2.0.82.Final/netty-tcnative-boringssl-static-2.0.82.Final-osx-x86_64.jar ee57cd15994600e0ac08cb086a33d9639afe64b42267a66141b18aedabb73e94
+      swap netty-tcnative-boringssl-static-2.0.75.Final-windows-x86_64.jar io/netty/netty-tcnative-boringssl-static/2.0.82.Final/netty-tcnative-boringssl-static-2.0.82.Final-windows-x86_64.jar f9f860935d20a3098cae9ff2d3c3c2a42504b198e549606692b8d4326c5016ae
       swap opentelemetry-api-1.56.0.jar io/opentelemetry/opentelemetry-api/1.67.0/opentelemetry-api-1.67.0.jar 538d1dff2f9a37aecbc0ef98fd17273a3affb058e734e6763a3a07a38a5fdc59
       swap opentelemetry-api-incubator-1.56.0-alpha.jar io/opentelemetry/opentelemetry-api-incubator/1.67.0-alpha/opentelemetry-api-incubator-1.67.0-alpha.jar fea3d78726e49620168c3f6194ff491edfd1ec89b2df06fd5d5b73e55d74a342
       swap opentelemetry-common-1.56.0.jar io/opentelemetry/opentelemetry-common/1.67.0/opentelemetry-common-1.67.0.jar da97bdb395418e16ecdcbe7ad3497f45b9e767ceda4ae7e86133e7a757ac377f
