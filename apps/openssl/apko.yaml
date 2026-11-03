@@ -1,0 +1,42 @@
+# Assembles a hardened OpenSSL CLI image directly from Wolfi packages. No Dockerfile,
+# no melange build: apko pulls the openssl-<line> apk plus a busybox shell.
+#
+# IMAGE-ONLY, no Helm chart. Built for init containers and jobs that convert or inspect
+# certificates (PEM to PKCS12 keystores for JVM servers, s_client checks). Charts on
+# quench-common use it for the tls.pkcs12 helper. `__PKG__` is the pinned line per matrix entry.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - busybox            # a POSIX shell for init-container scripts
+    - __PKG__            # the pinned OpenSSL line (/usr/bin/openssl)
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/openssl
+
+cmd: version -a
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-openssl"
+  org.opencontainers.image.licenses: "Apache-2.0"
