@@ -147,8 +147,13 @@ pipeline:
               fastcgi_pass 127.0.0.1:9000;
               fastcgi_read_timeout 600;
           }
+          # Chart drop-in server-level config (ConfigMap mounts land here, e.g. the TLS listener).
+          include /etc/zabbix/conf.d/*.conf;
       }
       NGX
+      install -d "$d/etc/zabbix/conf.d"
+      # Ensure the include glob never fails when the drop-in dir is empty.
+      : > "$d/etc/zabbix/conf.d/.keep.conf"
       install -d "$d/etc/php/php-fpm.d" "$d/etc/php/conf.d"
       cat > "$d/etc/php/php-fpm.d/zzz-zabbix.conf" <<'FPM'
       [global]
