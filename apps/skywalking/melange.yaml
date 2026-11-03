@@ -122,6 +122,26 @@ pipeline:
       }
       echo "netty: swapped $n jars $NETTY_OLD -> $NETTY_NEW"
 
+      # ---- (1b) netty-tcnative -> 2.0.84.Final, the line netty 4.2.18 is built against --
+      # Left on the dist's 2.0.77, netty-handler 4.2.18 calls SSL.getGroupName, which
+      # 2.0.77 lacks: every TLS request on the REST port died with NoSuchMethodError
+      # (measured in kind with SW_CORE_REST_SSL_ENABLED, 2026-11-03). Any older version moves.
+      TCN_NEW=2.0.84.Final
+      t=0
+      for f in "$dest"/oap-libs/netty-tcnative-*.jar; do
+        b="$(basename "$f")"
+        case "$b" in *-"$TCN_NEW"*) continue;; esac
+        art="$(printf '%s' "$b" | sed -E 's/-[0-9]+[.][0-9]+[.][0-9]+[.]Final.*//')"
+        cls="$(printf '%s' "$b" | sed -E 's/.*-[0-9]+[.][0-9]+[.][0-9]+[.]Final//')"
+        curl -fsSL -o "$dest/oap-libs/${art}-${TCN_NEW}${cls}" \
+          "$MC/io/netty/${art}/${TCN_NEW}/${art}-${TCN_NEW}${cls}"
+        test -s "$dest/oap-libs/${art}-${TCN_NEW}${cls}"
+        rm -f "$f"
+        t=$((t + 1))
+      done
+      [ "$t" -ge 2 ] || { echo "FATAL: expected netty-tcnative jars to move, moved $t"; exit 1; }
+      echo "netty-tcnative: swapped $t jars -> $TCN_NEW"
+
       # ---- (2) the standalone jars ---------------------------------------------------
       # jackson core trio 2.18.8 -> 2.18.9 (databind CVE-2026-54515 / 59889 /
       # GHSA-mhm7-754m-9p8w each offer 2.18.9); the trio moves together.
@@ -216,6 +236,9 @@ pipeline:
                and "netty-tcnative" not in j]
       if stale:
           dup["io.netty (mixed module set)"] = stale
+      tcn = [j for j in jars if j.startswith("netty-tcnative") and "2.0.84.Final" not in j]
+      if tcn:
+          dup["netty-tcnative (old line left)"] = tcn
       if dup:
           for k, v in sorted(dup.items()):
               print(f"  {k} -> {sorted(v)}")
