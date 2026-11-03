@@ -297,6 +297,17 @@ pipeline:
       jswap 'io.netty_netty-transport-sctp-4.2.16.Final.jar' io/netty netty-transport-sctp 4.2.17.Final netty-transport-sctp-4.2.17.Final.jar 5345dabce2cbf10bc9c6a80a8d7beeaa4cd975028aa04f1903a96b8e440529f6
       jswap 'io.netty_netty-transport-udt-4.2.16.Final.jar' io/netty netty-transport-udt 4.2.17.Final netty-transport-udt-4.2.17.Final.jar bd3d40e949077dd0f0ba62e87db5f0f55afc8fab99d20450ec22c2b84267badb
       jswap 'i...y_netty-transport-native-epoll-4.2.16.Final-linux-x86_64.jar' io/netty netty-transport-native-epoll 4.2.17.Final netty-transport-native-epoll-4.2.17.Final-linux-x86_64.jar c295b1d7f46e3c7375c93fa4c8abcc3944398c5e4eb53e31587cbbf0bf559d4f
+      # netty-tcnative moves with netty: handler 4.2.17 calls SSL.getGroupName (first in tcnative
+      # 2.0.81), and iceberg's 2.0.80 lacks it, so any TLS through Netty's OpenSSL engine in the
+      # plugin dies with NoSuchMethodError. 2.0.82 is the line
+      # netty 4.2.17 builds against (2026-11-03 sweep; sha1s match Maven).
+      jswap 'io.netty_netty-tcnative-classes-2.0.80.Final.jar' io/netty netty-tcnative-classes 2.0.82.Final netty-tcnative-classes-2.0.82.Final.jar 01a49ec157019e5cb33a4170a38b911026ed8edd99c83e64f5babcf5dff45f3f
+      jswap 'io.netty_netty-tcnative-boringssl-static-2.0.80.Final.jar' io/netty netty-tcnative-boringssl-static 2.0.82.Final netty-tcnative-boringssl-static-2.0.82.Final.jar 419daa29df97103a47cedfb4d709dfcbbb971ee24fcc15e579496a2cf9bd98b0
+      jswap 'io.netty_netty-tcnative-boringssl-static-2.0.80.Final-linux-x86_64.jar' io/netty netty-tcnative-boringssl-static 2.0.82.Final netty-tcnative-boringssl-static-2.0.82.Final-linux-x86_64.jar 1b1b506c0994f7adfd50936c8177ff4502838cd72d9bc384ebbd5306402eeb58
+      jswap 'netty-tcnative-boringssl-static-2.0.80.Final-linux-aarch_64.jar' io/netty netty-tcnative-boringssl-static 2.0.82.Final netty-tcnative-boringssl-static-2.0.82.Final-linux-aarch_64.jar 9418ee674bc6c868a0cde0c475b20942735c1016aaaee2513f2f15dc1c533a22
+      jswap 'io.netty_netty-tcnative-boringssl-static-2.0.80.Final-osx-aarch_64.jar' io/netty netty-tcnative-boringssl-static 2.0.82.Final netty-tcnative-boringssl-static-2.0.82.Final-osx-aarch_64.jar a352422fe725bc9854cf2269bebbb1f18ddaa465f26bc7b59e221615653850fb
+      jswap 'io.netty_netty-tcnative-boringssl-static-2.0.80.Final-osx-x86_64.jar' io/netty netty-tcnative-boringssl-static 2.0.82.Final netty-tcnative-boringssl-static-2.0.82.Final-osx-x86_64.jar ee57cd15994600e0ac08cb086a33d9639afe64b42267a66141b18aedabb73e94
+      jswap 'netty-tcnative-boringssl-static-2.0.80.Final-windows-x86_64.jar' io/netty netty-tcnative-boringssl-static 2.0.82.Final netty-tcnative-boringssl-static-2.0.82.Final-windows-x86_64.jar f9f860935d20a3098cae9ff2d3c3c2a42504b198e549606692b8d4326c5016ae
       jswap org.apache.httpcomponents.client5_httpclient5-5.6.2.jar org/apache/httpcomponents/client5 httpclient5 5.6.3 httpclient5-5.6.3.jar 80712ff129210d7c73d9fcc1195cbee5c3c34744965c7a05ea107b3648922f18
       jswap org.apache.thrift_libthrift-0.23.0.jar org/apache/thrift libthrift 0.24.0 libthrift-0.24.0.jar b72e321ff144e3e5211964764bd45794b96fdf250085f153c44416b35df89a07
       # snowflake-jdbc 4.3.1 -> 4.3.4 (CVE-2026-86597, 2026-10-06; same 4.3 line, iceberg's
