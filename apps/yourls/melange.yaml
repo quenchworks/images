@@ -153,6 +153,9 @@ pipeline:
       # + every *_temp_path under /tmp, logs to stdout/stderr). We only add the site: the
       # default_server on 8080 (nonroot cannot bind <1024), superseding quench-nginx's
       # placeholder server on the same port.
+      install -d "$destdir/etc/yourls/conf.d"
+      # Ensure the include glob never fails when the drop-in dir is empty.
+      : > "$destdir/etc/yourls/conf.d/.keep.conf"
       cat > "$destdir/etc/nginx/conf.d/yourls.conf" <<'EOF'
       server {
           listen 8080 default_server;
@@ -201,6 +204,9 @@ pipeline:
               log_not_found off;
               access_log off;
           }
+
+          # Chart drop-in server-level config (ConfigMap mounts land here, e.g. the TLS listener).
+          include /etc/yourls/conf.d/*.conf;
       }
       EOF
 
