@@ -802,6 +802,9 @@ pipeline:
       set -eu
       destdir="${{targets.destdir}}"
       install -d "$destdir/etc/nginx/conf.d"
+      install -d "$destdir/etc/nextcloud/conf.d"
+      # Ensure the include glob never fails when the drop-in dir is empty.
+      : > "$destdir/etc/nextcloud/conf.d/.keep.conf"
       # Ported from Nextcloud's documented nginx configuration, adapted for the
       # QuenchWorks nginx layout (included from quench-nginx's nginx.conf via
       # /etc/nginx/conf.d/*.conf). `listen 8080 default_server` makes this the
@@ -877,6 +880,9 @@ pipeline:
               access_log off;
               expires 6M;
           }
+
+          # Chart drop-in server-level config (ConfigMap mounts land here, e.g. the TLS listener).
+          include /etc/nextcloud/conf.d/*.conf;
       }
       EOF
 
