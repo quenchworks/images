@@ -51,6 +51,22 @@ pipeline:
       done
       echo "raising:${need:- nothing}"
       [ -z "$need" ] || go get $need
+      # go.mod replaces containerd/v2 with v2.2.0 (it requires 2.4.1). A go get floor follows the
+      # replace and downgrades the tree, so move the replace within its line: 2.2.10 closes
+      # CVE-2026-46680, -53488, -53489, -53492, -53493, -53495, -95837 and -95838.
+      grep -q '^replace github.com/containerd/containerd/v2 => github.com/containerd/containerd/v2 v2.2.0$' go.mod
+      go mod edit -replace=github.com/containerd/containerd/v2=github.com/containerd/containerd/v2@v2.2.10
+      # containerd 2.2.x builds against runtime-spec 1.3 (Pids.Limit is a pointer); go.mod replaces it with 1.2.1.
+      grep -q '^replace github.com/opencontainers/runtime-spec => github.com/opencontainers/runtime-spec v1.2.1$' go.mod
+      go mod edit -replace=github.com/opencontainers/runtime-spec=github.com/opencontainers/runtime-spec@v1.3.0
+      # containerd v1.7.36 (still in the graph) has exactly one 1.2-only line, WithPidsLimit assigning
+      # an int64 to Pids.Limit; a local copy takes its address, which is what 2.x does.
+      CD1="$(go mod download -json github.com/containerd/containerd@v1.7.36 | sed -n 's/.*"Dir": "\(.*\)",/\1/p')"
+      cp -r "$CD1" "$PWD/.containerd-v1" && chmod -R u+w "$PWD/.containerd-v1"
+      f="$PWD/.containerd-v1/oci/spec_opts.go"
+      grep -q '^		s.Linux.Resources.Pids.Limit = limit$' "$f"
+      sed -i 's/^		s.Linux.Resources.Pids.Limit = limit$/		s.Linux.Resources.Pids.Limit = \&limit/' "$f"
+      go mod edit -replace=github.com/containerd/containerd="$PWD/.containerd-v1"
       go mod tidy
       B="${{targets.destdir}}/usr/bin"
       mkdir -p "$B"
@@ -77,8 +93,8 @@ pipeline:
       # `ig image build --local` (Wolfi clang/llvm, libbpf and kernel headers; the Go WASM parts
       # with this Go), then `ig image export`, exactly as upstream names and tags them.
       export GOTOOLCHAIN=local GOWORK=off
-      IGV=v0.48.1
-      IGSHA=5b5b50305e24e06b16d5f40f06f5313a99c0aee8547536d41bd9e0d8dd02242f
+      IGV=v0.57.0
+      IGSHA=1eee07549f718a12e0840f771217f817611a650a603169ad1a8d2b70185df420
       W="$PWD/.igbuild"; mkdir -p "$W"
       curl -fsSL -o "$W/ig.tgz" "https://github.com/inspektor-gadget/inspektor-gadget/archive/refs/tags/$IGV.tar.gz"
       echo "$IGSHA  $W/ig.tgz" | sha256sum -c -
@@ -92,7 +108,7 @@ pipeline:
         -ldflags "-X github.com/inspektor-gadget/inspektor-gadget/internal/version.version=$IGV" \
         -o "$W/ig" ./cmd/ig)
       IG="$W/ig"
-      # Match ig v0.48.1's gadget builder (Dockerfiles/gadget-builder.Dockerfile): clang/LLVM 18
+      # Match ig v0.57.0's gadget builder (Dockerfiles/gadget-builder.Dockerfile): clang/LLVM 18
       # and libbpf v1.3.0 headers. Verifier complexity follows the compiler's output: built with
       # clang 21, trace_exec and trace_open hit the 1M-instruction limit in kind (charts run
       # 37777056908) while upstream's clang-18 builds load.
@@ -111,10 +127,16 @@ pipeline:
                bpf_tracing.h bpf_endian.h bpf_core_read.h skel_internal.h libbpf_version.h usdt.bpf.h; do
         cp "$W/libbpf-1.3.0/src/$h" "$W/inc/bpf/"
       done
-      # Makefile.build expects the gadget headers under /usr/include/gadget (the builder image's
-      # layout); CLANG is the one overridable variable, and make expands its $* per arch target.
-      export CLANG="$CL -I$W/inc -I$IG_SRC/include -I$IG_SRC/include/gadget/\$*"
-      export LLVM_STRIP="$ST"
+      # ig (since v0.5x) runs `clang` and `llvm-strip` from PATH with the builder image's
+      # include layout hardcoded (-I /usr/include/gadget/<arch>/). Wrappers first on PATH map
+      # that to the source tree and add the libbpf headers, using clang-18 and its llvm-strip.
+      mkdir -p "$W/bin"
+      printf '%s\n' '#!/bin/sh' "IGS='$IG_SRC'" 'n=$#; i=0' \
+        'while [ $i -lt $n ]; do a=$1; shift; case $a in /usr/include/gadget/*) a="$IGS/include/gadget/${a#/usr/include/gadget/}";; esac; set -- "$@" "$a"; i=$((i+1)); done' \
+        "exec '$CL' -I'$W/inc' -I'$IG_SRC/include' \"\$@\"" > "$W/bin/clang"
+      printf '%s\n' '#!/bin/sh' "exec '$ST' \"\$@\"" > "$W/bin/llvm-strip"
+      chmod +x "$W/bin/clang" "$W/bin/llvm-strip"
+      export PATH="$W/bin:$PATH"
       build() {  # <source dir> <image ref>
         echo "building gadget $2 from $1"
         (cd "$1" && "$IG" image build --local -t "$2" .)
