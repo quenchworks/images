@@ -30,7 +30,7 @@ pipeline:
       set -eu
       export CGO_ENABLED=0 GOFLAGS=-mod=mod GO111MODULE=on GOTOOLCHAIN=local
       # 0-CVE float: raise only what is below the floor, then assert the binary carries it
-      FLOOR="golang.org/x/crypto@v0.56.0"
+      FLOOR="golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2"
       for m in $FLOOR; do
         mod="${m%@*}"; want="${m#*@}"
         have="$(go list -m -e "$mod" | awk '{print $NF}')"

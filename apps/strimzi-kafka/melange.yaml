@@ -186,7 +186,7 @@ pipeline:
       mkdir -p /tmp/kexp && tar -xzf /tmp/kexp.tgz -C /tmp/kexp --strip-components=1
       cd /tmp/kexp
       export CGO_ENABLED=0 GOFLAGS=-mod=mod GOTOOLCHAIN=local
-      for want in golang.org/x/crypto@v0.58.0 golang.org/x/net@v0.62.0 golang.org/x/text@v0.43.0; do
+      for want in golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/net@v0.62.0 golang.org/x/text@v0.43.0; do
         m="${want%@*}"; w="${want#*@}"
         have="$(go list -m -f '{{.Version}}' "$m" 2>/dev/null || true)"
         [ -n "$have" ] || continue
