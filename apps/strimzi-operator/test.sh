@@ -28,7 +28,8 @@ K=q.example/kafka:x
 # a missing one and an extra one both stop it (CI 38355719947, 38357447746).
 case "$VER" in
   1.2.*) KV="4.2.0 4.2.1 4.3.0 4.3.1" ;;
-  *)     KV="4.2.0 4.2.1 4.2.2 4.3.0 4.3.1" ;;
+  1.3.0) KV="4.2.0 4.2.1 4.2.2 4.3.0 4.3.1" ;;
+  *)     KV="4.2.0 4.2.1 4.2.2 4.3.0 4.3.1 4.3.2" ;;
 esac
 KMAP="$(for v in $KV; do echo "$v=$K"; done)"
 echo "starting the cluster operator"
