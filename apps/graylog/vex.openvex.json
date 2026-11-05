@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/graylog/2026-11-05",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-05T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-56130"
+      },
+      "products": [
+        {
+          "@id": "pkg:maven/org.apache.shiro/shiro-core@2.2.1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Measured 2026-11-05 on a local build of graylog 7.1.12 (quench-graylog-7.1.12-r0.apk, /opt/graylog/graylog.jar). CVE-2026-56130 is the Shiro remember-me cookie not being checked for expiry on the server; the cookie handling is shiro-web's CookieRememberMeManager, installed by shiro-web's DefaultWebSecurityManager. graylog.jar ships 441 org/apache/shiro classes and no org/apache/shiro/web path at all (unzip -l), so neither class is in the image. shiro-core's DefaultSecurityManager only calls a RememberMeManager when one is set, and its default is null; a byte scan of every class in graylog.jar outside org/apache/shiro found 0 that reference RememberMe, so Graylog never sets one. The remember-me path cannot run. The fix is only in Shiro 3.0.0, a major line Graylog 7.1 does not use; revisit when Graylog moves to Shiro 3 or adds shiro-web."
+    }
+  ]
+}
