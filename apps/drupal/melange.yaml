@@ -116,10 +116,10 @@ pipeline:
       # composer, not Drupal's full ext surface.
       composer update -d "$src" --with-dependencies --no-dev --no-scripts \
         --no-audit --no-progress --no-interaction --ignore-platform-reqs \
-        guzzlehttp/guzzle symfony/mime symfony/http-foundation symfony/routing symfony/serializer
+        guzzlehttp/guzzle symfony/mime symfony/http-foundation symfony/routing symfony/serializer symfony/filesystem
       # symfony/mime 7.4.19 (CVE-2026-45070, fixed 7.4.22) is the same stale-lock case, and so are
-      # http-foundation, routing and serializer 7.4.21 (2026-11-05 scan, fixed 7.4.23).
-      for want in symfony/mime:7.4.22 symfony/http-foundation:7.4.23 symfony/routing:7.4.23 symfony/serializer:7.4.23; do
+      # http-foundation, routing, serializer 7.4.21 and filesystem 7.4.11 (2026-11-05 Symfony release, fixed 7.4.23).
+      for want in symfony/mime:7.4.22 symfony/http-foundation:7.4.23 symfony/routing:7.4.23 symfony/serializer:7.4.23 symfony/filesystem:7.4.23; do
         php -r '$j=json_decode(file_get_contents($argv[1]),true); [$n,$f]=explode(":",$argv[2]);
           foreach(($j["packages"]??$j) as $p){ if($p["name"]===$n){
             if(version_compare(ltrim($p["version"],"v"),$f,"<")){
