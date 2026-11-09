@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/floci-full/2026-11-09",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-09T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-12975"
+      },
+      "products": [
+        {
+          "@id": "pkg:maven/io.apicurio/apicurio-registry-schema-util-common@2.6.13.Final"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "Measured 2026-11-09 on the published floci-full:2.4.0 image (crane export of usr/share/floci/quarkus-app; the 2.3.0 and 2.4.0 lines resolve the same apicurio 2.6.13.Final). CVE-2026-12975 (GHSA-7g64-f2hm-vjxp) is an XXE/SSRF in ContentTypeUtil.isParsableXml(), which builds a SAXParserFactory without secure processing. The image ships six apicurio 2.6.13.Final jars in lib/main, and none contains a ContentTypeUtil class (every class in every jar was listed). A byte scan of every class in apicurio-registry-schema-util-common-2.6.13.Final.jar found no SAXParserFactory or isParsableXml reference; the jar holds content handles, reference finders and compatibility-rule types only. The vulnerable method is not in the image. The advisory's fixed versions are on the 3.2 and 3.3 lines, which the Quarkus build does not use. Revisit when Floci moves to apicurio 3."
+    }
+  ]
+}
