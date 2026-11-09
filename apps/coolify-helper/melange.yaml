@@ -260,6 +260,9 @@ pipeline:
       go mod edit -replace golang.org/x/mod=golang.org/x/mod@v0.41.0
       # 2026-10-11: x/net v0.58.0 in pack (CVE-2026-78669 HIGH), same treatment.
       go mod edit -replace golang.org/x/net=golang.org/x/net@v0.62.0
+      # 2026-11-09: chainguard-dev/kaniko v1.25.16 in pack (CVE-2026-105769 CRITICAL, fixed
+      # 1.25.20); same treatment, the newest patch of its line.
+      go mod edit -replace github.com/chainguard-dev/kaniko=github.com/chainguard-dev/kaniko@v1.25.21
       # the acceptance test tree imports otel semconv paths that the upgraded
       # otel renamed; nothing in it ships, so drop it before resolving.
       rm -rf acceptance testdata
