@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/activemq/2026-11-09",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-09T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-56130"
+      },
+      "products": [
+        {
+          "@id": "pkg:maven/org.apache.shiro/shiro-core@2.2.1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "Measured 2026-11-09 on the apache-activemq-6.3.3-bin.tar.gz release the image is built from. CVE-2026-56130 is the Shiro remember-me cookie not being checked for expiry on the server; that cookie handling is shiro-web's CookieRememberMeManager. The release ships three Shiro jars, all under lib/optional: shiro-core-2.2.1, shiro-spring-2.2.1 and activemq-shiro-6.3.3 (tar -tzf); there is no shiro-web jar, so CookieRememberMeManager is not in the image. A byte scan of every class found 0 remember-me references in activemq-shiro (ActiveMQ's own ShiroPlugin, which builds a DefaultSecurityManager whose remember-me manager defaults to null) and only in shiro-spring's Spring configuration classes, which need the absent shiro-web classes and which ActiveMQ never imports; the shipped conf/activemq.xml does not mention Shiro at all. The fix exists only in Shiro 3.0.0, a major line ActiveMQ 6.3 does not use. Revisit if an ActiveMQ release adds shiro-web."
+    }
+  ]
+}
