@@ -209,8 +209,16 @@ pipeline:
         --with-all-dependencies \
         guzzlehttp/guzzle guzzlehttp/psr7 laravel/framework phpseclib/phpseclib \
         symfony/http-foundation symfony/routing mtdowling/jmespath.php web-auth/webauthn-lib \
-        league/commonmark symfony/yaml
+        league/commonmark symfony/yaml symfony/serializer symfony/filesystem
       test -f vendor/autoload.php
+      # 2026-11-05 Symfony release: http-foundation, routing, filesystem 7.4.23 and serializer 8.1.11
+      for want in symfony/http-foundation:7.4.23 symfony/routing:7.4.23 symfony/serializer:8.1.11 symfony/filesystem:7.4.23; do
+        php -r 'require "vendor/autoload.php"; [$n,$f] = explode(":", $argv[1]);
+          if (!Composer\InstalledVersions::isInstalled($n)) { echo "$n not installed\n"; exit(0); }
+          $v = ltrim(Composer\InstalledVersions::getVersion($n), "v"); echo "$n $v\n";
+          $line = implode(".", array_slice(explode(".", $f), 0, 2));
+          exit(strpos($v, $line.".") === 0 && version_compare($v, $f, "<") ? 1 : 0);' "$want"
+      done
       php -r 'require "vendor/autoload.php"; $v = Composer\InstalledVersions::getVersion("league/commonmark"); echo "commonmark $v\n"; exit(version_compare($v, "2.10.2", ">=") ? 0 : 1);'
       php -r 'require "vendor/autoload.php"; $v = Composer\InstalledVersions::getVersion("symfony/yaml"); echo "symfony/yaml $v\n"; exit(version_compare($v, "7.4.18", ">=") ? 0 : 1);'
 
