@@ -37,8 +37,12 @@ accounts:
       gid: 1001
   run-as: 1001
 
+# ENTRYPOINT is the binary and CMD the default config, the same split as upstream's
+# image (whose ENTRYPOINT is /mediamtx): a chart can then pass only `args` with its own
+# config path and work on either image (charts PR #63, 2026-11-09).
 entrypoint:
-  command: /usr/bin/mediamtx /etc/mediamtx/mediamtx.yml
+  command: /usr/bin/mediamtx
+cmd: /etc/mediamtx/mediamtx.yml
 
 archs:
   - x86_64
