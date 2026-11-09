@@ -114,14 +114,10 @@ pipeline:
       # keycloak-admin-cli fat jar that SHADES jackson-databind). They are a separate
       # client, unused by the server runtime, and the shaded jackson trips the gate.
       rm -rf "$dest/bin/client"
-      # mssql-jdbc 13.2.1.jre11 (CVE-2025-59250): unused in a --db=postgres build and a
-      # Trivy classifier-parse false-positive (shipped jar IS the fixed .jre11 build).
-      # MUST be removed AFTER `kc.sh build` -- augmentation enumerates every bundled DB
-      # vendor and fails if the jar is missing at build time. The optimized postgres app
-      # never loads it at runtime, so deleting it from the shipped tree is safe.
-      rm -f "$dest"/lib/lib/main/com.microsoft.sqlserver.mssql-jdbc-*.jar \
-            "$dest"/lib/lib/main/io.quarkus.quarkus-jdbc-mssql-*.jar \
-            "$dest"/lib/lib/deployment/io.quarkus.quarkus-jdbc-mssql-deployment-*.jar
+      # mssql-jdbc stays: `kc.sh build` (how users add custom providers, or switch --db) re-runs
+      # Quarkus augmentation, which needs every jar in the application model and failed with
+      # "quarkus-jdbc-mssql-3.33.4.jar does not exist" while the driver was deleted here
+      # (user report 2026-11-09). The postgres build never loads it at runtime.
 
       # Read-only rootfs: Keycloak writes its data dir (H2 files, transaction logs,
       # infinispan, the optimized-marker) under ${kc.home.dir}/data, and conf may be

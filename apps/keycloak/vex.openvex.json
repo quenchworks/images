@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/keycloak/2026-11-09",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-09T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2025-59250"
+      },
+      "products": [
+        {
+          "@id": "pkg:maven/com.microsoft.sqlserver/mssql-jdbc@13.2.1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "Measured 2026-11-09 on a local build of keycloak 26.7.5. The image ships lib/lib/main/com.microsoft.sqlserver.mssql-jdbc-13.2.1.jre11.jar, whose sha1 (406aa00b60c1b30e1bb02e469530dd2e21f2eace) is identical to Maven Central's mssql-jdbc 13.2.1.jre11 artifact. GHSA-m494-w24q-6f7w names 13.2.1.jre11 as the fixed release of the 13.2 line (>= 13.2.0.jre11, < 13.2.1.jre11). Trivy reads the jar's Bundle-Version and pom.properties version, 13.2.1 without the .jre11 qualifier, and so does not match it against the qualified fixed versions; the code that ships is the fixed release. The jar is kept, not deleted, because kc.sh build (the custom-provider flow) needs every jar in the Quarkus application model; the --db=postgres build never loads the SQL Server driver at runtime."
+    }
+  ]
+}

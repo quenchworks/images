@@ -54,6 +54,21 @@ paths:
     uid: 1001
     gid: 1001
     permissions: 0o755
+  # Custom providers: `FROM` this image, COPY a jar into providers/ and RUN kc.sh build, the
+  # documented Keycloak extension flow. The build re-augments into lib/quarkus as the runtime
+  # user, so both trees belong to it (upstream's image makes them writable by its keycloak user).
+  - path: /opt/keycloak/lib/quarkus
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+    recursive: true
+  - path: /opt/keycloak/providers
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+    recursive: true
 
 archs:
   - x86_64
