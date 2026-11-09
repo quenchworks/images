@@ -125,6 +125,12 @@ pipeline:
       done
       echo "raising:${need:- nothing}"
       [ -z "$need" ] || go get $need
+      # The x/crypto floor (GO-2026-5932 fix) moved openpgp into its own module, which the
+      # server still imports (plugin signatures, upgrader); without it the build fails with
+      # "no required module provides package golang.org/x/crypto/openpgp".
+      if grep -rqs '"golang.org/x/crypto/openpgp' --include=*.go .; then
+        go get golang.org/x/crypto/openpgp@v0.1.0-deprecated
+      fi
 
       VER="${{package.version}}"
 
