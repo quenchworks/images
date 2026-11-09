@@ -29,7 +29,7 @@ environment:
       - build-base
       - busybox
       - ca-certificates-bundle
-      - go-1.26
+      - go-1.27
 
 pipeline:
   - uses: fetch
@@ -40,9 +40,8 @@ pipeline:
       set -eu
       export CGO_ENABLED=0
       export GOFLAGS=-mod=mod
-      # go.mod asks for go 1.26.5 (1.8.x) / 1.26.7 (1.9.1); Wolfi's go-1.26 is 1.26.7,
-      # so the installed toolchain satisfies both and must not fetch another one.
-      # 1.9.1 sits EXACTLY on 1.26.7 -- if Wolfi's go-1.26 ever regresses below that,
+      # go.mod asks for go 1.26.5 (1.8.x), 1.26.7 (1.9.x) and 1.27.3 (1.10.0), so the recipe
+      # uses Wolfi's go-1.27, which satisfies all three and must not fetch another one;
       # GOTOOLCHAIN=local fails the build loudly rather than fetching a toolchain.
       export GOTOOLCHAIN=local
 
