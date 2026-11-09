@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/datahub-frontend/2026-11-09",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-09T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-56130"
+      },
+      "products": [
+        {
+          "@id": "pkg:maven/org.apache.shiro/shiro-core@2.2.1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "Measured 2026-11-09 on the published datahub-frontend 1.8.0 and 1.7.0.1 images (crane export). CVE-2026-56130 is the Shiro remember-me cookie not being checked for expiry on the server; that cookie handling is shiro-web's CookieRememberMeManager. Both images ship the same eleven Shiro 2.2.1 jars in datahub-frontend/lib (cache, config-core, config-ogdl, core, crypto-cipher, crypto-core, crypto-hash, event, hashes-argon2, hashes-bcrypt, lang) and no shiro-web jar, so CookieRememberMeManager is not in the image. A byte scan of every non-Shiro jar in 1.8.0 found only two classes that reference org/apache/shiro: DataHub's auth/pac4j/Shiro2AesDataEncrypter (AesCipherService, ByteSource: pac4j session encryption) and pac4j-core's ShiroPasswordEncoder (hashing). Neither touches a SecurityManager or remember-me; DataHub authenticates through pac4j and Play sessions, not Shiro subjects. The fix exists only in Shiro 3.0.0, a major line DataHub does not use."
+    }
+  ]
+}
