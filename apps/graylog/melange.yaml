@@ -75,7 +75,7 @@ pipeline:
       ROOT="$(pwd)"
       MC="https://repo1.maven.org/maven2"
       PW="$ROOT/.patchwork"; DL="$PW/dl"; ST="$PW/stage"
-      mkdir -p "$DL" "$ST/jackson" "$ST/shiro" "$ST/mail" "$ST/lz4" "$ST/log4j" "$ST/jsoup" "$ST/amqp" "$ST/hc" "$ST/osj" "$ST/guava"
+      mkdir -p "$DL" "$ST/jackson" "$ST/shiro" "$ST/mail" "$ST/lz4" "$ST/log4j" "$ST/jsoup" "$ST/amqp" "$ST/hc" "$ST/osj" "$ST/guava" "$ST/json"
       getj() { curl -fsSL -o "$DL/$2" "$1"; echo "$3  $DL/$2" | sha256sum -c -; }
 
       # --- jackson (databind + core) 2.21.5: overlay class trees + maven metadata ---
@@ -104,6 +104,12 @@ pipeline:
       # META-INF/versions/11/org/jsoup/helper/** -- both live overrides on Java 21.
       ( cd "$ST/log4j" && unzip -qo "$DL/log4j-api-2.26.1.jar" 'org/apache/logging/log4j/*' 'META-INF/versions/*/org/apache/logging/log4j/*' 'META-INF/maven/org.apache.logging.log4j/log4j-api/*' )
       ( cd "$ST/jsoup" && unzip -qo "$DL/jsoup-1.23.2.jar"     'org/jsoup/*'                'META-INF/versions/*/org/jsoup/*'                'META-INF/maven/org.jsoup/jsoup/*' )
+
+      # --- org.json 20251224 -> 20260814 (CVE-2026-59171, MEDIUM, JSONTokener numeric DoS, fixed
+      #     20260719). Shaded unrelocated in graylog.jar; 20260814 drops no class 20251224 has.
+      #     Its META-INF/versions/9/module-info.class is not taken: graylog.jar is no module.
+      getj "$MC/org/json/json/20260814/json-20260814.jar" json-20260814.jar 7dd2de1533e766e2b6c07d8194da85145ad313a167a4760050f5c9b6839604fe
+      ( cd "$ST/json" && unzip -qo "$DL/json-20260814.jar" 'org/json/*' 'META-INF/maven/org.json/*' )
 
       # --- shiro family 2.2.1 (all 9 bundled modules, in lockstep) ---
       for row in \
@@ -262,7 +268,7 @@ pipeline:
         rm -rf "$w"
       }
       PRUNE_GUAVA="$PW/guava-old.files"
-      apply "$ROOT/graylog.jar" "$ST/jackson" "$ST/shiro" "$ST/mail" "$ST/lz4" "$ST/log4j" "$ST/jsoup" "$ST/amqp" "$ST/guava"
+      apply "$ROOT/graylog.jar" "$ST/jackson" "$ST/shiro" "$ST/mail" "$ST/lz4" "$ST/log4j" "$ST/jsoup" "$ST/amqp" "$ST/guava" "$ST/json"
       unset PRUNE_GUAVA
       PRUNE_HC=1
       apply "$ROOT/plugin/graylog-storage-opensearch3-${{package.version}}.jar" "$ST/jackson" "$ST/hc" "$ST/osj"
