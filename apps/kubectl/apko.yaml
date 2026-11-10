@@ -1,6 +1,6 @@
-# Assembles a hardened kubectl image directly from Wolfi packages. No Dockerfile,
-# NO melange build -- apko pulls kubectl plus the common cluster toolbelt (helm,
-# kustomize, jq) and a busybox shell straight from the Wolfi `os` repository.
+# Assembles a hardened kubectl image from Wolfi packages: kubectl, kustomize, jq and a
+# busybox shell straight from the Wolfi `os` repository, plus helm built from source by
+# melange.yaml (Wolfi's helm-4 links x/crypto and x/net releases with open advisories).
 #
 # IMAGE-ONLY -- no Helm chart. This is the 0-CVE, signed, nonroot, multi-arch
 # answer to alpine/k8s and bitnami/kubectl: `FROM` it in CI, or run kubectl/helm
@@ -8,14 +8,16 @@
 contents:
   keyring:
     - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
   repositories:
     - https://packages.wolfi.dev/os
+    - "@local ./packages"
   packages:
     - wolfi-baselayout
     - ca-certificates-bundle
     - busybox            # a POSIX shell + coreutils so the image is usable in CI pipelines
     - __PKG__            # the pinned kubectl minor (/usr/bin/kubectl)
-    - helm               # cluster toolbelt: helm
+    - quench-helm@local  # cluster toolbelt: helm, built from source (melange.yaml: x/crypto + x/net fixes)
     - kustomize          # cluster toolbelt: kustomize
     - jq                 # cluster toolbelt: jq (parse kubectl -o json)
 
