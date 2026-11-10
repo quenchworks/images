@@ -83,4 +83,15 @@ pipeline:
       (cd guava && zip -q -r ../metabase.jar com META-INF)
       v="$(unzip -p metabase.jar META-INF/maven/com.google.guava/guava/pom.properties | sed -n 's/^version=//p')"
       [ "$v" = "__GUAVA_VER__" ] || { echo "guava is $v after the swap"; exit 1; }
+      # org.json 20260814 (CVE-2026-59171, MEDIUM, JSONTokener numeric DoS, fixed 20260719; the
+      # uberjar bundles 20250517 unshaded): same in-place swap. 20260814 drops no class 20250517
+      # has; its META-INF/versions/9/module-info.class is not taken (the uberjar is no module).
+      curl -fsSL -o orgjson.jar "https://repo1.maven.org/maven2/org/json/json/20260814/json-20260814.jar"
+      echo "7dd2de1533e766e2b6c07d8194da85145ad313a167a4760050f5c9b6839604fe  orgjson.jar" | sha256sum -c -
+      v="$(unzip -p metabase.jar META-INF/maven/org.json/json/pom.properties | sed -n 's/^version=//p')"
+      [ -n "$v" ] || { echo "no org.json in the uberjar; re-audit"; exit 1; }
+      mkdir orgjson && unzip -q orgjson.jar 'org/json/*' 'META-INF/maven/org.json/*' -d orgjson
+      (cd orgjson && zip -q -r ../metabase.jar org META-INF)
+      v="$(unzip -p metabase.jar META-INF/maven/org.json/json/pom.properties | sed -n 's/^version=//p')"
+      [ "$v" = 20260814 ] || { echo "org.json is $v after the swap"; exit 1; }
       install -Dm644 metabase.jar "${{targets.destdir}}/usr/share/metabase/metabase.jar"
