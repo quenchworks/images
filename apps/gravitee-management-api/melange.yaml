@@ -108,7 +108,8 @@ pipeline:
       swapjar() {  # <glob> <artifact> <version>
         local n=0 kept=0 v j
         while IFS= read -r j; do
-          v="$(basename "$j" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)"
+          # dotted versions, or a plain date version (org.json json-20231013.jar)
+          v="$(basename "$j" .jar | grep -oE '[0-9]+(\.[0-9]+)+|-[0-9]{8}$' | head -1 || true)"; v="${v#-}"
           if [ "$(printf '%s\n%s\n' "$v" "$3" | sort -V | head -1)" = "$3" ]; then kept=$((kept+1)); continue; fi
           rm -f "$j"; cp "$m/$2-$3.jar" "$(dirname "$j")/"; n=$((n+1))
         done < <(find "$home/lib" "$home/plugins" "$home/plugins-expanded" -name "$1")
@@ -140,6 +141,7 @@ pipeline:
       io/opentelemetry opentelemetry-context 1.67.0 40fb813fb5e27ec2691daa29c81b572b5b1541ef9b41e62490c3ee3e6407c55e opentelemetry-context-[0-9]*.jar
       com/google/guava guava 33.7.2-jre b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c guava-[0-9]*-jre.jar
       org/xerial/snappy snappy-java 1.1.10.9 35228628442e4b9797681c7cbd3b26594f6da3379159dbd0cb07094ed3aece0d snappy-java-[0-9]*.jar
+      org/json json 20260814 7dd2de1533e766e2b6c07d8194da85145ad313a167a4760050f5c9b6839604fe json-2[0-9]*.jar
       LIST
       # netty: this dist ships a subset of the modules the gateway has, so walk what is present (each
       # below 4.2.17.Final moves to it) instead of listing globs that must all match.
