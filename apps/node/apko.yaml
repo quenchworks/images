@@ -22,16 +22,16 @@ contents:
     - ./melange.rsa.pub
   repositories:
     - https://packages.wolfi.dev/os
-    - "@local ./packages"
-    # untagged too: npm needs node-gyp, which needs `nodejs`, and only an untagged repo can satisfy
-    # that from quench-nodejs-22 (an @local package answers only @local requests).
+    # untagged on purpose: npm needs node-gyp, which needs `nodejs`, and an @local package answers only
+    # @local requests. Listing the dir both tagged and untagged resolved in `apko build` and failed in
+    # `apko publish` (run 42870694031). Our package names (quench-*) are unique, so no tag is needed.
     - ./packages
   packages:
     - wolfi-baselayout
     - ca-certificates-bundle
     - __NODEPKG__          # the Node.js major line: Wolfi nodejs-<major>, or our source build for 22
     - npm                         # standalone npm; depends on cmd:node
-    - quench-node-npm-fix@local   # glob 14 + minimatch 11 over npm-12 bundled glob 13 / minimatch 10 (see melange.yaml)
+    - quench-node-npm-fix   # glob 14 + minimatch 11 over npm-12 bundled glob 13 / minimatch 10 (see melange.yaml)
 
 accounts:
   groups:
