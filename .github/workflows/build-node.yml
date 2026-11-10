@@ -104,6 +104,12 @@ jobs:
           melange keygen melange.rsa
           melange build melange.rendered.yaml --arch ${{ matrix.arch.name }} --signing-key melange.rsa --out-dir ./packages
 
+      # Wolfi no longer publishes nodejs-22 updates (moved to its enterprise repo), so the 22 line
+      # builds Node from the release tarball. About an hour per arch on a 4-vCPU runner.
+      - name: Build Node.js 22 from source (22 line only)
+        if: startsWith(matrix.ver, '22.')
+        run: melange build nodejs22.melange.yaml --arch ${{ matrix.arch.name }} --signing-key melange.rsa --out-dir ./packages
+
       - name: Assemble single-arch image for the scan gate
         run: apko build apko.rendered.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}
 

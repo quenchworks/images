@@ -23,10 +23,13 @@ contents:
   repositories:
     - https://packages.wolfi.dev/os
     - "@local ./packages"
+    # untagged too: npm needs node-gyp, which needs `nodejs`, and only an untagged repo can satisfy
+    # that from quench-nodejs-22 (an @local package answers only @local requests).
+    - ./packages
   packages:
     - wolfi-baselayout
     - ca-certificates-bundle
-    - nodejs-__VERMAJOR__          # the pinned Node.js major line from Wolfi
+    - __NODEPKG__          # the Node.js major line: Wolfi nodejs-<major>, or our source build for 22
     - npm                         # standalone npm; depends on cmd:node
     - quench-node-npm-fix@local   # glob 14 + minimatch 11 over npm-12 bundled glob 13 / minimatch 10 (see melange.yaml)
 

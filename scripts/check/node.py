@@ -3,12 +3,16 @@
 # SPECIAL: the window is 3 DISTINCT major lines, so compare each major's newest
 # Wolfi patch against our current entry for that same major (not a global top-N).
 # nodejs-20 was deliberately DROPPED from the catalog (Wolfi-gated CVE) — do not track it.
-from _lib import wolfi, current, vkey
+from _lib import wolfi, current, vkey, json_get
 cur = {v.split(".")[0]: v for v in current("node")}
 print("node")
 behind = []
 for maj in (22, 24, 26):
-    newest = sorted(wolfi(f"nodejs-{maj}"), key=vkey, reverse=True)[0]
+    if maj == 22:  # built from the nodejs.org tarball since Wolfi moved nodejs-22 to enterprise (2026-08-14)
+        cands = [r["version"][1:] for r in json_get("https://nodejs.org/dist/index.json") if r["version"].startswith("v22.")]
+    else:
+        cands = wolfi(f"nodejs-{maj}")
+    newest = sorted(cands, key=vkey, reverse=True)[0]
     have = cur.get(str(maj), "?")
     upd = have == "?" or vkey(newest) > vkey(have)
     if upd:
