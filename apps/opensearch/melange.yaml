@@ -215,6 +215,19 @@ pipeline:
       swapjar 'guava-[0-9]*-jre.jar' guava-33.7.2-jre.jar "$t"; rm -f "$t"
       test "$(find "$dest" -name 'guava-*.jar' ! -name guava-33.7.2-jre.jar | wc -l)" -eq 0 \
         || { echo "FATAL: a guava jar other than 33.7.2-jre survived"; find "$dest" -name 'guava-*.jar'; exit 1; }
+      # org.json: seven plugins bundle json-20231013 to json-20251224 (CVE-2026-59171, MEDIUM,
+      # JSONTokener numeric DoS, fixed 20260719). Date versions, so not through swapjar's dotted
+      # version compare; 20260814 drops no class any of them has.
+      t=$(mktemp); curl -fsSL -o "$t" "$MC/org/json/json/20260814/json-20260814.jar"
+      echo "7dd2de1533e766e2b6c07d8194da85145ad313a167a4760050f5c9b6839604fe  $t" | sha256sum -c -
+      find "$dest" -name 'json-2[0-9][0-9][0-9][0-9][0-9][0-9][0-9].jar' ! -name json-20260814.jar | while IFS= read -r j; do
+        v="${j##*/json-}"; v="${v%.jar}"
+        [ "$v" -lt 20260814 ] || continue
+        cp "$t" "$(dirname "$j")/json-20260814.jar"; rm -f "$j"; echo "  ${j#"$dest"/} -> json-20260814.jar"
+      done
+      rm -f "$t"
+      test "$(find "$dest" -name 'json-2[0-9][0-9][0-9][0-9][0-9][0-9][0-9].jar' ! -name json-20260814.jar | wc -l)" -eq 0 \
+        || { echo "FATAL: an org.json jar older than 20260814 survived"; exit 1; }
       # Nothing may be left behind at an old version, or the classloader sees both.
       for stale in 'httpclient5-5.6.1.jar' 'httpcore5-5.4.jar' 'httpcore5-h2-5.4.jar' \
                    'httpcore5-reactive-5.4.jar' 'log4j-api-2.25.4.jar'; do
