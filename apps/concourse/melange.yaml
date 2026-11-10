@@ -12,8 +12,11 @@ package:
     runtime:
       - ca-certificates-bundle
       - tzdata
-      # the worker's containerd runtime; the web node never execs these
-      - containerd-2
+      # the worker's containerd runtime; the web node never execs these. /usr/bin/containerd
+      # is this package's own rebuild (x/crypto fix, below), so Wolfi's containerd-2, which
+      # only adds that binary, is replaced by the subpackages it would have pulled in.
+      - containerd-shim-runc-v2-2
+      - ctr-2
       - runc
       - iptables
       # baggageclaim runs `tar -C /dev/fd/3 --numeric-owner -xz` to import a resource
@@ -187,10 +190,43 @@ pipeline:
       awk '/^name = "rand"$/{r=1} r&&/^ "log",?$/{exit 1} r&&/^$/{r=0}' pathrs.Cargo.lock || { echo "libpathrs rand now has its log feature; re-check the rand VEX"; exit 1; }
       install -Dm0644 pathrs.Cargo.lock "${{targets.destdir}}/usr/share/doc/libpathrs/Cargo.lock"
 
+  - name: Rebuild containerd with the x/crypto fix
+    runs: |
+      set -eu
+      # Wolfi's containerd-2 2.4.2-r6 links golang.org/x/crypto v0.58.0, and containerd calls
+      # x/crypto/openpgp (armor, clearsign), so GO-2026-5932 is reachable (govulncheck,
+      # 2026-11-10): no VEX. Same tag and make target Wolfi builds; x/crypto at the fix commit
+      # moves openpgp to its own deprecated module.
+      curl -fsSL -o containerd.tgz https://github.com/containerd/containerd/archive/refs/tags/v2.4.2.tar.gz
+      echo "02cbbecd0ef78a521d124afa791b843ba5458ef206e1f7f017999ff45c80c0b4  containerd.tgz" | sha256sum -c -
+      mkdir -p containerd && tar -xzf containerd.tgz -C containerd --strip-components=1
+      cd containerd
+      export GOTOOLCHAIN=local GOFLAGS=-mod=mod
+      rm -rf vendor
+      # Wolfi's containerd-2 floor set plus the x/crypto fix; raise a module only when the tag
+      # has it below the floor (go get is exact, so an unconditional get could downgrade).
+      for mv in golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 google.golang.org/grpc@v1.83.2 \
+                golang.org/x/net@v0.62.0 golang.org/x/text@v0.39.0 golang.org/x/sys@v0.49.0 \
+                github.com/cilium/ebpf@v0.22.0 github.com/go-jose/go-jose/v4@v4.1.6 github.com/klauspost/compress@v1.20.2; do
+        m="${mv%@*}"; want="${mv#*@}"
+        have="$(go list -m -f '{{.Version}}' "$m" 2>/dev/null || true)"
+        [ -n "$have" ] || continue
+        [ "$(printf '%s\n%s\n' "$have" "$want" | sort -V | head -1)" = "$want" ] || go get "$mv"
+      done
+      go mod tidy
+      make bin/containerd VERSION=v2.4.2 REVISION=b7a25261e029d68978bbf290df0a62fc819b3c51 GO_BUILD_FLAGS=-mod=mod
+      go version -m bin/containerd | grep -q 'golang.org/x/crypto[[:space:]]*v0.58.1-0.20261009181718-2f1f834330b2' \
+        || { echo "containerd does not link the x/crypto fix"; exit 1; }
+      go version -m bin/containerd | grep -q 'github.com/cilium/ebpf[[:space:]]*v0.2[2-9]' \
+        || { echo "containerd does not link cilium/ebpf >= 0.22"; exit 1; }
+      ./bin/containerd --version | grep -q ' v2.4.2 b7a25261e029d68978bbf290df0a62fc819b3c51'
+      install -Dm755 bin/containerd "${{targets.destdir}}/usr/bin/containerd"
+
 test:
   pipeline:
     - runs: |
         concourse --version
+        containerd --version | grep -q ' v2.4.2 '
         test -x /usr/local/concourse/bin/init
         test -s /usr/local/concourse/resource-types/registry-image/rootfs.tgz
         grep -q '"type":"registry-image"' /usr/local/concourse/resource-types/registry-image/resource_metadata.json
