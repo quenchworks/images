@@ -76,8 +76,9 @@ pipeline:
           elm --version
           npm run build
         )
-        # vite-plugin-compression2 deletes originals; assert the gzip variant.
-        test -f ui/app/dist/index.html.gz
+        # vite-plugin-compression2 deletes originals; assert the gzip variant. 0.35 moved vite's
+        # outDir to dist/elm; ui/web.go still embeds all of app/dist, so accept either layout.
+        test -f ui/app/dist/index.html.gz || test -f ui/app/dist/elm/index.html.gz
       else
         # ---- legacy build (0.31.x): no vite/package.json. ui/app/Makefile builds
         # script.js via `elm make` + uglify; assets are served by vfsgen
