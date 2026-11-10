@@ -289,6 +289,11 @@ pipeline:
       swap spring-context-support- org/springframework/spring-context-support/7.0.9/spring-context-support-7.0.9.jar 3c0c35a0371539f5e7d4e9d0226b9a009a4109cd0e20e805e27132dd6ae0727d
       shade hazelcast-5.7.0.jar com/hazelcast/shaded/ - jackson-core-2.21.8.jar jackson-databind-2.21.8.jar jackson-core-3.1.8.jar jackson-databind-3.1.8.jar
       shade auth-api.jar - - jackson-core-2.21.8.jar jackson-databind-2.21.8.jar
+      # org.json CVE-2026-59171 (MEDIUM, JSONTokener numeric DoS, fixed 20260719): the standalone
+      # json-20231013.jar, hazelcast's relocated 20250107 copy and auth-api's unrelocated one.
+      swap json-                   org/json/json/20260814/json-20260814.jar 7dd2de1533e766e2b6c07d8194da85145ad313a167a4760050f5c9b6839604fe
+      shade hazelcast-5.7.0.jar com/hazelcast/shaded/ - json-20260814.jar
+      shade auth-api.jar - - json-20260814.jar
       # 2026-11-02 scan: guava 33.7.2 (CVE-2026-102554) for the standalone jar and three bundled
       # copies (graphql-java relocates 32.1.2 under graphql/, iceberg-bundled-guava 33.3.1 under
       # org/apache/iceberg/relocated/, auth-api carries 33.6.0 unrelocated next to failureaccess);
