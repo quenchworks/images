@@ -48,6 +48,8 @@ pipeline:
       expected-sha256: 7b9adc82d612d0a2a863d96c46de2292552e250cee51956ebbe0146c42aacae9
   - runs: |
       set -eu
+      # melange leaves CFLAGS/CPPFLAGS unset; under -u the substitutions below need a default
+      CFLAGS="${CFLAGS:-}" CXXFLAGS="${CXXFLAGS:-}" CPPFLAGS="${CPPFLAGS:-}"
       common_flags="-D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64"
       export CFLAGS="${CFLAGS/-Os/-O2} $common_flags"
       export CXXFLAGS="${CXXFLAGS/-Os/-O2} $common_flags"
