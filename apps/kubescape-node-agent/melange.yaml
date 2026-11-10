@@ -51,6 +51,23 @@ pipeline:
       done
       echo "raising:${need:- nothing}"
       [ -z "$need" ] || go get $need
+      B="${{targets.destdir}}/usr/bin"
+      mkdir -p "$B"
+      # github.com/docker/docker v28.5.2+incompatible carries CVE-2026-33997 (the daemon's
+      # plugin install); its fix exists only on the moby/moby path. Record which docker/docker
+      # packages each binary links, and fail if any daemon, plugin or API server code is one.
+      for p in ./cmd ./cmd/sbom-scanner; do
+        echo "docker/docker packages linked by $p:"; go list -deps "$p" | grep -E '^github.com/(docker/docker|moby/moby)/' || true
+        if go list -deps "$p" | grep -E '^github.com/(docker/docker|moby/moby)/(daemon|plugin|api/server|pkg/authorization)'; then
+          echo "$p links Docker daemon code: CVE-2026-33997 applies"; exit 1
+        fi
+      done
+      go build -buildvcs=false -trimpath -ldflags "-s -w" -o "$B/node-agent" ./cmd
+      # node-agent links containerd v1.7.36 (through inspektor-gadget) and no containerd/v2, so it
+      # builds on upstream's tested pins: containerd/v2 v2.2.0 and runtime-spec v1.2.1. Built on the
+      # overrides below (runtime-spec 1.3, a patched containerd v1.7.36), 0.3.310's node-agent never
+      # saw a container start after its own, and recorded no profile (charts CI 42792511808).
+      # The containerd/v2 CVEs are in sbom-scanner (syft), so only it is built on the overrides.
       # go.mod replaces containerd/v2 with v2.2.0 (it requires 2.4.1). A go get floor follows the
       # replace and downgrades the tree, so move the replace within its line: 2.2.10 closes
       # CVE-2026-46680, -53488, -53489, -53492, -53493, -53495, -95837 and -95838.
@@ -68,18 +85,6 @@ pipeline:
       sed -i 's/^		s.Linux.Resources.Pids.Limit = limit$/		s.Linux.Resources.Pids.Limit = \&limit/' "$f"
       go mod edit -replace=github.com/containerd/containerd="$PWD/.containerd-v1"
       go mod tidy
-      B="${{targets.destdir}}/usr/bin"
-      mkdir -p "$B"
-      # github.com/docker/docker v28.5.2+incompatible carries CVE-2026-33997 (the daemon's
-      # plugin install); its fix exists only on the moby/moby path. Record which docker/docker
-      # packages each binary links, and fail if any daemon, plugin or API server code is one.
-      for p in ./cmd ./cmd/sbom-scanner; do
-        echo "docker/docker packages linked by $p:"; go list -deps "$p" | grep -E '^github.com/(docker/docker|moby/moby)/' || true
-        if go list -deps "$p" | grep -E '^github.com/(docker/docker|moby/moby)/(daemon|plugin|api/server|pkg/authorization)'; then
-          echo "$p links Docker daemon code: CVE-2026-33997 applies"; exit 1
-        fi
-      done
-      go build -buildvcs=false -trimpath -ldflags "-s -w" -o "$B/node-agent" ./cmd
       go build -buildvcs=false -trimpath -ldflags "-s -w" -o "$B/sbom-scanner" ./cmd/sbom-scanner
       v="$(go version -m "$B/node-agent" | awk '$2 == "golang.org/x/sys" { print $3 }')"
       [ -z "$v" ] || ! vlt "$v" v0.47.0 || { echo "FATAL: links golang.org/x/sys $v"; exit 1; }
