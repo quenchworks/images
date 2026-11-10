@@ -43,6 +43,14 @@ pipeline:
       uri: https://github.com/kubernetes/kubernetes/archive/refs/tags/v1.36.4.tar.gz
       expected-sha256: 86a216801ddba7098a50c6f3b3fe5fbc28ba34ea5b1daa66d81c2d5307c301ac
       directory: kubernetes
+  # kine (the SQLite store the syncer starts), built here instead of taken from Wolfi: kine
+  # 0.17.5-r0 floors x/net only and still links x/crypto v0.58.0 (GO-2026-5932).
+  - runs: mkdir -p kine
+  - uses: fetch
+    with:
+      uri: https://github.com/k3s-io/kine/archive/refs/tags/v0.17.5.tar.gz
+      expected-sha256: 853c0f8f81b9c6c07d748c6d20d658d0c27ab69bc3a906fc5182b1d8505e7cfb
+      directory: kine
   - runs: |
       set -eu
       export CGO_ENABLED=0
@@ -109,3 +117,18 @@ pipeline:
         [ -z "$bad" ] || { echo "0-CVE float did not reach $b:"; echo "$bad"; exit 1; }
         "${{targets.destdir}}/usr/bin/$b" --version | grep -qx 'Kubernetes v1.36.4'
       done
+
+      # kine v0.17.5: kine's scripts/build flags (cgo SQLite, static, the same tags), run
+      # directly because the script needs bash and git. Same x/crypto + x/net floor.
+      cd ../kine
+      need="$(go list -m -e golang.org/x/crypto golang.org/x/net | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor kine | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
+      go mod tidy
+      CGO_ENABLED=1 CGO_CFLAGS="-DSQLITE_DEFAULT_MEMSTATUS=0 -DSQLITE_DISABLE_INTRINSIC -DSQLITE_ENABLE_COLUMN_METADATA -DSQLITE_ENABLE_DBPAGE_VTAB -DSQLITE_ENABLE_DBSTAT_VTAB -DSQLITE_ENABLE_MATH_FUNCTIONS -DSQLITE_ENABLE_MEMORY_MANAGEMENT -DSQLITE_ENABLE_OFFSET_SQL_FUNC -DSQLITE_ENABLE_PREUPDATE_HOOK -DSQLITE_ENABLE_RBU -DSQLITE_ENABLE_RTREE -DSQLITE_ENABLE_SESSION -DSQLITE_ENABLE_SNAPSHOT -DSQLITE_ENABLE_STAT4 -DSQLITE_ENABLE_UNLOCK_NOTIFY -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_THREADSAFE=1 -DSQLITE_WITHOUT_ZONEMALLOC" \
+        go build -trimpath -tags nats,sqlite_unlock_notify,sqlite_vtable,sqlite_stat4,sqlite_preupdate_hook,sqlite_math_functions,sqlite_dbstat,sqlite_column_metadata \
+          -ldflags "-X github.com/k3s-io/kine/pkg/version.Version=v0.17.5 -X github.com/k3s-io/kine/pkg/version.GitCommit=f82bd251 -extldflags -static -s" \
+          -o "${{targets.destdir}}/usr/bin/kine" .
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/kine" \
+        | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor kine)"
+      [ -z "$bad" ] || { echo "0-CVE float did not reach kine:"; echo "$bad"; exit 1; }
+      "${{targets.destdir}}/usr/bin/kine" --version | grep -q '^kine version v0.17.5 '
