@@ -34,29 +34,10 @@ pipeline:
   - name: Drop the vulnerable github.com/docker/docker dep, float the module graph, build
     runs: |
       set -eu
-      # grype imports github.com/docker/docker ONLY in cmd/grype/cli/commands/completion.go
-      # (listing local docker images for shell completion). That module caps at
-      # v28.5.2+incompatible and carries CVE-2026-34040 / CVE-2026-33997 (Moby daemon
-      # authz + plugin-install-privilege bypass); the fix ships only on the renamed
-      # github.com/moby/moby/v2 path, with NO fix on the docker/docker import path.
-      # grype ALREADY depends on the split client (github.com/moby/moby/client) + api
-      # (github.com/moby/moby/api) modules, so we migrate that single file onto them
-      # (identical NewClientWithOpts/FromEnv/APIVersionNegotiation + ImageList API).
-      # docker/docker then drops out of the build graph entirely and the grype binary
-      # embeds only moby/moby/{client,api} — the CVE is gone at the source, gate unchanged.
+      # grype used github.com/docker/docker (CVE-2026-34040 / CVE-2026-33997, no fix on that
+      # path) only in completion.go; this recipe sed-migrated it to github.com/moby/moby/client
+      # until upstream made the same move in v0.121.3. Keep docker/docker out of the build.
       F=cmd/grype/cli/commands/completion.go
-      sed -i \
-        -e '\#"github.com/docker/docker/api/types/filters"#d' \
-        -e '\#"github.com/docker/docker/api/types/image"#d' \
-        -e 's#"github.com/docker/docker/client"#"github.com/moby/moby/client"#' \
-        -e 's#imageListArgs := filters.NewArgs()#imageListArgs := make(client.Filters).Add("dangling", "false")#' \
-        -e '/^\timageListArgs.Add("dangling", "false")$/d' \
-        -e 's#image.ListOptions{All: false, Filters: imageListArgs}#client.ImageListOptions{All: false, Filters: imageListArgs}#' \
-        -e 's#for _, image := range images {#for _, img := range images.Items {#' \
-        -e 's#for _, tag := range image.RepoTags {#for _, tag := range img.RepoTags {#' \
-        "$F"
-      # sed is silent when a pattern stops matching, and a leftover import would put
-      # docker/docker straight back into the graph. Fail here instead.
       ! grep -q 'github.com/docker/docker' "$F" || exit 1
       export CGO_ENABLED=0
       export GOFLAGS=-mod=mod
