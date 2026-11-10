@@ -168,9 +168,10 @@ pipeline:
       # Staged the same way as adm-zip and brace-expansion above, for the same reason:
       # a global install has no project package.json, so npm `overrides` are ignored.
       # qs 6.16.0 is a minor within the same 6.x API and keeps the same entry point.
+      # 2026-11-11: 6.16.1 for CVE-2026-110816 (MEDIUM), a patch on the same API.
       mkdir -p .qs-stage
       echo '{"name":"quench-qs-stage","private":true}' > .qs-stage/package.json
-      ( cd .qs-stage && npm install --no-audit --no-fund --no-package-lock qs@6.16.0 )
+      ( cd .qs-stage && npm install --no-audit --no-fund --no-package-lock qs@6.16.1 )
       find "${destdir}/usr/lib/node_modules" -type d -name qs -print0 > "${PWD}/.qs-copies"
       QS_STAGE="${PWD}/.qs-stage/node_modules/qs" NM_ROOT="${destdir}/usr/lib/node_modules" \
       QS_COPIES="${PWD}/.qs-copies" node -e '
@@ -181,8 +182,8 @@ pipeline:
         if(!copies.length) throw new Error("no qs copy under "+root);
         let rep=0;
         for(const d of copies){
-          if(ver(d)!=="6.16.0"){ fs.rmSync(d,{recursive:true}); fs.cpSync(stage,d,{recursive:true}); rep++; }
-          if(ver(d)!=="6.16.0") throw new Error("qs still "+ver(d)+" at "+d);
+          if(ver(d)!=="6.16.1"){ fs.rmSync(d,{recursive:true}); fs.cpSync(stage,d,{recursive:true}); rep++; }
+          if(ver(d)!=="6.16.1") throw new Error("qs still "+ver(d)+" at "+d);
           const q=require(d);
           if(typeof q.parse!=="function"||typeof q.stringify!=="function") throw new Error("qs lost parse/stringify at "+d);
           if(q.parse("a[0]=1&a[1]=2").a[1]!=="2") throw new Error("qs parse round-trip failed at "+d);
@@ -190,6 +191,47 @@ pipeline:
         console.log("qs: "+copies.length+" copies, "+rep+" replaced");
       '
       rm -rf .qs-stage
+
+      # --- glob CVE-2026-118773 (fixed 14.0.2) + minimatch CVE-2026-118764 (fixed 11.0.1), both
+      # MEDIUM, fixed only in the next majors. Renovate pins glob 13.0.6 and minimatch 10.2.6
+      # itself (44.227.3 still does); gaxios -> rimraf 5 brings glob 10.5.0 + minimatch 9.0.9.
+      # Renovate calls only Minimatch#match and braceExpand (lib/util/minimatch.ts,
+      # config/app-strings) and glob("**",{dot,nodir}) (platform/local/scm), all kept in the
+      # new majors; both ship CJS builds for rimraf. Unlike the swaps above these have NEW
+      # dependencies (path-scurry 3, @isaacs/nonrecursive-glob-match, brace-expansion 5), so the
+      # staged dependency set is nested beside each replaced copy. minimatch 3.x (glob 6 under
+      # bunyan) is outside the advisory range (7.0.0+) and stays.
+      mkdir -p .gm-stage
+      echo '{"name":"quench-gm-stage","private":true}' > .gm-stage/package.json
+      ( cd .gm-stage && npm install --no-audit --no-fund --no-package-lock glob@14.0.2 minimatch@11.0.1 )
+      find "${destdir}/usr/lib/node_modules" -type d \( -name glob -o -name minimatch \) -print0 > "${PWD}/.gm-copies"
+      GM_STAGE="${PWD}/.gm-stage/node_modules" GM_COPIES="${PWD}/.gm-copies" node -e '
+        const fs=require("fs"), path=require("path");
+        const stage=process.env.GM_STAGE;
+        const pj=d=>{try{return JSON.parse(fs.readFileSync(path.join(d,"package.json"),"utf8"))}catch{return null}};
+        const want={glob:{min:9,max:13,to:"14.0.2"}, minimatch:{min:7,max:10,to:"11.0.1"}};
+        const deps=fs.readdirSync(stage).flatMap(n=>n.startsWith("@")?fs.readdirSync(path.join(stage,n)).map(m=>n+"/"+m):[n]).filter(n=>!n.startsWith("."));
+        const copies=fs.readFileSync(process.env.GM_COPIES,"utf8").split("\0").filter(Boolean);
+        let rep={glob:0,minimatch:0};
+        for(const d of copies){
+          const name=path.basename(d), j=pj(d), w=want[name];
+          if(!j||j.name!==name) continue;
+          const major=+j.version.split(".")[0];
+          if(major<w.min||major>w.max) continue;
+          fs.rmSync(d,{recursive:true});
+          fs.cpSync(path.join(stage,name),d,{recursive:true});
+          for(const dep of deps){ if(dep===name||dep==="glob") continue;
+            fs.cpSync(path.join(stage,dep),path.join(d,"node_modules",dep),{recursive:true}); }
+          if(pj(d).version!==w.to) throw new Error(name+" still "+pj(d).version+" at "+d);
+          const m=require(d);
+          if(name==="glob"&&typeof m.globSync!=="function") throw new Error("glob API missing at "+d);
+          if(name==="minimatch"&&!(new m.Minimatch("**/*.json",{dot:true}).match("a/.b/c.json"))) throw new Error("minimatch match broken at "+d);
+          rep[name]++;
+        }
+        if(!rep.glob||!rep.minimatch) throw new Error("expected glob and minimatch copies to replace: "+JSON.stringify(rep));
+        console.log("glob/minimatch replaced: "+JSON.stringify(rep));
+      '
+      rm -rf .gm-stage
 
       # Sanity: the launcher symlink must exist (build fails loudly otherwise).
       test -L "${destdir}/usr/bin/renovate"
