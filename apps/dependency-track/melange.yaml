@@ -59,6 +59,8 @@ pipeline:
       swap jackson-core 2.22.3 com/fasterxml/jackson/core 8a501126a385b25841915d839508f8a66e2a0dbc8a6709d055ef3b3e852b094c
       swap guava 33.7.2-jre com/google/guava b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c
       swap snappy-java 1.1.10.9 org/xerial/snappy 35228628442e4b9797681c7cbd3b26594f6da3379159dbd0cb07094ed3aece0d
+      # org.json 20231013: CVE-2026-59171 (MEDIUM, JSONTokener numeric DoS), fixed 20260719
+      swap json 20260814 org/json 7dd2de1533e766e2b6c07d8194da85145ad313a167a4760050f5c9b6839604fe
       chmod -R a+rX "$app"
 
 test:
@@ -66,3 +68,4 @@ test:
     - runs: |
         test -f /opt/dependency-track/dependency-track-apiserver.jar
         test -f /opt/dependency-track/lib/freemarker-2.3.35.jar
+        test -f /opt/dependency-track/lib/json-20260814.jar
