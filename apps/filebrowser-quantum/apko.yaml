@@ -1,0 +1,63 @@
+# Assembles the FileBrowser Quantum image: the from-source binary (UI embedded), Wolfi's ffmpeg
+# for video previews, nonroot uid 1001, multi-arch. Files are served from /srv; the SQLite
+# database lives under /home/filebrowser/data (mount a volume there to keep users and settings).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-filebrowser-quantum@local
+
+accounts:
+  groups:
+    - groupname: filebrowser
+      gid: 1001
+  users:
+    - username: filebrowser
+      uid: 1001
+      gid: 1001
+      homedir: /home/filebrowser
+  run-as: 1001
+
+environment:
+  FILEBROWSER_CONFIG: /etc/filebrowser/config.yaml
+  FILEBROWSER_DATABASE_PATH: /home/filebrowser/data/database.sqlite
+  FILEBROWSER_FFMPEG_PATH: /usr/bin/
+
+work-dir: /home/filebrowser
+
+paths:
+  - path: /home/filebrowser
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /home/filebrowser/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /srv
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /usr/bin/filebrowser
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-filebrowser-quantum"
+  org.opencontainers.image.licenses: "Apache-2.0"
