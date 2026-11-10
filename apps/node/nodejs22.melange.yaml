@@ -3,6 +3,10 @@
 # ship the 22.23.4 security release (CVE-2026-105481/105482/106069/106072-4). Configure flags and
 # build deps follow Wolfi's last public nodejs-22.yaml (MIT); the minimal/doc subpackages and the
 # coverage tests are dropped. npm is removed here as in Wolfi: the image installs Wolfi `npm`.
+# ICU: Wolfi's icu-dev is ICU 79.1, which Node 22's V8 build tool crashes on (gen-regexp-special-case,
+# run 42866960418), and ICU 78 has no -dev package. Node's bundled ICU 78.3 (deps/icu, the same ICU the
+# official Node 22 binaries carry) is built in. The scanner cannot see it; the build pins 78.3 and a newer
+# ICU 78 patch release means a bump here. OpenSSL, zlib, brotli, c-ares, nghttp2 and libuv stay shared.
 package:
   name: quench-nodejs-22
   version: 22.23.4
@@ -27,7 +31,6 @@ environment:
       - busybox
       - c-ares-dev
       - ca-certificates-bundle
-      - icu-dev
       - libuv-dev
       - linux-headers
       - nghttp2-dev
@@ -63,8 +66,7 @@ pipeline:
         --shared-libuv \
         --ninja \
         --openssl-use-def-ca-store \
-        --with-icu-default-data-dir="$(icu-config --icudatadir)" \
-        --with-intl=system-icu \
+        --with-intl=full-icu \
         --openssl-conf-name=openssl_conf \
         --without-corepack
       make BUILDTYPE=Release "-j$(nproc)"
@@ -72,6 +74,8 @@ pipeline:
       rm -rf "${{targets.destdir}}/usr/lib/node_modules" "${{targets.destdir}}/usr/bin/npm" "${{targets.destdir}}/usr/bin/npx"
       rm -rf "${{targets.destdir}}/usr/share/doc" "${{targets.destdir}}/usr/share/man"
       "${{targets.destdir}}/usr/bin/node" --version | grep -qx "v${{package.version}}"
+      # bundled ICU is invisible to the scanner: pin it, so a change is a decision, not an accident
+      test "$("${{targets.destdir}}/usr/bin/node" -p process.versions.icu)" = 78.3
   - uses: strip
 
 test:
