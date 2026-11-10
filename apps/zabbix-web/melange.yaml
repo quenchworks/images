@@ -1,7 +1,7 @@
 # The Zabbix web frontend: ui/ from the official release tarball, served by quench-nginx and
 # php-fpm 8.3 under supervisord (the phpmyadmin layout), PostgreSQL only.
 # symfony/yaml: every line pins v5.1.3 (CVE-2026-45133/45304/45305); composer moves it to
-# ^5.4.52, the same major, and the build asserts the installed version.
+# ^5.4.56 (CVE-2026-123792 since 2026-11-05), the same major, and the build asserts the installed version.
 package:
   name: quench-zabbix-web
   version: __VER__
@@ -81,11 +81,11 @@ pipeline:
     runs: |
       set -eu
       export COMPOSER_HOME=/tmp/composer COMPOSER_ALLOW_SUPERUSER=1
-      composer require -d ui 'symfony/yaml:^5.4.52' --update-no-dev --update-with-dependencies \
+      composer require -d ui 'symfony/yaml:^5.4.56' --update-no-dev --update-with-dependencies \
         --no-scripts --no-audit --no-progress --no-interaction --ignore-platform-reqs
       php -r '$i=json_decode(file_get_contents("ui/vendor/composer/installed.json"),true);
         foreach($i["packages"] as $p){ if($p["name"]==="symfony/yaml"){ echo "symfony/yaml ",$p["version"],"\n";
-          exit(version_compare(ltrim($p["version"],"v"),"5.4.52","<") ? 1 : 0); } } exit(1);'
+          exit(version_compare(ltrim($p["version"],"v"),"5.4.56","<") ? 1 : 0); } } exit(1);'
   - name: Install the frontend, config, nginx, php-fpm and supervisor wiring
     runs: |
       set -eu
