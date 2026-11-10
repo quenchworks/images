@@ -92,7 +92,9 @@ pipeline:
       RT=/tmp/hadoop/hadoop-client-modules/hadoop-client-runtime/pom.xml
       sed -i 's|<exclude>org.eclipse.jetty:jetty-continuation</exclude>|&<exclude>org.eclipse.jetty:jetty-client</exclude><exclude>org.eclipse.jetty:jetty-http</exclude><exclude>org.eclipse.jetty:jetty-io</exclude><exclude>org.eclipse.jetty.websocket:*</exclude><exclude>org.jline:*</exclude>|' "$RT"
       grep -q '<exclude>org.jline:\*</exclude>' "$RT"
-      mvn $SKIP -f "$RT" -Djackson2.version=__JACKSON_HADOOP__ -Djackson2.databind.version=__JACKSON_HADOOP__ install
+      # kerby 2.0.3 -> 2.1.2 (kerby-asn1 CVE-2026-57914, MEDIUM): hadoop-project's kerby.version
+      # manages all seven kerby/kerb jars the runtime shades, so they move as one release.
+      mvn $SKIP -f "$RT" -Djackson2.version=__JACKSON_HADOOP__ -Djackson2.databind.version=__JACKSON_HADOOP__ -Dkerby.version=2.1.2 install
 
       # --- Spark ---
       # XSDToSchema imports the Hadoop shaded jline copy of java.io.InputStreamReader; jline
@@ -151,6 +153,7 @@ pipeline:
           org.jline:*) echo "__JLINE__" ;;
           com.google.guava:guava) echo "__GUAVA__" ;;
           org.xerial.snappy:snappy-java) echo "__SNAPPY__" ;;
+          org.apache.kerby:*) echo "2.1.2" ;;
           org.apache.derby:derby|org.apache.hive:hive-exec|org.apache.thrift:libthrift) echo "none" ;;
         esac
       }
@@ -166,7 +169,7 @@ pipeline:
         fi
       done < /tmp/deps.txt
       # A check that matched nothing proves nothing: the shaded copies must be seen.
-      for need in "spark-core_2.13-${{package.version}}.jar org.eclipse.jetty:jetty-server" "hadoop-client-runtime-__HADOOP__.jar com.fasterxml.jackson.core:jackson-databind" "parquet-jackson-__PARQUET__.jar com.fasterxml.jackson.core:jackson-databind" "spark-connect-client-jvm_2.13-${{package.version}}.jar io.netty:netty-handler"; do
+      for need in "spark-core_2.13-${{package.version}}.jar org.eclipse.jetty:jetty-server" "hadoop-client-runtime-__HADOOP__.jar com.fasterxml.jackson.core:jackson-databind" "parquet-jackson-__PARQUET__.jar com.fasterxml.jackson.core:jackson-databind" "hadoop-client-runtime-__HADOOP__.jar org.apache.kerby:kerby-asn1" "spark-connect-client-jvm_2.13-${{package.version}}.jar io.netty:netty-handler"; do
         grep -q "^$need " /tmp/deps.txt || { echo "floor check saw no: $need"; bad=1; }
       done
       test ! -e "$S/yarn"
