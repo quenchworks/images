@@ -23,5 +23,7 @@ def pin(tag):
         return None
     return next((o["realtime"]["version"] for o in vj.values() if isinstance(o, dict) and "realtime" in o), None)
 
-rt = next(v for v in map(pin, github("coollabsio/coolify")[:10]) if v)
+# 2026-11-10: 4.4 onward ships no realtime at all, and ten 4.4+ releases pushed every 4.3 tag past a
+# [:10] window (StopIteration). Walk all releases, skipping the lines known to drop it.
+rt = next(v for v in map(pin, (t for t in github("coollabsio/coolify") if t.split(".")[:2] < ["4", "4"])) if v)
 report("coolify-realtime", [rt], n=1)
