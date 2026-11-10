@@ -29,6 +29,7 @@ from __future__ import annotations
 import hashlib
 import pathlib
 import re
+import time
 import subprocess
 import sys
 import urllib.request
@@ -218,7 +219,9 @@ def tag_commit(app: str, version: str) -> str | None:
 
 def wolfi_pin(pkg: str, version: str) -> str | None:
     idx = pathlib.Path("/tmp/APKINDEX.txt")
-    if not idx.exists():
+    # Refresh a cache older than an hour: a never-expiring copy (2026-11-09) reported Wolfi's
+    # composer 2.11.2 and ceph 20.2.5 as missing on 2026-11-11.
+    if not idx.exists() or time.time() - idx.stat().st_mtime > 3600:
         subprocess.run(
             "curl -s https://packages.wolfi.dev/os/x86_64/APKINDEX.tar.gz "
             "| tar -xzO APKINDEX > /tmp/APKINDEX.txt", shell=True, check=False)
