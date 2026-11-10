@@ -65,7 +65,7 @@ pipeline:
       # FLOOR is a floor, not a pin. Measured 2026-09-29 on 8.3.1: containerd/v2 2.3.5,
       # grpc 1.83.1, x/mod 0.38.0 and the otel 1.44.0 family (sdk carries
       # CVE-2026-81870); the otel modules release as a set, so they move together.
-      FLOOR="golang.org/x/net@v0.62.0 github.com/containerd/containerd/v2@v2.3.6 google.golang.org/grpc@v1.83.2 golang.org/x/mod@v0.41.0 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0 github.com/go-jose/go-jose/v4@v4.1.6"
+      FLOOR="golang.org/x/net@v0.62.0 github.com/containerd/containerd/v2@v2.3.6 google.golang.org/grpc@v1.83.2 golang.org/x/mod@v0.41.0 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0 github.com/go-jose/go-jose/v4@v4.1.6 golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2"
       MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
       below_floor() {
         awk -v floor="$FLOOR" -v tag="$1" '
