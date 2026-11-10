@@ -293,6 +293,11 @@ pipeline:
       swap jline-                  org/jline/jline/4.3.1/jline-4.3.1.jar c75761d4625467083c208563718fc37551af2a3468271a0758726b1f7f728d75
       shade hazelcast-5.7.0.jar com/hazelcast/shaded/ - jackson-core-2.21.8.jar jackson-databind-2.21.8.jar jackson-core-3.1.8.jar jackson-databind-3.1.8.jar
       shade auth-api.jar - - jackson-core-2.21.8.jar jackson-databind-2.21.8.jar
+      # org.json CVE-2026-59171 (MEDIUM, JSONTokener numeric DoS, fixed 20260719): the standalone
+      # json-20231013.jar, hazelcast's relocated 20250107 copy and auth-api's unrelocated one.
+      swap json-                   org/json/json/20260814/json-20260814.jar 7dd2de1533e766e2b6c07d8194da85145ad313a167a4760050f5c9b6839604fe
+      shade hazelcast-5.7.0.jar com/hazelcast/shaded/ - json-20260814.jar
+      shade auth-api.jar - - json-20260814.jar
       shade "$(cd "$L" && ls parquet-jackson-*.jar)" shaded/parquet/ com/fasterxml/jackson/annotation/ jackson-core-2.22.4.jar jackson-databind-2.22.4.jar
       # 2026-11-02 scan: guava 33.7.2 (CVE-2026-102554) for the standalone jar and three bundled
       # copies (graphql-java relocates 32.1.2 under graphql/, hadoop-shaded-guava 33.4.8 under
