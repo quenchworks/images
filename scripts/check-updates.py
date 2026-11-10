@@ -69,6 +69,8 @@ def hold_reason(app: str) -> str:
         return ""
     text = conf.read_text()
     status = next((l[1:].strip() for l in text.splitlines() if re.match(r"#\s*STATUS", l)), "")
+    if re.search(r"^EOL=1", text, re.M):
+        return "EOL: " + status[:90]
     if re.search(r"^BLOCKED=1", text, re.M):
         by = re.search(r"^BLOCKED_BY=(\S+)", text, re.M)
         return "BLOCKED: " + (by.group(1) if by else status[:90])

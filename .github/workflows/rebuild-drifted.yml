@@ -5,7 +5,7 @@ name: rebuild-drifted
 # a plain rebuild clears it. This reads the website's nightly scan (security-scan, 01:00
 # UTC) and dispatches build-<app>.yml for every app with a fixable finding. A rebuild that
 # does not clear it fails the 0-CVE gate and publishes nothing, so this cannot ship a worse
-# image; apps on a BLOCKED=1 hold are skipped by their own prep job.
+# image; apps on a BLOCKED=1 hold or EOL=1 are skipped by their own prep job.
 on:
   schedule:
     - cron: "17 3 * * *"   # after the nightly scan has pushed security.json
@@ -40,7 +40,7 @@ jobs:
             [ "$n" -lt "$LIMIT" ] || { echo "limit $LIMIT reached; the rest wait for the next run"; break; }
             wf=".github/workflows/build-${app}.yml"
             if [ ! -f "$wf" ]; then echo "skip ${app}: no ${wf}"; continue; fi
-            if grep -q '^BLOCKED=1' "apps/${app}/build.conf" 2>/dev/null; then echo "skip ${app}: BLOCKED"; continue; fi
+            if grep -qE '^(BLOCKED|EOL)=1' "apps/${app}/build.conf" 2>/dev/null; then echo "skip ${app}: BLOCKED or EOL"; continue; fi
             gh workflow run "build-${app}.yml" --repo "${GITHUB_REPOSITORY}" --ref main
             echo "dispatched ${app} (${fixable} fixable)"
             n=$((n + 1))
