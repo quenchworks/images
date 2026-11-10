@@ -33,7 +33,8 @@ package:
       # wheels bundle their own where the scan cannot see them: psycopg2-binary and
       # psycopg-binary each carried OpenSSL 3.5.8 in a .libs dir, grpcio a static
       # BoringSSL, cryptography a static OpenSSL. See the install step.
-      - py3.12-grpcio-1.83     # the line Airflow's constraints pin; the build asserts it
+      - py3.12-grpcio-1.84     # Wolfi's 1.83 line stops at 1.83.1 (CVE-2026-84445, fixed 1.83.2); 1.84.2 is clean.
+                               # The build asserts it is not below the constraints' grpcio.
       - py3.12-cryptography
       - libpq-18               # psycopg2 (rebuilt from source) and psycopg's python impl
 
@@ -48,7 +49,7 @@ environment:
       - ca-certificates-bundle
       - python-3.12
       - py3.12-pip
-      - py3.12-grpcio-1.83
+      - py3.12-grpcio-1.84
       - py3.12-cryptography
       - python-3.12-dev        # Python.h for the psycopg2-binary source build
       - postgresql-18-dev      # pg_config and libpq headers for the psycopg2-binary source build
@@ -146,7 +147,8 @@ pipeline:
       import sys, grpc, cryptography, psycopg, psycopg2
       for m in (grpc, cryptography):
           assert m.__file__.startswith('/usr/lib/python3.12/site-packages/'), m.__file__
-      assert grpc.__version__.rsplit('.', 1)[0] == sys.argv[1].rsplit('.', 1)[0], (grpc.__version__, sys.argv[1])
+      mm = lambda v: tuple(int(x) for x in v.split('.')[:2])
+      assert mm(grpc.__version__) >= mm(sys.argv[1]), (grpc.__version__, sys.argv[1])
       assert psycopg.pq.__impl__ == 'python', psycopg.pq.__impl__
       print('grpc', grpc.__version__, '(constraints', sys.argv[1] + ') cryptography', cryptography.__version__,
             'psycopg', psycopg.pq.__impl__, psycopg.pq.version(), 'psycopg2', psycopg2.__version__)
