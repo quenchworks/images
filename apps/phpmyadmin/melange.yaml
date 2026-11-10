@@ -106,7 +106,9 @@ pipeline:
       # 46635 / 47730 / 47732 MEDIUM -> fixed in 3.26/3.27), symfony/cache 5.4.46
       # (CVE-2026-45073 HIGH -> 5.4.52), symfony/process 5.4.47 (CVE-2026-24739 MEDIUM
       # -> 5.4.51), paragonie/sodium_compat 1.23.0 (CVE-2025-69277 MEDIUM -> 1.24.0) and
-      # symfony/expression-language 5.4.45 (CVE-2026-109449 -> 5.4.54).
+      # symfony/expression-language 5.4.45 (CVE-2026-109449 -> 5.4.54), symfony/config 5.4.46
+      # (CVE-2026-123824, XmlUtils DTD) and symfony/filesystem 5.4.45 (2026-11-05 Symfony
+      # release) -> 5.4.56.
       # All five fixes are INSIDE the constraints phpMyAdmin declares, so this is a
       # stale lock, not the drupal-11.2/11.3 kind of hard-pin conflict.
       #
@@ -125,7 +127,8 @@ pipeline:
       root = sys.argv[1]
       bump = {"twig/twig": "^3.28.0", "symfony/cache": "^5.4.53",
               "symfony/process": "^5.4.51", "paragonie/sodium_compat": "^1.24.0",
-              "symfony/expression-language": "^5.4.54"}
+              "symfony/expression-language": "^5.4.54", "symfony/config": "^5.4.56",
+              "symfony/filesystem": "^5.4.56"}
       cj = json.load(open(root + "/composer.json"))
       lock = json.load(open(root + "/composer.lock"))
       req = dict(cj["require"])
@@ -140,7 +143,7 @@ pipeline:
       composer update -d "$src" --with-dependencies --no-dev --no-scripts --no-audit \
         --no-progress --no-interaction --ignore-platform-reqs \
         twig/twig symfony/cache symfony/process paragonie/sodium_compat \
-        symfony/expression-language
+        symfony/expression-language symfony/config symfony/filesystem
 
       # Assert the fixed versions really landed in the vendored inventory AND that the
       # optional runtime packages survived the re-resolve (a silent prune would break
@@ -152,7 +155,8 @@ pipeline:
       have = {p["name"]: p["version"].lstrip("v") for p in inst["packages"]}
       floors = {"twig/twig": (3, 27, 0), "symfony/cache": (5, 4, 52),
                 "symfony/process": (5, 4, 51), "paragonie/sodium_compat": (1, 24, 0),
-                "symfony/expression-language": (5, 4, 54)}
+                "symfony/expression-language": (5, 4, 54), "symfony/config": (5, 4, 56),
+                "symfony/filesystem": (5, 4, 56)}
       bad = []
       for name, floor in floors.items():
           v = have.get(name)
