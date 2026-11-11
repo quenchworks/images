@@ -1,0 +1,58 @@
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-nginx-proxy-manager@local
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 1001
+  users:
+    - username: nonroot
+      uid: 1001
+      gid: 1001
+      homedir: /tmp/npm/home
+  run-as: 1001
+
+# /data holds the database, generated nginx config, custom certificates and logs;
+# /etc/letsencrypt is certbot's config dir. Both are volumes in the chart.
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /etc/letsencrypt
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  NODE_ENV: production
+  HOME: /tmp/npm/home
+  CERTBOT_VERSION: "5.10.0"
+  SUPPRESS_NO_CONFIG_WARNING: "1"
+
+work-dir: /app
+
+entrypoint:
+  command: /usr/bin/npm-start
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-nginx-proxy-manager"
+  org.opencontainers.image.licenses: "MIT"

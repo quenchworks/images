@@ -1,0 +1,306 @@
+# Packages Nginx Proxy Manager onto Wolfi: nginx built from source with the stream module,
+# the Node backend with its production dependencies (0-CVE pins below), the React UI built
+# from source, certbot, and a busybox sh entrypoint that replaces upstream's s6 tree.
+package:
+  name: quench-nginx-proxy-manager
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Nginx Proxy Manager, on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - busybox              # the entrypoint, and the backend's shell-outs
+      - ca-certificates-bundle
+      - logrotate            # the backend rotates /data/logs at every start
+      - nodejs-24
+      - openssl
+      - pcre2
+      - zlib
+      - python-3.13          # certbot
+      - py3.13-configargparse
+      - py3.13-configobj
+      - py3.13-cryptography
+      - py3.13-distro
+      - py3.13-parsedatetime
+      - py3.13-pyopenssl
+      - py3.13-pyrfc3339
+      - py3.13-requests
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - pcre2-dev
+      - zlib-dev
+      - openssl-3.6-dev    # as apps/nginx: openssl-4.0-dev also provides openssl-dev, and nginx 1.30 does not build on it
+      - linux-headers
+      - pkgconf
+      - nodejs-24
+      - yarn
+      - node-gyp
+      - python-3.13
+      - py3.13-pip
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/NginxProxyManager/nginx-proxy-manager/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - uses: fetch
+    with:
+      uri: https://nginx.org/download/nginx-__NGINX_VER__.tar.gz
+      expected-sha256: __NGINX_SHA256__
+      extract: false
+  - runs: |
+      set -eu
+      d="${{targets.destdir}}"
+
+      # --- nginx, from source. Stream (TCP/UDP hosts) and auth_request (the ACME challenge
+      # location says "auth_request off") are the modules NPM's configs need beyond apps/nginx.
+      mkdir -p _nginx && tar xzf nginx-__NGINX_VER__.tar.gz -C _nginx --strip-components=1
+      (
+        cd _nginx
+        ./configure \
+          --prefix=/etc/nginx \
+          --sbin-path=/usr/bin/nginx \
+          --modules-path=/usr/lib/nginx/modules \
+          --conf-path=/etc/nginx/nginx.conf \
+          --error-log-path=/tmp/npm/nginx-error.log \
+          --http-log-path=/tmp/npm/access.log \
+          --pid-path=/tmp/npm/nginx.pid \
+          --lock-path=/tmp/npm/nginx.lock \
+          --http-client-body-temp-path=/tmp/npm/body \
+          --http-proxy-temp-path=/tmp/npm/proxy_temp \
+          --http-fastcgi-temp-path=/tmp/npm/fastcgi_temp \
+          --http-uwsgi-temp-path=/tmp/npm/uwsgi_temp \
+          --http-scgi-temp-path=/tmp/npm/scgi_temp \
+          --with-http_ssl_module \
+          --with-http_v2_module \
+          --with-http_realip_module \
+          --with-http_auth_request_module \
+          --with-http_gzip_static_module \
+          --with-http_stub_status_module \
+          --with-stream \
+          --with-stream_ssl_module \
+          --with-stream_realip_module \
+          --with-stream_ssl_preread_module \
+          --with-threads \
+          --with-pcre-jit \
+          --with-compat \
+          --with-cc-opt=-Wno-error
+        make -j"$(nproc)"
+        make DESTDIR="$d" install
+      )
+      rm -rf "$d/etc/nginx/html" "$d"/etc/nginx/*.default "$d/tmp" "$d/dev"   # make install creates the temp and log dirs
+
+      # --- nginx config from upstream's rootfs, made nonroot and read-only-rootfs safe
+      root=docker/rootfs
+      cp "$root/etc/nginx/nginx.conf" "$root/etc/nginx/mime.types" "$d/etc/nginx/"
+      install -d "$d/etc/nginx/conf.d/include" "$d/usr/share/npm/conf.d" "$d/var/www/html"
+      cp "$root"/etc/nginx/conf.d/include/*.conf "$d/etc/nginx/conf.d/include/"
+      cp "$root/var/www/html/index.html" "$d/var/www/html/"
+      cp "$root/etc/letsencrypt.ini" "$d/etc/letsencrypt.ini"
+      # the compiled-in error log is opened before the config is read, also by the backend's
+      # `nginx -t`, whose stderr pipe cannot be opened as /dev/stderr: hence a file in /tmp/npm
+
+      # logrotate, as upstream minus `su` (already nonroot), with the pid path moved and the
+      # state file on the data volume
+      install -d "$d/etc/logrotate.d"
+      sed -e '/^ *su npm npm$/d' -e 's|/run/nginx/nginx.pid|/tmp/npm/nginx.pid|' \
+        "$root/etc/logrotate.d/nginx-proxy-manager" > "$d/etc/logrotate.d/nginx-proxy-manager"
+      chmod 0644 "$d/etc/logrotate.d/nginx-proxy-manager"
+      if grep -qE 'su npm|/run/nginx' "$d/etc/logrotate.d/nginx-proxy-manager"; then echo "logrotate config not rewritten"; exit 1; fi
+      # the backend runs plain `logrotate <config>`; this wrapper, first on PATH, moves the
+      # state file (and the temp file logrotate writes beside it) to the data volume
+      install -d "$d/usr/local/bin"
+      printf '#!/bin/sh\nexec /usr/bin/logrotate -s /data/logrotate.status "$@"\n' > "$d/usr/local/bin/logrotate"
+      chmod 0755 "$d/usr/local/bin/logrotate"
+      # the backend tests config with `nginx -t -g "error_log off;"`; error_log has no "off",
+      # so nginx opens the file /etc/nginx/off (harmless upstream, where /etc is writable)
+      ln -s /dev/null "$d/etc/nginx/off"
+      # default.conf and the admin server are copied to /tmp/npm/conf.d at start, where the
+      # entrypoint can apply DISABLE_IPV6 to them
+      cp "$root/etc/nginx/conf.d/default.conf" "$d/usr/share/npm/conf.d/"
+      sed 's/{{NPM_ADMIN_PORT}}/8181/g' "$root/etc/nginx/conf.d/production.conf.template" > "$d/usr/share/npm/conf.d/production.conf"
+      # written at runtime by the entrypoint (resolvers) and the backend (CDN ip ranges)
+      rm -f "$d/etc/nginx/conf.d/include/resolvers.conf" "$d/etc/nginx/conf.d/include/ip_ranges.conf"
+      ln -s /tmp/npm/resolvers.conf "$d/etc/nginx/conf.d/include/resolvers.conf"
+      ln -s /tmp/npm/ip_ranges.conf "$d/etc/nginx/conf.d/include/ip_ranges.conf"
+      sed -i \
+        -e '/^daemon off;/d' \
+        -e '/^user npm;/d' \
+        -e 's|^pid /run/nginx/nginx.pid;|pid /tmp/npm/nginx.pid;|' \
+        -e 's|/tmp/nginx/body|/tmp/npm/body|' \
+        -e 's|/var/lib/nginx/cache/|/tmp/npm/cache/|g' \
+        -e 's|include /etc/nginx/conf.d/\*.conf;|include /tmp/npm/conf.d/*.conf;|' \
+        "$d/etc/nginx/nginx.conf"
+      for s in 'daemon off;' 'user npm;' '/run/nginx' '/var/lib/nginx' '/tmp/nginx/'; do
+        if grep -qF "$s" "$d/etc/nginx/nginx.conf"; then echo "nginx.conf still has $s"; exit 1; fi
+      done
+      grep -q 'include /tmp/npm/conf.d/\*.conf;' "$d/etc/nginx/nginx.conf"
+
+      # every listen port moves above 1024: 80 -> 8080, 443 -> 8443 (the admin port is 8181)
+      ports() { sed -i -E 's/(listen +(\[::\]:)?)80([ ;])/\18080\3/; s/(listen +(\[::\]:)?)443([ ;])/\18443\3/' "$@"; }
+      ports "$d/usr/share/npm/conf.d/default.conf" backend/templates/*.conf
+      if grep -nE 'listen +(\[::\]:)?(80|443)[ ;]' "$d/usr/share/npm/conf.d/default.conf" backend/templates/*.conf; then
+        echo "a privileged listen port is left"; exit 1
+      fi
+
+      # upstream's CI stamps the release version into both package.json files (the
+      # API reports it, the UI shows it); the tagged source says 2.0.0
+      for f in backend/package.json frontend/package.json; do
+        node -e 'const fs=require("fs"),f=process.argv[1],p=JSON.parse(fs.readFileSync(f));p.version=process.argv[2];fs.writeFileSync(f,JSON.stringify(p,null,2))' "$f" "${{package.version}}"
+      done
+
+      # --- the UI, built from source
+      (
+        cd frontend
+        yarn install --frozen-lockfile --non-interactive --network-timeout 600000
+        yarn locale-compile    # generates src/locale/lang, which the build imports (upstream scripts/ci/frontend-build)
+        yarn build
+        test -f dist/index.html
+      )
+
+      # --- the backend. 0-CVE pins (measured 2026-11-11 against 2.16.0's yarn.lock).
+      # Yarn v1 resolutions; the two undici copies are pinned per dependent so each stays on
+      # its own major.
+      export PYTHON="$(command -v python3.13)" npm_config_python="$(command -v python3.13)"
+      (
+        cd backend
+        node -e '
+          const fs = require("fs");
+          const p = JSON.parse(fs.readFileSync("package.json"));
+          p.resolutions = Object.assign(p.resolutions || {}, {
+            "proxy-addr": "2.0.8", "body-parser": "2.4.0", "qs": "6.16.1", "fast-uri": "3.1.9",
+            "ip-address": "10.7.4", "basic-ftp": "6.2.1",
+            // archiver > readdir-glob uses minimatch 10; 11 keeps its CJS export and the
+            // Minimatch class readdir-glob calls (checked 2026-11-11)
+            "minimatch": "11.0.1", "brace-expansion": "5.0.13",
+            "@apidevtools/json-schema-ref-parser/undici": "8.12.2",
+            "node-gyp/undici": "6.29.1",
+          });
+          fs.writeFileSync("package.json", JSON.stringify(p, null, 2));
+          // yarn v1 keeps a stale lockfile entry beside a resolution (body-parser@^2.3.0 stayed
+          // 2.3.0, undici@^6.25.0 stayed 6.28.0), so drop the lockfile entries of the pinned packages and let
+          // yarn re-resolve only those
+          const pins = ["proxy-addr", "body-parser", "qs", "fast-uri", "ip-address", "basic-ftp", "undici", "minimatch", "brace-expansion"];
+          const blocks = fs.readFileSync("yarn.lock", "utf8").split(/\n\n/);
+          const keep = blocks.filter((b) => {
+            const head = b.split("\n").find((l) => l && !l.startsWith("#"));
+            if (!head) return true;
+            const names = head.replace(/:$/, "").split(", ").map((k) => k.replace(/^"|"$/g, "").replace(/@[^@]*$/, ""));
+            return !names.some((n) => pins.includes(n));
+          });
+          fs.writeFileSync("yarn.lock", keep.join("\n\n"));
+        '
+        yarn install --production --non-interactive --network-timeout 600000
+        yarn cache clean
+        # every pin must be what got installed, nested copies included
+        node -e '
+          const fs = require("fs"), path = require("path");
+          const want = { "proxy-addr": "2.0.8", "body-parser": "2.4.0", "qs": "6.16.1", "fast-uri": "3.1.9", "ip-address": "10.7.4", "basic-ftp": "6.2.1", "minimatch": "11.0.1", "brace-expansion": "5.0.13" };
+          const older = (a, b) => { const x = a.split(".").map(Number), y = b.split(".").map(Number); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i]; return false; };
+          const seen = {};
+          (function walk(dir) {
+            for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+              if (!e.isDirectory()) continue;
+              const full = path.join(dir, e.name);
+              if (e.name.startsWith("@")) { walk(full); continue; }
+              const pj = path.join(full, "package.json");
+              if (fs.existsSync(pj)) {
+                const { name, version } = JSON.parse(fs.readFileSync(pj));
+                (seen[name] = seen[name] || []).push(version);
+                if (want[name] && older(version, want[name])) { console.error(full, version, "below", want[name]); process.exit(1); }
+                if (name === "undici" && (older(version, "6.29.1") || (version.startsWith("8.") && older(version, "8.12.2")))) { console.error(full, version); process.exit(1); }
+              }
+              const nm = path.join(full, "node_modules");
+              if (fs.existsSync(nm)) walk(nm);
+            }
+          })("node_modules");
+          console.log("pins installed; undici", seen.undici);
+        '
+      )
+      install -d "$d/app"
+      cp -a backend/. "$d/app/"
+      cp -a frontend/dist "$d/app/frontend"
+      rm -rf "$d/app/yarn.lock" "$d/app/biome.json" "$d/app/nodemon.json" "$d/app/README.md"
+      find "$d/app/node_modules" -type d \( -name test -o -name tests -o -name __tests__ \) -prune -exec rm -rf {} + || true
+      # native modules ship prebuilt binaries for every platform; a foreign one makes the
+      # package depend on that platform's loader (so:ld-linux-aarch64.so.1 on x86_64), so keep
+      # only this arch's linux glibc build
+      narch="$(node -p process.arch)"
+      find "$d/app/node_modules" -type d -name prebuilds | while read -r p; do
+        find "$p" -mindepth 1 -maxdepth 1 ! -name "linux-$narch" ! -name "linux-$narch.node" -exec rm -rf {} +
+        find "$p" -name '*musl*' -exec rm -rf {} +
+      done
+
+      # --- certbot from PyPI, onto Wolfi's cryptography, pyOpenSSL and requests (pure-Python
+      # wheels, no deps pulled). DNS plugins are not installed: there is no pip at runtime.
+      python3.13 -m pip install --no-deps --no-compile --root "$d" --prefix /usr \
+        certbot==5.10.0 acme==5.10.0 josepy==2.3.0
+      test -x "$d/usr/bin/certbot"
+
+      # --- the entrypoint
+      cat > "$d/usr/bin/npm-start" <<'EOF'
+      #!/bin/sh
+      # Replaces upstream's s6 tree: prepare the writable paths, start nginx (it
+      # daemonizes), then run the backend as PID 1. The backend writes nginx config and
+      # runs `nginx -t` and `nginx -s reload` itself.
+      set -eu
+      is_true() { case "$(echo "${1:-}" | tr 'A-Z' 'a-z')" in 1|true|on|yes) return 0 ;; esac; return 1; }
+
+      mkdir -p /tmp/npm/body /tmp/npm/cache/public /tmp/npm/cache/private /tmp/npm/conf.d \
+        /tmp/npm/home /tmp/letsencrypt-lib \
+        /data/nginx/default_host /data/nginx/default_www /data/nginx/proxy_host \
+        /data/nginx/redirection_host /data/nginx/stream /data/nginx/dead_host /data/nginx/temp \
+        /data/nginx/custom /data/custom_ssl /data/logs /data/access /data/letsencrypt-acme-challenge
+      [ -f /tmp/npm/ip_ranges.conf ] || : > /tmp/npm/ip_ranges.conf
+      cp /usr/share/npm/conf.d/*.conf /tmp/npm/conf.d/
+
+      # optional TLS on the admin port: NPM_ADMIN_TLS_CERT and NPM_ADMIN_TLS_KEY name PEM files
+      if [ -n "${NPM_ADMIN_TLS_CERT:-}" ]; then
+        awk -v c="$NPM_ADMIN_TLS_CERT" -v k="${NPM_ADMIN_TLS_KEY:?NPM_ADMIN_TLS_KEY is required with NPM_ADMIN_TLS_CERT}" '
+          $1 == "listen" { sub(/8181 default;/, "8181 ssl default;") }
+          { print }
+          $1 == "server_name" && $2 == "nginxproxymanager;" {
+            print "\tssl_certificate " c ";"; print "\tssl_certificate_key " k ";"
+            print "\tinclude conf.d/include/ssl-ciphers.conf;"
+          }' /usr/share/npm/conf.d/production.conf > /tmp/npm/conf.d/production.conf
+      fi
+
+      # resolvers for proxy hosts that forward to names (upstream 40-dynamic.sh)
+      : > /tmp/npm/resolvers.conf
+      if ! is_true "${DISABLE_RESOLVER:-}"; then
+        ns="$(awk 'BEGIN{ORS=" "} $1=="nameserver" { sub(/%.*$/,"",$2); print ($2 ~ ":")? "["$2"]": $2}' /etc/resolv.conf)"
+        if [ -n "$ns" ]; then
+          if is_true "${DISABLE_IPV6:-}"; then echo "resolver $ns ipv6=off valid=10s;" > /tmp/npm/resolvers.conf
+          else echo "resolver $ns valid=10s;" > /tmp/npm/resolvers.conf; fi
+        fi
+      fi
+
+      # IPv6 listeners on or off (upstream 50-ipv6.sh)
+      if is_true "${DISABLE_IPV6:-}"; then re='s/^([^#]*)listen \[::\]/\1#listen [::]/g'
+      else re='s/^(\s*)#listen \[::\]/\1listen [::]/g'; fi
+      find /tmp/npm/conf.d /data/nginx -type f -name '*.conf' -exec sed -E -i "$re" {} +
+
+      nginx
+      cd /app
+      exec node --abort_on_uncaught_exception --max_old_space_size=250 index.js
+      EOF
+      chmod 0755 "$d/usr/bin/npm-start"
+
+test:
+  pipeline:
+    - runs: |
+        nginx -V 2>&1 | grep -q -- --with-stream
+        certbot --version
+        cd /app
+        node -e 'import("better-sqlite3").then(m => { new m.default(":memory:"); return import("bcrypt"); }).then(() => console.log("modules load"))'
