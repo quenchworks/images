@@ -1,0 +1,106 @@
+# Builds Apache Pinot from the source release with the dependency bumps in build.conf, then
+# replaces hadoop-client-runtime's relocated jackson in the parquet plugin.
+package:
+  name: quench-apache-pinot
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Apache Pinot, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - bash                    # bin/pinot-admin.sh and the other launch scripts
+      - busybox
+      - ca-certificates-bundle
+      - openjdk-25-default-jvm
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - bash
+      - busybox
+      - ca-certificates-bundle
+      - curl
+      - git
+      - libstdc++               # the prebuilt protoc and protoc-gen-grpc-java binaries the protobuf plugin runs
+      - maven-3.9
+      - openjdk-25-default-jdk
+      - unzip                   # unzip -Z1 (busybox unzip has no -Z)
+      - zip
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://archive.apache.org/dist/pinot/apache-pinot-${{package.version}}/apache-pinot-${{package.version}}-src.tar.gz
+      expected-sha256: __SHA256__
+      strip-components: 1
+  - runs: |
+      set -eu
+      export JAVA_HOME=/usr/lib/jvm/java-25-openjdk PATH="/usr/lib/jvm/java-25-openjdk/bin:$PATH"
+      export MAVEN_OPTS="-Xmx3g"
+      git apply pom-pins.patch
+      grep -q '<artifactId>hadoop-shaded-guava</artifactId>' pom.xml
+
+      # pinot-fastdev would skip the checks too, but it also sets shade.phase.prop=none (no
+      # shaded jars, and the bin-dist assembly fails), so the checks are skipped one by one
+      mvn -B -T 2 -Dmaven.repo.local=/tmp/m2 install -DskipTests -Pbin-dist -Pbuild-shaded-jar \
+        -Dcheckstyle.skip -Dlicense.skip -Drat.skip -Dspotless.check.skip -Dspotless.apply.skip -Denforcer.skip \
+        -Daws.sdk.version=2.57.13 -Dparquet.version=1.18.2 -Dpulsar.version=4.0.14 -Dasync-http-client.version=3.0.14
+
+      dest="${{targets.destdir}}/opt/pinot"
+      mkdir -p "$dest"
+      tar xzf pinot-distribution/target/apache-pinot-${{package.version}}-bin.tar.gz -C "$dest" --strip-components=1
+      rm -f "$dest"/bin/*.bat
+
+      # hadoop-client-runtime relocates jackson to org.apache.hadoop.shaded and pins it at 2.12.7
+      # (no 2.12 fix). Rebuild that tree from 2.18.12 with the same relocations and swap it in.
+      mkdir -p /tmp/reloc && cp hadoop-jackson-relocate.pom.xml /tmp/reloc/pom.xml
+      (cd /tmp/reloc && mvn -B -q -Dmaven.repo.local=/tmp/m2 package)
+      M=/tmp/m2/com/fasterxml/jackson
+      sha256sum -c - <<SUMS
+      367afb4be3efa8a1636200b5faefb67d7d0a1b730f64ec55a971229cb673bc23  $M/core/jackson-core/2.18.12/jackson-core-2.18.12.jar
+      02b62d64819bc1dbad7f1195c805f950ab3dceef1a479d0e9c55d99b7a04c255  $M/core/jackson-databind/2.18.12/jackson-databind-2.18.12.jar
+      143b94dd8caa3d5eb4417672f7d00472cec33626cbcb0fd35f0616de0dbccabf  $M/core/jackson-annotations/2.18.12/jackson-annotations-2.18.12.jar
+      ea011434d5e9a4c6274e0e521a3a4d6d167741e5ffdaaa150098dd895f3fd6d2  $M/jaxrs/jackson-jaxrs-base/2.18.12/jackson-jaxrs-base-2.18.12.jar
+      2b649d59588c81356e5e399e04b64edf3d56557f55be3f3d0dd915e8c9a6fc17  $M/jaxrs/jackson-jaxrs-json-provider/2.18.12/jackson-jaxrs-json-provider-2.18.12.jar
+      fe0e2ba932b1574a64c94204342372ee498fc85aabb0a3b3c1f68f72083695ff  $M/module/jackson-module-jaxb-annotations/2.18.12/jackson-module-jaxb-annotations-2.18.12.jar
+      SUMS
+      T=org/apache/hadoop/shaded/com/fasterxml/jackson
+      j="$dest/plugins/pinot-input-format/pinot-parquet/pinot-parquet-${{package.version}}-shaded.jar"
+      # list to a file first: grep -q stops at the first match and unzip dies of SIGPIPE under pipefail
+      unzip -Z1 "$j" > /tmp/parquet.list
+      grep -q "^$T/databind/ObjectMapper.class$" /tmp/parquet.list || { echo "no $T in $j; dist moved"; exit 1; }
+      rm -rf /tmp/swap && mkdir /tmp/swap
+      (cd /tmp/swap && unzip -q /tmp/reloc/target/hadoop-shaded-jackson-2.18.12.jar "$T/*")
+      zip -q -d "$j" "$T/*"
+      (cd /tmp/swap && zip -qr "$j" "$T")
+
+      # every jackson copy, relocated or not, must be at a fixed release (the scanner reads
+      # metadata, which in these fat jars names only one copy). Files, not pipes: under pipefail a
+      # grep with no match (a jar without jackson) would end the build.
+      find "$dest" -name '*.jar' > /tmp/jars.list
+      bad=0; n=0
+      while read -r f; do
+        unzip -Z1 "$f" > /tmp/jar.list
+        grep -E 'jackson/core/json/PackageVersion.class$' /tmp/jar.list > /tmp/pv.list || true
+        while read -r c; do
+          unzip -p "$f" "$c" > /tmp/pv.class
+          v="$(grep -aoE -m1 '2\.[0-9]+\.[0-9]+' /tmp/pv.class || true)"
+          n=$((n + 1))
+          case "$v" in
+            2.18.1[1-9]|2.18.[2-9][0-9]|2.21.[7-9]|2.21.[1-9][0-9]|2.22.[3-9]|2.22.[1-9][0-9]|2.2[3-9].*) ;;
+            *) echo "$f: ${c%/core/json/PackageVersion.class} is jackson '$v'"; bad=1 ;;
+          esac
+        done < /tmp/pv.list
+      done < /tmp/jars.list
+      echo "checked $n jackson copies"
+      [ "$n" -gt 10 ] && [ "$bad" = 0 ]
+
+test:
+  pipeline:
+    - runs: |
+        /opt/pinot/bin/pinot-admin.sh -help 2>&1 | grep StartController >/dev/null
