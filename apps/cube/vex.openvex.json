@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/cube/2026-11-11",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-11T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-115887"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/graphql-scalars@1.26.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Measured 2026-11-11 on Cube 1.8.21 (npm install of @cubejs-backend/server and the postgres, mysql and clickhouse drivers). GHSA-x8rm-f576-gq67 is a ReDoS in the GraphQLPhoneNumber scalar only (src/scalars/PhoneNumber.ts). The single consumer, @cubejs-backend/api-gateway, requires graphql-scalars once (dist/src/graphql.js line 14) and uses only DateTimeResolver; no file under node_modules/@cubejs-backend references PhoneNumber, so that scalar is never registered in Cube's schema and its parseLiteral/parseValue/serialize are never called. The fixed 2.0.1 cannot be installed: it peers graphql ^16 || ^17 and Cube depends on graphql 15.11.0."
+    }
+  ]
+}

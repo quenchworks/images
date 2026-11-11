@@ -1,0 +1,86 @@
+# Cube (cube-js/cube, Apache-2.0): the semantic layer server, REST/GraphQL/SQL API, on Wolfi Node 24.
+# The npm server tree is installed with --ignore-scripts, so @cubejs-backend/native's post-installer
+# never downloads upstream's prebuilt index.node (no cargo-auditable crate list, scanner-blind);
+# the addon is built here from the tag's packages/cubejs-backend-native with cargo auditable, the
+# same build upstream's native:build-release script runs, without the python feature (upstream's
+# "fallback" variant). No cubestore: Cube runs without a local cubestore. Drivers: postgres,
+# mysql, clickhouse.
+package:
+  name: quench-cube
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Cube semantic layer server, on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - nodejs-24
+      - ca-certificates-bundle
+      - tzdata
+      - libgcc               # the Rust cdylib links libgcc_s
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base           # ring's C parts (cc crate)
+      - busybox
+      - ca-certificates-bundle
+      - git                  # cargo fetches the arrow/datafusion forks from git
+      - nodejs-24
+      - npm
+      - rust-1.98            # the tag's rust-toolchain.toml pins 1.98.1
+      - cargo-auditable
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/cube-js/cube/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      # --- native addon from source -------------------------------------------------------
+      cd packages/cubejs-backend-native
+      # floors over the tag lock (rustls >= 0.23.45 GHSA-2mjx-qc3c-rqvc; tokio >= 1.38.2):
+      # semver-compatible updates of exactly these two, nothing else moves.
+      cargo update -p rustls -p tokio
+      cargo auditable build --release
+      lib=target/release/libcubejs_native.so
+      test -f "$lib"
+      grep -q '\.dep-v0' <<EOF
+      $(readelf -S "$lib" 2>/dev/null || true)
+      EOF
+      cd ../..
+      # --- npm server tree ----------------------------------------------------------------
+      mkdir -p /tmp/cube && cd /tmp/cube
+      # basic-ftp 6.2.1 (CVE-2026-102990): get-uri (proxy-agent, pac+ftp:// proxies) calls access,
+      # lastMod, list, downloadTo and close, all kept in 6.x. graphql-scalars stays at 1.26.0 with a
+      # VEX (vex.openvex.json): its fix needs graphql 16, Cube runs 15.11.0.
+      cat > package.json <<'EOF'
+      {"name":"quench-cube","private":true,
+       "dependencies":{
+         "@cubejs-backend/server":"__VER__",
+         "@cubejs-backend/postgres-driver":"__VER__",
+         "@cubejs-backend/mysql-driver":"__VER__",
+         "@cubejs-backend/clickhouse-driver":"__VER__"},
+       "overrides":{"basic-ftp":"6.2.1"}}
+      EOF
+      npm install --omit=dev --ignore-scripts --no-audit --no-fund
+      test "$(node -p 'require("basic-ftp/package.json").version')" = 6.2.1
+      install -m 0755 "$OLDPWD/packages/cubejs-backend-native/target/release/libcubejs_native.so" \
+        node_modules/@cubejs-backend/native/index.node
+      node -e 'require("@cubejs-backend/native"); console.log("native addon loads")'
+      find node_modules -name '*.node' ! -path '*/@cubejs-backend/native/index.node' | grep . && { echo "unexpected prebuilt native modules"; exit 1; } || true
+      find node_modules -type d \( -name test -o -name tests -o -name __tests__ \) -prune -exec rm -rf {} + || true
+      app="${{targets.destdir}}/usr/lib/cube"
+      install -d "$app"
+      cp -a node_modules package.json package-lock.json "$app/"
+
+test:
+  pipeline:
+    - runs: |
+        cd /usr/lib/cube
+        node -e 'require("@cubejs-backend/native"); require("@cubejs-backend/server"); console.log("modules load")'

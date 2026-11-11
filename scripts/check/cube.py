@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# cube: GitHub releases of cube-js/cube (vX.Y.Z). Held (see apps/cube/build.conf); a new
-# release is the cue to re-measure the native addon's crates.
-from _lib import github, report_lines
-report_lines("cube", github("cube-js/cube"), 1)
+import re
+from _lib import github, report
+report("cube", [v for v in github("cube-js/cube") if re.fullmatch(r"\d+\.\d+\.\d+", v)], n=1)
