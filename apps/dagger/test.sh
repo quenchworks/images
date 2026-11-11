@@ -27,7 +27,9 @@ docker rm "$NAME-x" >/dev/null
 m="$(cut -d: -f2 "$WORK/digest")"
 layer="$(jq -r '.layers[0].digest' "$WORK/content/blobs/sha256/$m" | cut -d: -f2)"
 mkdir "$WORK/sdk" && tar -xzf "$WORK/content/blobs/sha256/$layer" -C "$WORK/sdk"
-test -x "$WORK/sdk/usr/local/bin/codegen" && test -e "$WORK/sdk/usr/bin/go"
+# usr/bin/go is an absolute symlink, so test the link itself, not the host path it names
+[ -x "$WORK/sdk/usr/local/bin/codegen" ] || { echo "Go SDK runtime has no codegen"; exit 1; }
+[ -L "$WORK/sdk/usr/bin/go" ] || [ -e "$WORK/sdk/usr/bin/go" ] || { echo "Go SDK runtime has no go"; exit 1; }
 if command -v trivy >/dev/null; then
   trivy rootfs "$WORK/sdk" --exit-code 1 --ignore-unfixed --severity CRITICAL,HIGH,MEDIUM,LOW \
     --scanners vuln --detection-priority comprehensive --quiet
