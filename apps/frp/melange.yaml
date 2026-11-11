@@ -1,0 +1,76 @@
+# frp from the release tag: the dashboards (Vue + vite) are built with npm here because the
+# tag gitignores web/*/dist, then frps and frpc are built CGO-free with upstream's flags and
+# build tags, each embedding its own dashboard. Node only lives in the build sandbox.
+package:
+  name: quench-frp
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened frp (frps server and frpc client), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - go-1.26
+      - nodejs-24
+      - npm
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/fatedier/frp/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Build the dashboards
+    runs: |
+      set -eu
+      export npm_config_cache="$(mktemp -d)" HOME="$(mktemp -d)"
+      cd web
+      npm ci --no-audit --no-fund
+      # build-only: vite without the vue-tsc type-check, same emitted assets
+      npm run build-only --workspace frps
+      npm run build-only --workspace frpc
+      test -f frps/dist/index.html
+      test -f frpc/dist/index.html
+
+  - name: Build frps and frpc
+    runs: |
+      set -eu
+      export CGO_ENABLED=0 GOTOOLCHAIN=local GOFLAGS=-mod=mod
+      # floors, raised only when below (a bare go get downgrades once upstream passes it):
+      # go-jose/v4 >= 4.1.6 (CVE-2026-116587, -116585, -116586)
+      FLOOR="github.com/go-jose/go-jose/v4@v4.1.6"
+      for f in $FLOOR; do
+        m="${f%@*}"; want="${f#*@}"
+        have="$(go list -m -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "$m")"
+        [ "$(printf '%s\n%s\n' "$have" "$want" | sort -V | head -1)" = "$want" ] || go get "$f"
+      done
+      go mod tidy
+      install -d "${{targets.destdir}}/usr/bin"
+      for b in frps frpc; do
+        go build -trimpath -ldflags "-s -w" -tags "$b" -o "${{targets.destdir}}/usr/bin/$b" ./cmd/$b
+      done
+      # the floor must reach the binary
+      for f in $FLOOR; do
+        got="$(go version -m "${{targets.destdir}}/usr/bin/frps" | awk -v m="${f%@*}" '$2 == m { v = $3 } END { print v }')"
+        [ -z "$got" ] || [ "$(printf '%s\n%s\n' "$got" "${f#*@}" | sort -V | head -1)" = "${f#*@}" ] || { echo "floor missed: ${f%@*} $got"; exit 1; }
+      done
+      # the version is a constant in pkg/util/version; refuse a tag that does not match it
+      test "$("${{targets.destdir}}/usr/bin/frps" --version)" = "${{package.version}}"
+
+test:
+  pipeline:
+    - runs: |
+        frps --version
+        frpc --version
