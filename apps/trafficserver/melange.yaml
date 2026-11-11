@@ -1,0 +1,105 @@
+# Apache Traffic Server from the Apache release tarball, built with cmake on Wolfi.
+# OpenSSL 3.6, not 4: Wolfi's own trafficserver-9 needs three backport patches for OpenSSL 4,
+# and a TLS proxy that builds against an API it was not written for is how Odyssey segfaulted
+# (memory: silenced-warning-hid-a-crash). 10.2 is PCRE2-only; 10.1 still needs PCRE1.
+# Layout: binaries in /usr/bin, config in /etc/trafficserver, writable state in
+# /var/log/trafficserver, /run/trafficserver and /var/cache/trafficserver (uid 1001 in apko,
+# emptyDirs or a PVC in the chart). The image is shell-free.
+package:
+  name: quench-trafficserver
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Apache Traffic Server, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      # shared libraries (libssl.so.3, libpcre2-8, hwloc, ...) come in as so: deps melange
+      # reads from the binaries
+      - ca-certificates-bundle
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - cmake
+      - samurai
+      - pkgconf
+      - linux-headers
+      - openssl-3.6-dev
+      - pcre2-dev
+      - zlib-dev
+      - brotli-dev
+      - xz-dev
+      - zstd-dev
+      - zstd-static     # zstd-dev's CMake config imports libzstd.a too; the binary links the .so
+      - hwloc-dev
+      - libcap-dev
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://downloads.apache.org/trafficserver/trafficserver-${{package.version}}.tar.bz2
+      expected-sha256: __SHA256__
+
+  - runs: |
+      set -eu
+      # Curses off: traffic_top (an interactive TUI) is only built when Curses is found, and it fails
+      # to link against Wolfi's split libtinfo (ncurses-dev arrives transitively). traffic_ctl covers
+      # stats in a container.
+      cmake -S . -B build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr \
+        -DCMAKE_INSTALL_SYSCONFDIR=/etc/trafficserver \
+        -DCMAKE_INSTALL_LOCALSTATEDIR=/var \
+        -DCMAKE_INSTALL_RUNSTATEDIR=/run/trafficserver \
+        -DCMAKE_INSTALL_LOGDIR=/var/log/trafficserver \
+        -DCMAKE_INSTALL_CACHEDIR=/var/cache/trafficserver \
+        -DWITH_USER=trafficserver -DWITH_GROUP=trafficserver \
+        -DBUILD_TESTING=OFF \
+        -DENABLE_EXAMPLE=OFF \
+        -DENABLE_DOCS=OFF \
+        -DENABLE_AUTEST=OFF \
+        -DCMAKE_DISABLE_FIND_PACKAGE_Curses=ON
+      cmake --build build -j"$(nproc)"
+      DESTDIR="${{targets.destdir}}" cmake --install build
+      d="${{targets.destdir}}"
+      # install_configs.cmake prefixes CMAKE_INSTALL_PREFIX onto the absolute sysconfdir, so the
+      # default configs land in /usr/etc/trafficserver while the binary reads /etc/trafficserver.
+      test -f "$d/usr/etc/trafficserver/records.yaml"
+      mv "$d"/usr/etc/trafficserver/* "$d/etc/trafficserver/"
+      rmdir "$d/usr/etc/trafficserver" "$d/usr/etc"
+      # /run is a temp dir to melange's linter; apko creates /run/trafficserver (uid 1001) instead
+      rm -rf "$d/run"
+      rm -rf "$d/usr/include" "$d/usr/share/doc" "$d/usr/share/man"
+      find "$d" -name '*.a' -delete
+      # the binaries link ATS's own shared libs (libtscore, libswoc, ...) from /usr/lib in the image
+      v="$(LD_LIBRARY_PATH="$d/usr/lib" "$d/usr/bin/traffic_server" --version 2>&1 || true)"
+      echo "$v"
+      case "$v" in *"${{package.version}}"*) ;; *) echo "traffic_server does not report ${{package.version}}"; exit 1 ;; esac
+
+      # Bootable defaults for a nonroot container: listen on 8080 (no privileged port), logs to
+      # stdout-friendly ASCII files under the writable log dir, and a small cache on disk.
+      # remap.config ships empty: ATS answers 404 for unmapped hosts until the operator maps one.
+      c="$d/etc/trafficserver"
+      sed -i 's|^    server_ports: .*|    server_ports: 8080 8080:ipv6|' "$c/records.yaml"
+      grep -q '^    server_ports: 8080 8080:ipv6$' "$c/records.yaml"
+      # storage.config comes out as "var/trafficserver 256M" (relative to the prefix, the same
+      # absolute-dir quirk), so no cache span would come online. Point it at the real cache dir.
+      grep -q '^var/trafficserver 256M$' "$c/storage.config"
+      sed -i 's|^var/trafficserver 256M$|/var/cache/trafficserver 256M|' "$c/storage.config"
+
+  - uses: strip
+
+test:
+  pipeline:
+    - runs: |
+        traffic_server --version
+        traffic_ctl --version

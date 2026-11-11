@@ -1,0 +1,59 @@
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-trafficserver@local
+
+accounts:
+  groups:
+    - groupname: trafficserver
+      gid: 1001
+  users:
+    - username: trafficserver
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# Shell-free. traffic_server runs in the foreground (ATS 10 has no traffic_manager).
+entrypoint:
+  command: /usr/bin/traffic_server
+
+environment:
+  HOME: /tmp
+  PATH: /usr/bin:/bin
+
+# The three directories ATS writes to at runtime; the chart mounts emptyDirs (or a PVC for
+# the cache) over them for a read-only rootfs.
+paths:
+  - path: /var/log/trafficserver
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /run/trafficserver
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/cache/trafficserver
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-trafficserver"
+  org.opencontainers.image.licenses: "Apache-2.0"
