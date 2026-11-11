@@ -1,0 +1,42 @@
+# Odyssey runtime: odyssey is the entrypoint; pass the config path (e.g. /etc/odyssey/odyssey.conf)
+# as the argument. The config must set log_format, unix_socket_dir and unix_socket_mode (Odyssey
+# refuses to start without them); in a container also set `daemonize no` and `log_to_stdout yes`.
+# Nonroot 1001; the default
+# unix socket dir is /tmp.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-odyssey@local
+
+accounts:
+  groups:
+    - groupname: odyssey
+      gid: 1001
+  users:
+    - username: odyssey
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/odyssey
+cmd: /etc/odyssey/odyssey.conf
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-odyssey"
+  org.opencontainers.image.licenses: "BSD-3-Clause"
+  org.opencontainers.image.version: "__VER__"
