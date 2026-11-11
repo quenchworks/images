@@ -67,6 +67,14 @@ pipeline:
       go build -trimpath \
         -ldflags "-s -w -X github.com/trufflesecurity/trufflehog/v3/pkg/version.BuildVersion=${{package.version}}" \
         -o "${{targets.destdir}}/usr/bin/trufflehog" .
+      # golang.org/x/crypto/openpgp (GO-2026-5932, deprecated, no fix) is VEXed: pault.ag/go/debian uses it only to
+      # check signatures, and trufflehog only reads ar archives with it (vex.openvex.json). Fail if that changes.
+      bad="$(go list -deps -f '{{.ImportPath}}{{range .Imports}} {{.}}{{end}}' . | awk '{
+        for (i = 2; i <= NF; i++) if ($i ~ /^golang.org\/x\/crypto\/openpgp/ && $1 !~ /^golang.org\/x\/crypto\/openpgp/ &&
+          $1 !~ /^pault.ag\/go\/debian\/(deb|control)$/) print $1 }' | sort -u)"
+      [ -z "$bad" ] || { echo "openpgp imported outside pault.ag/go/debian (the VEX no longer holds): $bad"; exit 1; }
+      calls="$(find pkg/handlers -name '*.go' ! -name '*_test.go' -exec grep -hoE 'deb\.[A-Za-z]+' {} + | sort -u | tr '\n' ' ')"
+      [ "$calls" = "deb.Ar deb.LoadAr " ] || { echo "trufflehog now calls more of pault.ag/go/debian ($calls): re-check the openpgp VEX"; exit 1; }
       # The float is only real if it reached the BINARY. Every `dep`/`=>` line of
       # `go version -m` must be at or above its floor. Fail the build rather than ship it.
       bad="$(go version -m "${{targets.destdir}}/usr/bin/trufflehog" \

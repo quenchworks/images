@@ -22,7 +22,7 @@ environment:
     packages:
       - busybox
       - ca-certificates-bundle
-      - go
+      - go-1.27   # the rekor 1.5.5 floor raises go.mod to go 1.27
 
 pipeline:
   - uses: fetch
@@ -36,7 +36,7 @@ pipeline:
       # line links an older one.
       for want in github.com/klauspost/compress@v1.18.7 golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/net@v0.62.0 golang.org/x/text@v0.43.0 \
                   golang.org/x/mod@v0.41.0 google.golang.org/grpc@v1.83.2 github.com/sigstore/sigstore-go@v1.2.1 \
-                  github.com/sigstore/cosign/v2@v2.6.2 github.com/go-jose/go-jose/v4@v4.1.6; do
+                  github.com/sigstore/cosign/v2@v2.6.2 github.com/go-jose/go-jose/v4@v4.1.6 github.com/sigstore/rekor@v1.5.5; do
         m="${want%@*}"; w="${want#*@}"
         have="$(go list -m -f '{{.Version}}' "$m" 2>/dev/null || true)"
         [ -n "$have" ] || continue
@@ -48,6 +48,9 @@ pipeline:
       "${{targets.destdir}}/usr/bin/ko" version | grep -qx "${{package.version}}"
       bad="$(go version -m "${{targets.destdir}}/usr/bin/ko" | awk '$1 == "dep" && ($2 == "golang.org/x/crypto" && $3 < "v0.56.0" || $2 == "golang.org/x/net" && $3 < "v0.62.0" || $2 == "golang.org/x/text" && $3 < "v0.41.0" || $2 == "golang.org/x/mod" && $3 < "v0.40.0") { print $2, $3 }')"
       [ -z "$bad" ] || { echo "float did not reach the binary: $bad"; exit 1; }
+      # rekor's pki/pgp moved to ProtonMail/go-crypto in 1.5.5; older rekor linked golang.org/x/crypto/openpgp
+      # (GO-2026-5932, deprecated, no fix) into ko through cosign and sigstore-go
+      ! go version -m "${{targets.destdir}}/usr/bin/ko" | grep -q 'golang.org/x/crypto/openpgp'
 
 test:
   pipeline:
