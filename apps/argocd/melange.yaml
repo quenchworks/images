@@ -308,8 +308,8 @@ pipeline:
       }
 
       # ---- helm 3 (from source; see the header for why not the wolfi apk) ----
-      HELM_VER=3.21.3
-      HELM_SHA=9265b7bcad329480fe1f14547befe5da1dbbede6bbd13e3dd6bfebb00d42cb68
+      HELM_VER=3.22.1
+      HELM_SHA=f0e596af707e2e5c0411d1dd314264450fd68fa484c87fb9fdf1c3beed4323b9
       cd "$(mktemp -d)"
       curl -fsSL -o helm.tar.gz "https://github.com/helm/helm/archive/refs/tags/v${HELM_VER}.tar.gz"
       echo "${HELM_SHA}  helm.tar.gz" | sha256sum -c -
@@ -320,6 +320,9 @@ pipeline:
         -ldflags "-s -w -X helm.sh/helm/v3/internal/version.version=v${HELM_VER}" \
         -o "${{targets.destdir}}/usr/bin/helm" ./cmd/helm
       assert_binary "${{targets.destdir}}/usr/bin/helm" "$HELM_FLOOR"
+      # helm 3.22 signs and verifies provenance with ProtonMail/go-crypto; 3.21 and older linked
+      # golang.org/x/crypto/openpgp (GO-2026-5932, deprecated, no fix)
+      ! go version -m "${{targets.destdir}}/usr/bin/helm" | grep -q 'golang.org/x/crypto/openpgp'
 
       # ---- argo cd ----------------------------------------------------------
       cd "$SRC"
