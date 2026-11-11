@@ -1,0 +1,39 @@
+# Skipper runtime: skipper is the entrypoint (proxy on :9090, /metrics and health on the support
+# listener :9911). eskip and routesrv are in the same image (`--entrypoint`). Routes come from
+# flags (-inline-routes, -routes-file) or the Kubernetes data client (-kubernetes). Nonroot 1001.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-skipper@local
+
+accounts:
+  groups:
+    - groupname: skipper
+      gid: 1001
+  users:
+    - username: skipper
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/skipper
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-skipper"
+  org.opencontainers.image.licenses: "Apache-2.0"
+  org.opencontainers.image.version: "__VER__"
