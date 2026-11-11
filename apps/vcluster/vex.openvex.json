@@ -1,9 +1,9 @@
 {
   "@context": "https://openvex.dev/ns/v0.2.0",
-  "@id": "https://quench-works.com/vex/vcluster/2026-11-11",
+  "@id": "https://quench-works.com/vex/vcluster/2026-11-11b",
   "author": "QuenchWorks <info@quench-works.com>",
   "timestamp": "2026-11-11T00:00:00Z",
-  "version": 2,
+  "version": 3,
   "statements": [
     {
       "vulnerability": {
@@ -33,6 +33,54 @@
       "status": "not_affected",
       "justification": "vulnerable_code_not_present",
       "impact_statement": "CVE-2026-85747 is in github.com/docker/distribution registry/client: (*manifests).Get never hashes a fetched manifest against the requested digest, and the bundled registry/proxy pull-through cache consumes it (advisory GHSA-685w-q87j-wqw3; the v2 module path has no fix, only distribution/v3 3.1.2). This image links other packages of the module (registry/api/errcode, registry/api/v2, reference) but not registry/client or registry/proxy. Verified on 2026-11-11 against every published version: each flagged binary was extracted from GHCR and searched for Go symbol names under docker/distribution/registry/client. and docker/distribution/registry/proxy. (the function table keeps them in stripped binaries); every one returned 0 matches, while connaisseur and harbor-registry, which do link the client, returned matches. The melange recipe repeats that search on every build output and fails the build if one appears."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-41567"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/docker/docker@v28.3.3%2Bincompatible"
+        },
+        {
+          "@id": "pkg:golang/github.com/docker/docker@v28.5.2%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "CVE-2026-41567 is in the Moby/Docker daemon: a malicious container image making the daemon run its own decompression binary on PUT /containers/{id}/archive. Both affected module paths have no fix (only moby/moby/v2 2.0.0-beta.14). The image links Docker client code only and runs no dockerd. Verified on 2026-11-11 against every published version: each flagged binary was extracted from GHCR and searched for Go symbol names under docker/docker/daemon and moby/moby/daemon (the function table keeps them in stripped binaries); every one returned 0 matches, while client-package symbols were found where the client is linked, so the search sees the module. The melange recipe repeats the daemon search on every build output and fails the build if one appears."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-42306"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/docker/docker@v28.3.3%2Bincompatible"
+        },
+        {
+          "@id": "pkg:golang/github.com/docker/docker@v28.5.2%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "CVE-2026-42306 is in the Moby/Docker daemon: a race in docker cp mount setup that redirects a bind mount to a host path. Both affected module paths have no fix (only moby/moby/v2 2.0.0-beta.14). The image links Docker client code only and runs no dockerd. Verified on 2026-11-11 against every published version: each flagged binary was extracted from GHCR and searched for Go symbol names under docker/docker/daemon and moby/moby/daemon (the function table keeps them in stripped binaries); every one returned 0 matches, while client-package symbols were found where the client is linked, so the search sees the module. The melange recipe repeats the daemon search on every build output and fails the build if one appears."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-41568"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/docker/docker@v28.3.3%2Bincompatible"
+        },
+        {
+          "@id": "pkg:golang/github.com/docker/docker@v28.5.2%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "CVE-2026-41568 is in the Moby/Docker daemon: a race in docker cp mountpoint creation (createIfNotExists) that creates files at host paths. Both affected module paths have no fix (only moby/moby/v2 2.0.0-beta.14). The image links Docker client code only and runs no dockerd. Verified on 2026-11-11 against every published version: each flagged binary was extracted from GHCR and searched for Go symbol names under docker/docker/daemon and moby/moby/daemon (the function table keeps them in stripped binaries); every one returned 0 matches, while client-package symbols were found where the client is linked, so the search sees the module. The melange recipe repeats the daemon search on every build output and fails the build if one appears."
     }
   ]
 }

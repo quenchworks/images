@@ -170,3 +170,8 @@ pipeline:
       if grep -rlE 'docker/distribution/registry/(client|proxy)\.' "${{targets.destdir}}"; then
         echo "docker/distribution registry/client or registry/proxy is linked: CVE-2026-85747 applies, drop the VEX"; exit 1
       fi
+  - name: Guard the docker daemon VEX (the daemon package must not link)
+    runs: |
+      if grep -rlE '(docker/docker|moby/moby)/daemon[./]' "${{targets.destdir}}"; then
+        echo "the Moby daemon package is linked: CVE-2026-41567, -42306, -41568 apply, drop the VEX"; exit 1
+      fi

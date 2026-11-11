@@ -57,3 +57,8 @@ pipeline:
       fi
       go build -trimpath -ldflags "-s -w" \
         -o "${{targets.destdir}}/app/bin/connaisseur" ./cmd/connaisseur
+  - name: Guard the docker daemon VEX (the daemon package must not link)
+    runs: |
+      if grep -rlE '(docker/docker|moby/moby)/daemon[./]' "${{targets.destdir}}"; then
+        echo "the Moby daemon package is linked: CVE-2026-41567, -42306, -41568 apply, drop the VEX"; exit 1
+      fi

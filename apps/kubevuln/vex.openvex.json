@@ -1,9 +1,9 @@
 {
   "@context": "https://openvex.dev/ns/v0.2.0",
-  "@id": "https://quench-works.com/vex/kubevuln/2026-10-08",
+  "@id": "https://quench-works.com/vex/kubevuln/2026-11-11b",
   "author": "QuenchWorks <info@quench-works.com>",
-  "timestamp": "2026-10-08T00:00:00Z",
-  "version": 1,
+  "timestamp": "2026-11-11T00:00:00Z",
+  "version": 2,
   "statements": [
     {
       "vulnerability": {
@@ -17,6 +17,45 @@
       "status": "not_affected",
       "justification": "vulnerable_code_not_present",
       "impact_statement": "CVE-2026-33997 is a privilege-validation bypass in the Moby daemon's plugin installation. kubevuln v0.3.501 links only Docker API type definitions. Checked with `go list -deps` on both binaries in the CI build (images run 37733699814, both arches): ./cmd/http and ./cmd/sbom-scanner each linked github.com/docker/docker/api/types/filters, api/types/registry and api/types/versions, and no client, daemon, plugin manager or api/server package. The build fails if daemon, plugin or api/server code is ever linked. The fix (29.3.1) exists only under the github.com/moby/moby module path, so the +incompatible module cannot be floated to it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-41567"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/docker/docker@v28.5.2%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "CVE-2026-41567 is in the Moby/Docker daemon: a malicious container image making the daemon run its own decompression binary on PUT /containers/{id}/archive. Both affected module paths have no fix (only moby/moby/v2 2.0.0-beta.14). The image links Docker client code only and runs no dockerd. Verified on 2026-11-11 against every published version: each flagged binary was extracted from GHCR and searched for Go symbol names under docker/docker/daemon and moby/moby/daemon (the function table keeps them in stripped binaries); every one returned 0 matches, while client-package symbols were found where the client is linked, so the search sees the module. The melange recipe repeats the daemon search on every build output and fails the build if one appears."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-42306"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/docker/docker@v28.5.2%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "CVE-2026-42306 is in the Moby/Docker daemon: a race in docker cp mount setup that redirects a bind mount to a host path. Both affected module paths have no fix (only moby/moby/v2 2.0.0-beta.14). The image links Docker client code only and runs no dockerd. Verified on 2026-11-11 against every published version: each flagged binary was extracted from GHCR and searched for Go symbol names under docker/docker/daemon and moby/moby/daemon (the function table keeps them in stripped binaries); every one returned 0 matches, while client-package symbols were found where the client is linked, so the search sees the module. The melange recipe repeats the daemon search on every build output and fails the build if one appears."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-41568"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/docker/docker@v28.5.2%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "CVE-2026-41568 is in the Moby/Docker daemon: a race in docker cp mountpoint creation (createIfNotExists) that creates files at host paths. Both affected module paths have no fix (only moby/moby/v2 2.0.0-beta.14). The image links Docker client code only and runs no dockerd. Verified on 2026-11-11 against every published version: each flagged binary was extracted from GHCR and searched for Go symbol names under docker/docker/daemon and moby/moby/daemon (the function table keeps them in stripped binaries); every one returned 0 matches, while client-package symbols were found where the client is linked, so the search sees the module. The melange recipe repeats the daemon search on every build output and fails the build if one appears."
     }
   ]
 }
