@@ -1,0 +1,51 @@
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-openziti@local
+
+accounts:
+  groups:
+    - groupname: ziti
+      gid: 1001
+  users:
+    - username: ziti
+      uid: 1001
+      gid: 1001
+      homedir: /home/ziti
+  run-as: 1001
+
+environment:
+  HOME: /home/ziti
+
+# The controller and router keep their PKI, database and identities under one directory
+# (/persistent in the chart); the image only provides an empty, writable home.
+paths:
+  - path: /home/ziti
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+work-dir: /home/ziti
+
+# Shell-free. `ziti controller run <config>`, `ziti router run <config>`, `ziti edge ...`.
+entrypoint:
+  command: /usr/bin/ziti
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-openziti"
+  org.opencontainers.image.licenses: "Apache-2.0"
