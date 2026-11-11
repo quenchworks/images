@@ -32,7 +32,7 @@ pipeline:
   # and verify the same checksum either way.
   - runs: |
       f=kafka_2.13-${{package.version}}.tgz
-      for base in https://dlcdn.apache.org/kafka https://archive.apache.org/dist/kafka; do
+      for base in https://archive.apache.org/dist/kafka https://archive.apache.org/dist/kafka; do
         curl -fsSL -o "$f" "$base/${{package.version}}/$f" && break
         rm -f "$f"
       done

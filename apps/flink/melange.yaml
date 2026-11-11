@@ -28,7 +28,7 @@ pipeline:
   # keeps every release but is slow here. CDN first, archive fallback, same sha512.
   - runs: |
       f=flink-${{package.version}}-bin-scala_2.12.tgz
-      for base in https://dlcdn.apache.org/flink https://archive.apache.org/dist/flink; do
+      for base in https://archive.apache.org/dist/flink https://archive.apache.org/dist/flink; do
         curl -fsSL -o "$f" "$base/flink-${{package.version}}/$f" && break
         rm -f "$f"
       done

@@ -41,7 +41,7 @@ pipeline:
   # Try the CDN, fall back to the archive, and verify the same sha256 either way.
   - runs: |
       f=__FILE__
-      for base in https://dlcdn.apache.org/skywalking https://archive.apache.org/dist/skywalking; do
+      for base in https://archive.apache.org/dist/skywalking https://archive.apache.org/dist/skywalking; do
         curl -fsSL -o "$f" "$base/${{package.version}}/$f" && break
         rm -f "$f"
       done
