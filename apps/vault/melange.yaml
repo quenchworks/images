@@ -77,6 +77,7 @@ environment:
       - busybox
       - ca-certificates-bundle
       - git
+      - patch
       # go.mod declares go 1.25.3 (1.21.x) / 1.26.3 (2.0.x); the newest toolchain
       # builds both and carries the current stdlib CVE fixes.
       # GOTOOLCHAIN=local below keeps the go directive from triggering a download.
@@ -113,6 +114,208 @@ pipeline:
       export GOTOOLCHAIN=local
       export GOFLAGS=-mod=mod
 
+      # go-jose v3 has no fixed release for CVE-2026-116587, -116585 and -116586 (fixed in v4 4.1.6
+      # only). Port upstream 644e857134 + 17daa72acd (main, 2026-11-02 and 2026-11-05: wrapping,
+      # audit, agent test helper, PKI ACME JWS, OIDC provider move to v4; no release carries them
+      # yet). vault-plugin-auth-jwt v0.27.3 and cap v0.15.0 (FLOOR) drop the plugin's v3 too. GNU
+      # patch, not busybox: the audit hunk needs fuzz.
+      patch -p1 --forward <<'PATCH'
+      diff --git a/audit/entry_formatter.go b/audit/entry_formatter.go
+      --- a/audit/entry_formatter.go
+      +++ b/audit/entry_formatter.go
+      @@ -13,7 +13,8 @@ import (
+       	"strings"
+       	"time"
+       
+      -	"github.com/go-jose/go-jose/v3/jwt"
+      +	jose "github.com/go-jose/go-jose/v4"
+      +	"github.com/go-jose/go-jose/v4/jwt"
+       	"github.com/hashicorp/eventlogger"
+       	"github.com/hashicorp/go-hclog"
+       	nshelper "github.com/hashicorp/vault/internalshared/namespace"
+      @@ -220,7 +221,13 @@ func parseVaultTokenFromJWT(token string) *string {
+       		return nil
+       	}
+       
+      -	parsedJWT, err := jwt.ParseSigned(token)
+      +	parsedJWT, err := jwt.ParseSigned(token, []jose.SignatureAlgorithm{
+      +		jose.EdDSA,
+      +		jose.RS256, jose.RS384, jose.RS512,
+      +		jose.PS256, jose.PS384, jose.PS512,
+      +		jose.ES256, jose.ES384, jose.ES512,
+      +		jose.HS256, jose.HS384, jose.HS512,
+      +	})
+       	if err != nil {
+       		return nil
+       	}
+      diff --git a/vault/wrapping.go b/vault/wrapping.go
+      --- a/vault/wrapping.go
+      +++ b/vault/wrapping.go
+      @@ -16,2 +16,2 @@ import (
+      -	"github.com/go-jose/go-jose/v3"
+      -	"github.com/go-jose/go-jose/v3/jwt"
+      +	jose "github.com/go-jose/go-jose/v4"
+      +	"github.com/go-jose/go-jose/v4/jwt"
+      @@ -233,7 +233,7 @@ DONELISTHANDLING:
+       			c.logger.Error("failed to create JWT builder", "error", err)
+       			return nil, ErrInternalError
+       		}
+      -		ser, err := jwt.Signed(sig).Claims(claims).Claims(priClaims).CompactSerialize()
+      +		ser, err := jwt.Signed(sig).Claims(claims).Claims(priClaims).Serialize()
+       		if err != nil {
+       			c.tokenStore.revokeOrphan(ctx, te.ID)
+       			c.logger.Error("failed to serialize JWT", "error", err)
+      @@ -410,7 +410,7 @@ func (c *Core) validateWrappingToken(ctx context.Context, req *logical.Request)
+       	// Check for it being a JWT. If it is, and it is valid, we extract the
+       	// internal client token from it and use that during lookup.
+       	if IsJWT(token) {
+      -		parsedJWT, err := jwt.ParseSigned(token)
+      +		parsedJWT, err := jwt.ParseSigned(token, []jose.SignatureAlgorithm{jose.ES512})
+       		if err != nil {
+       			return false, fmt.Errorf("wrapping token could not be parsed: %w", err)
+       		}
+      diff --git a/builtin/logical/pki/acme_jws.go b/builtin/logical/pki/acme_jws.go
+      --- a/builtin/logical/pki/acme_jws.go
+      +++ b/builtin/logical/pki/acme_jws.go
+      @@ -1,4 +1,4 @@
+      -// Copyright IBM Corp. 2016, 2025
+      +// Copyright IBM Corp. 2016, 2026
+       // SPDX-License-Identifier: BUSL-1.1
+       
+       package pki
+      @@ -11,7 +11,7 @@ import (
+       	"fmt"
+       	"strings"
+       
+      -	"github.com/go-jose/go-jose/v3"
+      +	"github.com/go-jose/go-jose/v4"
+       )
+       
+       var AllowedOuterJWSTypes = map[string]interface{}{
+      @@ -26,6 +26,14 @@ var AllowedOuterJWSTypes = map[string]interface{}{
+       	"ES512": true,
+       }
+       
+      +var outerJWSSigAlgs = []jose.SignatureAlgorithm{
+      +	jose.RS256, jose.RS384, jose.RS512,
+      +	jose.PS256, jose.PS384, jose.PS512,
+      +	jose.ES256, jose.ES384, jose.ES512,
+      +}
+      +
+      +var eabJWSSigAlgs = []jose.SignatureAlgorithm{jose.HS256, jose.HS384, jose.HS512}
+      +
+       var AllowedEabJWSTypes = map[string]interface{}{
+       	"HS256": true,
+       	"HS384": true,
+      @@ -146,7 +154,7 @@ func (c *jwsCtx) VerifyJWS(signature string) (map[string]interface{}, error) {
+       	// > The JWS Unencoded Payload Option [RFC7797] MUST NOT be used
+       	//
+       	// This is validated by go-jose.
+      -	sig, err := jose.ParseSigned(signature)
+      +	sig, err := jose.ParseSigned(signature, outerJWSSigAlgs)
+       	if err != nil {
+       		return nil, fmt.Errorf("error parsing signature: %s: %w", err, ErrMalformed)
+       	}
+      @@ -236,7 +244,7 @@ func verifyEabPayload(acmeState *acmeState, ac *acmeContext, outer *jwsCtx, expe
+       
+       	// go-jose only seems to support compact signature encodings.
+       	compactSig := fmt.Sprintf("%v.%v.%v", jwkBase64, payloadBase64, signatureBase64)
+      -	sig, err := jose.ParseSigned(compactSig)
+      +	sig, err := jose.ParseSigned(compactSig, eabJWSSigAlgs)
+       	if err != nil {
+       		return nil, fmt.Errorf("error parsing eab signature: %s: %w", err, ErrMalformed)
+       	}
+      diff --git a/vault/identity_store_oidc.go b/vault/identity_store_oidc.go
+      --- a/vault/identity_store_oidc.go
+      +++ b/vault/identity_store_oidc.go
+      @@ -19,8 +19,8 @@ import (
+       	"strings"
+       	"time"
+       
+      -	"github.com/go-jose/go-jose/v3"
+      -	"github.com/go-jose/go-jose/v3/jwt"
+      +	"github.com/go-jose/go-jose/v4"
+      +	"github.com/go-jose/go-jose/v4/jwt"
+       	"github.com/hashicorp/go-hclog"
+       	"github.com/hashicorp/go-secure-stdlib/base62"
+       	"github.com/hashicorp/go-secure-stdlib/strutil"
+      @@ -1260,8 +1260,8 @@ func (k *namedKey) signPayload(payload []byte) (string, error) {
+       	if k.SigningKey == nil {
+       		return "", fmt.Errorf("signing key is nil; rotate the key and try again")
+       	}
+      -	signingKey := jose.SigningKey{Key: k.SigningKey, Algorithm: jose.SignatureAlgorithm(k.Algorithm)}
+      -	signer, err := jose.NewSigner(signingKey, &jose.SignerOptions{})
+      +	signingKey := jose.SigningKey{Key: k.SigningKey.Key, Algorithm: jose.SignatureAlgorithm(k.Algorithm)}
+      +	signer, err := jose.NewSigner(signingKey, (&jose.SignerOptions{}).WithHeader("kid", k.SigningKey.KeyID))
+       	if err != nil {
+       		return "", err
+       	}
+      @@ -1675,7 +1675,11 @@ func (i *IdentityStore) pathOIDCIntrospect(ctx context.Context, req *logical.Req
+       	clientID := d.Get("client_id").(string)
+       
+       	// validate basic JWT structure
+      -	parsedJWT, err := jwt.ParseSigned(rawIDToken)
+      +	parsedJWT, err := jwt.ParseSigned(rawIDToken, []jose.SignatureAlgorithm{
+      +		jose.RS256, jose.RS384, jose.RS512,
+      +		jose.ES256, jose.ES384, jose.ES512,
+      +		jose.EdDSA,
+      +	})
+       	if err != nil {
+       		return introspectionResp(fmt.Sprintf("error parsing token: %s", err.Error()))
+       	}
+      @@ -1715,7 +1719,7 @@ func (i *IdentityStore) pathOIDCIntrospect(ctx context.Context, req *logical.Req
+       	}
+       
+       	if clientID != "" {
+      -		expected.Audience = []string{clientID}
+      +		expected.AnyAudience = []string{clientID}
+       	}
+       
+       	if claimsErr := claims.Validate(expected); claimsErr != nil {
+      diff --git a/vault/identity_store_oidc_provider.go b/vault/identity_store_oidc_provider.go
+      --- a/vault/identity_store_oidc_provider.go
+      +++ b/vault/identity_store_oidc_provider.go
+      @@ -16,7 +16,7 @@ import (
+       	"strings"
+       	"time"
+       
+      -	"github.com/go-jose/go-jose/v3"
+      +	"github.com/go-jose/go-jose/v4"
+       	"github.com/hashicorp/go-memdb"
+       	"github.com/hashicorp/go-secure-stdlib/base62"
+       	"github.com/hashicorp/go-secure-stdlib/strutil"
+      diff --git a/vault/identity_store_oidc_provider_util.go b/vault/identity_store_oidc_provider_util.go
+      --- a/vault/identity_store_oidc_provider_util.go
+      +++ b/vault/identity_store_oidc_provider_util.go
+      @@ -12,7 +12,7 @@ import (
+       	"net/http"
+       	"net/url"
+       
+      -	"github.com/go-jose/go-jose/v3"
+      +	"github.com/go-jose/go-jose/v4"
+       	"github.com/hashicorp/go-secure-stdlib/strutil"
+       	"github.com/hashicorp/vault/sdk/logical"
+       )
+      diff --git a/command/agent/testing.go b/command/agent/testing.go
+      --- a/command/agent/testing.go
+      +++ b/command/agent/testing.go
+      @@ -16,2 +16,2 @@ import (
+      -	"github.com/go-jose/go-jose/v3"
+      -	"github.com/go-jose/go-jose/v3/jwt"
+      +	"github.com/go-jose/go-jose/v4"
+      +	"github.com/go-jose/go-jose/v4/jwt"
+       
+       func GetTestJWT(t *testing.T) (string, *ecdsa.PrivateKey) {
+      @@ -46,7 +46,7 @@ func GetTestJWT(t *testing.T) (string, *ecdsa.PrivateKey) {
+       		t.Fatal(err)
+       	}
+       
+      -	raw, err := jwt.Signed(sig).Claims(cl).Claims(privateCl).CompactSerialize()
+      +	raw, err := jwt.Signed(sig).Claims(cl).Claims(privateCl).Serialize()
+       	if err != nil {
+       		t.Fatal(err)
+       	}
+      PATCH
       # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
       # FLOOR is a FLOOR, not a pin. A bare `go get mod@vX` fails silently in two
       # directions: it is a NO-OP when an upstream `replace` overrides it, and it
@@ -133,7 +336,7 @@ pipeline:
       # versions use exactly these five modules, no log series and no exporters,
       # read from each tag's own go.mod rather than inferred from the one module
       # the scan happened to name.
-      FLOOR="golang.org/x/net@v0.62.0 golang.org/x/sys@v0.49.0 golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/text@v0.43.0 google.golang.org/grpc@v1.83.2 github.com/apache/thrift@v0.24.0 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/sdk/metric@v1.45.0 github.com/go-jose/go-jose/v4@v4.1.6"
+      FLOOR="golang.org/x/net@v0.62.0 golang.org/x/sys@v0.49.0 golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/text@v0.43.0 google.golang.org/grpc@v1.83.2 github.com/apache/thrift@v0.24.0 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/sdk/metric@v1.45.0 github.com/go-jose/go-jose/v4@v4.1.6 github.com/hashicorp/vault-plugin-auth-jwt@v0.27.3 github.com/hashicorp/cap@v0.15.0"
       MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
       # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
       below_floor() {
@@ -154,6 +357,12 @@ pipeline:
       need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
       if [ -n "$need" ]; then go get $need; fi
       go mod tidy
+      # What is left on v3 is okta-sdk-golang/v5, which only signs client assertions (see
+      # vex.openvex.json). Fail if any other package imports v3.
+      bad="$(go list -deps -f '{{.ImportPath}}{{range .Imports}} {{.}}{{end}}' . | awk '{
+        for (i = 2; i <= NF; i++) if ($i ~ /^github.com\/go-jose\/go-jose\/v3/ && $1 !~ /^github.com\/go-jose\/go-jose\/v3/ &&
+          $1 != "github.com/okta/okta-sdk-golang/v5/okta") print $1 }' | sort -u)"
+      [ -z "$bad" ] || { echo "go-jose/v3 imported outside okta-sdk-golang/v5 (the VEX no longer holds): $bad"; exit 1; }
 
       # Upstream's scripts/build.sh: BUILD_TAGS defaults to `vault`, main package is
       # the repo root. The version string is NOT an ldflag any more -- version/VERSION

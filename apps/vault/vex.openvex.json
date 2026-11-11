@@ -1,0 +1,48 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/vault/2026-11-11",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-11T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-116587"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/go-jose/go-jose/v3@v3.0.5"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "CVE-2026-116587 is a denial of service from crafted RSA parameters in a parsed JWK in go-jose v3 (no v3 fix; fixed in v4 4.1.6). Vault's own v3 users (wrapping, audit, PKI ACME JWS, OIDC provider, agent test helper) are ported to v4 from upstream main 644e857134 + 17daa72acd, and vault-plugin-auth-jwt v0.27.3 with cap v0.15.0 drop the plugin's v3. The one importer left is github.com/okta/okta-sdk-golang/v5/okta (Okta auth method), which uses v3 only to SIGN: createKeySigner and createClientAssertion (client.go:631-682) and the DPoP proof (client.go:1662-1663) build a jose.Signer and CompactSerialize a JWT. It never parses a JWK, parses a JOSE object or decrypts a JWE, which is where the flaw lives. The recipe fails the build if any package other than okta-sdk-golang/v5/okta imports v3 (go list -deps). Checked 2026-11-11 against vault 2.0.4 and 2.1.2 with okta-sdk-golang/v5 v5.0.2."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-116585"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/go-jose/go-jose/v3@v3.0.5"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "CVE-2026-116585 is a denial of service from an empty ciphertext buffer during JWE decryption in go-jose v3 (no v3 fix; fixed in v4 4.1.6). Vault's own v3 users (wrapping, audit, PKI ACME JWS, OIDC provider, agent test helper) are ported to v4 from upstream main 644e857134 + 17daa72acd, and vault-plugin-auth-jwt v0.27.3 with cap v0.15.0 drop the plugin's v3. The one importer left is github.com/okta/okta-sdk-golang/v5/okta (Okta auth method), which uses v3 only to SIGN: createKeySigner and createClientAssertion (client.go:631-682) and the DPoP proof (client.go:1662-1663) build a jose.Signer and CompactSerialize a JWT. It never parses a JWK, parses a JOSE object or decrypts a JWE, which is where the flaw lives. The recipe fails the build if any package other than okta-sdk-golang/v5/okta imports v3 (go list -deps). Checked 2026-11-11 against vault 2.0.4 and 2.1.2 with okta-sdk-golang/v5 v5.0.2."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-116586"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/go-jose/go-jose/v3@v3.0.5"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "CVE-2026-116586 is a denial of service from deeply nested JSON while parsing JOSE objects in go-jose v3 (no v3 fix; fixed in v4 4.1.6). Vault's own v3 users (wrapping, audit, PKI ACME JWS, OIDC provider, agent test helper) are ported to v4 from upstream main 644e857134 + 17daa72acd, and vault-plugin-auth-jwt v0.27.3 with cap v0.15.0 drop the plugin's v3. The one importer left is github.com/okta/okta-sdk-golang/v5/okta (Okta auth method), which uses v3 only to SIGN: createKeySigner and createClientAssertion (client.go:631-682) and the DPoP proof (client.go:1662-1663) build a jose.Signer and CompactSerialize a JWT. It never parses a JWK, parses a JOSE object or decrypts a JWE, which is where the flaw lives. The recipe fails the build if any package other than okta-sdk-golang/v5/okta imports v3 (go list -deps). Checked 2026-11-11 against vault 2.0.4 and 2.1.2 with okta-sdk-golang/v5 v5.0.2."
+    }
+  ]
+}
