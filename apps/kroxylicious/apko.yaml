@@ -1,0 +1,53 @@
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-kroxylicious@local
+
+accounts:
+  groups:
+    - groupname: kroxylicious
+      gid: 1001
+  users:
+    - username: kroxylicious
+      uid: 1001
+      gid: 1001
+      homedir: /home/kroxylicious
+  run-as: 1001
+
+environment:
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  HOME: /home/kroxylicious
+  LANG: C.UTF-8
+
+paths:
+  - path: /home/kroxylicious
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+work-dir: /usr/lib/kroxylicious
+
+# Shell-free: java runs the proxy directly with upstream's main class. The JNI libraries
+# (netty epoll, snappy, lz4, zstd) extract themselves to java.io.tmpdir (/tmp) at runtime.
+entrypoint:
+  command: /usr/lib/jvm/java-21-openjdk/bin/java -Dlog4j2.configurationFile=/etc/kroxylicious/log4j2.yaml -cp /usr/lib/kroxylicious/libs/* io.kroxylicious.app.Kroxylicious
+cmd: --config /etc/kroxylicious/config.yaml
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-kroxylicious"
+  org.opencontainers.image.licenses: "Apache-2.0"

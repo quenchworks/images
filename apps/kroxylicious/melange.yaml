@@ -1,0 +1,106 @@
+# Packages the Kroxylicious proxy onto Wolfi from its release distribution (libs/ of separate
+# jars), with the vulnerable libraries replaced one jar at a time. The upstream start script
+# needs a shell; the image runs java directly (apko entrypoint) with the same main class.
+package:
+  name: quench-kroxylicious
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Kroxylicious, the Kafka protocol proxy, on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-21-jre       # class file major 65 (Java 21)
+      - ca-certificates-bundle
+      - libstdc++            # zstd-jni and the other JNI libs extract to /tmp and link it
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - curl
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/kroxylicious/kroxylicious/releases/download/v${{package.version}}/kroxylicious-app-${{package.version}}-bin.tar.gz
+      expected-sha256: __SHA256__
+      extract: false
+  - runs: |
+      set -eu
+      tar xzf kroxylicious-app-${{package.version}}-bin.tar.gz
+      src=kroxylicious-app-${{package.version}}
+      dest="${{targets.destdir}}/usr/lib/kroxylicious"
+      install -d "$dest"
+      cp -a "$src/libs" "$dest/libs"
+      lib="$dest/libs"
+      # libs/native is the start script's pre-extracted copy of every JNI library for every
+      # OS and arch (melange would demand aarch64, FreeBSD and AIX loaders), and it would go
+      # stale against the swapped snappy-java. The jars carry the same natives and extract
+      # the right one to java.io.tmpdir at runtime, so the directory goes.
+      rm -rf "$lib/native"
+      M=https://repo1.maven.org/maven2
+      # swap <shipped jar> <maven path of the fixed jar> <its sha256, from a download checked
+      # against Maven Central's .sha1>. Each swap asserts the old jar is shipped, so a release
+      # that moves a library fails loudly instead of gaining a second copy.
+      swap() {
+        test -f "$lib/$1" || { echo "FATAL: $1 not shipped; re-audit the swaps"; exit 1; }
+        new="$(basename "$2")"
+        curl -fsSL -o "$lib/$new" "$M/$2"
+        echo "$3  $lib/$new" | sha256sum -c -
+        rm -f "$lib/$1"
+      }
+      # Measured 2026-11-11 with trivy (comprehensive) on the 0.25.1 distribution: 9 fixable.
+      # lz4-java 1.11.4 (CVE-2026-106449..106451), snappy-java 1.1.10.9 (CVE-2026-108106,
+      # -116590, -93451), org.json 20260814 (CVE-2026-59171).
+      swap lz4-java-1.11.2.jar at/yawk/lz4/lz4-java/1.11.4/lz4-java-1.11.4.jar 58c8e0b813960d2a248e050c353baea73139b48a2ffc55382d42c69707e17325
+      swap snappy-java-1.1.10.8.jar org/xerial/snappy/snappy-java/1.1.10.9/snappy-java-1.1.10.9.jar 35228628442e4b9797681c7cbd3b26594f6da3379159dbd0cb07094ed3aece0d
+      swap json-20250517.jar org/json/json/20260814/json-20260814.jar 7dd2de1533e766e2b6c07d8194da85145ad313a167a4760050f5c9b6839604fe
+      # OpenTelemetry api 1.63 (CVE-2026-118259): only api/common/context are shipped (no SDK),
+      # so the three move together to 1.67.0.
+      swap opentelemetry-api-1.63.0.jar io/opentelemetry/opentelemetry-api/1.67.0/opentelemetry-api-1.67.0.jar 538d1dff2f9a37aecbc0ef98fd17273a3affb058e734e6763a3a07a38a5fdc59
+      swap opentelemetry-common-1.63.0.jar io/opentelemetry/opentelemetry-common/1.67.0/opentelemetry-common-1.67.0.jar da97bdb395418e16ecdcbe7ad3497f45b9e767ceda4ae7e86133e7a757ac377f
+      swap opentelemetry-context-1.63.0.jar io/opentelemetry/opentelemetry-context/1.67.0/opentelemetry-context-1.67.0.jar 40fb813fb5e27ec2691daa29c81b572b5b1541ef9b41e62490c3ee3e6407c55e
+      # Wire 6.4.0 (CVE-2026-63126) moves as one family to 6.4.5, still 6.x (used by Apicurio's
+      # protobuf schema support).
+      swap wire-runtime-6.4.0.jar com/squareup/wire/wire-runtime/6.4.5/wire-runtime-6.4.5.jar f5d0a99dd738a8eb534d55005117142b426a67386c466241635725d739eafafc
+      swap wire-runtime-jvm-6.4.0.jar com/squareup/wire/wire-runtime-jvm/6.4.5/wire-runtime-jvm-6.4.5.jar 525cb6f4d838555ed882ebf1567bb4069ab0aa5a5bc69a3fce0be27e6fbb5b4c
+      swap wire-schema-6.4.0.jar com/squareup/wire/wire-schema/6.4.5/wire-schema-6.4.5.jar a0ce94a389fca5edfc1c9a99d08e692f9971f4c038f7fcbcfc16a93d275f8fe9
+      swap wire-schema-jvm-6.4.0.jar com/squareup/wire/wire-schema-jvm/6.4.5/wire-schema-jvm-6.4.5.jar b6177b19b2d6479f57802bb2b33c621f7272d8d210e398be083a9ef4a9d5858f
+
+      # Bootable default: one virtual cluster in front of kafka:9092, port-identifies-node
+      # gateway on 9192 (+ one port per broker), management (/livez, /metrics) on 9190.
+      # The chart replaces it.
+      install -d "${{targets.destdir}}/etc/kroxylicious"
+      cat > "${{targets.destdir}}/etc/kroxylicious/config.yaml" <<'YAML'
+      management:
+        endpoints:
+          prometheus: {}
+      clusterDefinitions:
+        - name: default
+          bootstrapServers: kafka:9092
+      virtualClusters:
+        - name: default
+          target:
+            cluster: default
+          gateways:
+            - name: default
+              portIdentifiesNode:
+                bootstrapAddress: 0.0.0.0:9192
+                advertisedBrokerAddressPattern: localhost
+      YAML
+      cp "$src/config/log4j2.yaml" "${{targets.destdir}}/etc/kroxylicious/log4j2.yaml"
+
+test:
+  environment:
+    contents:
+      packages:
+        - openjdk-21-jre
+  pipeline:
+    - runs: |
+        java -cp '/usr/lib/kroxylicious/libs/*' io.kroxylicious.app.Kroxylicious --version
