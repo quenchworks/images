@@ -1,0 +1,48 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/openbao/2026-11-11",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-11T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-116587"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/go-jose/go-jose/v3@v3.0.5"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "CVE-2026-116587 is a denial of service from crafted RSA parameters in a parsed JWK in go-jose v3, which has no fixed release (fixed in v4 4.1.6 only). In openbao 2.7.2 the recipe floors hashicorp/cap to v0.15.0, which moves the JWT auth method to go-jose v4; the build then fails if any package other than github.com/okta/okta-sdk-golang/v2 imports v3 (go list -deps check in melange.yaml). Okta SDK v2.20.0 uses go-jose only to sign: okta/requestExecutor.go:237-261 (CreateKeySigner, CreateClientAssertion) builds a jose.Signer for private-key client auth; it never parses a JWK, decrypts a JWE or parses a JOSE object, which is where all three flaws live. openbao builds its Okta client with okta.WithToken (internal/vault/login_mfa.go:1219, SSWS API token), so even the signer is not called. Checked on 2026-11-11 against the 2.7.2 source and the v2.20.0 module."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-116585"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/go-jose/go-jose/v3@v3.0.5"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "CVE-2026-116585 is a denial of service from an empty ciphertext buffer during JWE decryption in go-jose v3, which has no fixed release (fixed in v4 4.1.6 only). In openbao 2.7.2 the recipe floors hashicorp/cap to v0.15.0, which moves the JWT auth method to go-jose v4; the build then fails if any package other than github.com/okta/okta-sdk-golang/v2 imports v3 (go list -deps check in melange.yaml). Okta SDK v2.20.0 uses go-jose only to sign: okta/requestExecutor.go:237-261 (CreateKeySigner, CreateClientAssertion) builds a jose.Signer for private-key client auth; it never parses a JWK, decrypts a JWE or parses a JOSE object, which is where all three flaws live. openbao builds its Okta client with okta.WithToken (internal/vault/login_mfa.go:1219, SSWS API token), so even the signer is not called. Checked on 2026-11-11 against the 2.7.2 source and the v2.20.0 module."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-116586"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/go-jose/go-jose/v3@v3.0.5"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "CVE-2026-116586 is a denial of service from deeply nested JSON while parsing JOSE objects in go-jose v3, which has no fixed release (fixed in v4 4.1.6 only). In openbao 2.7.2 the recipe floors hashicorp/cap to v0.15.0, which moves the JWT auth method to go-jose v4; the build then fails if any package other than github.com/okta/okta-sdk-golang/v2 imports v3 (go list -deps check in melange.yaml). Okta SDK v2.20.0 uses go-jose only to sign: okta/requestExecutor.go:237-261 (CreateKeySigner, CreateClientAssertion) builds a jose.Signer for private-key client auth; it never parses a JWK, decrypts a JWE or parses a JOSE object, which is where all three flaws live. openbao builds its Okta client with okta.WithToken (internal/vault/login_mfa.go:1219, SSWS API token), so even the signer is not called. Checked on 2026-11-11 against the 2.7.2 source and the v2.20.0 module."
+    }
+  ]
+}
