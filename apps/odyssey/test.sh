@@ -59,4 +59,23 @@ for _ in $(seq 1 60); do
 done
 [ "$ok" = 1 ] || { echo "query never came back through the pooler"; docker logs "$ID-od" 2>&1 | tail -20; docker logs "$ID-pg" 2>&1 | tail -5; exit 1; }
 echo "$out"
-echo "smoke test passed: psql to odyssey:6432 reached PostgreSQL through a pooled connection, user 1001"
+
+# TLS for clients: Odyssey built against OpenSSL 4.0 segfaulted on the first TLS client, so a
+# TLS query must come back and the container must still be running afterwards
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=$ID-od" \
+  -keyout "$conf/tls.key" -out "$conf/tls.crt" >/dev/null 2>&1
+chmod a+r "$conf/tls.key" "$conf/tls.crt"
+sed -i 's|tls "disable"|tls "require"\n\ttls_cert_file "/etc/odyssey/tls.crt"\n\ttls_key_file "/etc/odyssey/tls.key"|' "$conf/odyssey.conf"
+docker restart "$ID-od" >/dev/null
+ok=0
+for _ in $(seq 1 30); do
+  out="$(docker run --rm --network "$ID" --entrypoint psql -e PGSSLMODE=require "$PG" -h "$ID-od" -p 6432 -U postgres -d postgres -tAc "select 'tls through odyssey'" 2>/dev/null || true)"
+  [ "$out" = "tls through odyssey" ] && { ok=1; break; }
+  sleep 2
+done
+[ "$ok" = 1 ] || { echo "TLS query never came back"; docker logs "$ID-od" 2>&1 | tail -10; exit 1; }
+sleep 2
+[ "$(docker inspect -f '{{.State.Running}} {{.RestartCount}}' "$ID-od")" = "true 0" ] || { echo "odyssey died after a TLS client: $(docker inspect -f '{{.State.ExitCode}}' "$ID-od")"; exit 1; }
+plain="$(docker run --rm --network "$ID" --entrypoint psql -e PGSSLMODE=disable "$PG" -h "$ID-od" -p 6432 -U postgres -d postgres -tAc "select 1" 2>&1 || true)"
+[ "$plain" != 1 ] || { echo "plain client accepted with tls require"; exit 1; }
+echo "smoke test passed: pooled query, TLS query with the process still up, plain refused under require, user 1001"
