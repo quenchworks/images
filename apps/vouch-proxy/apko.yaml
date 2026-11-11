@@ -1,0 +1,52 @@
+# Vouch Proxy runtime: listens on 9090. Configure it with VOUCH_* / OAUTH_* environment
+# variables, or mount config.yml at /vouch/config/config.yml (VOUCH_ROOT=/vouch). Nonroot 1001.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-vouch-proxy@local
+
+accounts:
+  groups:
+    - groupname: vouch
+      gid: 1001
+  users:
+    - username: vouch
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  - path: /vouch/config
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  VOUCH_ROOT: /vouch/
+  VOUCH_LISTEN: 0.0.0.0
+  VOUCH_PORT: "9090"
+
+work-dir: /vouch
+
+entrypoint:
+  command: /usr/bin/vouch-proxy
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-vouch-proxy"
+  org.opencontainers.image.licenses: "MIT"
+  org.opencontainers.image.version: "__VER__"
