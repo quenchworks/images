@@ -1,0 +1,93 @@
+diff --git a/server/channels/app/plugin_signature.go b/server/channels/app/plugin_signature.go
+index b1f9e14..54bb0b6 100644
+--- a/server/channels/app/plugin_signature.go
++++ b/server/channels/app/plugin_signature.go
+@@ -9,10 +9,11 @@ import (
+ 	"net/http"
+ 	"path/filepath"
+ 	"slices"
++	"time"
+ 
++	"github.com/ProtonMail/go-crypto/openpgp/armor"
++	openpgp "github.com/ProtonMail/go-crypto/openpgp/v2"
+ 	"github.com/pkg/errors"
+-	"golang.org/x/crypto/openpgp"       //nolint:staticcheck
+-	"golang.org/x/crypto/openpgp/armor" //nolint:staticcheck
+ 
+ 	"github.com/mattermost/mattermost/server/public/model"
+ 	"github.com/mattermost/mattermost/server/public/shared/mlog"
+@@ -135,9 +136,15 @@ func verifyBinarySignature(publicKey, signedFile, signature io.Reader) error {
+ 	if err != nil {
+ 		return errors.Wrap(err, "can't read public key")
+ 	}
+-	if _, err = openpgp.CheckDetachedSignature(keyring, signedFile, signature); err != nil {
++	sig, signer, err := openpgp.VerifyDetachedSignature(keyring, signedFile, signature, nil)
++	if err != nil {
+ 		return errors.Wrap(err, "error while checking the signature")
+ 	}
++	// v2 checks key validity at the signature's creation time, so a backdated
++	// signature from a retired key would pass. Re-check against the current time.
++	if _, ok := signer.SigningKeyById(time.Now(), *sig.IssuerKeyId, nil); !ok {
++		return errors.New("signing key is revoked, expired or invalid")
++	}
+ 	return nil
+ }
+ 
+diff --git a/server/platform/services/upgrader/pubkey.gpg b/server/platform/services/upgrader/pubkey.gpg
+index 173374e..a180365 100644
+--- a/server/platform/services/upgrader/pubkey.gpg
++++ b/server/platform/services/upgrader/pubkey.gpg
+@@ -7,12 +7,12 @@ fl6WltLrepiExTp6NMZ50k+Em4JGM6CWBMo22ucy0jYjZXO5hEGb3o6NGiG+Dx2z
+ b2J78LksCKGsSrn0F1rLJeA933bFL4g9ozv9asBlzmpgG77ESg6YE1N/Rh7WDzVA
+ prIR0MuB5JjElASw5LDVxDV6RZsxEVQr7ETLABEBAAG0KU1hdHRlcm1vc3QgQnVp
+ bGQgPGRldi1vcHNAbWF0dGVybW9zdC5jb20+iQFUBBMBCAA+AhsDBQsJCAcCBhUI
+-CQoLAgQWAgMBAh4BAheAFiEEobMdRvDzoQsCzy1E+PLDF0R3SygFAmJOqWgFCQ03
+-zUwACgkQ+PLDF0R3Syg/rQf8D5BgvVFnGuHDYNu2eiasZdfxmuhg1C7JGSLHqoCT
+-SB/0SLLQyMeHsJLye/gbo3yhK8G9XYOm+obGF+NDxB0LtRaPv5Q6pIQYt88ZxOGA
+-Kh6RG2DjYA5j410wYrN0mNzhudqnS2yZdyq215nEr7Z6l1T7L9OPcz0u0mF9RraQ
+-nawzxbxc8mPuC5tMLTedViSkTYLgMY12TCSYhykseUIGrl/FBfMbmKwBHM52SZJh
+-maBevuNymlFbODTciyE9Q7mJHkaamGKTXaa3Enlcf16oSoemawSBJuspaS0sZOW8
+-dgi5l3V5YvfFvSk45axiZbnGYfN81G5mkSGAENSGSKVtMA==
+-=kkvg
++CQoLAgQWAgMBAh4BAheAFiEEobMdRvDzoQsCzy1E+PLDF0R3SygFAmYTl7kFCRS/
++Ip0ACgkQ+PLDF0R3SyjrHwf7Byo5TU5mRv8vKP76jE8QJJDjmIM4+jT16ywIiEmu
++ZvBQC5GAliLrXqfQCOvCddwRoq4AqGIGs1yZRpHjcrxNkRVIn4G3w3li+8MYsG3U
++4Iz2tjdMwXrinhFCDUEG7LP8riGREC482PUBwBY9Q9b2TSTs9hn+CURBN+c4xVM6
++Nxx0r/Z9JBrCIOQYxBAj0GFeFO49EowbcbIGkHIBTR9BFBzaTZtqgDb4Vgmgovec
++/ZimCgN7TPE/3Jt5NfSCslnniRGZdxQt/CeabzpqBzsQKUQfL0Om5c/f/eaxlFPR
++/Vx0r829es4uJ7F1RwcBGM+VnWvfJMe+JIDmxO+3JSUD8w==
++=Z70o
+ -----END PGP PUBLIC KEY BLOCK-----
+diff --git a/server/platform/services/upgrader/upgrader_linux.go b/server/platform/services/upgrader/upgrader_linux.go
+index 422b989..f312ef6 100644
+--- a/server/platform/services/upgrader/upgrader_linux.go
++++ b/server/platform/services/upgrader/upgrader_linux.go
+@@ -20,9 +20,10 @@ import (
+ 	"sync"
+ 	"sync/atomic"
+ 	"syscall"
++	"time"
+ 
++	openpgp "github.com/ProtonMail/go-crypto/openpgp/v2"
+ 	"github.com/pkg/errors"
+-	"golang.org/x/crypto/openpgp" //nolint:staticcheck
+ 
+ 	"github.com/mattermost/mattermost/server/public/model"
+ 	"github.com/mattermost/mattermost/server/public/shared/mlog"
+@@ -115,11 +116,15 @@ func verifySignature(filename string, sigfilename string, publicKey []byte) erro
+ 		return NewInvalidSignature()
+ 	}
+ 
+-	_, err = openpgp.CheckDetachedSignature(keyring, mattermost_tar, signature)
++	sig, signer, err := openpgp.VerifyDetachedSignature(keyring, mattermost_tar, signature, nil)
+ 	if err != nil {
+ 		mlog.Debug("Unable to verify the Mattermost file signature", mlog.Err(err))
+ 		return NewInvalidSignature()
+ 	}
++	if _, ok := signer.SigningKeyById(time.Now(), *sig.IssuerKeyId, nil); !ok {
++		mlog.Debug("The Mattermost file signing key is revoked, expired or invalid")
++		return NewInvalidSignature()
++	}
+ 	return nil
+ }
+ 

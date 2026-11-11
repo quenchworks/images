@@ -125,11 +125,14 @@ pipeline:
       done
       echo "raising:${need:- nothing}"
       [ -z "$need" ] || go get $need
-      # The x/crypto floor (GO-2026-5932 fix) moved openpgp into its own module, which the
-      # server imports (channels/app/plugin_signature.go, platform/services/upgrader); without
-      # it the build fails with "no required module provides package golang.org/x/crypto/openpgp".
-      # Unconditional: busybox grep has no --include, so an import check here silently read false.
-      go get golang.org/x/crypto/openpgp@v0.1.0-deprecated
+      # GO-2026-5932: golang.org/x/crypto/openpgp is unmaintained and has no fix. The server
+      # used it to verify plugin and upgrade signatures; openpgp-protonmail.patch moves both to
+      # github.com/ProtonMail/go-crypto/openpgp/v2, a port of upstream master 95cc6d956ab4 and
+      # e55441911322 (MM-70987, 2026-11-09/11, unreleased): VerifyDetachedSignature plus a
+      # current-time key validity check, and the upgrader key re-exported with its renewed
+      # expiry (same fingerprint A1B31D46F0F3A10B02CF2D44F8F2C31744774B28).
+      (cd .. && git apply openpgp-protonmail.patch)
+      go get github.com/ProtonMail/go-crypto@v1.5.2
 
       VER="${{package.version}}"
 
@@ -152,6 +155,13 @@ pipeline:
         -X ${MMCTL}.gitCommit=v${VER} \
         -X ${MMCTL}.gitTreeState=clean"
       go build -p 4 -trimpath -ldflags "$MMCTL_LDFLAGS" -o /tmp/mmctl ./cmd/mmctl
+      # neither binary may link the unmaintained openpgp module again (GO-2026-5932)
+      for b in /tmp/mmserver /tmp/mmctl; do
+        if go version -m "$b" > /tmp/mods.txt && grep -q 'golang.org/x/crypto/openpgp' /tmp/mods.txt; then
+          echo "$b still links golang.org/x/crypto/openpgp"; exit 1
+        fi
+        grep -q 'github.com/ProtonMail/go-crypto' /tmp/mods.txt || [ "$b" = /tmp/mmctl ]
+      done
       cd ..
 
   # 4) Assemble the install tree: lay down upstream's prebuilt tree read-only under
