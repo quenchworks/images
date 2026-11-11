@@ -81,8 +81,8 @@ pipeline:
       # replace the prebuilt .so. A tag change fails here until its sha256 is pinned.
       MIX="$(curl -fsSL "https://raw.githubusercontent.com/emqx/emqx/${VER}/mix.exs")"
       DLMIX="$(curl -fsSL "https://raw.githubusercontent.com/emqx/emqx/${VER}/apps/emqx_bridge_datalayers/mix.exs")"
-      case "$MIX" in *'greptimedb-ingester-erlnif", tag: "0.1.13"'*) ;; *) echo "EMQX ${VER} moved greptimedb_rs off 0.1.13; pin the new tag"; exit 1 ;; esac
-      case "$DLMIX" in *'datalayers-adapter-erl", tag: "0.1.5"'*) ;; *) echo "EMQX ${VER} moved datalayers off 0.1.5; pin the new tag"; exit 1 ;; esac
+      case "$MIX" in *'greptimedb-ingester-erlnif", tag: "0.1.14"'*) ;; *) echo "EMQX ${VER} moved greptimedb_rs off 0.1.14; pin the new tag"; exit 1 ;; esac
+      case "$DLMIX" in *'datalayers-adapter-erl", tag: "0.1.6"'*) ;; *) echo "EMQX ${VER} moved datalayers off 0.1.6; pin the new tag"; exit 1 ;; esac
       export RUSTLER_NIF_VERSION=2.16   # loads on every ERTS EMQX 6 bundles (OTP 25+)
       nif() { # <owner/repo> <tag> <sha256> <lib name> <emqx lib dir glob>
         w=$(mktemp -d)
@@ -98,8 +98,8 @@ pipeline:
         install -m0755 "$so" "$old"
         rm -rf "$w"
       }
-      nif emqx/greptimedb-ingester-erlnif 0.1.13 811cfe09722770cc234518106377f9a520dae8b13d5fdb60936a9da55d7d1c84 greptimedb_nif 'greptimedb_rs-*'
-      nif datalayers-io/datalayers-adapter-erl 0.1.5 934261b586e08144088837f89cf079361fa42213b8af825568d8930e794a27f5 datalayers_nif 'datalayers-*'
+      nif emqx/greptimedb-ingester-erlnif 0.1.14 ca2dc05aa99d3b02cb954d2cfb776f949c9f6a738fdea9c5394a5fcdb681471e greptimedb_nif 'greptimedb_rs-*'
+      nif datalayers-io/datalayers-adapter-erl 0.1.6 9f83df1faf9c13bb8a8925684f256a985bc96c92f6002e2ca14cd812c891678a datalayers_nif 'datalayers-*'
       # Every Rust artifact must carry .dep-v0 (none here ships a Cargo.lock).
       find "$dest" -type f -size +100k | while read -r f; do
         LC_ALL=C grep -qa -e 'cargo/registry/src' -e 'rustc version' "$f" || continue
