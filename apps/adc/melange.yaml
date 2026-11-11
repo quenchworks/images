@@ -154,14 +154,18 @@ pipeline:
       old = "  js-yaml: ^4.1.2\n"
       assert old in s, "catalog js-yaml entry moved; re-check the js-yaml advisory"
       s = s.replace(old, "  js-yaml: ^4.3.1\n")
+      # zod too: a high advisory below 4.6.6 (pnpm audit 2026-11-12).
+      old = "  zod: ^4.1.12\n"
+      assert old in s, "catalog zod entry moved; re-check the zod advisory"
+      s = s.replace(old, "  zod: ^4.6.7\n")
 
       out, added, dropped = [], False, False
       for ln in s.splitlines():
           # Upstream's own `fast-uri: ">=3.1.2"` floor is superseded by the exact
           # pin below; two selectors for one package is ambiguous.
-          # Same for axios and qs (upstream: ">=1.17.0", ">=6.14.2"); a second key for one
+          # Same for axios, qs and body-parser (upstream: ">=1.17.0", ">=6.14.2", ">=2.2.1"); a second key for one
           # package is a duplicated mapping key and pnpm refuses the file.
-          if ln.startswith(("  fast-uri:", "  axios:", "  qs:", "  follow-redirects:")):
+          if ln.startswith(("  fast-uri:", "  axios:", "  qs:", "  follow-redirects:", "  body-parser:")):
               dropped = dropped or ln.startswith("  fast-uri:")
               continue
           out.append(ln)
@@ -170,11 +174,12 @@ pipeline:
                   "  'brace-expansion@<5.0.12': 5.0.12",  # CVE-2026-14257 + 2 follow-ons;
                                                        # EXACT selector: the tree's other
                                                        # copy (2.1.1) is not affected
-                  "  fast-uri: 4.1.5",                 # host-confusion advisories (>=4.1.5 as of 2026-10-08)
+                  "  fast-uri: 4.2.3",                 # host-confusion advisories (>=4.2.3 as of 2026-11-12)
                   "  axios: 1.20.0",                   # 11 advisories, high (fixed >=1.20.0; pnpm audit 2026-10-08)
                   "  proxy-addr: 2.0.8",               # critical advisory (fixed >=2.0.8; pnpm audit 2026-10-08)
-                  "  qs: 6.16.0",                      # moderate advisories (fixed >=6.16.0; pnpm audit 2026-10-08)
-                  "  follow-redirects: 1.16.1",        # 2 high advisories (fixed >=1.16.1; pnpm audit 2026-10-22)
+                  "  qs: 6.16.1",                      # moderate advisories (fixed >=6.16.1; pnpm audit 2026-11-12)
+                  "  follow-redirects: 1.16.3",        # high advisories (fixed >=1.16.2; pnpm audit 2026-11-12)
+                  "  body-parser: 2.4.0",              # high advisory (fixed >=2.4.0; upstream's >=2.2.1 replaced)
               ]
               added = True
       assert added, "overrides: block not found in pnpm-workspace.yaml"
