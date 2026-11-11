@@ -72,11 +72,26 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          # bwrap is often on the runner already; otherwise retry apt, whose mirrors drop out of DNS for hours
-          command -v bwrap >/dev/null || for i in 1 2 3 4 5 6 7 8 9 10; do
-            sudo apt-get update -o Acquire::Retries=3 && sudo apt-get install -y bubblewrap && break
-            [ "$i" = 10 ] && exit 1; sleep 60
-          done
+          # bubblewrap: apt first. When the runner cannot resolve the Ubuntu mirrors (hours on 2026-11-11),
+          # fetch the same noble-updates .deb from other mirrors and check the archive index sha256.
+          if ! command -v bwrap >/dev/null && ! { sudo apt-get update -o Acquire::Retries=3 && sudo apt-get install -y bubblewrap; }; then
+            a="$(dpkg --print-architecture)"; deb="bubblewrap_0.9.0-1ubuntu0.3_${a}.deb"
+            case "$a" in
+              amd64) sum=2461f1beee9cb04c8942739fe1a2b37e7b7c2a3d518f0779dc75f9245baa3094
+                     m="http://archive.ubuntu.com/ubuntu http://security.ubuntu.com/ubuntu https://mirrors.edge.kernel.org/ubuntu https://ftp.uni-stuttgart.de/ubuntu" ;;
+              arm64) sum=dce3a2e5f0302eab717a64fe9c9411fe2d40469e2a7946e0f2ce1420a61025c3
+                     m="http://ports.ubuntu.com/ubuntu-ports https://ftp.tu-chemnitz.de/pub/linux/ubuntu-ports https://mirrors.ocf.berkeley.edu/ubuntu-ports https://mirrors.dotsrc.org/ubuntu-ports" ;;
+            esac
+            ok=0
+            for i in 1 2 3 4 5 6; do
+              for u in $m; do
+                if curl -fsSL -m 120 -o "/tmp/$deb" "$u/pool/main/b/bubblewrap/$deb" && echo "$sum  /tmp/$deb" | sha256sum -c -; then ok=1; break 2; fi
+              done
+              sleep 30
+            done
+            [ "$ok" = 1 ] || { echo "bubblewrap: no mirror reachable"; exit 1; }
+            sudo dpkg -i "/tmp/$deb"
+          fi
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           MELANGE_VER=v0.53.0
           curl -fsSL "https://github.com/chainguard-dev/melange/releases/download/${MELANGE_VER}/melange_${MELANGE_VER#v}_linux_${{ matrix.arch.platform }}.tar.gz" \
