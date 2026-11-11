@@ -239,6 +239,13 @@ pipeline:
       go build -trimpath \
         -ldflags "-s -w -X github.com/influxdata/telegraf/internal.Version=${{package.version}}" \
         -o "${{targets.destdir}}/usr/bin/telegraf" ./cmd/telegraf
+      # golang.org/x/crypto/openpgp (GO-2026-5932, deprecated, no fix) is VEXed: go-github/v32 uses it only to
+      # sign commits in Git.CreateCommit, which telegraf never calls (vex.openvex.json). Fail if that changes.
+      bad="$(go list -deps -f '{{.ImportPath}}{{range .Imports}} {{.}}{{end}}' ./cmd/telegraf | awk '{
+        for (i = 2; i <= NF; i++) if ($i ~ /^golang.org\/x\/crypto\/openpgp/ && $1 !~ /^golang.org\/x\/crypto\/openpgp/ &&
+          $1 != "github.com/google/go-github/v32/github") print $1 }' | sort -u)"
+      [ -z "$bad" ] || { echo "openpgp imported outside go-github/v32 (the VEX no longer holds): $bad"; exit 1; }
+      ! grep -rq 'CreateCommit' plugins/inputs/github/ || { echo "telegraf now calls CreateCommit: re-check the openpgp VEX"; exit 1; }
       # The float is only real if it reached the BINARY. Every `dep`/`=>` line of
       # `go version -m` must be at or above its floor -- the `=>` line is what catches
       # a replace-shadowed float. Fail the build rather than ship it.

@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/telegraf/2026-11-11",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-11T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "GO-2026-5932"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/golang.org/x/crypto/openpgp@v0.1.0-deprecated"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "GO-2026-5932 covers golang.org/x/crypto/openpgp, deprecated and unmaintained, with no fixed version (it now ships as its own module at v0.1.0-deprecated). In telegraf the only importer is github.com/google/go-github/v32/github (v32.1.0), pulled in by the github input plugin (plugins/inputs/github/github.go). go-github uses openpgp only in createSignature (github/git_commits.go:154-166), which Git.CreateCommit calls when a commit carries a SigningKey. The plugin calls only Repositories.Get (plugins/inputs/github/github.go:79), so no openpgp code runs. The recipe fails the build if any other package imports openpgp (go list -deps over ./cmd/telegraf) or if telegraf's source calls CreateCommit. Checked 2026-11-11 against telegraf 1.40.3."
+    }
+  ]
+}
