@@ -33,6 +33,18 @@ pipeline:
   - runs: |
       set -eu
       export CGO_ENABLED=0 GOTOOLCHAIN=local GOFLAGS=-mod=mod
+      # floors, raised only when below (a bare go get downgrades once upstream passes it); the
+      # golang.org/x set moves together (x/crypto at the GO-2026-5932 fix commit)
+      FLOOR="golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/net@v0.62.0 golang.org/x/text@v0.43.0 golang.org/x/sys@v0.49.0"
+      need=""
+      for f in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${f%@*}")"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        [ "$(printf '%s\n%s\n' "$have" "${f#*@}" | sort -V | head -1)" = "${f#*@}" ] || need="$need $f"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
+      go mod tidy
       install -d "${{targets.destdir}}/usr/bin"
       for b in skipper eskip routesrv; do
         go build -trimpath -ldflags "-s -w -X main.version=v${{package.version}}" \
