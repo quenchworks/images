@@ -122,6 +122,13 @@ pipeline:
       go build -trimpath -tags json1 \
         -ldflags "-s -w -X github.com/ory/kratos/driver/config.Version=v${{package.version}}" \
         -o "${{targets.destdir}}/usr/bin/kratos" .
+      # golang.org/x/crypto/openpgp (GO-2026-5932, deprecated, no fix) is VEXed: go-github/v38 uses it only to sign
+      # commits in Git.CreateCommit, and the GitHub OIDC providers call only Users.Get/ListEmails (vex.openvex.json).
+      bad="$(go list -deps -f '{{.ImportPath}}{{range .Imports}} {{.}}{{end}}' . | awk '{
+        for (i = 2; i <= NF; i++) if ($i ~ /^golang.org\/x\/crypto\/openpgp/ && $1 !~ /^golang.org\/x\/crypto\/openpgp/ &&
+          $1 != "github.com/google/go-github/v38/github") print $1 }' | sort -u)"
+      [ -z "$bad" ] || { echo "openpgp imported outside go-github/v38 (the VEX no longer holds): $bad"; exit 1; }
+      ! grep -rq 'CreateCommit\|\.Git\.' selfservice/strategy/oidc/ || { echo "kratos now uses go-github's Git API: re-check the openpgp VEX"; exit 1; }
 
       # The float is only real if it reached the BINARY. Every `dep`/`=>` line of
       # `go version -m` must be at or above its floor -- the `=>` line is what
