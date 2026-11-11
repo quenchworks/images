@@ -132,3 +132,8 @@ pipeline:
         | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor kine)"
       [ -z "$bad" ] || { echo "0-CVE float did not reach kine:"; echo "$bad"; exit 1; }
       "${{targets.destdir}}/usr/bin/kine" --version | grep -q '^kine version v0.17.5 '
+  - name: Guard the docker/distribution VEX (registry/client and registry/proxy must not link)
+    runs: |
+      if grep -rlE 'docker/distribution/registry/(client|proxy)\.' "${{targets.destdir}}"; then
+        echo "docker/distribution registry/client or registry/proxy is linked: CVE-2026-85747 applies, drop the VEX"; exit 1
+      fi

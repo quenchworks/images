@@ -1,9 +1,9 @@
 {
   "@context": "https://openvex.dev/ns/v0.2.0",
-  "@id": "https://quench-works.com/vex/kubescape/2026-10-08b",
+  "@id": "https://quench-works.com/vex/kubescape/2026-11-11",
   "author": "QuenchWorks <info@quench-works.com>",
-  "timestamp": "2026-10-08T00:00:00Z",
-  "version": 2,
+  "timestamp": "2026-11-11T00:00:00Z",
+  "version": 3,
   "statements": [
     {
       "vulnerability": {
@@ -17,6 +17,19 @@
       "status": "not_affected",
       "justification": "vulnerable_code_not_present",
       "impact_statement": "CVE-2026-33997 is a privilege-validation bypass in the Moby daemon's plugin installation. The image's three binaries (kubescape, ksserver from ./httphandler, downloader) link only Docker client code. Checked with `go list -deps` on each in the CI build (images run 37738537104, both arches): every one linked github.com/docker/docker/client, api, the api/types packages, pkg/homedir and pkg/namesgenerator, plus the split github.com/moby/moby/api and moby/moby/client modules, and no daemon, plugin manager, api/server or pkg/authorization package. The build fails if one is ever linked. The fix (29.3.1) exists only under the github.com/moby/moby module path, so the +incompatible module cannot be floated to it."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-85747"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/docker/distribution@v2.8.3%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "CVE-2026-85747 is in github.com/docker/distribution registry/client: (*manifests).Get never hashes a fetched manifest against the requested digest, and the bundled registry/proxy pull-through cache consumes it (advisory GHSA-685w-q87j-wqw3; the v2 module path has no fix, only distribution/v3 3.1.2). This image links other packages of the module (registry/api/errcode, registry/api/v2, reference) but not registry/client or registry/proxy. Verified on 2026-11-11 against every published version: each flagged binary was extracted from GHCR and searched for Go symbol names under docker/distribution/registry/client. and docker/distribution/registry/proxy. (the function table keeps them in stripped binaries); every one returned 0 matches, while connaisseur and harbor-registry, which do link the client, returned matches. The melange recipe repeats that search on every build output and fails the build if one appears."
     }
   ]
 }

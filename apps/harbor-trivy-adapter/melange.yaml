@@ -220,6 +220,12 @@ pipeline:
 
   - uses: strip
 
+  - name: Guard the docker/distribution VEX (registry/client and registry/proxy must not link)
+    runs: |
+      if grep -rlE 'docker/distribution/registry/(client|proxy)\.' "${{targets.destdir}}"; then
+        echo "docker/distribution registry/client or registry/proxy is linked: CVE-2026-85747 applies, drop the VEX"; exit 1
+      fi
+
 test:
   pipeline:
     - runs: |

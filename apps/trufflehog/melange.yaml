@@ -76,3 +76,8 @@ pipeline:
       if go list -deps . | grep -E '^github.com/docker/docker/(daemon|plugin|api/server)'; then
         echo "trufflehog now links Docker daemon code: re-check vex.openvex.json"; exit 1
       fi
+  - name: Guard the docker/distribution VEX (registry/client and registry/proxy must not link)
+    runs: |
+      if grep -rlE 'docker/distribution/registry/(client|proxy)\.' "${{targets.destdir}}"; then
+        echo "docker/distribution registry/client or registry/proxy is linked: CVE-2026-85747 applies, drop the VEX"; exit 1
+      fi

@@ -1,9 +1,9 @@
 {
   "@context": "https://openvex.dev/ns/v0.2.0",
-  "@id": "https://quench-works.com/vex/concourse/2026-10-13",
+  "@id": "https://quench-works.com/vex/concourse/2026-11-11",
   "author": "QuenchWorks <info@quench-works.com>",
-  "timestamp": "2026-10-13T00:00:00Z",
-  "version": 2,
+  "timestamp": "2026-11-11T00:00:00Z",
+  "version": 3,
   "statements": [
     {
       "vulnerability": {
@@ -30,6 +30,19 @@
       "status": "not_affected",
       "justification": "vulnerable_code_not_present",
       "impact_statement": "GHSA-cq8v-f236-94qc makes rand unsound only when BOTH its log and thread_rng features are enabled and a custom logger calls rand::rng() while ThreadRng reseeds; the unsafe path is the log call inside the reseeding core. rand 0.9.2 reaches the image only in Wolfi libpathrs 0.2.5 (/usr/lib/libpathrs.so.0.2.5, a runc dependency), built from tag v0.2.5 commit 080908395e75a32a5c4dbe9b318bf93643429f9f with that tag Cargo.lock, which ships at /usr/share/doc/libpathrs/Cargo.lock. libpathrs Cargo.toml:78 declares rand = { version = \"0.9\", optional = true } with default features (no log), and the lock entry for rand 0.9.2 lists only rand_chacha and rand_core as dependencies: log, the optional dependency the log feature enables, is not resolved, so the log feature and the logging calls in rand are not compiled into the library. The recipe fails the build if libpathrs leaves 0.2.5 or the rand lock entry gains log. Verified 2026-10-13."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-85747"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/docker/distribution@v2.8.3%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "CVE-2026-85747 is in github.com/docker/distribution registry/client: (*manifests).Get never hashes a fetched manifest against the requested digest, and the bundled registry/proxy pull-through cache consumes it (advisory GHSA-685w-q87j-wqw3; the v2 module path has no fix, only distribution/v3 3.1.2). This image links other packages of the module (registry/api/errcode, registry/api/v2, reference) but not registry/client or registry/proxy. Verified on 2026-11-11 against every published version: each flagged binary was extracted from GHCR and searched for Go symbol names under docker/distribution/registry/client. and docker/distribution/registry/proxy. (the function table keeps them in stripped binaries); every one returned 0 matches, while connaisseur and harbor-registry, which do link the client, returned matches. The melange recipe repeats that search on every build output and fails the build if one appears."
     }
   ]
 }

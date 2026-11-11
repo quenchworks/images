@@ -71,3 +71,8 @@ pipeline:
       bad="$(go version -m "${{targets.destdir}}/usr/bin/skopeo" \
         | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor skopeo)"
       [ -z "$bad" ] || { echo "❌ 0-CVE float did not reach skopeo:"; echo "$bad"; exit 1; }
+  - name: Guard the docker/distribution VEX (registry/client and registry/proxy must not link)
+    runs: |
+      if grep -rlE 'docker/distribution/registry/(client|proxy)\.' "${{targets.destdir}}"; then
+        echo "docker/distribution registry/client or registry/proxy is linked: CVE-2026-85747 applies, drop the VEX"; exit 1
+      fi

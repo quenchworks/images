@@ -224,3 +224,8 @@ pipeline:
            | awk '$1 == "dep" || $1 == "=>" { print $2 }' | grep -qx 'github.com/docker/docker'; then
         echo "sever failed: github.com/docker/docker is still linked into the binary"; exit 1
       fi
+  - name: Guard the docker/distribution VEX (registry/client and registry/proxy must not link)
+    runs: |
+      if grep -rlE 'docker/distribution/registry/(client|proxy)\.' "${{targets.destdir}}"; then
+        echo "docker/distribution registry/client or registry/proxy is linked: CVE-2026-85747 applies, drop the VEX"; exit 1
+      fi

@@ -1,9 +1,9 @@
 {
   "@context": "https://openvex.dev/ns/v0.2.0",
-  "@id": "https://quench-works.com/vex/kubescape-node-agent/2026-11-10",
+  "@id": "https://quench-works.com/vex/kubescape-node-agent/2026-11-11",
   "author": "QuenchWorks <info@quench-works.com>",
-  "timestamp": "2026-11-10T00:00:00Z",
-  "version": 2,
+  "timestamp": "2026-11-11T00:00:00Z",
+  "version": 3,
   "statements": [
     {
       "vulnerability": {
@@ -173,6 +173,19 @@
       "status": "not_affected",
       "justification": "vulnerable_code_not_present",
       "impact_statement": "Measured 2026-11-10 on a local build of kubescape-node-agent 0.3.310. /usr/bin/node-agent is built on upstream's go.mod pins (replace containerd/v2 => v2.2.0, runtime-spec => v1.2.1, the combination upstream tests: with the v2.2.10 + runtime-spec 1.3 override the binary recorded no container profile in the chart gate, charts run 42792511808). `govulncheck -mode=binary /usr/bin/node-agent` lists every containerd/v2 v2.2.0 advisory only under modules the binary requires and reports 0 vulnerabilities in packages it imports: none of the affected containerd/v2 packages (CRI plugin, checkpoint restore, image unpack, user resolution) is compiled into node-agent. /usr/bin/sbom-scanner, the binary that does use containerd/v2 (through syft), is built on v2.2.10, which carries the fixes, so this statement matches only the v2.2.0 module in node-agent."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-85747"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/docker/distribution@v2.8.3%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "CVE-2026-85747 is in github.com/docker/distribution registry/client: (*manifests).Get never hashes a fetched manifest against the requested digest, and the bundled registry/proxy pull-through cache consumes it (advisory GHSA-685w-q87j-wqw3; the v2 module path has no fix, only distribution/v3 3.1.2). This image links other packages of the module (registry/api/errcode, registry/api/v2, reference) but not registry/client or registry/proxy. Verified on 2026-11-11 against every published version: each flagged binary was extracted from GHCR and searched for Go symbol names under docker/distribution/registry/client. and docker/distribution/registry/proxy. (the function table keeps them in stripped binaries); every one returned 0 matches, while connaisseur and harbor-registry, which do link the client, returned matches. The melange recipe repeats that search on every build output and fails the build if one appears."
     }
   ]
 }
