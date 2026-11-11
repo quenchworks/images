@@ -1,9 +1,9 @@
 {
   "@context": "https://openvex.dev/ns/v0.2.0",
-  "@id": "https://quench-works.com/vex/vcluster/2026-11-11b",
+  "@id": "https://quench-works.com/vex/vcluster/2026-11-11c",
   "author": "QuenchWorks <info@quench-works.com>",
   "timestamp": "2026-11-11T00:00:00Z",
-  "version": 3,
+  "version": 4,
   "statements": [
     {
       "vulnerability": {
@@ -81,6 +81,19 @@
       "status": "not_affected",
       "justification": "vulnerable_code_not_present",
       "impact_statement": "CVE-2026-41568 is in the Moby/Docker daemon: a race in docker cp mountpoint creation (createIfNotExists) that creates files at host paths. Both affected module paths have no fix (only moby/moby/v2 2.0.0-beta.14). The image links Docker client code only and runs no dockerd. Verified on 2026-11-11 against every published version: each flagged binary was extracted from GHCR and searched for Go symbol names under docker/docker/daemon and moby/moby/daemon (the function table keeps them in stripped binaries); every one returned 0 matches, while client-package symbols were found where the client is linked, so the search sees the module. The melange recipe repeats the daemon search on every build output and fails the build if one appears."
+    },
+    {
+      "vulnerability": {
+        "name": "GO-2026-5932"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/golang.org/x/crypto/openpgp@v0.1.0-deprecated"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "GO-2026-5932 covers golang.org/x/crypto/openpgp, deprecated and unmaintained, with no fixed version (it now ships as its own module at v0.1.0-deprecated). In the vcluster syncer the only importer is github.com/google/go-github/v30/github (v30.1.0), used by pkg/upgrade to look up releases. go-github uses openpgp only in createSignature (github/git_commits.go:154-166), which Git.CreateCommit calls when a commit carries a SigningKey. vcluster calls only Repositories.GetReleaseByTag (pkg/upgrade/helpers.go:26) and never CreateCommit, so no openpgp code runs. The recipe fails the build if any other package imports openpgp (go list -deps over ./cmd/vcluster) or if vcluster's source calls CreateCommit. Checked 2026-11-11 against vcluster 0.37.7."
     }
   ]
 }

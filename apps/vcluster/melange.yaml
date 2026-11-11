@@ -95,6 +95,13 @@ pipeline:
       go build -trimpath \
         -ldflags "-s -w -X github.com/loft-sh/vcluster/pkg/telemetry.SyncerVersion=${{package.version}}" \
         -o "${{targets.destdir}}/usr/bin/vcluster" ./cmd/vcluster
+      # golang.org/x/crypto/openpgp (GO-2026-5932, deprecated, no fix) is VEXed: go-github/v30 uses it only to
+      # sign commits in Git.CreateCommit, which vcluster never calls (vex.openvex.json). Fail if that changes.
+      bad="$(go list -deps -f '{{.ImportPath}}{{range .Imports}} {{.}}{{end}}' ./cmd/vcluster | awk '{
+        for (i = 2; i <= NF; i++) if ($i ~ /^golang.org\/x\/crypto\/openpgp/ && $1 !~ /^golang.org\/x\/crypto\/openpgp/ &&
+          $1 != "github.com/google/go-github/v30/github") print $1 }' | sort -u)"
+      [ -z "$bad" ] || { echo "openpgp imported outside go-github/v30 (the VEX no longer holds): $bad"; exit 1; }
+      ! grep -rq 'CreateCommit(' cmd pkg config || { echo "vcluster now calls CreateCommit: re-check the openpgp VEX"; exit 1; }
       bad="$(go version -m "${{targets.destdir}}/usr/bin/vcluster" \
         | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor vcluster)"
       [ -z "$bad" ] || { echo "0-CVE float did not reach vcluster:"; echo "$bad"; exit 1; }
