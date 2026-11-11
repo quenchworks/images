@@ -66,6 +66,13 @@ pipeline:
       need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
       if [ -n "$need" ]; then go get $need; fi
       go mod tidy
+      # go-jose/v3 has no fixed release (CVE-2026-116587, -116585, -116586). Its only importer is
+      # spire-plugin-sdk bundleformat, which marshals the server's own bundle to JWKS and never parses
+      # or decrypts (see vex.openvex.json). Fail if any other package ever imports v3.
+      bad="$(go list -deps -f '{{.ImportPath}}{{range .Imports}} {{.}}{{end}}' ./cmd/spire-server ./cmd/spire-agent | awk '{
+        for (i = 2; i <= NF; i++) if ($i ~ /^github.com\/go-jose\/go-jose\/v3/ && $1 !~ /^github.com\/go-jose\/go-jose\/v3/ &&
+          $1 != "github.com/spiffe/spire-plugin-sdk/pluginsdk/support/bundleformat") print $1 }' | sort -u)"
+      [ -z "$bad" ] || { echo "go-jose/v3 imported outside bundleformat (the VEX no longer holds): $bad"; exit 1; }
       LD="-s -w -X github.com/spiffe/spire/pkg/common/version.gittag=${{package.version}} -X github.com/spiffe/spire/pkg/common/version.githash=quenchworks"
       for b in spire-server spire-agent; do
         go build -trimpath -ldflags "$LD" -o "${{targets.destdir}}/usr/bin/$b" ./cmd/$b

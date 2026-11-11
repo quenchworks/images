@@ -1,0 +1,48 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/spire/2026-11-11",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-11T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-116587"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/go-jose/go-jose/v3@v3.0.5"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "CVE-2026-116587 is a denial of service from crafted RSA parameters in a parsed JWK in go-jose v3 (no v3 fix; fixed in v4 4.1.6). In spire the only importer of v3 is github.com/spiffe/spire-plugin-sdk/pluginsdk/support/bundleformat, used by the server's bundlepublisher plugins (k8s ConfigMap, S3, GCS, Azure Blob, AWS Roles Anywhere). Its toJWKS (bundleformat.go:130-152) builds a jose.JSONWebKeySet from the server's own X.509 and JWT authorities and json.Marshal-s it: it never parses a JWK, decrypts a JWE or parses a JOSE object, which is where the flaw lives. The recipe fails the build if any package other than bundleformat imports v3 (go list -deps over cmd/spire-server and cmd/spire-agent). Checked 2026-11-11 against spire 1.16.0 and spire-plugin-sdk e961422db712."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-116585"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/go-jose/go-jose/v3@v3.0.5"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "CVE-2026-116585 is a denial of service from an empty ciphertext buffer during JWE decryption in go-jose v3 (no v3 fix; fixed in v4 4.1.6). In spire the only importer of v3 is github.com/spiffe/spire-plugin-sdk/pluginsdk/support/bundleformat, used by the server's bundlepublisher plugins (k8s ConfigMap, S3, GCS, Azure Blob, AWS Roles Anywhere). Its toJWKS (bundleformat.go:130-152) builds a jose.JSONWebKeySet from the server's own X.509 and JWT authorities and json.Marshal-s it: it never parses a JWK, decrypts a JWE or parses a JOSE object, which is where the flaw lives. The recipe fails the build if any package other than bundleformat imports v3 (go list -deps over cmd/spire-server and cmd/spire-agent). Checked 2026-11-11 against spire 1.16.0 and spire-plugin-sdk e961422db712."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-116586"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/go-jose/go-jose/v3@v3.0.5"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "CVE-2026-116586 is a denial of service from deeply nested JSON while parsing JOSE objects in go-jose v3 (no v3 fix; fixed in v4 4.1.6). In spire the only importer of v3 is github.com/spiffe/spire-plugin-sdk/pluginsdk/support/bundleformat, used by the server's bundlepublisher plugins (k8s ConfigMap, S3, GCS, Azure Blob, AWS Roles Anywhere). Its toJWKS (bundleformat.go:130-152) builds a jose.JSONWebKeySet from the server's own X.509 and JWT authorities and json.Marshal-s it: it never parses a JWK, decrypts a JWE or parses a JOSE object, which is where the flaw lives. The recipe fails the build if any package other than bundleformat imports v3 (go list -deps over cmd/spire-server and cmd/spire-agent). Checked 2026-11-11 against spire 1.16.0 and spire-plugin-sdk e961422db712."
+    }
+  ]
+}
