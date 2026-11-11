@@ -67,9 +67,9 @@ jobs:
         run: |
           set -euo pipefail
           # bwrap is often on the runner already; otherwise retry apt, whose mirrors drop out of DNS for hours
-          command -v bwrap >/dev/null || for i in 1 2 3 4 5; do
+          command -v bwrap >/dev/null || for i in 1 2 3 4 5 6 7 8 9 10; do
             sudo apt-get update -o Acquire::Retries=3 && sudo apt-get install -y bubblewrap && break
-            [ "$i" = 5 ] && exit 1; sleep 20
+            [ "$i" = 10 ] && exit 1; sleep 60
           done
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           MELANGE_VER=v0.53.0
