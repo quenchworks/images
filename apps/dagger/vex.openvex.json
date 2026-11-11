@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/dagger/2026-11-12",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-12T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-33997"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/docker/docker@v28.5.2%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "CVE-2026-33997 is a privilege-validation bypass in the Moby daemon's plugin installation. dagger-engine links only github.com/docker/docker/pkg/idtools, libnetwork/resolvconf, libnetwork/internal/resolvconf and profiles/seccomp from the module; the dagger CLI and dagger-init link only pkg/idtools. Checked with `go list -deps -tags dfexcludepatterns,dfparents ./cmd/engine ./cmd/dagger ./cmd/init` at v0.21.11 with docker v28.5.2: no daemon, plugin or API server package is in the build. The build fails if one is ever linked. The fix (29.3.1) exists only under the github.com/moby/moby module path, so the +incompatible module cannot be floated to it."
+    }
+  ]
+}

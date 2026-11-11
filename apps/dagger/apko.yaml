@@ -1,0 +1,38 @@
+# Assembles the Dagger engine image. Root and privileged, like upstream's engine: it runs
+# containers itself (runc, CNI, cgroup nesting), so a nonroot user cannot work here.
+# The CLI is in the image too; its default runner is this image.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-dagger@local
+
+accounts:
+  groups:
+    - groupname: dagger
+      gid: 1001
+  users:
+    - username: dagger
+      uid: 1001
+      gid: 1001
+  run-as: 0
+
+entrypoint:
+  command: /usr/local/bin/dagger-entrypoint.sh
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-dagger"
+  org.opencontainers.image.licenses: "Apache-2.0"

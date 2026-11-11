@@ -1,0 +1,223 @@
+# Builds the Dagger engine and CLI from source onto Wolfi, in upstream's engine image
+# layout (toolchains/engine-dev/build/builder.go, engine/distconsts/consts.go):
+# dagger-engine, dagger-init and the dagger CLI under /usr/local/bin, dnsname under
+# /opt/cni/bin, dial-stdio (also as buildctl) under /usr/bin. CGO off, the engine with
+# upstream's dockerfile2llb tags, version stamped on github.com/dagger/dagger/engine.
+# The CLI's default runner is this image, not registry.dagger.io/engine.
+# runc and the CNI plugins (bridge, loopback, firewall, host-local) are built here too, with
+# the same floors: Wolfi's builds lagged (runc on go 1.27.3, the plugins on x/net 0.60.0).
+# tini and sshfs are Wolfi packages; the engine expects tini under /usr/local/bin.
+package:
+  name: quench-dagger
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Dagger engine and CLI, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      # the entrypoint is a shell script (cgroup nesting, ulimit), as upstream's
+      - busybox
+      - ca-certificates-bundle
+      - mount
+      - umount
+      - posix-libc-utils
+      - coreutils
+      - git
+      - openssh-client
+      - fuse3
+      - sshfs
+      - isa-l
+      - pigz
+      - xz
+      - nftables
+      - iptables-legacy
+      - dnsmasq
+      - e2fsprogs
+      - ripgrep
+      - sqlite
+      - libseccomp
+      - tini
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - apk-tools
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - curl
+      - go-1.27
+      - gzip
+      - jq
+      - libseccomp-dev
+      - patch
+      - gnutar
+      - wolfi-keys
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/dagger/dagger/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - name: Build the engine, the CLI and the helpers
+    runs: |
+      set -eu
+      export CGO_ENABLED=0 GOTOOLCHAIN=local GOFLAGS=-mod=mod
+      # ---- 0-CVE module float (docs/go-module-float.md): a floor, not a pin ----
+      # At v0.21.11: containerd/v2 2.2.3, go-git 5.17.2, go-billy 5.8.0, x/net 0.61.0,
+      # go-jose/v4 4.1.4, in-toto-golang 0.10.0, moby/sys/user 0.4.0, go-archive 0.1.0,
+      # cilium/ebpf 0.21.0, the runc module 1.4.2 (CVE-2026-41579, fixed in 1.5), and the
+      # otel family (sdk 1.44.0, exporters 1.41.0/1.43.0, otel/log pinned to 0.16.0).
+      FLOOR="golang.org/x/net@v0.62.0 golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 github.com/containerd/containerd/v2@v2.3.6 github.com/go-git/go-git/v5@v5.19.2 github.com/go-git/go-billy/v5@v5.9.0 github.com/go-jose/go-jose/v4@v4.1.6 github.com/in-toto/in-toto-golang@v0.11.0 github.com/moby/sys/user@v0.4.1 github.com/moby/go-archive@v0.3.0 github.com/cilium/ebpf@v0.22.0 github.com/opencontainers/runc@v1.5.2"
+      O=go.opentelemetry.io/otel
+      OTEL="$O@v1.45.0 $O/sdk@v1.45.0 $O/trace@v1.45.0 $O/metric@v1.45.0 $O/sdk/metric@v1.45.0 $O/exporters/otlp/otlptrace@v1.45.0 $O/exporters/otlp/otlptrace/otlptracehttp@v1.45.0 $O/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0 $O/exporters/otlp/otlpmetric/otlpmetrichttp@v1.45.0 $O/exporters/otlp/otlpmetric/otlpmetricgrpc@v1.45.0 $O/log@v0.21.0 $O/sdk/log@v0.21.0 $O/exporters/otlp/otlplog/otlploghttp@v0.21.0 $O/exporters/otlp/otlplog/otlploggrpc@v0.21.0"
+      vlt() { awk -v a="${1#v}" -v b="${2#v}" 'function pp(s,  p){sub(/\+.*/,"",s);p=index(s,"-");if(p){C=substr(s,1,p-1);P=substr(s,p+1)}else{C=s;P=""}} function cmp(x,y,  i,n,m,X,Y){n=split(x,X,".");m=split(y,Y,".");for(i=1;i<=n&&i<=m;i++){if(X[i]==Y[i])continue;if(X[i]~/^[0-9]+$/&&Y[i]~/^[0-9]+$/)return (X[i]+0<Y[i]+0)?-1:1;if(X[i]~/^[0-9]+$/)return -1;if(Y[i]~/^[0-9]+$/)return 1;return (X[i]<Y[i])?-1:1}return (n<m)?-1:(n>m)?1:0} BEGIN{pp(a);ca=C;pa=P;pp(b);cb=C;pb=P;c=cmp(ca,cb);if(c==0){if(pa==pb)c=0;else if(pa=="")c=1;else if(pb=="")c=-1;else c=cmp(pa,pb)}exit !(c<0)}'; }
+      floor() {  # raise the modules of $1 that the current go.mod has below it
+        need=""
+        for mv in $1; do
+          have="$(go list -m -e -f '{{.Version}}' "${mv%@*}" 2>/dev/null)"
+          case "$have" in v[0-9]*) ;; *) continue ;; esac
+          vlt "$have" "${mv#*@}" && need="$need $mv"
+        done
+        echo "raising:${need:- nothing}"
+        [ -z "$need" ] || { go get $need; go mod tidy; }
+      }
+      # otel/log 0.21 (needed for CVE-2026-81871, -81872, -39882 in the log exporters and
+      # sdk/log) moved log.Value/KeyValue to attribute.Value/KeyValue (otel-go #8490), so
+      # upstream pins the log modules to 0.16.0 with replace (main too, 2026-11-12). The two
+      # patches port dagger and its github.com/dagger/otel-go fork to the new API, and move
+      # dagger's semconv imports from v1.41.0 to v1.43.0, the schema sdk 1.45.0 detects with
+      # (two schema URLs make resource.New fail).
+      go mod edit -dropreplace $O/exporters/otlp/otlplog/otlploggrpc -dropreplace $O/exporters/otlp/otlplog/otlploghttp \
+        -dropreplace $O/log -dropreplace $O/sdk/log
+      patch -p1 < otel-log-dagger.patch
+      og="$(go list -m -f '{{.Version}}' github.com/dagger/otel-go)"
+      mkdir -p third_party && cp -r "$(go mod download -json github.com/dagger/otel-go@$og | jq -r .Dir)" third_party/otel-go
+      chmod -R u+w third_party/otel-go
+      (cd third_party/otel-go && patch -p1 < ../../otel-log-otel-go.patch)
+      go mod edit -replace github.com/dagger/otel-go=./third_party/otel-go
+      go get $OTEL
+      floor "$FLOOR"
+      go mod tidy
+      FLOOR="$FLOOR $OTEL"
+
+      D="${{targets.destdir}}"
+      V="v${{package.version}}"
+      X="-X github.com/dagger/dagger/engine.Version=$V -X github.com/dagger/dagger/engine.Tag=$V"
+      gb() { out="$1"; shift; go build -trimpath -ldflags "-s -w $X" -o "$out" "$@"; }
+      install -d "$D/usr/local/bin" "$D/usr/bin" "$D/opt/cni/bin" "$D/var/lib/dagger"
+      gb "$D/usr/local/bin/dagger-engine" -tags dfexcludepatterns,dfparents ./cmd/engine
+      go build -trimpath -ldflags "-s -w $X -X main.RunnerHost=image://ghcr.io/quenchworks/images/dagger:${{package.version}}" \
+        -o "$D/usr/local/bin/dagger" ./cmd/dagger
+      gb "$D/usr/local/bin/dagger-init" ./cmd/init
+      gb "$D/opt/cni/bin/dnsname" ./cmd/dnsname
+      gb "$D/usr/bin/dial-stdio" ./cmd/dialstdio
+      gb /tmp/codegen ./cmd/codegen
+      ln -s dial-stdio "$D/usr/bin/buildctl"
+      ln -s /usr/bin/tini "$D/usr/local/bin/tini"
+      for b in usr/local/bin/dagger-engine usr/local/bin/dagger usr/local/bin/dagger-init opt/cni/bin/dnsname usr/bin/dial-stdio; do
+        for mv in $FLOOR; do
+          got="$(go version -m "$D/$b" | awk -v m="${mv%@*}" '($1 == "dep" || $1 == "=>") && $2 == m { print $3 }' | tail -1)"
+          [ -z "$got" ] || ! vlt "$got" "${mv#*@}" || { echo "0-CVE float did not reach $b: ${mv%@*} $got"; exit 1; }
+        done
+      done
+      "$D/usr/local/bin/dagger" version | grep -F "$V"
+      # the docker/docker module (v28.5.2+incompatible, CVE-2026-33997 is daemon-only and
+      # VEXed) must stay limited to pkg/idtools, libnetwork/resolvconf and profiles/seccomp
+      if go list -deps -tags dfexcludepatterns,dfparents ./cmd/engine ./cmd/dagger ./cmd/init \
+          | grep -E '^github.com/(docker/docker|moby/moby)/(daemon|plugin|api/server)'; then
+        echo "a docker daemon, plugin or API server package is now linked; re-check the VEX"; exit 1
+      fi
+
+      # runc and the CNI plugins with the same floors, as upstream builds them (builder.go)
+      for spec in "runc 1.5.2 b5af44864a830c7032cf4a72efa0c6d44f701873d9507b127be31ad4d1d42ff3 https://github.com/opencontainers/runc/archive/refs/tags/v1.5.2.tar.gz" \
+                  "cni 1.10.0 15a36f0a88e90704126d2d523a9704c4cab2439a4a19c9ac23961b31c2a311c6 https://github.com/containernetworking/plugins/archive/refs/tags/v1.10.0.tar.gz"; do
+        set -- $spec
+        mkdir -p /tmp/$1 && curl -fsSL -o /tmp/$1.tgz "$4"
+        echo "$3  /tmp/$1.tgz" | sha256sum -c -
+        tar -xzf /tmp/$1.tgz -C /tmp/$1 --strip-components=1
+        ( cd /tmp/$1
+          # runc 1.5.2 also carries cilium/ebpf 0.17.3 and moby/sys/user 0.4.0
+          floor "golang.org/x/net@v0.62.0 golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 github.com/cilium/ebpf@v0.22.0 github.com/moby/sys/user@v0.4.1"
+          rm -rf vendor
+          if [ "$1" = runc ]; then
+            CGO_ENABLED=1 go build -trimpath -buildmode=pie -tags "seccomp netgo osusergo" \
+              -ldflags "-s -w -X main.version=$2" -o "$D/usr/local/bin/runc" .
+          else
+            for p in main/bridge main/loopback meta/firewall ipam/host-local; do
+              go build -trimpath -ldflags "-s -w -X github.com/containernetworking/plugins/pkg/utils/buildversion.BuildVersion=v$2" \
+                -o "$D/opt/cni/bin/${p#*/}" ./plugins/$p
+            done
+          fi )
+      done
+      "$D/usr/local/bin/runc" --version | grep -F 1.5.2
+      for b in usr/local/bin/runc opt/cni/bin/bridge opt/cni/bin/loopback opt/cni/bin/firewall opt/cni/bin/host-local; do
+        got="$(go version -m "$D/$b" | awk '($1 == "dep" || $1 == "=>") && $2 == "golang.org/x/net" { print $3 }' | tail -1)"
+        [ -z "$got" ] || ! vlt "$got" v0.62.0 || { echo "$b links golang.org/x/net $got"; exit 1; }
+      done
+
+      # sshfs volumes: fuse needs user_allow_other, as upstream sets it.
+      install -d "$D/etc/dagger"
+      echo user_allow_other > "$D/etc/fuse.conf"
+      cat > "$D/usr/local/bin/dagger-entrypoint.sh" <<'EOS'
+      #!/bin/sh
+      set -e
+      # cgroup v2: enable nesting (as upstream's entrypoint and moby's hack/dind)
+      if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+        mkdir -p /sys/fs/cgroup/init
+        xargs -rn1 < /sys/fs/cgroup/cgroup.procs > /sys/fs/cgroup/init/cgroup.procs || :
+        sed -e 's/ / +/g' -e 's/^/+/' < /sys/fs/cgroup/cgroup.controllers \
+          > /sys/fs/cgroup/cgroup.subtree_control
+      fi
+      # per-client SQLite databases want far more than the usual 1024 open files
+      ulimit -n 1048576 || echo "cannot increase open FDs with ulimit, ignoring"
+      # the bundled Go SDK runtime (an OCI image in /usr/local/share/dagger/content)
+      DAGGER_GO_SDK_MANIFEST_DIGEST="$(cat /etc/dagger/go-sdk-manifest-digest)"
+      export DAGGER_GO_SDK_MANIFEST_DIGEST
+      cfg=""
+      [ -f /etc/dagger/engine.toml ] && cfg="--config /etc/dagger/engine.toml"
+      exec tini -- /usr/local/bin/dagger-engine $cfg "$@"
+      EOS
+      chmod 0755 "$D/usr/local/bin/dagger-entrypoint.sh"
+
+  # Go module SDK runtime. Upstream bakes a golang:alpine image with codegen into the
+  # engine's local content store, and the engine runs Go modules in it. This assembles
+  # the same thing on Wolfi (go-1.27, git, openssh, openssl, codegen) as a one-layer OCI
+  # image and records its manifest digest for the entrypoint. The scanner does not look
+  # inside these blobs, so test.sh unpacks the layer and gates it with Trivy separately.
+  - name: Assemble the Go SDK runtime image
+    runs: |
+      set -eu
+      D="${{targets.destdir}}"
+      W=/tmp/gosdk; R=$W/rootfs; mkdir -p "$R"
+      case "$(uname -m)" in x86_64) GOARCH=amd64 ;; aarch64) GOARCH=arm64 ;; *) echo "arch?"; exit 1 ;; esac
+      apk add --root "$R" --initdb --no-cache --arch "$(uname -m)" --keys-dir /etc/apk/keys \
+        --repository https://packages.wolfi.dev/os \
+        wolfi-baselayout busybox ca-certificates-bundle go-1.27 git openssh-client openssl
+      install -Dm0755 /tmp/codegen "$R/usr/local/bin/codegen"
+      install -d "$R/go/pkg/mod" "$R/root/.cache/go-build"
+      "$R/usr/local/bin/codegen" --help >/dev/null
+      test -x "$R/usr/bin/go"
+      rm -rf "$R/var/cache/apk"/* "$R/dev"/* 2>/dev/null || true
+      tar -C "$R" --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf $W/layer.tar .
+      diffid="sha256:$(sha256sum $W/layer.tar | cut -d' ' -f1)"
+      gzip -n -9 $W/layer.tar
+      B="$D/usr/local/share/dagger/content/blobs/sha256"; install -d "$B"
+      put() { d="$(sha256sum "$1" | cut -d' ' -f1)"; cp "$1" "$B/$d"; echo "$d $(stat -c %s "$1")"; }
+      set -- $(put $W/layer.tar.gz); ldig=$1; lsize=$2
+      jq -cn --arg a "$GOARCH" --arg d "$diffid" '{architecture:$a, os:"linux",
+        config:{Env:["PATH=/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","GOPATH=/go","GOTOOLCHAIN=auto"], WorkingDir:"/"},
+        rootfs:{type:"layers", diff_ids:[$d]}}' > $W/config.json
+      set -- $(put $W/config.json); cdig=$1; csize=$2
+      jq -cn --arg cd "sha256:$cdig" --argjson cs "$csize" --arg ld "sha256:$ldig" --argjson ls "$lsize" '{schemaVersion:2,
+        mediaType:"application/vnd.oci.image.manifest.v1+json",
+        config:{mediaType:"application/vnd.oci.image.config.v1+json", digest:$cd, size:$cs},
+        layers:[{mediaType:"application/vnd.oci.image.layer.v1.tar+gzip", digest:$ld, size:$ls}]}' > $W/manifest.json
+      set -- $(put $W/manifest.json); mdig=$1
+      echo "sha256:$mdig" > "$D/etc/dagger/go-sdk-manifest-digest"
+      echo "Go SDK runtime manifest sha256:$mdig, layer $lsize bytes"

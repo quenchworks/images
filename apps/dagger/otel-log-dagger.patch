@@ -1,0 +1,513 @@
+--- a/internal/cloud/trace.go
++++ b/internal/cloud/trace.go
+@@ -1,6 +1,7 @@
+ package cloud
+ 
+ import (
++	"go.opentelemetry.io/otel/attribute"
+ 	"bytes"
+ 	"context"
+ 	"encoding/json"
+@@ -12,7 +13,6 @@
+ 
+ 	"github.com/dagger/dagger/engine/slog"
+ 	"github.com/vito/go-sse/sse"
+-	"go.opentelemetry.io/otel/log"
+ 	sdklog "go.opentelemetry.io/otel/sdk/log"
+ 	"go.opentelemetry.io/otel/trace"
+ 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
+@@ -447,15 +447,15 @@
+ 	for _, msg := range msgs {
+ 		var rec sdklog.Record
+ 		rec.SetTimestamp(msg.Timestamp)
+-		rec.SetBody(log.StringValue(msg.Body))
++		rec.SetBody(attribute.StringValue(msg.Body))
+ 		rec.SetTraceID(tid)
+ 		if msg.SpanID != nil {
+ 			sid, _ := trace.SpanIDFromHex(*msg.SpanID)
+ 			rec.SetSpanID(sid)
+ 		}
+ 		for k, v := range msg.Attributes {
+-			rec.AddAttributes(log.KeyValue{
+-				Key:   k,
++			rec.AddAttributes(attribute.KeyValue{
++				Key:   attribute.Key(k),
+ 				Value: anyToLogValue(v),
+ 			})
+ 		}
+@@ -464,32 +464,32 @@
+ 	return records
+ }
+ 
+-func anyToLogValue(v any) log.Value {
++func anyToLogValue(v any) attribute.Value {
+ 	switch val := v.(type) {
+ 	case string:
+-		return log.StringValue(val)
++		return attribute.StringValue(val)
+ 	case bool:
+-		return log.BoolValue(val)
++		return attribute.BoolValue(val)
+ 	case float64:
+ 		if val == float64(int64(val)) {
+-			return log.Int64Value(int64(val))
++			return attribute.Int64Value(int64(val))
+ 		}
+-		return log.Float64Value(val)
++		return attribute.Float64Value(val)
+ 	case json.Number:
+ 		if i, err := val.Int64(); err == nil {
+-			return log.Int64Value(i)
++			return attribute.Int64Value(i)
+ 		}
+ 		if f, err := val.Float64(); err == nil {
+-			return log.Float64Value(f)
++			return attribute.Float64Value(f)
+ 		}
+-		return log.StringValue(val.String())
++		return attribute.StringValue(val.String())
+ 	case []any:
+-		values := make([]log.Value, len(val))
++		values := make([]attribute.Value, len(val))
+ 		for i, elem := range val {
+ 			values[i] = anyToLogValue(elem)
+ 		}
+-		return log.SliceValue(values...)
++		return attribute.SliceValue(values...)
+ 	default:
+-		return log.StringValue(fmt.Sprintf("%v", v))
++		return attribute.StringValue(fmt.Sprintf("%v", v))
+ 	}
+ }
+--- a/engine/snapshots/progress.go
++++ b/engine/snapshots/progress.go
+@@ -1,6 +1,7 @@
+ package snapshots
+ 
+ import (
++	"go.opentelemetry.io/otel/attribute"
+ 	"context"
+ 	"io"
+ 	"sync"
+@@ -44,14 +45,14 @@
+ 	// Explicit empty body: log consumers skip empty-bodied records as text,
+ 	// and an unset body does not survive the OTLP round-trip (nil AnyValue
+ 	// triggers conversion errors on the receiving side).
+-	rec.SetBody(log.StringValue(""))
++	rec.SetBody(attribute.StringValue(""))
+ 	rec.AddAttributes(
+-		log.String(telemetryattrs.ProgressItemAttr, item),
+-		log.Int64(telemetryattrs.ProgressCurrentAttr, current),
+-		log.Int64(telemetryattrs.ProgressTotalAttr, total),
++		attribute.String(telemetryattrs.ProgressItemAttr, item),
++		attribute.Int64(telemetryattrs.ProgressCurrentAttr, current),
++		attribute.Int64(telemetryattrs.ProgressTotalAttr, total),
+ 	)
+ 	if unit != "" {
+-		rec.AddAttributes(log.String(telemetryattrs.ProgressUnitAttr, unit))
++		rec.AddAttributes(attribute.String(telemetryattrs.ProgressUnitAttr, unit))
+ 	}
+ 	telemetry.Logger(ctx, "dagger.io/progress").Emit(ctx, rec)
+ }
+--- a/engine/slog/telemetry.go
++++ b/engine/slog/telemetry.go
+@@ -1,6 +1,7 @@
+ package slog
+ 
+ import (
++	"go.opentelemetry.io/otel/attribute"
+ 	"context"
+ 	"io"
+ 	"log/slog"
+@@ -10,7 +11,6 @@
+ 	"github.com/lmittmann/tint"
+ 	"github.com/muesli/termenv"
+ 	"go.opentelemetry.io/otel/baggage"
+-	"go.opentelemetry.io/otel/log"
+ )
+ 
+ const (
+@@ -56,7 +56,7 @@
+ //
+ // - If debug=true is set in baggage, the log level will be Debug. Otherwise,
+ // it will be Info.
+-func SpanLogger(ctx context.Context, name string, attrs ...log.KeyValue) *Logger {
++func SpanLogger(ctx context.Context, name string, attrs ...attribute.KeyValue) *Logger {
+ 	bag := baggage.FromContext(ctx)
+ 	profile := termenv.ANSI
+ 	if bag.Member(noColorBaggageKey).Value() == "true" {
+@@ -75,7 +75,7 @@
+ 
+ // GlobalLogger returns a Logger that sends logs to the global span, or the
+ // current span if none is configured.
+-func GlobalLogger(ctx context.Context, name string, attrs ...log.KeyValue) *Logger {
++func GlobalLogger(ctx context.Context, name string, attrs ...attribute.KeyValue) *Logger {
+ 	return SpanLogger(telemetry.GlobalLogsSpanContext(ctx), name, attrs...)
+ }
+ 
+--- a/engine/server/telemetry.go
++++ b/engine/server/telemetry.go
+@@ -1,6 +1,7 @@
+ package server
+ 
+ import (
++	"go.opentelemetry.io/otel/attribute"
+ 	"context"
+ 	"database/sql"
+ 	"fmt"
+@@ -9,7 +10,6 @@
+ 	"time"
+ 
+ 	telemetry "github.com/dagger/otel-go"
+-	"go.opentelemetry.io/otel/log"
+ 	sdklog "go.opentelemetry.io/otel/sdk/log"
+ 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+ 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+@@ -486,7 +486,7 @@
+ 	severity := int64(rec.Severity())
+ 
+ 	var body []byte
+-	if !rec.Body().Empty() {
++	if rec.Body().Type() != attribute.EMPTY {
+ 		var err error
+ 		body, err = proto.Marshal(telemetry.LogValueToPB(rec.Body()))
+ 		if err != nil {
+@@ -495,9 +495,9 @@
+ 	}
+ 
+ 	attrs := []*otlpcommonv1.KeyValue{}
+-	rec.WalkAttributes(func(kv log.KeyValue) bool {
++	rec.WalkAttributes(func(kv attribute.KeyValue) bool {
+ 		attrs = append(attrs, &otlpcommonv1.KeyValue{
+-			Key:   kv.Key,
++			Key:   string(kv.Key),
+ 			Value: telemetry.LogValueToPB(kv.Value),
+ 		})
+ 		return true
+--- a/dagql/idtui/frontend.go
++++ b/dagql/idtui/frontend.go
+@@ -1,6 +1,7 @@
+ package idtui
+ 
+ import (
++	"go.opentelemetry.io/otel/attribute"
+ 	"context"
+ 	"fmt"
+ 	"io"
+@@ -16,7 +17,6 @@
+ 	"github.com/iancoleman/strcase"
+ 	"github.com/muesli/termenv"
+ 	"github.com/vito/tuist"
+-	"go.opentelemetry.io/otel/log"
+ 	sdklog "go.opentelemetry.io/otel/sdk/log"
+ 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+ 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+@@ -837,7 +837,7 @@
+ 	for _, l := range logs {
+ 		data := l.Body().AsString()
+ 		var stream int
+-		l.WalkAttributes(func(attr log.KeyValue) bool {
++		l.WalkAttributes(func(attr attribute.KeyValue) bool {
+ 			if attr.Key == telemetry.StdioStreamAttr {
+ 				stream = int(attr.Value.AsInt64())
+ 				return false
+--- a/dagql/idtui/frontend_plain.go
++++ b/dagql/idtui/frontend_plain.go
+@@ -1,6 +1,7 @@
+ package idtui
+ 
+ import (
++	"go.opentelemetry.io/otel/attribute"
+ 	"context"
+ 	"errors"
+ 	"fmt"
+@@ -21,7 +22,6 @@
+ 	"github.com/muesli/termenv"
+ 	"github.com/pkg/browser"
+ 	"github.com/vito/go-interact/interact"
+-	"go.opentelemetry.io/otel/log"
+ 	sdklog "go.opentelemetry.io/otel/sdk/log"
+ 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+ 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+@@ -330,7 +330,7 @@
+ 	for _, record := range logs {
+ 		// Check if this log is marked as verbose
+ 		isVerbose := false
+-		record.WalkAttributes(func(kv log.KeyValue) bool {
++		record.WalkAttributes(func(kv attribute.KeyValue) bool {
+ 			if kv.Key == telemetry.LogsVerboseAttr && kv.Value.AsBool() {
+ 				isVerbose = true
+ 				return false // stop walking
+--- a/dagql/idtui/frontend_streaming_logs.go
++++ b/dagql/idtui/frontend_streaming_logs.go
+@@ -1,6 +1,7 @@
+ package idtui
+ 
+ import (
++	"go.opentelemetry.io/otel/attribute"
+ 	"context"
+ 	"fmt"
+ 	"strings"
+@@ -9,7 +10,6 @@
+ 	"github.com/dagger/dagger/dagql/idtui/multiprefixw"
+ 	telemetry "github.com/dagger/otel-go"
+ 	"github.com/muesli/termenv"
+-	"go.opentelemetry.io/otel/log"
+ 	sdklog "go.opentelemetry.io/otel/sdk/log"
+ )
+ 
+@@ -99,7 +99,7 @@
+ 	for _, record := range records {
+ 		// Check if this log is marked as verbose
+ 		isVerbose := false
+-		record.WalkAttributes(func(kv log.KeyValue) bool {
++		record.WalkAttributes(func(kv attribute.KeyValue) bool {
+ 			if kv.Key == telemetry.LogsVerboseAttr && kv.Value.AsBool() {
+ 				isVerbose = true
+ 				return false // stop walking
+--- a/dagql/idtui/frontend_test_summary_logs.go
++++ b/dagql/idtui/frontend_test_summary_logs.go
+@@ -1,12 +1,12 @@
+ package idtui
+ 
+ import (
++	"go.opentelemetry.io/otel/attribute"
+ 	"fmt"
+ 
+ 	"github.com/dagger/dagger/dagql/dagui"
+ 	telemetry "github.com/dagger/otel-go"
+ 	"github.com/muesli/termenv"
+-	"go.opentelemetry.io/otel/log"
+ 	sdklog "go.opentelemetry.io/otel/sdk/log"
+ )
+ 
+@@ -37,7 +37,7 @@
+ }
+ 
+ func testSummaryLogRecordInfo(record sdklog.Record) (contentType string, skip bool) {
+-	record.WalkAttributes(func(kv log.KeyValue) bool {
++	record.WalkAttributes(func(kv attribute.KeyValue) bool {
+ 		switch kv.Key {
+ 		case telemetry.ContentTypeAttr:
+ 			contentType = kv.Value.AsString()
+--- a/dagql/idtui/viztest/main.go
++++ b/dagql/idtui/viztest/main.go
+@@ -13,7 +13,6 @@
+ 
+ 	telemetry "github.com/dagger/otel-go"
+ 	"go.opentelemetry.io/otel/attribute"
+-	"go.opentelemetry.io/otel/log"
+ 	"go.opentelemetry.io/otel/trace"
+ )
+ 
+@@ -222,7 +221,7 @@
+ 			trace.WithAttributes(attribute.String("dagger.io/ui.message", "received")),
+ 		)
+ 		span.End()
+-		stdio := telemetry.SpanStdio(ctx, "doesnt matter", log.String("dagger.io/content.type", "text/markdown"))
++		stdio := telemetry.SpanStdio(ctx, "doesnt matter", attribute.String("dagger.io/content.type", "text/markdown"))
+ 		defer stdio.Close()
+ 		fmt.Fprintln(stdio.Stdout, "sometimes you gotta be **bold**")
+ 	}()
+--- a/dagql/dagui/spans.go
++++ b/dagql/dagui/spans.go
+@@ -11,7 +11,7 @@
+ 	telemetry "github.com/dagger/otel-go"
+ 	"go.opentelemetry.io/otel/codes"
+ 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+-	semconv "go.opentelemetry.io/otel/semconv/v1.41.0"
++	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
+ 
+ 	"github.com/dagger/dagger/dagql/call"
+ 	"github.com/dagger/dagger/dagql/call/callpbv1"
+--- a/dagql/dagui/db.go
++++ b/dagql/dagui/db.go
+@@ -9,7 +9,6 @@
+ 
+ 	"go.opentelemetry.io/otel/attribute"
+ 	"go.opentelemetry.io/otel/codes"
+-	otellog "go.opentelemetry.io/otel/log"
+ 	sdklog "go.opentelemetry.io/otel/sdk/log"
+ 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+ 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+@@ -871,7 +870,7 @@
+ 	fallback := SpanID{SpanID: record.SpanID()}
+ 
+ 	var targetDig string
+-	record.WalkAttributes(func(kv otellog.KeyValue) bool {
++	record.WalkAttributes(func(kv attribute.KeyValue) bool {
+ 		if kv.Key == telemetry.DagDigestAttr {
+ 			targetDig = kv.Value.AsString()
+ 			return false
+--- a/core/mcp.go
++++ b/core/mcp.go
+@@ -32,7 +32,6 @@
+ 	"github.com/sourcegraph/conc/pool"
+ 	"github.com/vektah/gqlparser/v2/ast"
+ 	"go.opentelemetry.io/otel/attribute"
+-	"go.opentelemetry.io/otel/log"
+ 	"go.opentelemetry.io/otel/trace"
+ 	otlpcommonv1 "go.opentelemetry.io/proto/otlp/common/v1"
+ 	"google.golang.org/protobuf/proto"
+@@ -1194,7 +1193,7 @@
+ 	}()
+ 
+ 	stdio := telemetry.SpanStdio(ctx, InstrumentationLibrary,
+-		log.Bool(telemetry.LogsVerboseAttr, true))
++		attribute.Bool(telemetry.LogsVerboseAttr, true))
+ 	defer stdio.Close()
+ 
+ 	defer func() {
+--- a/core/changeset.go
++++ b/core/changeset.go
+@@ -1,6 +1,7 @@
+ package core
+ 
+ import (
++	"go.opentelemetry.io/otel/attribute"
+ 	"context"
+ 	"encoding/json"
+ 	"errors"
+@@ -23,7 +24,6 @@
+ 	bkclient "github.com/dagger/dagger/internal/buildkit/client"
+ 	telemetry "github.com/dagger/otel-go"
+ 	"github.com/vektah/gqlparser/v2/ast"
+-	"go.opentelemetry.io/otel/log"
+ 	"go.opentelemetry.io/otel/trace"
+ )
+ 
+@@ -609,7 +609,7 @@
+ 	}
+ 
+ 	ctx = trace.ContextWithSpanContext(ctx, trace.SpanContextFromContext(ctx))
+-	stdio := telemetry.SpanStdio(ctx, InstrumentationLibrary, log.Bool(telemetry.LogsVerboseAttr, true))
++	stdio := telemetry.SpanStdio(ctx, InstrumentationLibrary, attribute.Bool(telemetry.LogsVerboseAttr, true))
+ 	defer stdio.Close()
+ 
+ 	newRef, err := query.SnapshotManager().New(ctx, nil,
+--- a/core/llm.go
++++ b/core/llm.go
+@@ -20,7 +20,6 @@
+ 	"github.com/joho/godotenv"
+ 	"github.com/vektah/gqlparser/v2/ast"
+ 	"go.opentelemetry.io/otel/attribute"
+-	"go.opentelemetry.io/otel/log"
+ 	"go.opentelemetry.io/otel/trace"
+ 	"golang.org/x/sync/errgroup"
+ 
+@@ -764,7 +763,7 @@
+ 	))
+ 	defer span.End()
+ 	stdio := telemetry.SpanStdio(ctx, InstrumentationLibrary,
+-		log.String(telemetry.ContentTypeAttr, "text/markdown"))
++		attribute.String(telemetry.ContentTypeAttr, "text/markdown"))
+ 	defer stdio.Close()
+ 	var lastAssistantMessage string
+ 	for i := len(llm.messages) - 1; i >= 0; i-- {
+@@ -887,7 +886,7 @@
+ 					))
+ 				defer span.End()
+ 				stdio := telemetry.SpanStdio(ctx, InstrumentationLibrary,
+-					log.String(telemetry.ContentTypeAttr, "text/markdown"))
++					attribute.String(telemetry.ContentTypeAttr, "text/markdown"))
+ 				defer stdio.Close()
+ 				fmt.Fprint(stdio.Stdout, msg.Content)
+ 			}()
+--- a/core/llm_anthropic.go
++++ b/core/llm_anthropic.go
+@@ -11,7 +11,6 @@
+ 	"github.com/anthropics/anthropic-sdk-go/shared/constant"
+ 	telemetry "github.com/dagger/otel-go"
+ 	"go.opentelemetry.io/otel/attribute"
+-	"go.opentelemetry.io/otel/log"
+ 	"go.opentelemetry.io/otel/metric"
+ 	"go.opentelemetry.io/otel/trace"
+ )
+@@ -72,7 +71,7 @@
+ 	defer stdio.Close()
+ 
+ 	markdownW := telemetry.NewWriter(ctx, InstrumentationLibrary,
+-		log.String(telemetry.ContentTypeAttr, "text/markdown"))
++		attribute.String(telemetry.ContentTypeAttr, "text/markdown"))
+ 
+ 	m := telemetry.Meter(ctx, InstrumentationLibrary)
+ 	spanCtx := trace.SpanContextFromContext(ctx)
+--- a/core/llm_google.go
++++ b/core/llm_google.go
+@@ -12,7 +12,6 @@
+ 	telemetry "github.com/dagger/otel-go"
+ 	"github.com/googleapis/gax-go/v2/apierror"
+ 	"go.opentelemetry.io/otel/attribute"
+-	"go.opentelemetry.io/otel/log"
+ 	"go.opentelemetry.io/otel/metric"
+ 	"go.opentelemetry.io/otel/trace"
+ 
+@@ -198,7 +197,7 @@
+ 
+ func (c *GenaiClient) SendQuery(ctx context.Context, history []*ModelMessage, tools []LLMTool) (_ *LLMResponse, rerr error) {
+ 	stdio := telemetry.SpanStdio(ctx, InstrumentationLibrary,
+-		log.String(telemetry.ContentTypeAttr, "text/markdown"))
++		attribute.String(telemetry.ContentTypeAttr, "text/markdown"))
+ 	defer stdio.Close()
+ 
+ 	m := telemetry.Meter(ctx, InstrumentationLibrary)
+--- a/core/llm_openai.go
++++ b/core/llm_openai.go
+@@ -11,7 +11,6 @@
+ 	"github.com/openai/openai-go/azure"
+ 	"github.com/openai/openai-go/option"
+ 	"go.opentelemetry.io/otel/attribute"
+-	"go.opentelemetry.io/otel/log"
+ 	"go.opentelemetry.io/otel/metric"
+ 	"go.opentelemetry.io/otel/trace"
+ )
+@@ -54,7 +53,7 @@
+ 
+ func (c *OpenAIClient) SendQuery(ctx context.Context, history []*ModelMessage, tools []LLMTool) (_ *LLMResponse, rerr error) {
+ 	stdio := telemetry.SpanStdio(ctx, InstrumentationLibrary,
+-		log.String(telemetry.ContentTypeAttr, "text/markdown"))
++		attribute.String(telemetry.ContentTypeAttr, "text/markdown"))
+ 	defer stdio.Close()
+ 
+ 	m := telemetry.Meter(ctx, InstrumentationLibrary)
+--- a/core/telemetry.go
++++ b/core/telemetry.go
+@@ -8,7 +8,6 @@
+ 	"strings"
+ 
+ 	"go.opentelemetry.io/otel/attribute"
+-	"go.opentelemetry.io/otel/log"
+ 	"go.opentelemetry.io/otel/trace"
+ 
+ 	"github.com/dagger/dagger/dagql"
+@@ -316,7 +315,7 @@
+ 		return
+ 	}
+ 
+-	stdio := telemetry.SpanStdio(ctx, InstrumentationLibrary, log.Bool(telemetry.LogsVerboseAttr, true))
++	stdio := telemetry.SpanStdio(ctx, InstrumentationLibrary, attribute.Bool(telemetry.LogsVerboseAttr, true))
+ 	defer stdio.Close()
+ 	fmt.Fprint(stdio.Stdout, output)
+ }
+--- a/cmd/engine/telemetry.go
++++ b/cmd/engine/telemetry.go
+@@ -13,7 +13,7 @@
+ 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
+ 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+ 	"go.opentelemetry.io/otel/sdk/resource"
+-	semconv "go.opentelemetry.io/otel/semconv/v1.41.0"
++	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
+ 
+ 	"github.com/dagger/dagger/engine"
+ 	"github.com/dagger/dagger/engine/config"
+--- a/cmd/dagger/main.go
++++ b/cmd/dagger/main.go
+@@ -32,7 +32,7 @@
+ 	"go.opentelemetry.io/otel"
+ 	"go.opentelemetry.io/otel/attribute"
+ 	"go.opentelemetry.io/otel/sdk/resource"
+-	semconv "go.opentelemetry.io/otel/semconv/v1.41.0"
++	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
+ 	"go.opentelemetry.io/otel/trace"
+ 	"golang.org/x/mod/semver"
+ 	"golang.org/x/term"
