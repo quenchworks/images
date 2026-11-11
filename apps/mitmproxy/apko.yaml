@@ -1,0 +1,53 @@
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-mitmproxy@local
+
+accounts:
+  groups:
+    - groupname: mitmproxy
+      gid: 1001
+  users:
+    - username: mitmproxy
+      uid: 1001
+      gid: 1001
+      homedir: /home/mitmproxy
+  run-as: 1001
+
+environment:
+  HOME: /home/mitmproxy
+  LANG: C.UTF-8
+  PATH: /usr/bin:/bin
+
+# ~/.mitmproxy holds the generated CA (mitmproxy-ca.pem) that clients must trust; mount a
+# volume there to keep it across restarts.
+paths:
+  - path: /home/mitmproxy
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+work-dir: /home/mitmproxy
+
+# mitmdump by default (headless, scriptable); run mitmweb or mitmproxy by overriding the command.
+entrypoint:
+  command: /usr/bin/mitmdump
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-mitmproxy"
+  org.opencontainers.image.licenses: "MIT"
