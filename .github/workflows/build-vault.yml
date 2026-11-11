@@ -99,6 +99,8 @@ jobs:
       - name: Assemble single-arch image for the scan gate
         run: apko build apko.rendered.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}
 
+      - name: Install uv (for the VEX validator)
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       - name: Check VEX
         working-directory: ${{ github.workspace }}
         run: uv run scripts/check-vex.py vault
