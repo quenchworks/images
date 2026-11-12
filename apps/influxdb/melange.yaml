@@ -133,6 +133,26 @@ pipeline:
       # The influxdata pkg-config wrapper resolves the `flux` library by running
       # `cargo build --release` inside the flux module's libflux crate.
       export PKG_CONFIG="$(pwd)/scripts/pkg-config.sh"
+      # Go 1.26.11/1.27.4 cgo inspects every archive pkg-config --libs names and refuses
+      # LLVM bitcode sections (".llvmbc", ".llvmcmd": LTO payloads that could carry linker
+      # options). libflux.a carries them from Rust's prebuilt std. We build libflux here, so
+      # strip those sections after the wrapper builds it: no LTO payload is left to link.
+      export PKG_CONFIG_REAL="$PKG_CONFIG"
+      cat > /tmp/pkg-config-strip.sh <<'EOS'
+      #!/bin/sh
+      out="$("$PKG_CONFIG_REAL" "$@")" || exit $?
+      for w in $out; do
+        case "$w" in
+          *.a) f="$w" ;;
+          -L*) f="${w#-L}/libflux*.a" ;;
+          *) continue ;;
+        esac
+        for a in $f; do [ -f "$a" ] && objcopy --remove-section=.llvmbc --remove-section=.llvmcmd "$a"; done
+      done
+      printf '%s\n' "$out"
+      EOS
+      chmod +x /tmp/pkg-config-strip.sh
+      export PKG_CONFIG=/tmp/pkg-config-strip.sh
 
       COMMIT="$(git -C . rev-parse --short HEAD 2>/dev/null || echo ${{package.version}})"
       VERSION="v${{package.version}}"
