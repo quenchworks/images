@@ -1,0 +1,47 @@
+# Owncast runtime: /usr/bin/owncast in /app, which keeps its database, logs, HLS segments and
+# backups in /app/data (mount a volume there). Web on 8080, RTMP ingest on 1935.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-owncast@local
+
+accounts:
+  groups:
+    - groupname: owncast
+      gid: 1001
+  users:
+    - username: owncast
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+work-dir: /app
+
+paths:
+  - path: /app/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /usr/bin/owncast
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-owncast"
+  org.opencontainers.image.licenses: "MIT"
+  org.opencontainers.image.version: "__VER__"
