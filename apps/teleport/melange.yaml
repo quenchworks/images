@@ -110,6 +110,9 @@ pipeline:
       set -eu
       export RUSTUP_HOME=/tmp/rustup CARGO_HOME=/tmp/cargo PATH="/tmp/cargo/bin:$PATH"
       export GOTOOLCHAIN=local GOFLAGS=-mod=mod COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+      # Go 1.27.4 refuses the RDP client's `#cgo LDFLAGS: -l:librdp_client.a` (an unlisted flag
+      # form); allow exactly that library so the static Rust archive still links.
+      export CGO_LDFLAGS_ALLOW='-l:librdp_client\.a'
       corepack enable --install-directory /tmp/cargo/bin
       unset GITHUB_REPOSITORY_OWNER
       # ensure-wasm-opt always cargo-installs the wasm-opt crate (binaryen 116 vendored); its C++ link
