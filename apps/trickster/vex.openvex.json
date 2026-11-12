@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/trickster/2026-11-12",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-12T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "GHSA-2w8w-qhg4-f78j"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/jaegertracing/jaeger@v1.18.1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "GHSA-2w8w-qhg4-f78j is a stored XSS in the Jaeger web UI (fixed in jaeger 1.47.0). Trickster 2.1.0 and 2.2.1 link exactly one jaeger package, github.com/jaegertracing/jaeger/model/json (JSON span structs), reached through pkg/backends/druid -> cockroachdb-parser tracing. Verified at v2.2.1 with go mod why -m github.com/jaegertracing/jaeger and go list -deps ./cmd/trickster: model/json is the only jaeger package, so no UI code or HTTP handler from jaeger is compiled in. The build re-runs that go list check and fails if any other jaeger package appears."
+    }
+  ]
+}

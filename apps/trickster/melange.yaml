@@ -1,0 +1,60 @@
+# Trickster from the release tag, CGO-free with upstream's Makefile stamp (-X main.applicationVersion).
+package:
+  name: quench-trickster
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Trickster time-series caching proxy, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - go-1.27          # 2.2.1 go.mod: go 1.27.3
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/trickstercache/trickster/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - runs: |
+      set -eu
+      export CGO_ENABLED=0 GOTOOLCHAIN=local GOFLAGS=-mod=mod
+      # floors, raised only when below (a bare go get downgrades once upstream passes it); the
+      # golang.org/x set moves together, as in the other recipes
+      FLOOR="golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/net@v0.62.0 golang.org/x/text@v0.43.0 golang.org/x/sys@v0.49.0"
+      need=""
+      for f in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${f%@*}")"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        [ "$(printf '%s\n%s\n' "$have" "${f#*@}" | sort -V | head -1)" = "${f#*@}" ] || need="$need $f"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
+      go mod tidy
+      # the jaeger VEX holds while only model/json is linked: fail if any other jaeger package is
+      jp="$(go list -deps ./cmd/trickster | grep '^github.com/jaegertracing/jaeger/' || true)"
+      echo "jaeger packages linked: ${jp:-none}"
+      [ -z "$jp" ] || [ "$jp" = github.com/jaegertracing/jaeger/model/json ] \
+        || { echo "more jaeger packages than model/json: re-check the GHSA-2w8w-qhg4-f78j VEX"; exit 1; }
+      go build -trimpath -ldflags "-s -w -X main.applicationVersion=${{package.version}}" \
+        -o "${{targets.destdir}}/usr/bin/trickster" ./cmd/trickster
+      v="$("${{targets.destdir}}/usr/bin/trickster" -version 2>&1 || true)"
+      echo "trickster -version: $v"
+      case "$v" in *"${{package.version}}"*) ;; *) exit 1 ;; esac
+
+test:
+  pipeline:
+    - runs: |
+        trickster -version
