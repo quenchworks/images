@@ -1,0 +1,110 @@
+# Kanboard runtime: supervisord runs php-fpm 8.4 and quench-nginx (port 8080). Data (SQLite,
+# uploads, cache) goes to /var/www/app/data and plugins to /var/www/app/plugins: mount volumes
+# there. Settings are environment variables (DB_DRIVER, DB_HOSTNAME, ...), read by Kanboard.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - busybox
+    - tzdata
+    - supervisor
+    - quench-nginx@local
+    - quench-kanboard@local
+    - php-8.4
+    - php-8.4-config
+    - php-8.4-fpm
+    - php-8.4-fpm-config
+    - php-8.4-opcache
+    - php-8.4-opcache-config
+    - php-8.4-pdo
+    - php-8.4-pdo-config
+    - php-8.4-pdo_sqlite
+    - php-8.4-pdo_sqlite-config
+    - php-8.4-pdo_pgsql
+    - php-8.4-pdo_pgsql-config
+    - php-8.4-pdo_mysql
+    - php-8.4-pdo_mysql-config
+    - php-8.4-mbstring
+    - php-8.4-mbstring-config
+    - php-8.4-gd
+    - php-8.4-gd-config
+    - php-8.4-xml
+    - php-8.4-xml-config
+    - php-8.4-dom
+    - php-8.4-dom-config
+    - php-8.4-simplexml
+    - php-8.4-simplexml-config
+    - php-8.4-xmlwriter
+    - php-8.4-xmlwriter-config
+    - php-8.4-ctype
+    - php-8.4-ctype-config
+    - php-8.4-openssl
+    - php-8.4-openssl-config
+    - php-8.4-zip
+    - php-8.4-zip-config
+    - php-8.4-iconv
+    - php-8.4-iconv-config
+    - php-8.4-curl
+    - php-8.4-curl-config
+    - php-8.4-ldap
+    - php-8.4-ldap-config
+    - php-8.4-sockets
+    - php-8.4-sockets-config
+    - php-8.4-posix
+    - php-8.4-posix-config
+    - php-8.4-bcmath
+    - php-8.4-bcmath-config
+
+accounts:
+  groups:
+    - groupname: kanboard
+      gid: 1001
+  users:
+    - username: kanboard
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# supervisord (PID 1) starts php-fpm then nginx. No shell wrapper: supervisord parses the
+# program commands itself, and quench-nginx's own nginx.conf already puts the pid and all
+# temp paths under /tmp, so nothing has to be mkdir'd at boot.
+entrypoint:
+  command: /usr/bin/supervisord -c /etc/kanboard/supervisord.conf
+
+work-dir: /var/www/app
+
+paths:
+  # /tmp holds supervisord pid/sock, nginx pid + temp dirs and PHP sessions/uploads.
+  - path: /tmp
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o1777
+  # Kanboard's data (SQLite, files, cache) and plugins: writable for the app user
+  - path: /var/www/app/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/www/app/plugins
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-kanboard"
+  org.opencontainers.image.licenses: "MIT"

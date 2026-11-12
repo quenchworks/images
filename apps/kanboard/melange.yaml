@@ -1,0 +1,207 @@
+# Kanboard from the release tag (the finished app), with its nginx server block, php-fpm pool,
+# php.ini overrides and supervisord wiring. The PHP runtime and quench-nginx come from apko.
+package:
+  name: quench-kanboard
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Kanboard (release tag) on Wolfi php-fpm + nginx"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - php-8.4
+      - php-8.4-config
+      - php-8.4-fpm
+      - php-8.4-fpm-config
+      - php-8.4-opcache
+      - php-8.4-opcache-config
+      - php-8.4-pdo
+      - php-8.4-pdo-config
+      - php-8.4-pdo_sqlite
+      - php-8.4-pdo_sqlite-config
+      - php-8.4-pdo_pgsql
+      - php-8.4-pdo_pgsql-config
+      - php-8.4-pdo_mysql
+      - php-8.4-pdo_mysql-config
+      - php-8.4-mbstring
+      - php-8.4-mbstring-config
+      - php-8.4-gd
+      - php-8.4-gd-config
+      - php-8.4-xml
+      - php-8.4-xml-config
+      - php-8.4-dom
+      - php-8.4-dom-config
+      - php-8.4-simplexml
+      - php-8.4-simplexml-config
+      - php-8.4-xmlwriter
+      - php-8.4-xmlwriter-config
+      - php-8.4-ctype
+      - php-8.4-ctype-config
+      - php-8.4-openssl
+      - php-8.4-openssl-config
+      - php-8.4-zip
+      - php-8.4-zip-config
+      - php-8.4-iconv
+      - php-8.4-iconv-config
+      - php-8.4-curl
+      - php-8.4-curl-config
+      - php-8.4-ldap
+      - php-8.4-ldap-config
+      - php-8.4-sockets
+      - php-8.4-sockets-config
+      - php-8.4-posix
+      - php-8.4-posix-config
+      - php-8.4-bcmath
+      - php-8.4-bcmath-config
+      - supervisor
+      - busybox
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - php-8.4
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/kanboard/kanboard/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Install the Kanboard tree at /var/www/app
+    runs: |
+      set -eu
+      app="${{targets.destdir}}/var/www/app"
+      install -d -m 0755 "$app"
+      # the workspace also holds melange-out/: copy the app's own entries only
+      for f in *; do [ "$f" = melange-out ] || cp -a "$f" "$app/"; done
+      # the volume mount points (data/, plugins/) start empty; config comes from the environment
+      rm -rf "$app/data" "$app/plugins" "$app"/docker-compose.*.yml "$app/web.config"
+      install -d -m 0755 "$app/data" "$app/plugins"
+      echo "v${{package.version}}" > "$app/app/version.txt"
+      grep -q "tag: v${{package.version}}" "$app/app/constants.php"
+      for f in "$app"/*.php "$app"/app/constants.php; do php -l "$f" >/dev/null; done
+
+  - name: Install nginx, php-fpm and supervisord wiring
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/etc/nginx/conf.d" "$d/etc/php/php-fpm.d" "$d/etc/php/conf.d" "$d/etc/kanboard" "$d/etc/supervisor.d"
+      cat > "$d/etc/nginx/conf.d/kanboard.conf" <<'EOF'
+      server {
+          listen 8080 default_server;
+          listen [::]:8080 default_server;
+          server_name _;
+          root /var/www/app;
+          index index.php;
+          client_max_body_size 64M;
+          access_log off;
+
+          location ~ /\.                     { return 403; }
+          location ~ ^/(app|data|libs|vendor|cli)/ { return 403; }
+          location ~ ^/plugins/.*\.php$       { return 403; }
+
+          location / { try_files $uri $uri/ /index.php$is_args$args; }
+
+          location ~ \.php$ {
+              try_files $uri =404;
+              include        /etc/nginx/fastcgi_params;
+              fastcgi_split_path_info ^(.+\.php)(/.+)$;
+              fastcgi_param  SCRIPT_FILENAME $document_root$fastcgi_script_name;
+              fastcgi_param  PATH_INFO $fastcgi_path_info;
+              fastcgi_index  index.php;
+              fastcgi_pass   127.0.0.1:9000;
+              fastcgi_read_timeout 300;
+          }
+
+          location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff2?)$ { expires 7d; access_log off; }
+      }
+      EOF
+      cat > "$d/etc/php/php-fpm.d/zzz-kanboard.conf" <<'EOF'
+      [global]
+      daemonize = no
+      error_log = /proc/self/fd/2
+
+      [www]
+      listen = 127.0.0.1:9000
+      catch_workers_output = yes
+      decorate_workers_output = no
+      ; Kanboard reads DB_*, DATA_DIR and friends from the environment
+      clear_env = no
+      pm = dynamic
+      pm.max_children = 16
+      pm.start_servers = 2
+      pm.min_spare_servers = 1
+      pm.max_spare_servers = 4
+      EOF
+      cat > "$d/etc/php/conf.d/zzz-kanboard.ini" <<'EOF'
+      expose_php = Off
+      memory_limit = 256M
+      upload_max_filesize = 64M
+      post_max_size = 64M
+      sys_temp_dir = /tmp
+      upload_tmp_dir = /tmp
+      session.save_path = /tmp
+      session.cookie_httponly = 1
+      session.use_strict_mode = 1
+      display_errors = Off
+      log_errors = On
+      error_log = /proc/self/fd/2
+      date.timezone = UTC
+      opcache.enable = 1
+      opcache.memory_consumption = 64
+      opcache.revalidate_freq = 2
+      EOF
+      cat > "$d/etc/kanboard/supervisord.conf" <<'EOF'
+      [supervisord]
+      nodaemon=true
+      logfile=/dev/stdout
+      logfile_maxbytes=0
+      pidfile=/tmp/supervisord.pid
+
+      [unix_http_server]
+      file=/tmp/supervisor.sock
+
+      [supervisorctl]
+      serverurl=unix:///tmp/supervisor.sock
+
+      [rpcinterface:supervisor]
+      supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+
+      [include]
+      files = /etc/supervisor.d/*.conf
+      EOF
+      cat > "$d/etc/supervisor.d/php-fpm.conf" <<'EOF'
+      [program:php-fpm]
+      command=/usr/bin/php-fpm --nodaemonize --fpm-config /etc/php/php-fpm.conf
+      autorestart=true
+      priority=10
+      stdout_logfile=/dev/stdout
+      stdout_logfile_maxbytes=0
+      stderr_logfile=/dev/stderr
+      stderr_logfile_maxbytes=0
+      EOF
+      cat > "$d/etc/supervisor.d/nginx.conf" <<'EOF'
+      [program:nginx]
+      command=/usr/bin/nginx -g "daemon off;"
+      autorestart=true
+      priority=20
+      stdout_logfile=/dev/stdout
+      stdout_logfile_maxbytes=0
+      stderr_logfile=/dev/stderr
+      stderr_logfile_maxbytes=0
+      EOF
+
+test:
+  pipeline:
+    - runs: |
+        set -eu
+        test -f /var/www/app/index.php
+        for ext in pdo_sqlite pdo_pgsql pdo_mysql mbstring gd xml dom simplexml ctype openssl zip ldap session; do
+          php -m | grep -qi "^${ext}$" || { echo "missing PHP extension: $ext"; exit 1; }
+        done
+        command -v php-fpm
