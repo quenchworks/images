@@ -1,0 +1,72 @@
+# Homebox from the release tag: nuxt generate, then the Go API with the static site embedded,
+# as upstream's Dockerfile does. AVIF/WebP decode through the WASM fallbacks (no native libs).
+package:
+  name: quench-homebox
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Homebox inventory manager, built from source on Wolfi"
+  copyright:
+    - license: AGPL-3.0-only
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - go-1.27
+      - nodejs-24
+      - npm
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/sysadminsmedia/homebox/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Frontend
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" npm_config_cache="$(mktemp -d)" NUXT_TELEMETRY_DISABLED=1
+      PNPM="$(node -p 'require("./frontend/package.json").packageManager.split("@")[1]')"
+      npm install -g --prefix "$HOME/.npm-global" "pnpm@$PNPM"
+      export PATH="$HOME/.npm-global/bin:$PATH"
+      cd frontend
+      pnpm install --frozen-lockfile
+      pnpm build
+      rm -rf ../backend/app/api/static/public
+      cp -a .output/public ../backend/app/api/static/public
+
+  - name: Backend
+    runs: |
+      set -eu
+      cd backend
+      export CGO_ENABLED=0 GOTOOLCHAIN=local GOFLAGS=-mod=mod
+      # floors, raised only when below (a bare go get downgrades once upstream passes it)
+      FLOOR="golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/net@v0.62.0 golang.org/x/text@v0.43.0 golang.org/x/sys@v0.49.0"
+      # go-jose CVE-2026-116587
+      FLOOR="$FLOOR github.com/go-jose/go-jose/v4@v4.1.6"
+      need=""
+      for f in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${f%@*}")"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        [ "$(printf '%s\n%s\n' "$have" "${f#*@}" | sort -V | head -1)" = "${f#*@}" ] || need="$need $f"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
+      go mod tidy
+      go build -trimpath -ldflags "-s -w -X main.version=${{package.version}} -X main.commit=v${{package.version}}" \
+        -o "${{targets.destdir}}/usr/bin/homebox" ./app/api
+      test -s app/api/static/public/index.html
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/bin/homebox

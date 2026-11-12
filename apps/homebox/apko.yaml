@@ -1,0 +1,53 @@
+# Homebox runtime: the API serves the embedded web UI on 7745 and keeps SQLite and attachments in
+# /data (mount a volume there). Settings are HBOX_* environment variables.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-homebox@local
+
+accounts:
+  groups:
+    - groupname: homebox
+      gid: 1001
+  users:
+    - username: homebox
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  HBOX_MODE: production
+  HBOX_STORAGE_CONN_STRING: file:///?no_tmp_dir=true
+  HBOX_STORAGE_PREFIX_PATH: data
+  HBOX_DATABASE_SQLITE_PATH: /data/homebox.db?_pragma=busy_timeout=2000&_pragma=journal_mode=WAL&_fk=1&_time_format=sqlite
+
+work-dir: /
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /usr/bin/homebox
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-homebox"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"
+  org.opencontainers.image.version: "__VER__"
