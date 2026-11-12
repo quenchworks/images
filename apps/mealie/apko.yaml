@@ -1,0 +1,59 @@
+# Mealie runtime: `mealie` (uvicorn) on 9000 with data (SQLite, images, backups) in /app/data:
+# mount a volume there. Settings are environment variables (DB_ENGINE, POSTGRES_*, BASE_URL, ...).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-mealie@local
+
+accounts:
+  groups:
+    - groupname: mealie
+      gid: 1001
+  users:
+    - username: mealie
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  PATH: /opt/mealie/bin:/usr/sbin:/sbin:/usr/bin:/bin
+  VIRTUAL_ENV: /opt/mealie
+  PYTHONUNBUFFERED: "1"
+  PRODUCTION: "true"
+  TESTING: "false"
+  MEALIE_HOME: /app
+  DATA_DIR: /app/data
+  NLTK_DATA: /nltk_data
+  HOST: 0.0.0.0
+  API_PORT: "9000"
+
+work-dir: /app
+
+paths:
+  - path: /app/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /opt/mealie/bin/mealie
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-mealie"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"
+  org.opencontainers.image.version: "__VER__"

@@ -1,0 +1,96 @@
+# Mealie from the release tag: `pnpm generate` for the frontend, then the project and its locked
+# dependencies into /opt/mealie with uv (extra pgsql). psycopg2 is built from source against Wolfi
+# libpq instead of psycopg2-binary, whose wheel bundles its own libpq and OpenSSL.
+package:
+  name: quench-mealie
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Mealie recipe manager, built from source on Wolfi"
+  copyright:
+    - license: AGPL-3.0-only
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - ffmpeg
+      - libheif
+      - libldap-2.7
+      - libpq-18
+      - libwebp
+      - python-3.14
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - cyrus-sasl-mit-dev
+      - libheif-dev
+      - libwebp-dev
+      - nodejs-24
+      - npm
+      - openldap-2.7-dev
+      - postgresql-18-dev
+      - python-3.14
+      - python-3.14-dev
+      - uv
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/mealie-recipes/mealie/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Frontend
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" npm_config_cache="$(mktemp -d)" NUXT_TELEMETRY_DISABLED=1
+      npm install -g --prefix "$HOME/.npm-global" pnpm@11
+      export PATH="$HOME/.npm-global/bin:$PATH"
+      # the frontend reads the unit locales from the backend tree, as in upstream's Dockerfile
+      ( cd frontend && pnpm install --frozen-lockfile && pnpm generate )
+      rm -rf mealie/frontend && cp -a frontend/dist mealie/frontend
+      test -s mealie/frontend/index.html
+
+  - name: Python app
+    runs: |
+      set -eu
+      export UV_PYTHON=/usr/bin/python3.14 UV_PYTHON_DOWNLOADS=never UV_CACHE_DIR="$(mktemp -d)" UV_LINK_MODE=copy
+      export UV_PROJECT_ENVIRONMENT=/opt/mealie
+      # the tag carries __version__ = "develop"; upstream's release stamps it, so do the same
+      sed -i 's/^__version__ = "develop"$/__version__ = "${{package.version}}"/' mealie/__init__.py
+      grep -qx '__version__ = "${{package.version}}"' mealie/__init__.py
+      uv sync --frozen --no-dev --no-editable --extra pgsql
+      # CVE floors over the lock: nltk CVE-2026-81726 / GHSA-j456-xh4h-cpf2, oauthlib CVE-2026-49272,
+      # pyasn1 CVE-2026-119194..119197
+      uv pip install --python /opt/mealie/bin/python 'nltk==3.10.4' 'oauthlib==4.0.1' 'pyasn1==0.6.5'
+      # psycopg2 from source against Wolfi libpq instead of the binary wheel
+      v="$(/opt/mealie/bin/python -c 'import importlib.metadata as m; print(m.version("psycopg2-binary"))')"
+      uv pip uninstall --python /opt/mealie/bin/python psycopg2-binary
+      uv pip install --python /opt/mealie/bin/python --no-binary psycopg2 "psycopg2==$v"
+      # importing mealie.main builds the settings: give it production mode and a scratch data dir
+      PRODUCTION=true DATA_DIR="$(mktemp -d)" /opt/mealie/bin/python -c 'import psycopg2, ldap, mealie.main; print("psycopg2", psycopg2.__version__)'
+      test -s /opt/mealie/lib/python3.14/site-packages/mealie/frontend/index.html
+      # the ingredient parser's tagger, as upstream's setup_nltk_data.sh fetches
+      /opt/mealie/bin/python -m nltk.downloader -d nltk_data averaged_perceptron_tagger_eng
+
+  - name: Install
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/opt" "$d/app/data" "$d/nltk_data"
+      cp -a /opt/mealie "$d/opt/mealie"
+      cp -a nltk_data/. "$d/nltk_data/"
+      find "$d/opt/mealie" -name __pycache__ -prune -exec rm -rf {} +
+      rm -f "$d/opt/mealie/.lock"   # uv's environment lock, mode 666
+      "$d/opt/mealie/bin/python" -c 'import importlib.metadata as m; print("mealie", m.version("mealie"))' | grep -F "${{package.version}}"
+
+test:
+  pipeline:
+    - runs: |
+        /opt/mealie/bin/python -c "import mealie, psycopg2"
