@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/zoraxy/2026-11-12",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-12T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2025-47909"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/gorilla/csrf@v1.7.3"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "CVE-2025-47909 is in gorilla/csrf's TrustedOrigins handling: a host listed in TrustedOrigins is also trusted over plain HTTP. Zoraxy 3.3.4 configures csrf.Protect at src/main.go:125-131 with CookieName, Secure(false), Path and SameSite only, and never calls csrf.TrustedOrigins anywhere in its source (checked with grep -rn TrustedOrigins src at v3.3.4: no match). Without TrustedOrigins the origin check compares against the request host only, so the trusted-origin path never runs. The build fails if csrf.TrustedOrigins ever appears in the source. No fixed gorilla/csrf release exists; 1.7.3 is the newest."
+    }
+  ]
+}

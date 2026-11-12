@@ -1,0 +1,61 @@
+# Builds Zoraxy from the release tarball (src/, static Go, web UI embedded via go:embed).
+# Floors: the house golang.org/x set, grpc, go-jose v4 and gorilla/csrf 1.7.3. csrf 1.7.3
+# checks Origin/Referer against https:// for every request, so csrf-plaintext.patch marks
+# plain-HTTP admin requests with csrf.PlaintextHTTPRequest (the panel's default listener is
+# http on :8000). gorilla/csrf CVE-2025-47909 has no fix and affects only TrustedOrigins,
+# which Zoraxy never sets: VEXed, and the build fails if it ever appears in the source.
+package:
+  name: quench-zoraxy
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Zoraxy (reverse proxy with a web UI), built from source on Wolfi"
+  copyright:
+    - license: AGPL-3.0-only
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - go
+      - patch
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/tobychui/zoraxy/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - runs: |
+      set -eu
+      patch -p1 < csrf-plaintext.patch
+      cd src
+      if grep -rn "csrf.TrustedOrigins" . ; then
+        echo "zoraxy now sets csrf TrustedOrigins: re-check the CVE-2025-47909 VEX"; exit 1
+      fi
+      export CGO_ENABLED=0 GOTOOLCHAIN=local GOFLAGS=-mod=mod
+      FLOOR="golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/net@v0.62.0 golang.org/x/text@v0.43.0 golang.org/x/sys@v0.49.0 golang.org/x/mod@v0.41.0 google.golang.org/grpc@v1.83.2 github.com/go-jose/go-jose/v4@v4.1.6 github.com/gorilla/csrf@v1.7.3"
+      need=""
+      for f in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${f%@*}")"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        [ "$(printf '%s\n%s\n' "$have" "${f#*@}" | sort -V | head -1)" = "${f#*@}" ] || need="$need $f"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
+      go mod tidy
+      go build -trimpath -ldflags "-s -w" -o "${{targets.destdir}}/usr/bin/zoraxy" .
+      "${{targets.destdir}}/usr/bin/zoraxy" -version | grep -F "${{package.version}}"
+
+test:
+  pipeline:
+    - runs: |
+        zoraxy -version

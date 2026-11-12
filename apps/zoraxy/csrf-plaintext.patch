@@ -1,0 +1,20 @@
+--- a/src/main.go
++++ b/src/main.go
+@@ -141,7 +141,16 @@
+ 	// Create a entry mux to accept all management interface requests
+ 	entryMux := http.NewServeMux()
+ 	entryMux.Handle("/plugin/", pluginAPIMux)            //For plugins API access
+-	entryMux.Handle("/", csrfMiddleware(webminPanelMux)) //For webmin UI access, require csrf token
++	//For webmin UI access, require csrf token. gorilla/csrf 1.7.3+ treats every request as
++	//HTTPS and checks Origin/Referer against https://; mark plain-HTTP requests so the
++	//panel on its default http listener keeps working.
++	webminCSRF := csrfMiddleware(webminPanelMux)
++	entryMux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		if r.TLS == nil {
++			r = csrf.PlaintextHTTPRequest(r)
++		}
++		webminCSRF.ServeHTTP(w, r)
++	}))
+ 
+ 	// Start the reverse proxy server in go routine
+ 	go func() {

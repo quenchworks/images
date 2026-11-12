@@ -1,0 +1,49 @@
+# Assembles the Zoraxy image. Nonroot uid 1001, multi-arch, SBOM by apko. Zoraxy keeps its
+# config, database and certificates under its working directory, /opt/zoraxy/data (the chart
+# mounts a volume there). The admin panel listens on 8000; proxy listeners are configured in
+# the panel (use ports above 1024, e.g. 8080/8443, since the image is not root).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-zoraxy@local
+
+accounts:
+  groups:
+    - groupname: zoraxy
+      gid: 1001
+  users:
+    - username: zoraxy
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  - path: /opt/zoraxy/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+work-dir: /opt/zoraxy/data
+
+entrypoint:
+  command: /usr/bin/zoraxy
+cmd: -port=:8000 -docker=true -mdns=false -default_inbound_port=8443
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-zoraxy"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"
