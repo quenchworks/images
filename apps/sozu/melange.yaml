@@ -1,0 +1,62 @@
+# Builds Sozu from the release tarball with `cargo auditable build`, so the crate list
+# lands in a .dep-v0 section and the gate scans every crate. Features match upstream's
+# Dockerfile: jemallocator and the ring crypto provider. command/build.rs runs
+# prost-build, which needs protoc.
+#
+# The default config (/etc/sozu/config.toml) is upstream's os-build/config.toml with the
+# listeners moved to 8080/8443 (the image runs as uid 1001) and the state, socket and
+# pid files under /var/lib/sozu and /run/sozu, both writable mounts in the chart.
+package:
+  name: quench-sozu
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Sozu (hot-reconfigurable reverse proxy), built from source on Wolfi"
+  copyright:
+    - license: AGPL-3.0-only
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - libgcc
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - cargo-auditable
+      - cmake
+      - protobuf-dev
+      - rust
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/sozu-proxy/sozu/archive/refs/tags/${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      # rust-toolchain pins 1.93.1 for rustup; build with Wolfi's toolchain instead.
+      rm -f rust-toolchain rust-toolchain.toml
+      cargo auditable build --release --locked -p sozu \
+        --no-default-features --features jemallocator,crypto-ring
+      readelf -S target/release/sozu | grep dep-v0 >/dev/null || { echo "sozu has no .dep-v0 section"; exit 1; }
+      install -Dm0755 target/release/sozu "${{targets.destdir}}/usr/bin/sozu"
+      "${{targets.destdir}}/usr/bin/sozu" --version | grep -F "${{package.version}}"
+      sed -e 's|^address = "0.0.0.0:80"$|address = "0.0.0.0:8080"|' \
+          -e 's|^address = "0.0.0.0:443"$|address = "0.0.0.0:8443"|' \
+          os-build/config.toml > config.toml
+      grep -F '0.0.0.0:8080' config.toml >/dev/null && grep -F '0.0.0.0:8443' config.toml >/dev/null \
+        || { echo "upstream config listeners moved; re-check the port rewrite"; exit 1; }
+      grep -F 'saved_state = "/var/lib/sozu/state.json"' config.toml >/dev/null \
+        && grep -F 'command_socket = "/run/sozu/sozu.sock"' config.toml >/dev/null \
+        || { echo "upstream config paths moved; re-check the writable mounts"; exit 1; }
+      install -Dm0644 config.toml "${{targets.destdir}}/etc/sozu/config.toml"
+
+test:
+  pipeline:
+    - runs: |
+        sozu --version

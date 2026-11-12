@@ -1,0 +1,50 @@
+# Assembles the Sozu runtime image. Nonroot uid 1001, multi-arch, SBOM by apko. Listeners on
+# 8080 (HTTP) and 8443 (HTTPS); state in /var/lib/sozu, command socket and pid in /run/sozu.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-sozu@local
+
+accounts:
+  groups:
+    - groupname: sozu
+      gid: 1001
+  users:
+    - username: sozu
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  - path: /var/lib/sozu
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /run/sozu
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /usr/bin/sozu
+cmd: start -c /etc/sozu/config.toml
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-sozu"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"
