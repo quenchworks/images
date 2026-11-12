@@ -1,0 +1,38 @@
+# Nebula runtime: nebula is the entrypoint (-config <file>); nebula-cert makes the CA and host certificates.
+# Nonroot 1001; a TUN interface needs NET_ADMIN and /dev/net/tun, a lighthouse can run with tun.disabled.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-nebula@local
+
+accounts:
+  groups:
+    - groupname: nebula
+      gid: 1001
+  users:
+    - username: nebula
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/nebula
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-nebula"
+  org.opencontainers.image.licenses: "MIT"
+  org.opencontainers.image.version: "__VER__"
