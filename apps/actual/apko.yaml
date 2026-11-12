@@ -1,0 +1,53 @@
+# Actual runtime: the sync server and the web client on 5006, data (server files and budgets) in
+# ACTUAL_DATA_DIR=/data (mount a volume there). Settings are ACTUAL_* environment variables.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-actual@local
+
+accounts:
+  groups:
+    - groupname: actual
+      gid: 1001
+  users:
+    - username: actual
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  NODE_ENV: production
+  ACTUAL_DATA_DIR: /data
+  ACTUAL_PORT: "5006"
+  ACTUAL_HOSTNAME: 0.0.0.0
+
+work-dir: /app
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /usr/bin/node /app/node_modules/@actual-app/sync-server/build/bin/actual-server.js
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-actual"
+  org.opencontainers.image.licenses: "MIT"
+  org.opencontainers.image.version: "__VER__"
