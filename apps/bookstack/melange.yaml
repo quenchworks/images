@@ -1,0 +1,250 @@
+# BookStack from the release tag with composer-installed vendor/, its nginx server block, php-fpm pool,
+# php.ini overrides and supervisord wiring. The PHP runtime and quench-nginx come from apko.
+package:
+  name: quench-bookstack
+  version: __VER__
+  epoch: 1
+  description: "Quenchworks hardened BookStack (release tag + composer) on Wolfi php-fpm + nginx"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - php-8.4
+      - php-8.4-config
+      - php-8.4-fpm
+      - php-8.4-fpm-config
+      - php-8.4-opcache
+      - php-8.4-opcache-config
+      - php-8.4-pdo
+      - php-8.4-pdo-config
+      - php-8.4-mysqlnd
+      - php-8.4-mysqlnd-config
+      - php-8.4-pdo_mysql
+      - php-8.4-pdo_mysql-config
+      - php-8.4-mysqli
+      - php-8.4-mysqli-config
+      - php-8.4-mbstring
+      - php-8.4-mbstring-config
+      - php-8.4-gd
+      - php-8.4-gd-config
+      - php-8.4-xml
+      - php-8.4-xml-config
+      - php-8.4-dom
+      - php-8.4-dom-config
+      - php-8.4-simplexml
+      - php-8.4-simplexml-config
+      - php-8.4-xmlwriter
+      - php-8.4-xmlwriter-config
+      - php-8.4-ctype
+      - php-8.4-ctype-config
+      - php-8.4-openssl
+      - php-8.4-openssl-config
+      - php-8.4-zip
+      - php-8.4-zip-config
+      - php-8.4-curl
+      - php-8.4-curl-config
+      - php-8.4-fileinfo
+      - php-8.4-fileinfo-config
+      - php-8.4-iconv
+      - php-8.4-iconv-config
+      - php-8.4-intl
+      - php-8.4-intl-config
+      - php-8.4-sodium
+      - php-8.4-sodium-config
+      - php-8.4-bcmath
+      - php-8.4-bcmath-config
+      - php-8.4-ldap
+      - php-8.4-ldap-config
+      - supervisor
+      - busybox
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - composer
+      - php-8.4
+      - php-8.4-config
+      - php-8.4-fpm
+      - php-8.4-fpm-config
+      - php-8.4-opcache
+      - php-8.4-opcache-config
+      - php-8.4-pdo
+      - php-8.4-pdo-config
+      - php-8.4-mysqlnd
+      - php-8.4-mysqlnd-config
+      - php-8.4-pdo_mysql
+      - php-8.4-pdo_mysql-config
+      - php-8.4-mysqli
+      - php-8.4-mysqli-config
+      - php-8.4-mbstring
+      - php-8.4-mbstring-config
+      - php-8.4-gd
+      - php-8.4-gd-config
+      - php-8.4-xml
+      - php-8.4-xml-config
+      - php-8.4-dom
+      - php-8.4-dom-config
+      - php-8.4-simplexml
+      - php-8.4-simplexml-config
+      - php-8.4-xmlwriter
+      - php-8.4-xmlwriter-config
+      - php-8.4-ctype
+      - php-8.4-ctype-config
+      - php-8.4-openssl
+      - php-8.4-openssl-config
+      - php-8.4-zip
+      - php-8.4-zip-config
+      - php-8.4-curl
+      - php-8.4-curl-config
+      - php-8.4-fileinfo
+      - php-8.4-fileinfo-config
+      - php-8.4-iconv
+      - php-8.4-iconv-config
+      - php-8.4-intl
+      - php-8.4-intl-config
+      - php-8.4-sodium
+      - php-8.4-sodium-config
+      - php-8.4-bcmath
+      - php-8.4-bcmath-config
+      - php-8.4-ldap
+      - php-8.4-ldap-config
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/BookStackApp/BookStack/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Install BookStack with its PHP dependencies at /var/www/bookstack
+    runs: |
+      set -eu
+      export COMPOSER_HOME="$(mktemp -d)" COMPOSER_ALLOW_SUPERUSER=1
+      composer install --no-dev --no-interaction --no-progress --optimize-autoloader --classmap-authoritative
+      grep -qx "v${{package.version}}" version
+      app="${{targets.destdir}}/var/www/bookstack"
+      install -d -m 0755 "$app"
+      # the workspace also holds melange-out/; dev/ and tests/ are development trees
+      for f in *; do case "$f" in melange-out|dev|tests|node_modules) ;; *) cp -a "$f" "$app/" ;; esac; done
+      rm -f "$app"/package*.json "$app"/eslint.config.mjs "$app"/jest.config.ts "$app"/tsconfig.json "$app"/phpcs.xml "$app"/phpstan.neon.dist "$app"/phpunit.xml "$app"/docker-compose.yml "$app"/crowdin.yml
+      test -f "$app/public/dist/app.js" && test -f "$app/vendor/autoload.php"
+      php -l "$app/public/index.php" >/dev/null
+
+  - name: Install nginx, php-fpm and supervisord wiring
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/etc/nginx/conf.d" "$d/etc/php/php-fpm.d" "$d/etc/php/conf.d" "$d/etc/bookstack" "$d/etc/supervisor.d"
+      cat > "$d/etc/nginx/conf.d/bookstack.conf" <<'EOF'
+      server {
+          listen 8080 default_server;
+          listen [::]:8080 default_server;
+          server_name _;
+          # only public/ is served; the app, storage and vendor stay outside the docroot
+          root /var/www/bookstack/public;
+          index index.php;
+          client_max_body_size 100M;
+          access_log off;
+
+          location ~ /\.                     { return 403; }
+          location / { try_files $uri $uri/ /index.php$is_args$args; }
+
+          location ~ \.php$ {
+              try_files $uri =404;
+              include        /etc/nginx/fastcgi_params;
+              fastcgi_param  SCRIPT_FILENAME $document_root$fastcgi_script_name;
+              fastcgi_pass   127.0.0.1:9000;
+              fastcgi_read_timeout 300;
+          }
+
+          location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff2?)$ { expires 7d; access_log off; }
+      }
+      EOF
+      cat > "$d/etc/php/php-fpm.d/zzz-bookstack.conf" <<'EOF'
+      [global]
+      daemonize = no
+      error_log = /proc/self/fd/2
+
+      [www]
+      listen = 127.0.0.1:9000
+      catch_workers_output = yes
+      decorate_workers_output = no
+      ; Laravel reads APP_KEY, DB_* and friends from the environment
+      clear_env = no
+      pm = dynamic
+      pm.max_children = 16
+      pm.start_servers = 2
+      pm.min_spare_servers = 1
+      pm.max_spare_servers = 4
+      EOF
+      cat > "$d/etc/php/conf.d/zzz-bookstack.ini" <<'EOF'
+      expose_php = Off
+      memory_limit = 256M
+      upload_max_filesize = 100M
+      post_max_size = 100M
+      sys_temp_dir = /tmp
+      upload_tmp_dir = /tmp
+      session.save_path = /tmp
+      session.cookie_httponly = 1
+      session.use_strict_mode = 1
+      display_errors = Off
+      log_errors = On
+      error_log = /proc/self/fd/2
+      date.timezone = UTC
+      opcache.enable = 1
+      opcache.memory_consumption = 64
+      opcache.revalidate_freq = 2
+      EOF
+      cat > "$d/etc/bookstack/supervisord.conf" <<'EOF'
+      [supervisord]
+      nodaemon=true
+      logfile=/dev/stdout
+      logfile_maxbytes=0
+      pidfile=/tmp/supervisord.pid
+
+      [unix_http_server]
+      file=/tmp/supervisor.sock
+
+      [supervisorctl]
+      serverurl=unix:///tmp/supervisor.sock
+
+      [rpcinterface:supervisor]
+      supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+
+      [include]
+      files = /etc/supervisor.d/*.conf
+      EOF
+      cat > "$d/etc/supervisor.d/php-fpm.conf" <<'EOF'
+      [program:php-fpm]
+      command=/usr/bin/php-fpm --nodaemonize --fpm-config /etc/php/php-fpm.conf
+      autorestart=true
+      priority=10
+      stdout_logfile=/dev/stdout
+      stdout_logfile_maxbytes=0
+      stderr_logfile=/dev/stderr
+      stderr_logfile_maxbytes=0
+      EOF
+      cat > "$d/etc/supervisor.d/nginx.conf" <<'EOF'
+      [program:nginx]
+      command=/usr/bin/nginx -g "daemon off;"
+      autorestart=true
+      priority=20
+      stdout_logfile=/dev/stdout
+      stdout_logfile_maxbytes=0
+      stderr_logfile=/dev/stderr
+      stderr_logfile_maxbytes=0
+      EOF
+
+test:
+  pipeline:
+    - runs: |
+        set -eu
+        test -f /var/www/bookstack/public/index.php
+        for ext in pdo_mysql mbstring gd xml dom simplexml ctype openssl zip curl fileinfo intl sodium session; do
+          php -m | grep -qi "^${ext}$" || { echo "missing PHP extension: $ext"; exit 1; }
+        done
+        command -v php-fpm

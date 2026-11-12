@@ -1,0 +1,188 @@
+# BookStack runtime: migrates the database, then supervisord runs php-fpm 8.4 and quench-nginx
+# (port 8080). Writable: storage/ (uploads, logs, framework caches), public/uploads (images) and
+# bootstrap/cache. Settings are Laravel environment variables (APP_KEY, APP_URL, DB_*).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - busybox
+    - tzdata
+    - supervisor
+    - quench-nginx@local
+    - quench-bookstack@local
+    - php-8.4
+    - php-8.4-config
+    - php-8.4-fpm
+    - php-8.4-fpm-config
+    - php-8.4-opcache
+    - php-8.4-opcache-config
+    - php-8.4-pdo
+    - php-8.4-pdo-config
+    - php-8.4-mysqlnd
+    - php-8.4-mysqlnd-config
+    - php-8.4-pdo_mysql
+    - php-8.4-pdo_mysql-config
+    - php-8.4-mysqli
+    - php-8.4-mysqli-config
+    - php-8.4-mbstring
+    - php-8.4-mbstring-config
+    - php-8.4-gd
+    - php-8.4-gd-config
+    - php-8.4-xml
+    - php-8.4-xml-config
+    - php-8.4-dom
+    - php-8.4-dom-config
+    - php-8.4-simplexml
+    - php-8.4-simplexml-config
+    - php-8.4-xmlwriter
+    - php-8.4-xmlwriter-config
+    - php-8.4-ctype
+    - php-8.4-ctype-config
+    - php-8.4-openssl
+    - php-8.4-openssl-config
+    - php-8.4-zip
+    - php-8.4-zip-config
+    - php-8.4-curl
+    - php-8.4-curl-config
+    - php-8.4-fileinfo
+    - php-8.4-fileinfo-config
+    - php-8.4-iconv
+    - php-8.4-iconv-config
+    - php-8.4-intl
+    - php-8.4-intl-config
+    - php-8.4-sodium
+    - php-8.4-sodium-config
+    - php-8.4-bcmath
+    - php-8.4-bcmath-config
+    - php-8.4-ldap
+    - php-8.4-ldap-config
+
+accounts:
+  groups:
+    - groupname: bookstack
+      gid: 1001
+  users:
+    - username: bookstack
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# supervisord (PID 1) starts php-fpm then nginx. No shell wrapper: supervisord parses the
+# program commands itself, and quench-nginx's own nginx.conf already puts the pid and all
+# temp paths under /tmp, so nothing has to be mkdir'd at boot.
+# The schema first, then the web stack: nothing serves until the migration has finished.
+entrypoint:
+  command: /bin/sh -c "php /var/www/bookstack/artisan migrate --force --no-interaction && exec /usr/bin/supervisord -c /etc/bookstack/supervisord.conf"
+
+work-dir: /var/www/bookstack
+
+paths:
+  # /tmp holds supervisord pid/sock, nginx pid + temp dirs and PHP sessions/uploads.
+  - path: /tmp
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o1777
+  # BookStack's writable trees (every directory, as Laravel writes into the subdirectories)
+  - path: /var/www/bookstack/bootstrap/cache
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/www/bookstack/public/uploads
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/www/bookstack/storage
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/www/bookstack/storage/app
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/www/bookstack/storage/backups
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/www/bookstack/storage/clockwork
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/www/bookstack/storage/fonts
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/www/bookstack/storage/fonts/dompdf
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/www/bookstack/storage/fonts/dompdf/cache
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/www/bookstack/storage/framework
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/www/bookstack/storage/framework/cache
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/www/bookstack/storage/framework/sessions
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/www/bookstack/storage/framework/views
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/www/bookstack/storage/logs
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/www/bookstack/storage/uploads
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/www/bookstack/storage/uploads/files
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/www/bookstack/storage/uploads/images
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-bookstack"
+  org.opencontainers.image.licenses: "MIT"
