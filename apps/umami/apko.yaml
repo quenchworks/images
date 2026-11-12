@@ -1,0 +1,47 @@
+# Umami runtime: scripts/start-docker.sh migrates the database (DATABASE_URL) and starts the Next.js server on 3000.
+# Nonroot 1001, so listen on ports above 1023 unless the pod grants NET_BIND_SERVICE.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-umami@local
+
+accounts:
+  groups:
+    - groupname: umami
+      gid: 1001
+  users:
+    - username: umami
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  NODE_ENV: production
+  NEXT_TELEMETRY_DISABLED: "1"
+  HOSTNAME: 0.0.0.0
+  PORT: "3000"
+  PRISMA_SCHEMA_ENGINE_BINARY: /app/schema-engine
+
+work-dir: /app
+
+entrypoint:
+  command: /bin/sh /app/scripts/start-docker.sh
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-umami"
+  org.opencontainers.image.licenses: "MIT"
+  org.opencontainers.image.version: "__VER__"

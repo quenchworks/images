@@ -1,0 +1,83 @@
+# Umami from the release tag, laid out like upstream's image (Next.js standalone under /app).
+package:
+  name: quench-umami
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Umami web analytics, built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - busybox            # scripts/start-docker.sh
+      - ca-certificates-bundle
+      - nodejs-24
+      - openssl-3.6-libssl # Prisma's schema engine links libssl.so.3 (Wolfi openssl is 4)
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - nodejs-24
+      - npm
+      - openssl-3.6-libssl
+      - python3
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/umami-software/umami/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Build
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" npm_config_cache="$(mktemp -d)" NEXT_TELEMETRY_DISABLED=1
+      export DATABASE_URL="postgresql://user:pass@localhost:5432/dummy" SKIP_BUILD_GEO=1
+      case "$(uname -m)" in aarch64) PT=linux-arm64-openssl-3.0.x ;; *) PT=debian-openssl-3.0.x ;; esac
+      export PRISMA_CLI_BINARY_TARGETS="$PT"
+      npm install -g --prefix "$HOME/.npm-global" pnpm@12.3.4
+      export PATH="$HOME/.npm-global/bin:$PATH"
+      pnpm --version
+      printf 'strictDepBuilds: false\n' >> pnpm-workspace.yaml
+      pnpm install --frozen-lockfile
+      cp docker/proxy.ts src/
+      pnpm build:docker
+
+  - name: Runtime tree
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" npm_config_cache="$(mktemp -d)"
+      case "$(uname -m)" in aarch64) PT=linux-arm64-openssl-3.0.x ;; *) PT=debian-openssl-3.0.x ;; esac
+      export PATH="$HOME/.npm-global/bin:$PATH" PRISMA_CLI_BINARY_TARGETS="$PT"
+      npm install -g --prefix "$HOME/.npm-global" pnpm@12.3.4
+      R="${{targets.destdir}}/app"
+      install -d "$R"
+      # upstream's runner stage: a small package.json with the CLIs start-docker.sh needs
+      PV="$(node -p 'require("./package.json").dependencies.prisma.replace(/^[^0-9]*/,"")')"
+      ( cd "$R"
+        echo '{}' > package.json
+        printf "allowBuilds:\n  '@prisma/engines': true\n  prisma: false\nverifyDepsBeforeRun: false\n" > pnpm-workspace.yaml
+        # CVE floors for the prisma CLI's tree: deepmerge-ts CVE-2026-40345 (8.x keeps deepmerge()),
+        # mysql2 GHSA-3f6p-5ww8-9rcr + GHSA-rgwj-5xj2-c3m3 (@prisma/dev, unused with PostgreSQL)
+        printf "overrides:\n  deepmerge-ts: 8.0.2\n  mysql2: 3.24.6\n" >> pnpm-workspace.yaml
+        pnpm add npm-run-all dotenv chalk semver "prisma@$PV" "@prisma/client@$PV" "@prisma/adapter-pg@$PV"
+        # a fixed path for PRISMA_SCHEMA_ENGINE_BINARY (apko), since detection would ask for 1.1.x
+        e="$(ls node_modules/.pnpm/@prisma+engines@*/node_modules/@prisma/engines/schema-engine-$PT)"
+        ln -s "$e" schema-engine )
+      test -x "$R/schema-engine"
+      cp -a public prisma prisma.config.ts scripts generated "$R/"
+      cp -a .next/standalone/. "$R/"
+      install -d "$R/.next"
+      cp -a .next/static "$R/.next/static"
+      grep -q "\"version\": \"${{package.version}}\"" package.json
+
+test:
+  pipeline:
+    - runs: |
+        test -f /app/server.js
