@@ -1,0 +1,54 @@
+# Vaultwarden runtime: serves the API and /web-vault on 8080 and keeps its database, keys and
+# attachments in /data (mount a volume there). Settings are environment variables.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-vaultwarden@local
+
+accounts:
+  groups:
+    - groupname: vaultwarden
+      gid: 1001
+  users:
+    - username: vaultwarden
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  ROCKET_PROFILE: release
+  ROCKET_ADDRESS: 0.0.0.0
+  ROCKET_PORT: "8080"
+  DATA_FOLDER: /data
+  WEB_VAULT_FOLDER: /web-vault
+
+work-dir: /
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /usr/bin/vaultwarden
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-vaultwarden"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"
+  org.opencontainers.image.version: "__VER__"
