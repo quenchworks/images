@@ -1,0 +1,86 @@
+# Builds PgDog from the release tarball with `cargo auditable build`, so the crate list lands
+# in a .dep-v0 section and the gate scans every crate. Like upstream's Dockerfile it builds
+# the pgdog binary and the primary-only-tables plugin. At 0.1.64 the lockfile carried rustls
+# 0.23.40, hickory-proto/resolver 0.25.2 (one advisory unfixed on 0.25), postgres-protocol
+# 0.6.11, tokio-postgres 0.7.17, aws-smithy-json 0.62.6 and cmov 0.5.3. hickory-026.patch
+# moves pgdog to hickory-resolver 0.26 (one file, plus an error variant) and pins
+# pgdog-config's `rand = "*"` to 0.10, the version upstream's lock resolved it to.
+package:
+  name: quench-pgdog
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened PgDog (PostgreSQL pooler, load balancer and sharding proxy), built from source on Wolfi"
+  copyright:
+    - license: AGPL-3.0-only
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - libgcc
+      - libstdc++
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - bison                  # pg_internals builds PostgreSQL's parser sources
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - cargo-auditable
+      - clang-21
+      - llvm-21-dev
+      - cmake
+      - flex
+      - git
+      - icu-dev
+      - openssl-dev
+      - patch
+      - perl
+      - pkgconf
+      - protobuf-dev
+      - readline-dev
+      - rust
+      - zlib-dev
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/pgdogdev/pgdog/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      # rust-toolchain.toml pins rustup's channel; build with Wolfi's toolchain. The repo's
+      # .cargo/config.toml links through clang + mold; drop those target sections and keep
+      # the rest (tokio_unstable, RUST_MIN_STACK).
+      rm -f rust-toolchain rust-toolchain.toml
+      sed -i '/^\[target\.x86_64-unknown-linux-gnu\]/,/^# Bump reserved stack/{/^# Bump reserved stack/!d}' .cargo/config.toml
+      ! grep mold .cargo/config.toml
+      patch -p1 < hickory-026.patch
+      cargo update -p hickory-resolver
+      cargo update -p rustls --precise 0.23.46
+      cargo update -p tokio-postgres --precise 0.7.18   # also lifts postgres-protocol to 0.6.12
+      cargo update -p aws-smithy-json -p cmov
+      # floors, read back from the lockfile (a no-op update must not pass silently)
+      for want in hickory-resolver:0.26.2 hickory-proto:0.26.1 rustls:0.23.46 tokio-postgres:0.7.18 aws-smithy-json:0.62.7 cmov:0.5.4; do
+        n="${want%%:*}"; f="${want#*:}"
+        for v in $(awk -v n="$n" '$0=="name = \""n"\"" {getline; gsub(/version = |"/,""); print}' Cargo.lock); do
+          [ "$(printf '%s\n%s\n' "$v" "$f" | sort -V | head -1)" = "$f" ] || { echo "$n $v is below $f"; exit 1; }
+        done
+      done
+      if awk '$0=="name = \"postgres-protocol\"" {getline; print}' Cargo.lock | grep '"0.6.11"'; then echo "postgres-protocol 0.6.11 still locked"; exit 1; fi
+      # build.rs stamps --version from GIT_HASH, else `git rev-parse` (no .git in a tarball)
+      export GIT_HASH="${{package.version}}"
+      cargo auditable build --release --locked -p pgdog
+      cargo auditable build --release --locked -p pgdog-primary-only-tables
+      readelf -S target/release/pgdog | grep dep-v0 >/dev/null || { echo "pgdog has no .dep-v0 section"; exit 1; }
+      install -Dm0755 target/release/pgdog "${{targets.destdir}}/usr/bin/pgdog"
+      install -Dm0755 target/release/libpgdog_primary_only_tables.so "${{targets.destdir}}/usr/lib/libpgdog_primary_only_tables.so"
+      "${{targets.destdir}}/usr/bin/pgdog" --version | grep -F "${{package.version}}"
+
+test:
+  pipeline:
+    - runs: |
+        pgdog --version

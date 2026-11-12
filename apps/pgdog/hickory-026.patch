@@ -1,0 +1,66 @@
+--- a/pgdog/Cargo.toml
++++ b/pgdog/Cargo.toml
+@@ -63,7 +63,7 @@
+ sha1 = "0.10"
+ indexmap.workspace = true
+ lru = "0.16"
+-hickory-resolver = "0.25.2"
++hickory-resolver = "0.26.2"
+ lazy_static = "1"
+ dashmap = "6"
+ moka = { version = "0.12", features = ["sync"] }
+--- a/pgdog-config/Cargo.toml
++++ b/pgdog-config/Cargo.toml
+@@ -11,7 +11,7 @@
+ toml = "0.8"
+ url = "2"
+ uuid.workspace = true
+-rand = "*"
++rand = "0.10"
+ pgdog-vector = { path = "../pgdog-vector" }
+ once_cell = "*"
+ schemars.workspace = true
+--- a/pgdog/src/backend/pool/dns_cache.rs
++++ b/pgdog/src/backend/pool/dns_cache.rs
+@@ -5,7 +5,7 @@
+ //! hostname cache hits so callers resolve DNS on every request. IP literals are
+ //! returned directly and are not stored in the cache.
+ 
+-use hickory_resolver::{Resolver, name_server::TokioConnectionProvider};
++use hickory_resolver::TokioResolver;
+ use once_cell::sync::Lazy;
+ use parking_lot::RwLock;
+ use std::collections::HashMap;
+@@ -37,7 +37,7 @@
+ 
+ /// Shared hostname-to-IP cache backed by the system DNS resolver.
+ pub(crate) struct DnsCache {
+-    resolver: Arc<Resolver<TokioConnectionProvider>>,
++    resolver: Arc<TokioResolver>,
+     cache: Arc<RwLock<HashMap<String, CacheEntry>>>,
+ }
+ 
+@@ -56,9 +56,10 @@
+     /// Create a new DNS cache instance.
+     pub(crate) fn new() -> Self {
+         // Initialize the Resolver with system config (e.g., /etc/resolv.conf on Unix)
+-        let resolver = Resolver::builder(TokioConnectionProvider::default())
++        let resolver = TokioResolver::builder_tokio()
+             .unwrap()
+-            .build();
++            .build()
++            .unwrap();
+ 
+         DnsCache {
+             resolver: Arc::new(resolver),
+--- a/pgdog/src/backend/error.rs
++++ b/pgdog/src/backend/error.rs
+@@ -85,7 +85,7 @@
+     TlsRequired,
+ 
+     #[error("{0}")]
+-    DnsLookupError(#[from] hickory_resolver::ResolveError),
++    DnsLookupError(#[from] hickory_resolver::net::NetError),
+ 
+     #[error("could not resolve to any address for hostname {0}")]
+     DnsResolutionFailed(String),

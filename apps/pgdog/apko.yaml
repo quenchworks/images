@@ -1,0 +1,42 @@
+# Assembles the PgDog runtime image. Nonroot uid 1001, multi-arch, SBOM by apko. PgDog reads
+# pgdog.toml and users.toml from its working directory (/etc/pgdog); the chart mounts both.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-pgdog@local
+
+accounts:
+  groups:
+    - groupname: pgdog
+      gid: 1001
+  users:
+    - username: pgdog
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+work-dir: /etc/pgdog
+
+environment:
+  RUST_LOG: info
+
+entrypoint:
+  command: /usr/bin/pgdog
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-pgdog"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"
