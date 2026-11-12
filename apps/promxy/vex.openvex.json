@@ -1,0 +1,61 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/promxy/2026-11-12",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-12T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-33997"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/docker/docker@v28.5.2%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "CVE-2026-33997 is a privilege-validation bypass in the Moby daemon's plugin installation; promxy links no plugin manager or daemon and never calls the client's plugin endpoints. The fix (29.3.1) exists only under the github.com/moby/moby module path, so the +incompatible module cannot be floated to it. Verified for promxy v0.0.97: the upstream release binary contains 0 Go symbol names under docker/docker or moby/moby daemon, plugin or api/server (grep -c on the binary), while docker/docker/client and api/types symbols are present, so the search sees the module. Promxy reaches the module only through Prometheus' Docker service discovery, a client. The recipe runs go list -deps ./cmd/promxy and a daemon-path grep on every build output and fails the build if either finds daemon code."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-41567"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/docker/docker@v28.5.2%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "CVE-2026-41567 is in the Moby/Docker daemon: a malicious image making the daemon run its own decompression binary on PUT /containers/{id}/archive. No fix exists on either module path (only moby/moby/v2 2.0.0-beta.14). The image runs no dockerd. Verified for promxy v0.0.97: the upstream release binary contains 0 Go symbol names under docker/docker or moby/moby daemon, plugin or api/server (grep -c on the binary), while docker/docker/client and api/types symbols are present, so the search sees the module. Promxy reaches the module only through Prometheus' Docker service discovery, a client. The recipe runs go list -deps ./cmd/promxy and a daemon-path grep on every build output and fails the build if either finds daemon code."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-42306"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/docker/docker@v28.5.2%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "CVE-2026-42306 is in the Moby/Docker daemon: a race in docker cp mount setup that redirects a bind mount to a host path. No fix exists on either module path. The image runs no dockerd. Verified for promxy v0.0.97: the upstream release binary contains 0 Go symbol names under docker/docker or moby/moby daemon, plugin or api/server (grep -c on the binary), while docker/docker/client and api/types symbols are present, so the search sees the module. Promxy reaches the module only through Prometheus' Docker service discovery, a client. The recipe runs go list -deps ./cmd/promxy and a daemon-path grep on every build output and fails the build if either finds daemon code."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-41568"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/docker/docker@v28.5.2%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "CVE-2026-41568 is in the Moby/Docker daemon: a race in docker cp mountpoint creation that creates files at host paths. No fix exists on either module path. The image runs no dockerd. Verified for promxy v0.0.97: the upstream release binary contains 0 Go symbol names under docker/docker or moby/moby daemon, plugin or api/server (grep -c on the binary), while docker/docker/client and api/types symbols are present, so the search sees the module. Promxy reaches the module only through Prometheus' Docker service discovery, a client. The recipe runs go list -deps ./cmd/promxy and a daemon-path grep on every build output and fails the build if either finds daemon code."
+    }
+  ]
+}
