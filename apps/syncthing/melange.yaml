@@ -1,0 +1,56 @@
+# Syncthing from the release tag with upstream's build.go: CGO-free (modernc sqlite), no self-upgrade.
+package:
+  name: quench-syncthing
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Syncthing file synchronisation, built from source on Wolfi"
+  copyright:
+    - license: MPL-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - go-1.27
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/syncthing/syncthing/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - runs: |
+      set -eu
+      export CGO_ENABLED=0 GOTOOLCHAIN=local GOFLAGS=-mod=mod
+      # floors, raised only when below (a bare go get downgrades once upstream passes it)
+      FLOOR="golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/net@v0.62.0 golang.org/x/text@v0.43.0 golang.org/x/sys@v0.49.0"
+      # 2.0 line: go-ntlmssp CVE-2026-32952, quic-go CVE-2026-40898 (2.1 already carries both)
+      FLOOR="$FLOOR github.com/Azure/go-ntlmssp@v0.1.1 github.com/quic-go/quic-go@v0.59.1"
+      need=""
+      for f in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${f%@*}")"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        [ "$(printf '%s\n%s\n' "$have" "${f#*@}" | sort -V | head -1)" = "${f#*@}" ] || need="$need $f"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
+      go mod tidy
+      # build.go reads git for the stamp, user and host; the tarball has no .git
+      export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-0}" BUILD_USER=quenchworks BUILD_HOST=quenchworks
+      go run build.go -version "v${{package.version}}" -no-upgrade build syncthing
+      install -Dm755 syncthing "${{targets.destdir}}/usr/bin/syncthing"
+      "${{targets.destdir}}/usr/bin/syncthing" --version | grep -F "v${{package.version}} "
+
+test:
+  pipeline:
+    - runs: |
+        syncthing --version

@@ -1,0 +1,53 @@
+# Syncthing runtime: `syncthing serve` with config and database under /var/syncthing (mount a volume
+# there), the GUI/REST API on 8384, sync on 22000 (TCP + QUIC), local discovery on 21027/udp.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-syncthing@local
+
+accounts:
+  groups:
+    - groupname: syncthing
+      gid: 1001
+  users:
+    - username: syncthing
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  STHOMEDIR: /var/syncthing/config
+  STGUIADDRESS: 0.0.0.0:8384
+  STNOUPGRADE: "1"
+  HOME: /var/syncthing
+
+work-dir: /var/syncthing
+
+paths:
+  - path: /var/syncthing
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /usr/bin/syncthing serve --no-browser
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-syncthing"
+  org.opencontainers.image.licenses: "MPL-2.0"
+  org.opencontainers.image.version: "__VER__"
