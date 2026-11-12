@@ -95,7 +95,8 @@ pipeline:
       # 'undici@<6.28.0': 6.28.0 below covers that edge and forces the re-resolution.
       # Ghost's own axios entry (axios@<1.15.2: ^1.15.2) is a caret the lockfile already
       # satisfies at the flagged 1.18.1, so it is superseded by the exact pin below too.
-      drops=("tar@<7.5.21:", "undici@<6.24.0:", "axios@<1.15.2:")
+      # Ghost's own fast-xml-parser@<x entry (if any) is superseded by our exact pin below.
+      drops=("tar@<7.5.21:", "undici@<6.24.0:", "axios@<1.15.2:", "fast-xml-parser@")
       add=[
         "  babel-traverse: 'npm:@babel/traverse@7.23.2'",  # CVE-2023-45133 rename fix
         "  'mppx@<0.8.2': 0.8.2",                # CVE-2026-63627/63628, new in Ghost 6.65.0's
@@ -209,6 +210,7 @@ pipeline:
         "  'compression@<1.8.2': 1.8.2",         # CVE-2026-87776 HIGH (2026-10-06 scan)
         "  'source-map-js@<1.2.2': 1.2.2",       # CVE-2026-93749 HIGH (2026-10-06 scan; pnpm, no npm-12 cooldown)
         "  'handlebars@<4.7.10': 4.7.10",        # CVE-2026-106444/106445/106446 (2 CRITICAL); same deps, CJS
+        "  'fast-xml-parser@<5.12.0': 5.12.0",   # CVE-2026-126066 (2026-11-12; 5.10.1 and 5.11.2 copies)
       ]
       out=[]
       done=False; dropped=set()
@@ -342,7 +344,10 @@ pipeline:
       copies = sorted(os.path.join(r, 'brace-expansion', 'package.json')
                       for r, dirs, _ in os.walk('node_modules') if 'brace-expansion' in dirs)
       assert copies, "brace-expansion not found under node_modules"
-      stale = [p for p in copies if json.load(open(p))['version'] != '5.0.12']  # CVE-2026-102276/-102278 sit on 5.0.9/5.0.10
+      # CVE-2026-102276/-102278 sit on 5.0.9/5.0.10. A newer 5.x patch (6.67.0's lock resolves
+      # minimatch 11.0.1 to brace-expansion 5.0.13) is fine; anything below 5.0.12 or off 5.x is not.
+      def ver(p): return tuple(int(x) for x in json.load(open(p))['version'].split('.')[:3])
+      stale = [p for p in copies if not ((5, 0, 12) <= ver(p) < (6, 0, 0))]
       assert not stale, "override missed brace-expansion copies: %s" % stale
       n = 0
       for pj in copies:
