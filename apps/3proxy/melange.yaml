@@ -1,0 +1,65 @@
+# Builds 3proxy from the release tarball with upstream's Makefile.Linux (as Dockerfile.full
+# does, without LIBSTATIC): 3proxy plus its plugins, against Wolfi OpenSSL and PCRE2.
+# The default config is closed: strong authentication with no users, so nothing is proxied
+# until users are configured (the chart writes the config and a users file).
+package:
+  name: quench-3proxy
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened 3proxy (HTTP/SOCKS proxy suite), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - libssl3
+      - pcre2
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - linux-headers
+      - openssl-dev
+      - pcre2-dev
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/3proxy/3proxy/archive/refs/tags/${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      mkdir -p bin
+      make -f Makefile.Linux PAM_CHECK=false
+      D="${{targets.destdir}}"
+      install -Dm0755 bin/3proxy "$D/usr/bin/3proxy"
+      install -d "$D/usr/local/3proxy/libexec"
+      for so in bin/*.so; do install -m0755 "$so" "$D/usr/local/3proxy/libexec/"; done
+      strip "$D/usr/bin/3proxy" "$D"/usr/local/3proxy/libexec/*.so
+      # no version flag: the version string is compiled in (src/version.h)
+      grep -c "3proxy-${{package.version}}" "$D/usr/bin/3proxy" >/dev/null
+      install -d "$D/etc/3proxy"
+      # no users line: an empty `users $file` include is a parse error, and `auth strong`
+      # with no users already refuses everyone
+      printf '%s\n' \
+        '# QuenchWorks default: closed. Add users (users name:CL:password, or users $/path)' \
+        '# to proxy anything. HTTP proxy on 3128, SOCKS on 1080.' \
+        'nscache 65536' \
+        'log' \
+        'auth strong' \
+        'deny * * 127.0.0.0/8' \
+        'allow *' \
+        'proxy -p3128' \
+        'socks -p1080' > "$D/etc/3proxy/3proxy.cfg"
+
+test:
+  pipeline:
+    - runs: |
+        3proxy --help 2>&1 | grep -i usage
