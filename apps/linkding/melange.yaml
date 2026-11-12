@@ -1,0 +1,93 @@
+# linkding from the release tag, laid out like upstream's image under /etc/linkding.
+package:
+  name: quench-linkding
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened linkding bookmark manager, built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - busybox            # bootstrap.sh is a shell script
+      - ca-certificates-bundle
+      - icu-libs           # the SQLite ICU extension (libicu.so) links ICU
+      - python-3.13        # the venv references the system interpreter
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - curl
+      - icu-dev
+      - nodejs-24
+      - npm
+      - pcre2-dev
+      - postgresql-17-dev  # libpq for psycopg[c]
+      - python-3.13
+      - python-3.13-dev
+      - sqlite-dev
+      - uv
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/sissbruecker/linkding/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Frontend
+    runs: |
+      set -eu
+      export npm_config_cache="$(mktemp -d)" HOME="$(mktemp -d)"
+      npm ci
+      npm run build
+      test -d bookmarks/static
+
+  - name: Python app
+    runs: |
+      set -eu
+      export UV_PYTHON=/usr/bin/python3.13 UV_PYTHON_DOWNLOADS=never UV_CACHE_DIR="$(mktemp -d)" UV_LINK_MODE=copy
+      # upstream's lockfile, production deps and psycopg built from source
+      uv sync --frozen --no-dev --group postgres
+      # floors over upstream's lock for fixed advisories (Django CVE-2026-15307, PyJWT
+      # CVE-2026-102268 and -101918, certifi GHSA-6q48-6c7w-9gw2, DRF CVE-2026-114136, soupsieve
+      # CVE-2026-85999, urllib3 CVE-2026-97687); same majors, so the app is unchanged
+      uv pip install --python .venv/bin/python 'django==6.0.8' 'pyjwt==2.15.0' 'certifi==2026.10.18' \
+        'djangorestframework==3.18.2' 'soupsieve==2.9.0' 'urllib3==2.8.0'
+      # upstream's SQLite ICU extension (case-insensitive search in non-ASCII text); the source
+      # file is pinned to the revision upstream's Dockerfile names
+      curl -fsSL -o icu.c 'https://www.sqlite.org/src/raw/ext/icu/icu.c?name=91c021c7e3e8bbba286960810fa303295c622e323567b2e6def4ce58e4466e60'
+      echo "0e410b139a7cdb2655cf419515d59600453c7a8d74a1bd1fab1eba43baf1bfe5  icu.c" | sha256sum -c -
+      gcc -fPIC -shared icu.c $(pkg-config --libs --cflags icu-uc icu-i18n icu-io) -o libicu.so
+      rm icu.c
+      # collectstatic opens the SQLite database in data/, as upstream's Dockerfile prepares
+      mkdir -p data
+      .venv/bin/python manage.py collectstatic --noinput >/dev/null
+      rm -rf data
+      .venv/bin/python -c "import django, psycopg; print('django', django.get_version())"
+      test -x .venv/bin/uwsgi && test -x .venv/bin/supervisord
+      cat version.txt
+
+  - name: Install
+    runs: |
+      set -eu
+      D="${{targets.destdir}}/etc/linkding"
+      install -d "$D"
+      rm -rf node_modules .devcontainer .github docs scripts/__pycache__
+      # the workspace holds melange-out (the package being built): copy everything else
+      tar -cf - --exclude=./melange-out . | tar -xf - -C "$D"
+      install -d "$D/data"
+      # the venv was built here; its scripts must point at its final home
+      sed -i "s|$(pwd)/.venv|/etc/linkding/.venv|g" "$D"/.venv/bin/* 2>/dev/null || true
+      grep -F "${{package.version}}" "$D/version.txt"
+
+test:
+  pipeline:
+    - runs: |
+        /etc/linkding/.venv/bin/python -c "import django; print(django.get_version())"

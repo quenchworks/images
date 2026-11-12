@@ -1,0 +1,55 @@
+# Assembles the linkding image: Wolfi python-3.13, nonroot uid 1001, upstream's layout under
+# /etc/linkding. bootstrap.sh runs the migrations and starts uWSGI on 9090 (and the background
+# task runner); persistent state lives in /etc/linkding/data, which should be a volume.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-linkding@local
+
+accounts:
+  groups:
+    - groupname: linkding
+      gid: 1001
+  users:
+    - username: linkding
+      uid: 1001
+      gid: 1001
+      homedir: /etc/linkding
+  run-as: 1001
+
+paths:
+  - path: /etc/linkding/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  VIRTUAL_ENV: /etc/linkding/.venv
+  PATH: /etc/linkding/.venv/bin:/usr/sbin:/sbin:/usr/bin:/bin
+  PYTHONUNBUFFERED: "1"
+  UWSGI_MAX_FD: "4096"
+
+work-dir: /etc/linkding
+
+entrypoint:
+  command: /bin/sh /etc/linkding/bootstrap.sh
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-linkding"
+  org.opencontainers.image.licenses: "MIT"
+  org.opencontainers.image.version: "__VER__"
