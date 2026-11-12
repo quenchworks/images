@@ -1,0 +1,46 @@
+# GoAccess from the release tarball on tar.goaccess.io (the GitHub tag has no configure script).
+package:
+  name: quench-goaccess
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened GoAccess web log analyzer, built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - gettext-dev
+      - ncurses-dev
+      - openssl-dev
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://tar.goaccess.io/goaccess-${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - runs: |
+      set -eu
+      ./configure --prefix=/usr --sysconfdir=/etc --enable-utf8 --with-openssl --disable-nls
+      make -j"$(nproc)"
+      make install DESTDIR="${{targets.destdir}}"
+      strip "${{targets.destdir}}/usr/bin/goaccess"
+      rm -rf "${{targets.destdir}}/usr/share/man" "${{targets.destdir}}/usr/share/doc"
+      "${{targets.destdir}}/usr/bin/goaccess" --version | grep -F "GoAccess - ${{package.version}}"
+
+test:
+  pipeline:
+    - runs: |
+        goaccess --version
