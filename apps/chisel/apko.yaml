@@ -1,0 +1,38 @@
+# chisel runtime: chisel is the entrypoint; run `server --port 8080 ...` or `client <server> <remotes>`.
+# Nonroot 1001, so listen on ports above 1023.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-chisel@local
+
+accounts:
+  groups:
+    - groupname: chisel
+      gid: 1001
+  users:
+    - username: chisel
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/chisel
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-chisel"
+  org.opencontainers.image.licenses: "MIT"
+  org.opencontainers.image.version: "__VER__"
