@@ -137,11 +137,12 @@ pipeline:
           "basic-ftp": "6.2.3", "socks": "2.8.10", "ip-address": "10.7.4", "dompurify": "3.4.17",
           "decode-uri-component": "0.5.1", "js-yaml": "4.3.2", "on-headers": "1.1.0", "qs": "6.16.1",
           "ws": "8.22.0", "uuid": "11.1.1", "moment": "2.31.0", "follow-redirects": "1.16.2",
+          "fast-xml-parser": "5.12.0",  // CVE-2026-126066 (2026-11-12)
         });
         fs.writeFileSync("package.json", JSON.stringify(p, null, 2) + "\n");
         const refresh = new Set(["bn.js", "body-parser", "brace-expansion", "diff", "fast-uri", "form-data",
           "jws", "path-to-regexp", "follow-redirects", "pbkdf2", "proxy-addr", "shell-quote", "undici", "on-headers", "qs",
-          "dompurify", "js-yaml", "uuid", "moment"]);
+          "dompurify", "js-yaml", "uuid", "moment", "fast-xml-parser"]);
         const blocks = fs.readFileSync("yarn.lock", "utf8").split(/\n\n/);
         fs.writeFileSync("yarn.lock", blocks.filter(b => {
           const h = b.split("\n").find(l => l && !l.startsWith("#"));
