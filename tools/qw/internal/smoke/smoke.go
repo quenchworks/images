@@ -6,6 +6,7 @@ package smoke
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -249,6 +250,36 @@ func (t *T) RunCode(flags []string, args ...string) (string, int) {
 		return out, ee.ExitCode()
 	}
 	return out, -1
+}
+
+// runHost runs a program on the host (not in a container) and returns its combined output.
+func runHost(name string, args ...string) (string, error) {
+	out, err := exec.Command(name, args...).CombinedOutput()
+	return strings.TrimRight(string(out), "\n"), err
+}
+
+// RunAnyFor runs the image (docker run flags, then args) for at most d, like bash
+// `timeout d docker run`, removes the container, and returns its output and exit code
+// (124 when it was still running at the deadline).
+func (t *T) RunAnyFor(d time.Duration, flags []string, args ...string) (string, int) {
+	name := fmt.Sprintf("%s-for-%d", t.name, time.Now().UnixNano())
+	defer docker("rm", "-f", name)
+	ctx, cancel := context.WithTimeout(context.Background(), d)
+	defer cancel()
+	a := append(append(append([]string{"run", "--rm", "--name", name}, flags...), t.Image), args...)
+	out, err := exec.CommandContext(ctx, "docker", a...).CombinedOutput()
+	o := strings.TrimRight(string(out), "\n")
+	if ctx.Err() != nil {
+		return o, 124
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return o, ee.ExitCode()
+	}
+	if err != nil {
+		return o, -1
+	}
+	return o, 0
 }
 
 // regexpDev matches unstamped development versions.

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // Short smoke tests: the image runs as uid 1001 and its binary answers. The component's
@@ -51,7 +52,7 @@ func stampedEntry(entry, re string, args ...string) func(*T) {
 func execs(bins ...string) func(*T) {
 	return func(t *T) {
 		for _, b := range bins {
-			out, rc := t.RunCode([]string{"--entrypoint", b}, "--help")
+			out, rc := t.RunAnyFor(20*time.Second, []string{"--entrypoint", b}, "--help")
 			t.Logf("%s (exit %d): %.300s", b, rc, out)
 			if rc == 126 || rc == 127 || out == "" || regexp.MustCompile(`(?i)exec format error|no such file or directory.*exec|permission denied`).MatchString(out) {
 				t.Fatalf("%s did not execute", b)
@@ -247,7 +248,8 @@ echo tools present`))
 	register("vitess-operator", func(t *T) {
 		u := t.User("1001")
 		// without a cluster it logs its version and exits on the missing kubeconfig
-		t.Contains(t.RunAny(), "Operator Version: "+t.Want, "startup log")
+		out, _ := t.RunAnyFor(60*time.Second, nil)
+		t.Contains(out, "Operator Version: "+t.Want, "startup log")
 		t.Contains(t.RunAny("--help"), "cache_invalidate_interval", "--help")
 		t.Logf("smoke test passed (vitess-operator %s: startup version, CLI, nonroot user %s)", t.Want, u)
 	})
