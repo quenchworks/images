@@ -9,7 +9,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: qw wolfi-latest ... | qw check [app...] | qw vex [--stale] [app...] | qw gen-catalog [--meta] [-o file] | qw unbuilt [--all] [app...] | qw blocked [--pkg P --min V] [--dispatch]")
+		fmt.Fprintln(os.Stderr, "usage: qw wolfi-latest ... | qw check [app...] | qw vex [--stale] [app...] | qw gen-catalog [--meta] [-o file] | qw unbuilt [--all] [app...] | qw blocked [--pkg P --min V] [--dispatch] | qw drift-scan [--shard N --of M] [--json f] [--only app...]")
 		os.Exit(2)
 	}
 	if wd, err := os.Getwd(); err == nil {
@@ -22,6 +22,8 @@ func main() {
 		os.Exit(cmdCheck(os.Args[2:]))
 	case "gen-catalog":
 		os.Exit(cmdGenCatalog(os.Args[2:]))
+	case "drift-scan":
+		os.Exit(cmdDriftScan(os.Args[2:]))
 	case "blocked":
 		os.Exit(cmdBlocked(os.Args[2:]))
 	case "unbuilt":
