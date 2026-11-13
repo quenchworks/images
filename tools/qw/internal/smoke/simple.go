@@ -46,6 +46,22 @@ func stampedEntry(entry, re string, args ...string) func(*T) {
 	}
 }
 
+// execs: in-cluster daemons that exit on missing config outside a cluster; each binary must
+// start and print its own output, not fail to exec (missing loader, wrong arch, bad mode).
+func execs(bins ...string) func(*T) {
+	return func(t *T) {
+		for _, b := range bins {
+			out, rc := t.RunCode([]string{"--entrypoint", b}, "--help")
+			t.Logf("%s (exit %d): %.300s", b, rc, out)
+			if rc == 126 || rc == 127 || out == "" || regexp.MustCompile(`(?i)exec format error|no such file or directory.*exec|permission denied`).MatchString(out) {
+				t.Fatalf("%s did not execute", b)
+			}
+		}
+		u := t.User("1001")
+		t.Logf("smoke test passed (nonroot user: %s)", u)
+	}
+}
+
 // helpFlag: nonroot, and entry's help output (exit code ignored) lists flag.
 func helpFlag(entry, helpArg, flag string) func(*T) {
 	return func(t *T) {
@@ -410,17 +426,9 @@ echo tools present`))
 		}
 		t.Logf("manager flags present\nsmoke test passed")
 	})
-	register("kubescape-operator", func(t *T) {
-		// an in-cluster daemon: outside a cluster it must start and print its own output,
-		// not fail to exec (missing loader, wrong arch, bad mode)
-		out, rc := t.RunCode([]string{"--entrypoint", "/usr/bin/operator"}, "--help")
-		t.Logf("/usr/bin/operator (exit %d): %.300s", rc, out)
-		if rc == 126 || rc == 127 || out == "" || regexp.MustCompile(`(?i)exec format error|no such file or directory.*exec|permission denied`).MatchString(out) {
-			t.Fatalf("/usr/bin/operator did not execute")
-		}
-		u := t.User("1001")
-		t.Logf("smoke test passed (nonroot user: %s)", u)
-	})
+	register("kubescape-operator", execs("/usr/bin/operator"))
+	register("kubescape-synchronizer", execs("/usr/bin/client", "/usr/bin/server"))
+	register("kubevuln", execs("/usr/bin/kubevuln", "/usr/bin/sbom-scanner"))
 	register("sonar-scanner-cli", func(t *T) {
 		// a real scan needs a SonarQube server: check the CLI is on PATH and the bundled JRE runs
 		t.RunEntry("/bin/sh", "-c", `set -e
@@ -429,5 +437,104 @@ java="$(command -v java || true)"; [ -n "$java" ] || java="$JAVA_HOME/bin/java"
 "$java" -version 2>&1 | grep -qiE "openjdk|version" || { echo "no working JRE (JAVA_HOME=$JAVA_HOME)"; exit 1; }`)
 		u := t.User("1001")
 		t.Logf("smoke test passed (nonroot user: %s)", u)
+	})
+	register("step-ca", func(t *T) {
+		out := t.RunEntry("/usr/bin/step-ca", "version")
+		t.Logf("%s", out)
+		t.Match(out, `[0-9]+\.[0-9]+\.[0-9]+`, "version not stamped")
+		if strings.Contains(strings.ToUpper(out), "N/A") {
+			t.Fatalf("version is N/A (not stamped)")
+		}
+		u := t.User("1001")
+		t.Logf("smoke test passed (nonroot user: %s)", u)
+	})
+	register("hydra", stamped(`Version:\s*v?[0-9]+\.[0-9]+\.[0-9]+`, "version"))
+	register("descheduler", stamped(`GitVersion:v[0-9]+\.[0-9]+\.[0-9]+`, "version"))
+	register("navidrome", func(t *T) {
+		out := t.Run("--version")
+		t.Logf("%s", out)
+		t.Match(out, `[0-9]+\.[0-9]+\.[0-9]+`, "version not stamped")
+		if strings.Contains(strings.ToLower(out), "dev") {
+			t.Fatalf("version reports 'dev': gitSha/gitTag not stamped")
+		}
+		u := t.User("1001")
+		t.Logf("smoke test passed (nonroot user: %s)", u)
+	})
+	register("dex", func(t *T) {
+		ver := t.Match(t.RunEntry("/usr/bin/dex", "version"), `(?m)^Dex Version: (.*)$`, "dex version")
+		t.Logf("reported version: %s", ver)
+		if ver == "" || ver == "0.0.0" || ver == "DEV" || strings.Contains(ver, "dev") {
+			t.Fatalf("version not stamped: '%s'", ver)
+		}
+		u := t.User("1001")
+		t.Logf("smoke test passed (nonroot user: %s)", u)
+	})
+	register("linkerd-cni", func(t *T) {
+		out, _ := t.RunFlags([]string{"-e", "CNI_COMMAND=VERSION", "--entrypoint", "/opt/cni/bin/linkerd-cni"})
+		t.Contains(out, `"supportedVersions"`, "linkerd-cni CNI VERSION reply")
+		out = t.RunEntry("/usr/lib/linkerd/linkerd-cni-repair-controller", "--version")
+		t.Contains(out, "linkerd-cni-repair-controller", "repair controller --version")
+		// the installer (the image's default command) copies a working plugin into the host bin dir
+		cmd := t.Docker("image", "inspect", "-f", `{{join .Config.Cmd " "}}`, t.Image)
+		out, _ = t.RunFlags([]string{"--tmpfs", "/host/opt/cni/bin:exec", "--tmpfs", "/host/etc/cni/net.d", "--entrypoint", "/bin/sh"}, "-c",
+			cmd+` >/tmp/install.log 2>&1 & for i in $(seq 1 20); do [ -x /host/opt/cni/bin/linkerd-cni ] && break; sleep 1; done; CNI_COMMAND=VERSION /host/opt/cni/bin/linkerd-cni </dev/null; echo; cat /tmp/install.log`)
+		t.Contains(out, `"supportedVersions"`, "installed linkerd-cni")
+		t.Logf("installer: copied linkerd-cni to the host bin dir\nsmoke test passed")
+	})
+	register("prometheus-operator", func(t *T) {
+		u := t.User("1001")
+		t.WantVersion(t.Run("--version"))
+		// Go's flag package prints one dash
+		t.Contains(t.RunAny("--help"), "-prometheus-config-reloader", "--help")
+		// the CRDs are compiled into the binary; the chart ships the same set
+		crds := t.Run("crds")
+		if n := len(regexp.MustCompile(`(?m)^kind: CustomResourceDefinition`).FindAllString(crds, -1)); n < 8 {
+			t.Fatalf("crds printed %d CustomResourceDefinitions", n)
+		}
+		t.Contains(crds, "name: prometheuses.monitoring.coreos.com", "crds")
+		t.Logf("smoke test passed (prometheus-operator %s: version, CLI, CRDs, nonroot user %s)", t.Want, u)
+	})
+	register("rook", func(t *T) {
+		t.User("2016")
+		out := t.Run("version")
+		t.Logf("%s", out)
+		ver := t.Match(out, `(?m)^rook: v([0-9.]*)`, "rook version")
+		if t.Want != "" && ver != t.Want {
+			t.Fatalf("expected rook %s, got '%s'", t.Want, ver)
+		}
+		t.Logf("%s", t.RunEntry("/bin/bash", "-c", `set -e
+for b in ceph rados rbd radosgw-admin ceph-volume ip s5cmd toolbox.sh set-ceph-debug-level; do command -v $b >/dev/null || { echo "missing $b"; exit 1; }; done
+ceph --version
+test -d /etc/ceph-monitoring && test -f /etc/rook-external/create-external-cluster-resources.py`))
+		t.Logf("smoke test passed")
+	})
+	register("calico-kube-controllers", func(t *T) {
+		t.User("1001")
+		for _, b := range []string{"/usr/bin/calico-kube-controllers -version", "/usr/bin/check-status -v"} {
+			f := strings.Fields(b)
+			out := t.RunEntryAny(f[0], f[1])
+			t.Logf("%s: %s", b, out)
+			t.WantVersionV(out)
+		}
+		// the operator runs this image as uid 999, gid 0; its probes read /status/status.json
+		es := t.Entries("status/status.json")
+		if len(es) != 1 || es[0].Mode&0o777 != 0o664 || es[0].Uid != 999 || es[0].Gid != 0 {
+			t.Fatalf("/status/status.json must be 0664 999:0, got %v", es)
+		}
+		t.Logf("smoke test passed")
+	})
+	register("calico-node", func(t *T) {
+		out := t.RunEntry("/usr/bin/calico-node", "-v")
+		t.Logf("%s", out)
+		t.WantVersionV(out)
+		// BIRD, the BPF objects, Wolfi's runit services, and no Go modules left in the Wolfi SPDX
+		t.Logf("%s", t.RunEntry("/bin/bash", "-c", `set -e
+for b in calico-node mountns bird bird6 birdcl start_runit ip ipset iptables-nft modprobe conntrack; do command -v $b >/dev/null || { echo "missing $b"; exit 1; }; done
+bird --version 2>&1 | head -1
+ls /usr/lib/calico/bpf/*.o >/dev/null
+test -d /etc/service/available/felix && test -d /etc/calico/confd/templates
+f=$(ls /var/lib/db/sbom/calico-node-*.spdx.json)
+! grep -q "pkg:golang/" $f || { echo "Wolfi SPDX still lists Go modules: $f"; exit 1; }`))
+		t.Logf("smoke test passed")
 	})
 }

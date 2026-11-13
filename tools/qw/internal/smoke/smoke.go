@@ -189,9 +189,9 @@ func (t *T) RunInput(input string, args ...string) (string, error) {
 	return strings.TrimRight(string(out), "\n"), err
 }
 
-// Files lists the paths in the image's filesystem that start with prefix (no leading "/"),
-// read from a docker export, so it works on images without a shell.
-func (t *T) Files(prefix string) []string {
+// Entries returns the tar headers of the image's files whose path starts with prefix (no
+// leading "/"), read from a docker export, so it works on images without a shell.
+func (t *T) Entries(prefix string) []*tar.Header {
 	id := t.Docker("create", t.Image)
 	defer docker("rm", id)
 	c := exec.Command("docker", "export", id)
@@ -202,7 +202,7 @@ func (t *T) Files(prefix string) []string {
 	if err := c.Start(); err != nil {
 		t.Fatalf("docker export: %v", err)
 	}
-	var out []string
+	var out []*tar.Header
 	tr := tar.NewReader(r)
 	for {
 		h, err := tr.Next()
@@ -210,10 +210,19 @@ func (t *T) Files(prefix string) []string {
 			break
 		}
 		if strings.HasPrefix(h.Name, prefix) {
-			out = append(out, h.Name)
+			out = append(out, h)
 		}
 	}
 	c.Wait()
+	return out
+}
+
+// Files lists the paths in the image that start with prefix (see Entries).
+func (t *T) Files(prefix string) []string {
+	var out []string
+	for _, h := range t.Entries(prefix) {
+		out = append(out, h.Name)
+	}
 	return out
 }
 
