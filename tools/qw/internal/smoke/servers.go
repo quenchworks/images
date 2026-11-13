@@ -8,6 +8,21 @@ import (
 	"time"
 )
 
+// fluxDeadAPI: a Flux controller given a kubeconfig whose API server never answers must
+// start, dial that server, and neither panic nor write to its read-only root.
+func fluxDeadAPI(flags []string, args ...string) func(*T) {
+	return func(t *T) {
+		t.User("1001")
+		kc := t.DeadKubeconfig()
+		f := append([]string{"--read-only", "--tmpfs", "/tmp"}, flags...)
+		f = append(f, "-e", "KUBECONFIG=/etc/kubeconfig", "-v", kc+":/etc/kubeconfig:ro")
+		out, _ := t.RunAnyFor(25*time.Second, f, args...)
+		t.Contains(out, "127.0.0.1:1", "dialed the configured API server")
+		noCrash(t, out)
+		t.Logf("  started, dialed 127.0.0.1:1, no panic, nothing written to the root\nsmoke test passed")
+	}
+}
+
 // noCrash fails if out shows a panic or a write to the read-only root.
 func noCrash(t *T, out string) {
 	if regexp.MustCompile(`panic:|read-only file system`).MatchString(out) {
@@ -141,12 +156,70 @@ openssl pkcs12 -in ks.p12 -passin pass:changeit -nokeys | grep -c "BEGIN CERTIFI
 		u := t.User("8888")
 		t.Logf("smoke test passed (version %s, user %s)", ver, u)
 	})
-	register("flux-helm-controller", func(t *T) {
+	register("flux-helm-controller", fluxDeadAPI(nil))
+	register("flux-image-automation-controller", fluxDeadAPI(nil))
+	register("flux-notification-controller", fluxDeadAPI(nil))
+	register("flux-image-reflector-controller", fluxDeadAPI(nil, "--storage-path=/tmp/data"))
+	register("flux-source-controller", fluxDeadAPI(nil, "--storage-path=/tmp/data"))
+	// the artifact directory must already exist: a tmpfs here, an emptyDir in the chart
+	register("flux-source-watcher", fluxDeadAPI([]string{"--tmpfs", "/tmp/data:uid=1001,gid=1001"}, "--storage-path=/tmp/data"))
+	register("dive", func(t *T) {
 		t.User("1001")
-		kc := t.DeadKubeconfig()
-		out, _ := t.RunAnyFor(25*time.Second, []string{"--read-only", "--tmpfs", "/tmp", "-e", "KUBECONFIG=/etc/kubeconfig", "-v", kc + ":/etc/kubeconfig:ro"})
-		t.Contains(out, "127.0.0.1:1", "dialed the configured API server")
-		noCrash(t, out)
-		t.Logf("  started, dialed 127.0.0.1:1, no panic, nothing written to the root\nsmoke test passed")
+		ver := t.Run("--version")
+		t.Logf("%s", ver)
+		if t.Want != "" && ver != "dive "+t.Want {
+			t.Fatalf("expected dive %s", t.Want)
+		}
+		// dive analyses its own image from a docker-archive in --ci mode (no Docker socket)
+		tar := filepath.Join(t.TempDir(), "image.tar")
+		t.Docker("save", t.Image, "-o", tar)
+		os.Chmod(tar, 0o644)
+		name := t.Name("")
+		t.Cleanup(func() { docker("rm", "-f", name) })
+		t.Docker("create", "--name", name, "-e", "CI=true", t.Image, "--ci", "--source", "docker-archive", "/image.tar")
+		t.Docker("cp", tar, name+":/image.tar")
+		out, _ := docker("start", "-a", name)
+		t.Contains(out, "efficiency:", "dive analysis")
+		t.Contains(out, "Result:PASS", "dive --ci on its own image")
+		t.Logf("smoke test passed")
+	})
+	register("graylog", func(t *T) {
+		t.User("1001")
+		t.Logf("%s", t.RunEntry("java", "-version"))
+		if _, err := t.RunFlags([]string{"--entrypoint", "sh"}, "-c", "test -f /opt/graylog/graylog.jar"); err != nil {
+			t.RunEntry("/usr/bin/busybox", "sh", "-c", "test -f /opt/graylog/graylog.jar")
+		}
+		// the entrypoint's non-server passthrough: no Mongo or OpenSearch needed
+		t.Match(t.Run("version"), `(?im)^Graylog [0-9]+\.[0-9]+\.[0-9]+`, "version")
+		t.Logf("smoke test passed")
+	})
+	register("hubble-relay", func(t *T) {
+		t.User("1001")
+		t.WantVersion(t.RunEntry("/usr/bin/hubble-relay", "version"))
+		// no Cilium peer: it must open the Observer and health ports and keep retrying the peer
+		name := t.Name("")
+		t.Start(name, []string{"--read-only", "--tmpfs", "/tmp", "-p", "127.0.0.1:14245:4245", "-p", "127.0.0.1:14222:4222"},
+			"--disable-server-tls", "--disable-client-tls", "--peer-service=127.0.0.1:1")
+		t.WaitTCP(30, name, "127.0.0.1:14245", "127.0.0.1:14222")
+		time.Sleep(3 * time.Second)
+		if t.Docker("inspect", name, "--format", "{{.State.Running}}") != "true" {
+			t.Fatalf("relay exited:\n%s", t.Logs(name))
+		}
+		t.Contains(t.Logs(name), "Starting gRPC server", "relay log")
+		t.Logf("smoke test passed")
+	})
+	register("keda", func(t *T) {
+		t.ContainsFold(t.RunAny("--help"), "--leader-elect", "operator --help")
+		t.Match(t.RunEntryAny("/usr/bin/keda-adapter", "--help"), `(?i)usage|--secure-port|--help`, "adapter --help")
+		u := t.User("1001")
+		t.Logf("smoke test passed (nonroot user: %s)", u)
+	})
+	register("kyverno", func(t *T) {
+		out := t.RunEntry("/usr/bin/kubectl-kyverno", "version")
+		t.Logf("%s", out)
+		t.Match(out, `(?i)Version:\s*v?[0-9]+\.[0-9]+\.[0-9]+`, "version not stamped")
+		t.RunEntry("/usr/bin/kyverno", "--help")
+		u := t.User("1001")
+		t.Logf("smoke test passed (nonroot user: %s)", u)
 	})
 }

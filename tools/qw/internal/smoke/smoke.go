@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -312,6 +313,26 @@ contexts: [{name: none, context: {cluster: none, user: none}}]
 current-context: none
 `), 0o644)
 	return p
+}
+
+// WaitTCP polls until every addr accepts a TCP connection, once a second up to tries.
+func (t *T) WaitTCP(tries int, container string, addrs ...string) {
+	for i := 0; i < tries; i++ {
+		ok := true
+		for _, a := range addrs {
+			c, err := net.DialTimeout("tcp", a, 2*time.Second)
+			if err != nil {
+				ok = false
+				break
+			}
+			c.Close()
+		}
+		if ok {
+			return
+		}
+		time.Sleep(time.Second)
+	}
+	t.Fatalf("ports %v never opened\n--- logs:\n%s", addrs, t.Logs(container))
 }
 
 // regexpDev matches unstamped development versions.
