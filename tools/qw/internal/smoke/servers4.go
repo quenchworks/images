@@ -29,8 +29,8 @@ func (t *T) waitCount(name, re string, n, tries int) {
 
 // hostPort returns the host port docker published for a container port.
 func (t *T) hostPort(name, port string) string {
-	out := t.Docker("port", name, port)
-	return out[strings.LastIndex(strings.SplitN(out, "\n", 2)[0], ":")+1:]
+	first := strings.SplitN(t.Docker("port", name, port), "\n", 2)[0]
+	return first[strings.LastIndex(first, ":")+1:]
 }
 
 func viaProxy(proxyURL, target string) (int, string) {
