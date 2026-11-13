@@ -1,0 +1,52 @@
+# changedetection.io runtime: the web UI and API on 5000, watches and snapshots in /datastore
+# (mount a volume there). Settings are environment variables (BASE_URL, PLAYWRIGHT_DRIVER_URL, ...).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-changedetection@local
+
+accounts:
+  groups:
+    - groupname: changedetection
+      gid: 1001
+  users:
+    - username: changedetection
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  PATH: /opt/changedetection/bin:/usr/sbin:/sbin:/usr/bin:/bin
+  PYTHONUNBUFFERED: "1"
+  PORT: "5000"
+
+work-dir: /app
+
+paths:
+  - path: /datastore
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /opt/changedetection/bin/python /app/changedetection.py -d /datastore
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-changedetection"
+  org.opencontainers.image.licenses: "Apache-2.0"
+  org.opencontainers.image.version: "__VER__"

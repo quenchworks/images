@@ -1,0 +1,69 @@
+# changedetection.io from the release tag: its requirements into /opt/changedetection with uv, the
+# app itself at /app (run as `python changedetection.py`, as upstream's image does).
+package:
+  name: quench-changedetection
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened changedetection.io, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - libxslt
+      - python-3.13
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - libffi-dev
+      - libjpeg-turbo-dev
+      - libxml2-dev
+      - libxslt-dev
+      - python-3.13
+      - python-3.13-dev
+      - uv
+      - zlib-dev
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/dgtlmoon/changedetection.io/archive/refs/tags/${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - runs: |
+      set -eu
+      export UV_PYTHON=/usr/bin/python3.13 UV_PYTHON_DOWNLOADS=never UV_CACHE_DIR="$(mktemp -d)" UV_LINK_MODE=copy
+      grep -qx "__version__ = '${{package.version}}'" changedetectionio/__init__.py
+      uv venv /opt/changedetection
+      uv pip install --python /opt/changedetection/bin/python -r requirements.txt
+      d="${{targets.destdir}}"
+      install -d "$d/app" "$d/opt"
+      cp -a changedetection.py changedetectionio "$d/app/"
+      rm -rf "$d/app/changedetectionio/tests"
+      # model/schema_utils.py reads changedetectionio/docs/api-spec.yaml on the first watch;
+      # the spec sits at the repo root and only the sdist MANIFEST carries it.
+      install -Dm644 docs/api-spec.yaml "$d/app/changedetectionio/docs/api-spec.yaml"
+      cp -a /opt/changedetection "$d/opt/changedetection"
+      rm -f "$d/opt/changedetection/.lock"
+      # selenium bundles selenium-manager, a Rust driver downloader (tokio 1.54.0, CVE-2026-115567).
+      # changedetection.io only drives a REMOTE WebDriver (WEBDRIVER_URL), which never calls it.
+      sm="$d/opt/changedetection/lib/python3.13/site-packages/selenium/webdriver/common"
+      test -d "$sm"
+      rm -rf "${sm:?}"/linux-* "${sm:?}"/macos "${sm:?}"/windows "${sm:?}"/selenium-manager*
+      if [ -n "$(find "$d/opt" -name 'selenium-manager*')" ]; then echo "selenium-manager still in the image"; exit 1; fi
+      find "$d/opt/changedetection" -name __pycache__ -prune -exec rm -rf {} +
+      cd "$d/app" && /opt/changedetection/bin/python -c "import changedetectionio; print(changedetectionio.__version__)"
+
+test:
+  pipeline:
+    - runs: |
+        test -f /app/changedetection.py
