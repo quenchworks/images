@@ -216,6 +216,17 @@ func (t *T) Files(prefix string) []string {
 	return out
 }
 
+// WaitLog polls a container's logs once a second until they contain sub, up to tries.
+func (t *T) WaitLog(name, sub string, tries int) {
+	for i := 0; i < tries; i++ {
+		if strings.Contains(t.Logs(name), sub) {
+			return
+		}
+		time.Sleep(time.Second)
+	}
+	t.Fatalf("%q never appeared in the logs of %s:\n%s", sub, name, t.Logs(name))
+}
+
 // regexpDev matches unstamped development versions.
 var regexpDev = regexp.MustCompile(`dev`)
 

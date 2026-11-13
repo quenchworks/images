@@ -1,6 +1,7 @@
 package smoke
 
 import (
+	"encoding/json"
 	"regexp"
 	"strings"
 )
@@ -19,6 +20,18 @@ func versionWant(args ...string) func(*T) {
 		t.Logf("%s", v)
 		t.WantVersion(v)
 		t.Logf("smoke test passed (%s %s: version, nonroot user %s)", t.App, t.Want, u)
+	}
+}
+
+// stamped: nonroot, and the version command's output matches re (a real release, not a
+// dev default).
+func stamped(re string, args ...string) func(*T) {
+	return func(t *T) {
+		out := t.Run(args...)
+		t.Logf("%s", out)
+		t.Match(out, "(?i)"+re, "version not stamped")
+		u := t.User("1001")
+		t.Logf("smoke test passed (nonroot user: %s)", u)
 	}
 }
 
@@ -300,5 +313,59 @@ echo tools present`))
 		// its built-in image list is the Calico release the calico-* images are built from
 		t.Contains(t.Run("-print-images", "list"), "calico/node:v3.32.0", "operator image list")
 		t.Logf("smoke test passed")
+	})
+	register("duckdb", stamped(`v[0-9]+\.[0-9]+\.[0-9]+`, "--version"))
+	register("grype", stamped(`Version:\s*[0-9]+\.[0-9]+\.[0-9]+`, "version"))
+	register("headscale", stamped(`headscale version\s+v?[0-9]+\.[0-9]+\.[0-9]+`, "version"))
+	register("kratos", stamped(`Version:\s*v?[0-9]+\.[0-9]+\.[0-9]+`, "version"))
+	register("livekit", stamped(`[0-9]+\.[0-9]+\.[0-9]+`, "--version"))
+	register("mailpit", stamped(`mailpit\s+v[0-9]+\.[0-9]+\.[0-9]+`, "version"))
+	register("postgrest", stamped(`PostgREST\s+[0-9]+\.[0-9]+`, "--version"))
+	register("kubectl", func(t *T) {
+		out, err := t.RunFlags(nil, "version", "--client", "-o", "json")
+		var v struct {
+			ClientVersion struct{ GitVersion string } `json:"clientVersion"`
+		}
+		if err != nil || json.Unmarshal([]byte(out), &v) != nil {
+			t.Fatalf("kubectl version: %v %s", err, out)
+		}
+		ver := v.ClientVersion.GitVersion
+		t.Logf("  kubectl: %s", ver)
+		if ver == "" || strings.Contains(ver, "v0.0.0") || strings.Contains(ver, "dirty") {
+			t.Fatalf("version not stamped: '%s'", ver)
+		}
+		// the toolbelt the image ships beside kubectl
+		t.RunEntry("helm", "version", "--short")
+		t.RunEntry("kustomize", "version")
+		t.RunEntry("sh", "-c", "command -v jq >/dev/null")
+		u := t.User("1001")
+		t.Logf("smoke test passed (kubectl %s, toolbelt ok, nonroot %s)", ver, u)
+	})
+	register("ml-metadata-store-server", func(t *T) {
+		t.User("1001")
+		out := t.RunAny("--helpfull")
+		for _, f := range []string{"grpc_port", "mysql_config_host", "enable_database_upgrade"} {
+			t.Contains(out, "-"+f, "--helpfull")
+		}
+		// no connection config: it serves gRPC from an in-memory store
+		name := t.Name("")
+		t.Start(name, nil, "--grpc_port=8080")
+		t.WaitLog(name, "Server listening", 20)
+		t.Logf("smoke test passed")
+	})
+	register("trivy-operator", func(t *T) {
+		u := t.User("1001")
+		out, _ := t.RunFlags([]string{"--read-only", "--tmpfs", "/tmp", "-e", "OPERATOR_NAMESPACE=default"})
+		if lines := strings.Split(out, "\n"); len(lines) > 40 {
+			out = strings.Join(lines[:40], "\n")
+		}
+		if t.Want != "" {
+			t.Contains(out, `"Version":"`+t.Want+`"`, "start log")
+		}
+		t.Match(out, `(?i)kubeconfig|in-cluster|KUBERNETES_SERVICE_HOST|config`, "cluster configuration")
+		if regexp.MustCompile(`(?m)^panic:|SIGSEGV`).MatchString(out) {
+			t.Fatalf("operator panicked:\n%s", out)
+		}
+		t.Logf("smoke test passed (trivy-operator %s, uid %s; the chart gate exercises it against a cluster)", t.Want, u)
 	})
 }
