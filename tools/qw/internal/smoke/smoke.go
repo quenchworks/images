@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"os"
@@ -335,6 +336,15 @@ func (t *T) WaitTCP(tries int, container string, addrs ...string) {
 	t.Fatalf("ports %v never opened\n--- logs:\n%s", addrs, t.Logs(container))
 }
 
+// randFrom returns n characters drawn at random from alphabet.
+func randFrom(alphabet string, n int) string {
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = alphabet[rand.IntN(len(alphabet))]
+	}
+	return string(b)
+}
+
 // regexpDev matches unstamped development versions.
 var regexpDev = regexp.MustCompile(`dev`)
 
@@ -354,6 +364,21 @@ func Get(url string) (int, string) {
 // Post does one HTTP POST with a content type and body.
 func Post(url, ctype, body string) (int, string) {
 	r, err := httpc.Post(url, ctype, bytes.NewBufferString(body))
+	if err != nil {
+		return 0, err.Error()
+	}
+	defer r.Body.Close()
+	b, _ := io.ReadAll(r.Body)
+	return r.StatusCode, string(b)
+}
+
+// Do sends one HTTP request with a body (empty for none) and returns the status and body.
+func Do(method, url, body string) (int, string) {
+	req, err := http.NewRequest(method, url, strings.NewReader(body))
+	if err != nil {
+		return 0, err.Error()
+	}
+	r, err := httpc.Do(req)
 	if err != nil {
 		return 0, err.Error()
 	}

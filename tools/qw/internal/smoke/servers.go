@@ -1,7 +1,12 @@
 package smoke
 
 import (
+	"bytes"
+	"compress/bzip2"
+	"encoding/base64"
+	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -221,5 +226,225 @@ openssl pkcs12 -in ks.p12 -passin pass:changeit -nokeys | grep -c "BEGIN CERTIFI
 		t.RunEntry("/usr/bin/kyverno", "--help")
 		u := t.User("1001")
 		t.Logf("smoke test passed (nonroot user: %s)", u)
+	})
+}
+
+// busyboxImage is our busybox, pinned, for side containers that write or read a volume.
+const busyboxImage = "ghcr.io/quenchworks/images/busybox@sha256:041302c8da3a2e182ecc2eac3c56c4f47a13c03cc284d255489c0be741893b64"
+
+func init() {
+	register("prometheus-config-reloader", func(t *T) {
+		t.User("1001")
+		t.WantVersion(t.Run("--version"))
+		vol, name := t.Name("vol"), t.Name("")
+		t.Docker("volume", "create", vol)
+		t.Cleanup(func() { docker("volume", "rm", vol) })
+		// the input config uses $(POD_NAME), which the reloader must substitute
+		c := exec.Command("docker", "run", "--rm", "-i", "-u", "0", "-v", vol+":/c", "--entrypoint", "/bin/sh", busyboxImage, "-c", "cat > /c/in.yaml && chown 1001 /c")
+		c.Stdin = strings.NewReader("global:\n  external_labels:\n    replica: $(POD_NAME)\n")
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("seed config: %v %s", err, out)
+		}
+		t.Start(name, []string{"--read-only", "-e", "POD_NAME=quench-smoke-0", "-v", vol + ":/c", "-p", "127.0.0.1:18085:8080"},
+			"--listen-address=:8080", "--config-file=/c/in.yaml", "--config-envsubst-file=/c/out.yaml", "--reload-url=http://127.0.0.1:9/-/reload")
+		t.WaitHTTP("http://127.0.0.1:18085/healthz", 30, name)
+		var out string
+		for i := 0; i < 20; i++ {
+			if out, _ = docker("run", "--rm", "-v", vol+":/c", "--entrypoint", "/bin/cat", busyboxImage, "/c/out.yaml"); strings.Contains(out, "quench-smoke-0") {
+				break
+			}
+			time.Sleep(time.Second)
+		}
+		t.Contains(out, "replica: quench-smoke-0", "rendered config")
+		t.Logf("  rendered config carries replica: quench-smoke-0; /healthz ok\nsmoke test passed")
+	})
+	register("trivy-scanner", func(t *T) {
+		t.User("1001")
+		ver := strings.SplitN(t.RunAny("--version"), "\n", 2)[0]
+		t.Logf("%s", ver)
+		if t.Want != "" {
+			t.Contains(ver, "Version: "+t.Want, "version")
+		}
+		// the shape of command Trivy Operator's scan Jobs run: /bin/sh -c, trivy, bzip2, base64,
+		// on a read-only root. A random AWS-shaped key is planted and must be found.
+		key, secret := "AKIA"+randFrom("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567", 16), randFrom("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789/+", 40)
+		out, err := t.RunFlags([]string{"--read-only", "--tmpfs", "/tmp", "-e", "KEYID=" + key, "-e", "SECRET=" + secret, "--entrypoint", "/bin/sh"}, "-c", `
+mkdir -p /tmp/scan /tmp/fs/etc && printf "aws_access_key_id = %s\naws_secret_access_key = %s\n" "$KEYID" "$SECRET" > /tmp/fs/etc/creds
+trivy fs --scanners secret --format json --output /tmp/scan/result.json /tmp/fs 2>/tmp/scan/result.json.log
+rc=$?; if [ $rc -eq 1 ]; then cat /tmp/scan/result.json.log; else bzip2 -c /tmp/scan/result.json | base64; fi; exit $rc`)
+		if err != nil {
+			t.Fatalf("scan job: %v %s", err, out)
+		}
+		raw, err := base64.StdEncoding.DecodeString(strings.Join(strings.Fields(out), ""))
+		if err != nil {
+			t.Fatalf("scan output is not base64: %v", err)
+		}
+		var rep struct {
+			Results []struct{ Secrets []any } `json:"Results"`
+		}
+		if err := json.NewDecoder(bzip2.NewReader(bytes.NewReader(raw))).Decode(&rep); err != nil {
+			t.Fatalf("scan output is not bzip2 JSON: %v", err)
+		}
+		n := 0
+		for _, r := range rep.Results {
+			n += len(r.Secrets)
+		}
+		t.Logf("secrets found: %d", n)
+		if n == 0 {
+			t.Fatalf("the planted secret was not found")
+		}
+		t.Logf("smoke test passed")
+	})
+	register("woodpecker", func(t *T) {
+		for _, b := range []string{"woodpecker-server", "woodpecker-agent", "woodpecker-cli"} {
+			t.Match(t.RunEntry("/usr/bin/"+b, "--version"), `[0-9]+\.[0-9]+\.[0-9]+`, b+" version not stamped")
+		}
+		u := t.User("1001")
+		t.Logf("smoke test passed (nonroot user: %s)", u)
+	})
+	register("ztunnel", func(t *T) {
+		v := t.RunAny("version")
+		t.Logf("ztunnel version: %s", v)
+		if t.Want != "" {
+			t.Contains(v, `Version:"`+t.Want+`"`, "version")
+		}
+		name := t.Name("")
+		t.Start(name, []string{"--cap-add", "NET_ADMIN", "-p", "127.0.0.1:15020:15020", "-p", "127.0.0.1:15021:15021",
+			"-e", "XDS_ADDRESS=", "-e", "PROXY_MODE=dedicated", "-e", "PROXY_WORKLOAD_INFO=default/local/default"}, "proxy")
+		var body string
+		for i := 0; i < 30; i++ {
+			if _, body = Get("http://127.0.0.1:15020/metrics"); regexp.MustCompile(`(?m)^# TYPE`).MatchString(body) {
+				break
+			}
+			if i == 29 {
+				t.Fatalf("stats server (:15020/metrics) did not answer\n%s", t.Logs(name))
+			}
+			time.Sleep(time.Second)
+		}
+		// no XDS server: readiness answers, ready or not
+		if code, _ := Get("http://127.0.0.1:15021/healthz/ready"); code < 200 || code >= 600 || (code >= 300 && code < 500) {
+			t.Fatalf("readiness server did not answer (%d)", code)
+		}
+		t.Logf("smoke test passed")
+	})
+	register("pushgateway", func(t *T) {
+		t.User("1001")
+		if t.Want != "" {
+			t.Contains(t.Run("--version"), "version "+t.Want, "version")
+		}
+		name := t.Name("")
+		t.Start(name, []string{"--read-only", "-p", "127.0.0.1:19091:9091"})
+		const b = "http://127.0.0.1:19091"
+		t.WaitHTTP(b+"/-/ready", 30, name)
+		t.WaitHTTP(b+"/-/healthy", 1, name)
+		if code, body := Do("POST", b+"/metrics/job/quench_smoke", "quench_smoke_value 42\n"); code != 200 {
+			t.Fatalf("push: %d %s", code, body)
+		}
+		_, m := Get(b + "/metrics")
+		t.Match(m, `(?m)^quench_smoke_value\{.*job="quench_smoke".*\} 42$`, "pushed metric")
+		if code, body := Do("DELETE", b+"/metrics/job/quench_smoke", ""); code != 202 && code != 200 {
+			t.Fatalf("delete: %d %s", code, body)
+		}
+		if _, m = Get(b + "/metrics"); regexp.MustCompile(`(?m)^quench_smoke_value`).MatchString(m) {
+			t.Fatalf("deleted group still exposed")
+		}
+		noCrash(t, t.Logs(name))
+		t.Logf("smoke test passed")
+	})
+	register("filebrowser-quantum", func(t *T) {
+		out := t.Run("version")
+		t.Logf("%s", out)
+		t.Match(out, `v?[0-9]+\.[0-9]+\.[0-9]+`, "version not stamped")
+		t.WantVersion(out)
+		t.User("1001")
+		name := t.Name("")
+		t.Start(name, []string{"-p", "18081:8080", "-e", "FILEBROWSER_ADMIN_PASSWORD=smoke-test-pw", "--tmpfs", "/tmp"})
+		ok := false
+		for i := 0; i < 60 && !ok; i++ {
+			h, _ := Get("http://127.0.0.1:18081/health")
+			r, _ := Get("http://127.0.0.1:18081/")
+			ok = h == 200 && (r == 200 || r == 302)
+			if !ok {
+				time.Sleep(time.Second)
+			}
+		}
+		if !ok {
+			t.Fatalf("server not healthy\n%s", t.Logs(name))
+		}
+		_, page := Get("http://127.0.0.1:18081/")
+		t.Match(page, `(?i)<div id="app"|<script`, "UI served")
+		t.Logf("smoke test passed")
+	})
+	register("rabbitmq", func(t *T) {
+		name := t.Name("")
+		t.Start(name, nil)
+		for i := 0; ; i++ {
+			if _, err := docker("exec", name, "rabbitmq-diagnostics", "-q", "check_running"); err == nil {
+				t.Logf("node fully booted after ~%ds", i*2)
+				break
+			}
+			if i == 60 {
+				t.Fatalf("rabbitmq did not become ready\n%s", t.Logs(name))
+			}
+			time.Sleep(2 * time.Second)
+		}
+		u := t.User("1001")
+		v, _ := docker("exec", name, "rabbitmqctl", "--version")
+		t.Logf("version: %s\nsmoke test passed (nonroot user: %s)", v, u)
+	})
+	register("vcluster", func(t *T) {
+		t.User("1001")
+		ver := t.RunEntry("/vcluster", "version")
+		t.Logf("vcluster: %s", ver)
+		if ver == "" || ver == "dev" || strings.Contains(ver, "0.0.0") {
+			t.Fatalf("version not stamped: '%s'", ver)
+		}
+		if t.Want != "" && ver != t.Want {
+			t.Fatalf("expected %s", t.Want)
+		}
+		t.RunEntry("/vcluster", "start", "--help")
+		for _, b := range []string{"kube-apiserver", "kube-controller-manager"} {
+			if kv := t.RunEntry("/binaries/"+b, "--version"); kv != "Kubernetes v1.36.4" {
+				t.Fatalf("/binaries/%s reports '%s'", b, kv)
+			}
+		}
+		t.RunEntry("/binaries/kine", "--version")
+		t.Logf("smoke test passed")
+	})
+	register("flink", func(t *T) {
+		if t.Want == "" {
+			t.Fatalf("usage: qw smoke flink <image-ref> <version>")
+		}
+		t.User("1001")
+		net, jm, tm := t.Name("net"), t.Name("jm"), t.Name("tm")
+		t.Docker("network", "create", net)
+		t.Cleanup(func() { docker("network", "rm", net) })
+		t.Start(jm, []string{"--network", net, "--hostname", "jobmanager", "--read-only", "--tmpfs", "/tmp", "-e", "JOB_MANAGER_RPC_ADDRESS=jobmanager", "-p", "127.0.0.1:18081:8081"}, "jobmanager")
+		t.Start(tm, []string{"--network", net, "--read-only", "--tmpfs", "/tmp", "-e", "JOB_MANAGER_RPC_ADDRESS=jobmanager", "-e", "TASK_MANAGER_NUMBER_OF_TASK_SLOTS=2"}, "taskmanager")
+		var out string
+		for i := 0; i < 90; i++ {
+			if _, out = Get("http://127.0.0.1:18081/overview"); strings.Contains(out, `"taskmanagers":1`) {
+				break
+			}
+			if i == 89 {
+				t.Fatalf("no taskmanager registered: %s\n%s\n%s", out, t.Logs(jm), t.Logs(tm))
+			}
+			time.Sleep(time.Second)
+		}
+		t.Logf("%s", out)
+		t.Contains(out, `"flink-version":"`+t.Want+`"`, "version")
+		t.Contains(out, `"slots-available":2`, "free slots")
+		t.Logf("smoke test passed")
+	})
+	register("fulcio", func(t *T) {
+		t.User("1001")
+		t.Match(t.RunEntry("/usr/bin/fulcio", "version"), `GitVersion: *v`+regexp.QuoteMeta(t.Want), "version")
+		name := t.Name("")
+		t.Start(name, []string{"-p", "127.0.0.1:18080:8080"}, "--ca", "ephemeralca")
+		bundle := t.WaitHTTP("http://127.0.0.1:18080/api/v2/trustBundle", 30, name)
+		t.Contains(bundle, "BEGIN CERTIFICATE", "trust bundle")
+		_, conf := Get("http://127.0.0.1:18080/api/v2/configuration")
+		t.Contains(conf, `"issuers"`, "issuer configuration")
+		t.Logf("  trust bundle and issuer configuration served\nsmoke test passed")
 	})
 }
