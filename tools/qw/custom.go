@@ -54,9 +54,11 @@ func init() {
 		"filebrowser-quantum": {src: ghRel("gtsteffaniak/filebrowser"), n: 1, f: filter{
 			keep:  func(t string) bool { return strings.HasSuffix(t, "-stable") },
 			clean: func(t string) string { return strings.TrimSuffix(t, "-stable") }}},
-		"flyway":    {src: ghRel("flyway/flyway"), n: 1, f: mapThen(trim("flyway-"), full(`\d+\.\d+\.\d+`))},
-		"unbound":   {src: ghRel("NLnetLabs/unbound"), n: 1, f: mapThen(trim("release-"), full(`\d+\.\d+\.\d+`))},
-		"friendica": {src: scrapeSrc("https://files.friendi.ca/", `friendica-full-(\d{4}\.\d{2}(?:-\d+)?)\.tar\.gz"`), n: 1},
+		"flyway":                               {src: ghRel("flyway/flyway"), n: 1, f: mapThen(trim("flyway-"), full(`\d+\.\d+\.\d+`))},
+		"unbound":                              {src: ghRel("NLnetLabs/unbound"), n: 1, f: mapThen(trim("release-"), full(`\d+\.\d+\.\d+`))},
+		"clickhouse-operator":                  {src: ghRel("Altinity/clickhouse-operator"), n: 1, f: mapThen(trim("release-"), full(`\d+\.\d+\.\d+`))},
+		"clickhouse-operator-metrics-exporter": {src: ghRel("Altinity/clickhouse-operator"), n: 1, f: mapThen(trim("release-"), full(`\d+\.\d+\.\d+`))},
+		"friendica":                            {src: scrapeSrc("https://files.friendi.ca/", `friendica-full-(\d{4}\.\d{2}(?:-\d+)?)\.tar\.gz"`), n: 1},
 		"garage": {src: jsonList("https://git.deuxfleurs.fr/api/v1/repos/Deuxfleurs/garage/tags?limit=50",
 			func(d any) []string {
 				return each(d, func(t any) string { return strings.TrimLeft(str(path(t, "name")), "v") })
