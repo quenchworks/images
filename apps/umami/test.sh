@@ -43,12 +43,12 @@ echo "  migrated and up: /api/heartbeat ok"
 bad="$(curl -sS -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' "$URL/api/auth/login" -d '{"username":"admin","password":"wrong"}')"
 [ "$bad" = 401 ] || { echo "a wrong password got HTTP $bad"; exit 1; }
 login="$(curl -fsS -H 'Content-Type: application/json' "$URL/api/auth/login" -d '{"username":"admin","password":"umami"}')"
-token="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["token"])' "$login")"
+token="$(jq -er '.token' <<<"$login")"
 [ -n "$token" ] || { echo "no token: $login"; exit 1; }
 echo "  admin login ok, wrong password refused"
 auth=(-H "Authorization: Bearer $token" -H 'Content-Type: application/json')
 site="$(curl -fsS "${auth[@]}" "$URL/api/websites" -d '{"name":"smoke","domain":"smoke.example"}')"
-id="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["id"])' "$site")"
+id="$(jq -er '.id' <<<"$site")"
 ua='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36'
 curl -fsS -A "$ua" -H 'Content-Type: application/json' "$URL/api/send" \
   -d "{\"type\":\"event\",\"payload\":{\"website\":\"$id\",\"hostname\":\"smoke.example\",\"url\":\"/hello\",\"language\":\"en-US\",\"screen\":\"1920x1080\"}}" >/dev/null

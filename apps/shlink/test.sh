@@ -25,7 +25,7 @@ start() {
 }
 start
 health="$(curl -fsS "$URL/rest/health")"; echo "$health"
-ver="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["version"])' "$health")"
+ver="$(jq -er '.version' <<<"$health")"
 [ -z "$WANT" ] || [ "$ver" = "$WANT" ] || { echo "expected $WANT, got $ver"; exit 1; }
 code="$(curl -s -o /dev/null -w '%{http_code}' -H 'X-Api-Key: wrong' "$URL/rest/v3/short-urls")"
 [ "$code" = 401 ] || { echo "a wrong API key got HTTP $code"; exit 1; }

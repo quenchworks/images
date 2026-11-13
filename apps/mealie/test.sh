@@ -20,9 +20,9 @@ start() {
     [ "$i" = 120 ] && { echo "/api/app/about never answered"; docker logs "$NAME" 2>&1 | tail -30; exit 1; }; sleep 1; done
 }
 login() { curl -fsS "$URL/api/auth/token" -d username=changeme@example.com -d "password=$1" \
-  | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])'; }
+  | jq -er '.access_token'; }
 start
-ver="$(curl -fsS "$URL/api/app/about" | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')"
+ver="$(curl -fsS "$URL/api/app/about" | jq -er '.version')"
 echo "mealie $ver"
 [ -z "$WANT" ] || [ "${ver#v}" = "$WANT" ] || { echo "expected $WANT"; exit 1; }
 curl -fsS "$URL/" | grep -qi '<html' || { echo "frontend not served"; exit 1; }

@@ -33,7 +33,7 @@ done
 echo "health: $health"
 
 ver="$(curl -fsS "http://127.0.0.1:$PORT/api/version")"
-release="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["release"])' <<<"$ver")"
+release="$(jq -er '.release' <<<"$ver")"
 echo "label-studio $release"
 [ -z "$WANT" ] || [ "$release" = "$WANT" ] || { echo "expected $WANT"; exit 1; }
 

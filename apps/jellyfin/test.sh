@@ -33,7 +33,7 @@ done
 echo "  /health: $out"
 
 info="$(curl -fsS "$B/System/Info/Public")"
-ver="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["Version"])' <<<"$info")"
+ver="$(jq -er '.Version' <<<"$info")"
 echo "jellyfin $ver"
 [ -z "$WANT" ] || [[ "$ver" == "$WANT"* ]] || { echo "expected $WANT"; exit 1; }
 grep -q '"StartupWizardCompleted":false' <<<"$info" || { echo "not a fresh install: $info"; exit 1; }
@@ -45,7 +45,7 @@ curl -fsS -H "$H" -H "Authorization: $auth" -d '{"UICulture":"en-US","MetadataCo
 curl -fsS -H "Authorization: $auth" "$B/Startup/User" >/dev/null
 curl -fsS -H "$H" -H "Authorization: $auth" -d '{"Name":"admin","Password":"smoke-pw-12345"}' "$B/Startup/User" >/dev/null
 curl -fsS -X POST -H "Authorization: $auth" "$B/Startup/Complete" >/dev/null
-tok="$(curl -fsS -H "$H" -H "Authorization: $auth" -d '{"Username":"admin","Pw":"smoke-pw-12345"}' "$B/Users/AuthenticateByName" | python3 -c 'import json,sys; print(json.load(sys.stdin)["AccessToken"])')"
+tok="$(curl -fsS -H "$H" -H "Authorization: $auth" -d '{"Username":"admin","Pw":"smoke-pw-12345"}' "$B/Users/AuthenticateByName" | jq -er '.AccessToken')"
 [ -n "$tok" ] || { echo "no access token"; exit 1; }
 echo "  wizard completed, admin logged in"
 bad="$(curl -s -o /dev/null -w '%{http_code}' -H "$H" -H "Authorization: $auth" -d '{"Username":"admin","Pw":"wrong"}' "$B/Users/AuthenticateByName")"

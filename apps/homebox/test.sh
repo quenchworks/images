@@ -24,7 +24,7 @@ start() {
 }
 start
 st="$(curl -fsS "$URL/api/v1/status")"
-ver="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["build"]["version"])' "$st")"
+ver="$(jq -er '.build.version' <<<"$st")"
 echo "homebox $ver"
 [ -z "$WANT" ] || [ "$ver" = "$WANT" ] || { echo "expected $WANT"; exit 1; }
 curl -fsS "$URL/" | grep -qi '<html' || { echo "web UI not served"; exit 1; }
@@ -33,7 +33,7 @@ curl -fsS "${J[@]}" "$URL/api/v1/users/register" -d '{"name":"Smoke","email":"sm
 code="$(curl -s -o /dev/null -w '%{http_code}' "${J[@]}" "$URL/api/v1/users/login" -d '{"username":"smoke@quench.test","password":"wrong-pass"}')"
 [ "$code" = 401 ] || [ "$code" = 403 ] || { echo "a wrong password got HTTP $code"; exit 1; }
 login() { curl -fsS "${J[@]}" "$URL/api/v1/users/login" -d '{"username":"smoke@quench.test","password":"smoke-pass-2026"}' \
-  | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])'; }
+  | jq -er '.token'; }
 tok="$(login)"
 A=(-H "Authorization: $tok" "${J[@]}")
 echo "  registered, wrong password refused ($code), logged in"

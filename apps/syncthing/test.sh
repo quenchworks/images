@@ -28,7 +28,7 @@ for n in a b; do
   port=$((port + 1))
 done
 api() { local p=$1; shift; curl -fsS -m 10 -H "X-API-Key: $KEY" "$@" "http://127.0.0.1:$p/rest/$REST"; }
-myid() { REST=system/status api "$1" | python3 -c 'import json,sys; print(json.load(sys.stdin)["myID"])'; }
+myid() { REST=system/status api "$1" | jq -er '.myID'; }
 for p in 18384 18385; do
   for i in $(seq 1 60); do myid "$p" >/dev/null 2>&1 && break
     [ "$i" = 60 ] && { echo "REST on $p never up"; docker logs "$TAG-a" 2>&1 | tail -20; exit 1; }; sleep 1; done

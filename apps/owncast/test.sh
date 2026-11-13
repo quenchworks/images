@@ -24,7 +24,7 @@ docker run -d --name "$TAG" --network "$NET" --network-alias owncast --read-only
 st=""
 for i in $(seq 1 60); do st="$(curl -fsS "$URL/api/status" 2>/dev/null || true)"; [ -n "$st" ] && break
   [ "$i" = 60 ] && { echo "/api/status never answered"; docker logs "$TAG" 2>&1 | tail -30; exit 1; }; sleep 1; done
-ver="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["versionNumber"])' "$st")"
+ver="$(jq -er '.versionNumber' <<<"$st")"
 echo "owncast $ver"
 [ -z "$WANT" ] || [ "$ver" = "$WANT" ] || { echo "expected $WANT"; exit 1; }
 
@@ -38,10 +38,10 @@ docker run -d --name "$TAG-src" --network "$NET" --entrypoint /usr/bin/ffmpeg "$
   -c:v libx264 -preset veryfast -g 50 -c:a aac -f flv "rtmp://owncast:1935/live/$SK" >/dev/null
 online=""
 for _ in $(seq 1 60); do
-  online="$(curl -fsS "$URL/api/status" | python3 -c 'import json,sys; print(json.load(sys.stdin)["online"])' 2>/dev/null || true)"
-  [ "$online" = True ] && break; sleep 1
+  online="$(curl -fsS "$URL/api/status" | jq -er '.online' 2>/dev/null || true)"
+  [ "$online" = true ] && break; sleep 1
 done
-[ "$online" = True ] || { echo "stream never went online"; docker logs "$TAG" 2>&1 | tail -30; docker logs "$TAG-src" 2>&1 | tail -10; exit 1; }
+[ "$online" = true ] || { echo "stream never went online"; docker logs "$TAG" 2>&1 | tail -30; docker logs "$TAG-src" 2>&1 | tail -10; exit 1; }
 echo "  RTMP stream online"
 pl=""
 for _ in $(seq 1 60); do

@@ -49,12 +49,12 @@ fi
 
 token="$(curl -fsS -H 'Content-Type: application/json' \
   -d '{"identity":"admin@smoke.test","secret":"quench-smoke-pw"}' \
-  "http://127.0.0.1:${ADMIN}/api/tokens" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')"
+  "http://127.0.0.1:${ADMIN}/api/tokens" | jq -er '.token')"
 created="$(curl -sS -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
   -d '{"domain_names":["smoke.test"],"forward_scheme":"http","forward_host":"127.0.0.1","forward_port":8181,"meta":{}}' \
   "http://127.0.0.1:${ADMIN}/api/nginx/proxy-hosts")"
 echo "created: ${created:0:200}"
-id="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["id"])' "$created")"
+id="$(jq -er '.id' <<<"$created")"
 
 # the backend writes the config, tests it and reloads nginx after answering; it records
 # the outcome in the host's meta

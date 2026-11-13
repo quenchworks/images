@@ -32,7 +32,7 @@ done
 echo "health: $h"
 
 props="$(curl -fsS -m 10 "http://127.0.0.1:${PORT}/api/session/properties")"
-tag="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["version"]["tag"])' <<<"$props")"
+tag="$(jq -er '.version.tag' <<<"$props")"
 echo "version tag: $tag"
 if [ -n "${2:-}" ]; then [ "$tag" = "v${2}" ] || { echo "expected v$2"; exit 1; }; fi
 
