@@ -15,6 +15,7 @@ import (
 	"github.com/quenchworks/images/tools/qw/internal/core"
 	"github.com/quenchworks/images/tools/qw/internal/drift"
 	"github.com/quenchworks/images/tools/qw/internal/probe"
+	"github.com/quenchworks/images/tools/qw/internal/smoke"
 	"github.com/quenchworks/images/tools/qw/internal/unbuilt"
 	"github.com/quenchworks/images/tools/qw/internal/vex"
 	"github.com/quenchworks/images/tools/qw/internal/wolfi"
@@ -33,6 +34,7 @@ var commands = map[string]struct {
 	"unbuilt":         {unbuilt.Run, "[--all] [app...]", "VERSIONS entries missing on GHCR"},
 	"wolfi-latest":    {wolfi.Run, "<pkg> [N] | --majors P [N] | --match RE", "newest Wolfi versions"},
 	"freeport":        {probe.FreePort, "", "print a free TCP port on 127.0.0.1 (smoke tests)"},
+	"smoke":           {smoke.Run, "<app> <image-ref> [version] | --list", "the app's Go smoke test against an image"},
 	"tlsprobe":        {probe.TLSProbe, "--addr H:P (--ca F --name N | --plain) [--send S] [--expect T]...", "speak a few protocol bytes, check the reply"},
 	"fakeapi":         {probe.FakeAPI, "[--addr H:P] [--cert C --key K] [--route 'M /p=CODE:file']... [--record 'M /p=file']... [--log f] [--port-file f]", "canned JSON API server (smoke tests)"},
 	"rethinkdb-smoke": {probe.RethinkSmoke, "[--addr H:P] [--want V]", "RethinkDB driver round trip (smoke tests)"},
