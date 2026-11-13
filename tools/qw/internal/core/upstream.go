@@ -1,4 +1,4 @@
-package main
+package core
 
 import (
 	"encoding/json"
@@ -8,14 +8,16 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
-	"time"
+
+	"github.com/quenchworks/images/tools/qw/internal/common"
+	"github.com/quenchworks/images/tools/qw/internal/constants"
 )
 
-var httpc = &http.Client{Timeout: 30 * time.Second}
+var httpc = &http.Client{Timeout: constants.HTTPTimeout}
 
 // gh runs one `gh api` call and FAILS when the call fails: an empty answer from a
 // rate-limited call would otherwise read as "no stable releases" (openbao, 2026-09-18).
-func gh(path, jq string) ([]string, error) {
+func Gh(path, jq string) ([]string, error) {
 	out, err := exec.Command("gh", "api", path, "-q", jq).Output()
 	if err != nil {
 		msg := err.Error()
@@ -36,19 +38,19 @@ func gh(path, jq string) ([]string, error) {
 
 // github: stable, non-draft release tags. The name filter backs up the prerelease
 // flag, which upstreams forget (kgateway v2.5.0-beta.1 had prerelease=false).
-func github(repo string) ([]string, error) {
-	return gh("repos/"+repo+"/releases?per_page=40",
+func Github(repo string) ([]string, error) {
+	return Gh("repos/"+repo+"/releases?per_page=40",
 		`.[]|select(.prerelease==false and .draft==false)|.tag_name|select(test("[-.](alpha|beta|rc|pre|preview)[.0-9]*$"; "i")|not)`)
 }
 
 // githubAssetReleases: release tags that ship a downloadable asset (prereleases included).
-func githubAssetReleases(repo string) ([]string, error) {
-	return gh("repos/"+repo+"/releases?per_page=40", `.[]|select(.draft==false and (.assets|length)>0)|.tag_name`)
+func GithubAssetReleases(repo string) ([]string, error) {
+	return Gh("repos/"+repo+"/releases?per_page=40", `.[]|select(.draft==false and (.assets|length)>0)|.tag_name`)
 }
 
 // githubTags: every git tag via ls-remote. The tags API pages in name order, so
 // prerelease tags can push every stable one off page one (cockroachdb, 2026-11-02).
-func githubTags(repo string) ([]string, error) {
+func GithubTags(repo string) ([]string, error) {
 	out, err := exec.Command("git", "ls-remote", "--tags", "--refs", "https://github.com/"+repo).Output()
 	if err != nil {
 		return nil, fmt.Errorf("git ls-remote %s failed: %v", repo, err)
@@ -62,7 +64,7 @@ func githubTags(repo string) ([]string, error) {
 	return vs, nil
 }
 
-func fetch(url string) ([]byte, error) {
+func Fetch(url string) ([]byte, error) {
 	req, _ := http.NewRequest("GET", url, nil)
 	// Wikimedia (and others) refuse a default client agent with a 403.
 	req.Header.Set("User-Agent", "quenchworks-update-check (info@quench-works.com)")
@@ -77,41 +79,33 @@ func fetch(url string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-func jsonGet(url string, v any) error {
-	b, err := fetch(url)
+func JsonGet(url string, v any) error {
+	b, err := Fetch(url)
 	if err != nil {
 		return err
 	}
 	return json.Unmarshal(b, v)
 }
 
-func keys[V any](m map[string]V) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
-}
-
-func npm(pkg string) ([]string, error) {
+func Npm(pkg string) ([]string, error) {
 	var d struct{ Versions map[string]json.RawMessage }
-	if err := jsonGet("https://registry.npmjs.org/"+pkg, &d); err != nil {
+	if err := JsonGet("https://registry.npmjs.org/"+pkg, &d); err != nil {
 		return nil, err
 	}
-	return keys(d.Versions), nil
+	return common.Keys(d.Versions), nil
 }
 
-func pypi(pkg string) ([]string, error) {
+func Pypi(pkg string) ([]string, error) {
 	var d struct{ Releases map[string]json.RawMessage }
-	if err := jsonGet("https://pypi.org/pypi/"+pkg+"/json", &d); err != nil {
+	if err := JsonGet("https://pypi.org/pypi/"+pkg+"/json", &d); err != nil {
 		return nil, err
 	}
-	return keys(d.Releases), nil
+	return common.Keys(d.Releases), nil
 }
 
 // scrape returns every group-1 match of pattern in the page (all matches if no group).
-func scrape(url, pattern string) ([]string, error) {
-	b, err := fetch(url)
+func Scrape(url, pattern string) ([]string, error) {
+	b, err := Fetch(url)
 	if err != nil {
 		return nil, err
 	}
@@ -123,13 +117,13 @@ func scrape(url, pattern string) ([]string, error) {
 }
 
 // wolfi: X.Y.Z versions of one flat Wolfi apk (-rN dropped), newest 40.
-func wolfi(pkg string) ([]string, error) {
-	idx, err := loadWolfi()
+func Wolfi(pkg string) ([]string, error) {
+	idx, err := LoadWolfi()
 	if err != nil {
 		return nil, err
 	}
 	var vs []string
-	for i, v := range bestPerRelease(idx[pkg]) {
+	for i, v := range BestPerRelease(idx[pkg]) {
 		if i == 40 {
 			break
 		}
@@ -140,8 +134,8 @@ func wolfi(pkg string) ([]string, error) {
 }
 
 // wolfiMatch: {package: newest X.Y.Z} for every Wolfi apk whose name matches pattern.
-func wolfiMatch(pattern string) (map[string]string, error) {
-	idx, err := loadWolfi()
+func WolfiMatch(pattern string) (map[string]string, error) {
+	idx, err := LoadWolfi()
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +143,7 @@ func wolfiMatch(pattern string) (map[string]string, error) {
 	out := map[string]string{}
 	for p, vs := range idx {
 		if re.MatchString(p) {
-			x, _, _ := strings.Cut(bestPerRelease(vs)[0], "-r")
+			x, _, _ := strings.Cut(BestPerRelease(vs)[0], "-r")
 			out[p] = x
 		}
 	}

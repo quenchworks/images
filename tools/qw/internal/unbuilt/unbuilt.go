@@ -1,9 +1,4 @@
-package main
-
-// qw unbuilt finds recipes whose newest VERSIONS entry was never published. Build
-// workflows are dispatch-only, so a committed bump can sit ahead of the registry with
-// every run green (zot and three linkerd apps, found 2026-09-17). BLOCKED apps are
-// expected to be behind and are skipped unless --all.
+package unbuilt
 
 import (
 	"fmt"
@@ -13,15 +8,18 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/quenchworks/images/tools/qw/internal/constants"
+	"github.com/quenchworks/images/tools/qw/internal/core"
 )
 
 func published(app, ver string) bool {
 	out, err := exec.Command("docker", "buildx", "imagetools", "inspect",
-		"ghcr.io/quenchworks/images/"+app+":"+ver, "--format", "{{.Manifest.Digest}}").Output()
+		constants.Registry+"/"+app+":"+ver, "--format", "{{.Manifest.Digest}}").Output()
 	return err == nil && strings.HasPrefix(strings.TrimSpace(string(out)), "sha256:")
 }
 
-func cmdUnbuilt(args []string) int {
+func Run(args []string) int {
 	all := false
 	var apps []string
 	for _, a := range args {
@@ -32,9 +30,9 @@ func cmdUnbuilt(args []string) int {
 		}
 	}
 	if len(apps) == 0 {
-		dirs, _ := os.ReadDir(filepath.Join(imagesRoot, "apps"))
+		dirs, _ := os.ReadDir(filepath.Join(core.ImagesRoot, "apps"))
 		for _, d := range dirs {
-			if _, err := os.Stat(filepath.Join(imagesRoot, "apps", d.Name(), "build.conf")); err == nil {
+			if _, err := os.Stat(filepath.Join(core.ImagesRoot, "apps", d.Name(), "build.conf")); err == nil {
 				apps = append(apps, d.Name())
 			}
 		}
@@ -44,7 +42,7 @@ func cmdUnbuilt(args []string) int {
 	var real []string
 	skipped := 0
 	for _, app := range apps {
-		b, err := os.ReadFile(filepath.Join(imagesRoot, "apps", app, "build.conf"))
+		b, err := os.ReadFile(filepath.Join(core.ImagesRoot, "apps", app, "build.conf"))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "!! no such app: %s\n", app)
 			continue
@@ -54,13 +52,13 @@ func cmdUnbuilt(args []string) int {
 			skipped++
 			continue
 		}
-		vs := current(app)
+		vs := core.Current(app)
 		if len(vs) == 0 {
 			fmt.Fprintf(os.Stderr, "!! %s: could not read VERSIONS\n", app)
 			continue
 		}
 		// newest by version: bump puts a new entry first, the chart-pinned one stays last
-		sortDesc(vs)
+		core.SortDesc(vs)
 		if !published(app, vs[0]) {
 			note := ""
 			if blocked {

@@ -1,4 +1,4 @@
-package main
+package check
 
 import (
 	"bytes"
@@ -12,6 +12,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/quenchworks/images/tools/qw/internal/common"
+	"github.com/quenchworks/images/tools/qw/internal/constants"
+	"github.com/quenchworks/images/tools/qw/internal/core"
 )
 
 // check is one app's upstream version check. Exactly one of src, wolfiPrefix or run is set.
@@ -25,18 +29,32 @@ type check struct {
 	run         func(w io.Writer) error // anything the fields above cannot say
 }
 
-func ghRel(r string) func() ([]string, error) { return func() ([]string, error) { return github(r) } }
+func ghRel(r string) func() ([]string, error) {
+	return func() ([]string, error) { return core.Github(r) }
+}
+
 func ghTags(r string) func() ([]string, error) {
-	return func() ([]string, error) { return githubTags(r) }
+	return func() ([]string, error) { return core.GithubTags(r) }
 }
+
 func ghAssets(r string) func() ([]string, error) {
-	return func() ([]string, error) { return githubAssetReleases(r) }
+	return func() ([]string, error) { return core.GithubAssetReleases(r) }
 }
-func npmPkg(p string) func() ([]string, error)   { return func() ([]string, error) { return npm(p) } }
-func pypiPkg(p string) func() ([]string, error)  { return func() ([]string, error) { return pypi(p) } }
-func wolfiPkg(p string) func() ([]string, error) { return func() ([]string, error) { return wolfi(p) } }
+
+func npmPkg(p string) func() ([]string, error) {
+	return func() ([]string, error) { return core.Npm(p) }
+}
+
+func pypiPkg(p string) func() ([]string, error) {
+	return func() ([]string, error) { return core.Pypi(p) }
+}
+
+func wolfiPkg(p string) func() ([]string, error) {
+	return func() ([]string, error) { return core.Wolfi(p) }
+}
+
 func scrapeSrc(u, re string) func() ([]string, error) {
-	return func() ([]string, error) { return scrape(u, re) }
+	return func() ([]string, error) { return core.Scrape(u, re) }
 }
 
 // full keeps candidates the whole of which match re (Python's re.fullmatch).
@@ -68,7 +86,7 @@ func (c check) exec(app string, w io.Writer) error {
 func runOne(app string) string {
 	c, ok := table[app]
 	if !ok {
-		return fmt.Sprintf("%-20s ERROR: no check in tools/qw/table.go", app)
+		return fmt.Sprintf("%-20s ERROR: no check in tools/qw/internal/check/table.go", app)
 	}
 	var b bytes.Buffer
 	done := make(chan error, 1)
@@ -79,7 +97,7 @@ func runOne(app string) string {
 			return fmt.Sprintf("%-20s ERROR: %v", app, err)
 		}
 		return strings.TrimSpace(b.String())
-	case <-time.After(180 * time.Second):
+	case <-time.After(constants.CheckTimeout):
 		return fmt.Sprintf("%-20s ERROR: timed out", app)
 	}
 }
@@ -89,7 +107,7 @@ var statusLine = regexp.MustCompile(`(?m)^#\s*STATUS`)
 // holdReason: why a newer upstream is not an update (EOL=1, BLOCKED=1, or the STATUS line
 // says HELD/DEFERRED/BLOCKED; "DEFERRED to YYYY-MM-DD" stops holding on that date).
 func holdReason(app string) string {
-	b, err := os.ReadFile(filepath.Join(imagesRoot, "apps", app, "build.conf"))
+	b, err := os.ReadFile(filepath.Join(core.ImagesRoot, "apps", app, "build.conf"))
 	if err != nil {
 		return ""
 	}
@@ -127,7 +145,7 @@ func holdReason(app string) string {
 
 // cmdCheck runs the checks (all, or the named apps) in parallel. Exit code is the number
 // of apps with an update, so cron and CI can gate on it.
-func cmdCheck(args []string) int {
+func Run(args []string) int {
 	quiet, workers := false, 8
 	var names []string
 	for i := 0; i < len(args); i++ {
@@ -146,12 +164,12 @@ func cmdCheck(args []string) int {
 	}
 	var uncovered []string
 	if len(names) == 0 {
-		names = keys(table)
+		names = common.Keys(table)
 		// An app with no check is never reported as behind (vikunja sat two releases
 		// behind with HIGH CVEs that way), so list them loudly.
-		dirs, _ := os.ReadDir(filepath.Join(imagesRoot, "apps"))
+		dirs, _ := os.ReadDir(filepath.Join(core.ImagesRoot, "apps"))
 		for _, d := range dirs {
-			if _, err := os.Stat(filepath.Join(imagesRoot, "apps", d.Name(), "build.conf")); err == nil {
+			if _, err := os.Stat(filepath.Join(core.ImagesRoot, "apps", d.Name(), "build.conf")); err == nil {
 				if _, ok := table[d.Name()]; !ok {
 					uncovered = append(uncovered, d.Name())
 				}
@@ -226,4 +244,62 @@ func cmdCheck(args []string) int {
 	fmt.Printf("\nsummary: %d/%d apps checked · %d updates · %d held · %d errors · %d blank · %d unchecked\n",
 		len(names), len(names)+len(uncovered), len(updates), len(helds), len(errs), len(blank), len(uncovered))
 	return len(updates)
+}
+
+func prefix(p string) func(string) bool {
+	return func(v string) bool { return strings.HasPrefix(v, p) }
+}
+
+func notPrefix(p string) func(string) bool {
+	return func(v string) bool { return !strings.HasPrefix(v, p) }
+}
+
+func noDash(v string) bool { return !strings.Contains(v, "-") }
+
+// numDots is Python's v.replace(".", "").isdigit(): only digits and dots, at least one digit.
+func numDots(v string) bool {
+	s := strings.ReplaceAll(v, ".", "")
+	return s != "" && strings.Trim(s, "0123456789") == ""
+}
+
+func trim(p string) func(string) string {
+	return func(v string) string { return strings.TrimPrefix(v, p) }
+}
+
+// group keeps candidates matching re in full and maps each to its first group.
+func group(re string) filter {
+	r := regexp.MustCompile(`^(?:` + re + `)$`)
+	return filter{keep: r.MatchString, clean: func(v string) string { return r.FindStringSubmatch(v)[1] }}
+}
+
+// mapThen cleans first and keeps on the cleaned value (Python's "re.sub, then fullmatch").
+func mapThen(clean func(string) string, keep func(string) bool) filter {
+	return filter{keep: func(v string) bool { return keep(clean(v)) }, clean: clean}
+}
+
+// wolfiVals: the newest version of every Wolfi apk whose name matches re.
+func wolfiVals(re string) func() ([]string, error) {
+	return func() ([]string, error) {
+		m, err := core.WolfiMatch(re)
+		return valsOf(m), err
+	}
+}
+
+func valsOf(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for _, v := range m {
+		out = append(out, v)
+	}
+	return out
+}
+
+// jsonList fetches url and returns pick(decoded).
+func jsonList(url string, pick func(any) []string) func() ([]string, error) {
+	return func() ([]string, error) {
+		var d any
+		if err := core.JsonGet(url, &d); err != nil {
+			return nil, err
+		}
+		return pick(d), nil
+	}
 }

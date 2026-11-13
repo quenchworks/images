@@ -1,24 +1,22 @@
-package main
-
-// qw gen-catalog writes catalog.lock.yaml: the published state of the GHCR catalog. For
-// every app in catalog.yaml it lists the package's version tags (digest + publish date),
-// keeps the ones build.conf declares, and merges in the editorial fields. --meta also
-// inspects each unique digest for its real arches, compressed amd64 size and layer count.
+package catalog
 
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
 
+	"github.com/quenchworks/images/tools/qw/internal/common"
+	"github.com/quenchworks/images/tools/qw/internal/constants"
+	"github.com/quenchworks/images/tools/qw/internal/core"
 	"gopkg.in/yaml.v3"
 )
-
-const org = "quenchworks"
 
 // every image is built amd64+arm64; per-digest arches only come from --meta
 var defaultArches = []string{"amd64", "arm64"}
@@ -55,7 +53,7 @@ func isFullVersion(t string) bool { return isVersionTag(t) && strings.Count(t, "
 
 func buildVersions(slug string) map[string]bool {
 	out := map[string]bool{}
-	conf := filepath.Join(imagesRoot, "apps", slug, "build.conf")
+	conf := filepath.Join(core.ImagesRoot, "apps", slug, "build.conf")
 	if _, err := os.Stat(conf); err != nil {
 		return out
 	}
@@ -81,7 +79,7 @@ type pkgVersion struct {
 // once delisted dragonfly's three published versions. A loud failure costs a re-run.
 func versionsOf(slug string) ([]lockVersion, error) {
 	out, err := exec.Command("gh", "api", "--paginate",
-		"/orgs/"+org+"/packages/container/images%2F"+slug+"/versions?per_page=100").CombinedOutput()
+		"/orgs/"+constants.Org+"/packages/container/images%2F"+slug+"/versions?per_page=100").CombinedOutput()
 	if err != nil {
 		if s := string(out); strings.Contains(s, "HTTP 404") || strings.Contains(s, "Not Found") {
 			return nil, nil
@@ -167,7 +165,7 @@ func metaOf(repo, digest string) *imageMeta {
 		set := map[string]bool{}
 		for _, x := range asList(idx["manifests"]) {
 			mm, _ := x.(map[string]any)
-			arch := str(path(mm, "platform", "architecture"))
+			arch := common.Str(common.Path(mm, "platform", "architecture"))
 			if arch == "" || arch == "unknown" {
 				continue
 			}
@@ -176,21 +174,21 @@ func metaOf(repo, digest string) *imageMeta {
 				amd = mm
 			}
 		}
-		m.arches = sortedKeys(set)
+		m.arches = slices.Sorted(maps.Keys(set))
 		if len(m.arches) == 0 {
 			m.arches = defaultArches
 		}
 		pm := idx // single-arch: the index IS the manifest
 		if amd != nil {
-			pm = rawManifest(repo + "@" + str(amd["digest"]))
+			pm = rawManifest(repo + "@" + common.Str(amd["digest"]))
 		}
 		if pm != nil {
 			if ls, ok := pm["layers"].([]any); ok {
 				var total int64
 				for _, l := range ls {
-					total += int64(num(path(l, "size")))
+					total += int64(num(common.Path(l, "size")))
 				}
-				total += int64(num(path(pm, "config", "size")))
+				total += int64(num(common.Path(pm, "config", "size")))
 				h := human(total)
 				n := len(ls)
 				m.size, m.layers = &h, &n
@@ -204,7 +202,8 @@ func metaOf(repo, digest string) *imageMeta {
 }
 
 func asList(d any) []any { a, _ := d.([]any); return a }
-func num(d any) float64  { f, _ := d.(float64); return f }
+
+func num(d any) float64 { f, _ := d.(float64); return f }
 
 // parallel runs f(0..n-1) on `workers` goroutines.
 func parallel(n, workers int, f func(int)) {
@@ -218,9 +217,9 @@ func parallel(n, workers int, f func(int)) {
 	wg.Wait()
 }
 
-func cmdGenCatalog(args []string) int {
+func Run(args []string) int {
 	withMeta := false
-	out := filepath.Join(imagesRoot, "catalog.lock.yaml")
+	out := filepath.Join(core.ImagesRoot, "catalog.lock.yaml")
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--meta":
@@ -230,7 +229,7 @@ func cmdGenCatalog(args []string) int {
 			out = args[i]
 		}
 	}
-	b, err := os.ReadFile(filepath.Join(imagesRoot, "catalog.yaml"))
+	b, err := os.ReadFile(filepath.Join(core.ImagesRoot, "catalog.yaml"))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -249,7 +248,7 @@ func cmdGenCatalog(args []string) int {
 			rows = append(rows, r)
 		}
 	}
-	repo := func(slug string) string { return "ghcr.io/" + org + "/images/" + slug }
+	repo := func(slug string) string { return constants.Registry + "/" + slug }
 
 	fmt.Fprintf(os.Stderr, "• phase 1/3: listing published tags for %d apps\n", len(rows))
 	listed := make([][]lockVersion, len(rows))
@@ -314,7 +313,7 @@ func cmdGenCatalog(args []string) int {
 		total += len(vs)
 	}
 	doc := &yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{
-		{Kind: yaml.ScalarNode, Value: "registry"}, {Kind: yaml.ScalarNode, Value: "ghcr.io/" + org + "/images"},
+		{Kind: yaml.ScalarNode, Value: "registry"}, {Kind: yaml.ScalarNode, Value: constants.Registry},
 		{Kind: yaml.ScalarNode, Value: "apps"}, apps,
 	}}
 	f, err := os.Create(out)

@@ -1,10 +1,4 @@
-package main
-
-// qw blocked lists BLOCKED=1 apps and whether the package that walls them has shipped
-// the fixed version on BOTH arches; --dispatch then flips BLOCKED=0 on the recipes whose
-// build.conf names that package, commits, pushes and rebuilds them.
-// A recorded fixed version is a snapshot of an advisory, not a constant: the zlib block
-// watched 1.3.3-r0 for months while Wolfi shipped the fix as 1.3.2.1_rc20260601-r0.
+package blocked
 
 import (
 	"fmt"
@@ -15,6 +9,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/quenchworks/images/tools/qw/internal/core"
 )
 
 // apkVKey orders a Wolfi version: dot/underscore fields (non-numeric = 0), then -rN.
@@ -36,20 +32,20 @@ func apkVKey(v string) []int {
 }
 
 func wolfiNewest(pkg, arch string) (string, error) {
-	idx, err := loadWolfiArch(arch)
+	idx, err := core.LoadWolfiArch(arch)
 	if err != nil {
 		return "", err
 	}
 	best := ""
 	for _, v := range idx[pkg] {
-		if best == "" || cmpKey(apkVKey(v), apkVKey(best)) > 0 {
+		if best == "" || core.CmpKey(apkVKey(v), apkVKey(best)) > 0 {
 			best = v
 		}
 	}
 	return best, nil
 }
 
-func cmdBlocked(args []string) int {
+func Run(args []string) int {
 	pkg, minV, dispatch := "zlib", "1.3.2.1_rc20260601-r0", false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -63,7 +59,7 @@ func cmdBlocked(args []string) int {
 			dispatch = true
 		}
 	}
-	confs, _ := filepath.Glob(filepath.Join(imagesRoot, "apps", "*", "build.conf"))
+	confs, _ := filepath.Glob(filepath.Join(core.ImagesRoot, "apps", "*", "build.conf"))
 	sort.Slice(confs, func(i, j int) bool { return filepath.Dir(confs[i]) < filepath.Dir(confs[j]) })
 	blockedRe := regexp.MustCompile(`(?m)^BLOCKED=1`)
 	var mine, other []string
@@ -94,7 +90,7 @@ func cmdBlocked(args []string) int {
 			fmt.Fprintln(os.Stderr, err)
 			return 2
 		}
-		if v == "" || cmpKey(apkVKey(v), apkVKey(minV)) < 0 {
+		if v == "" || core.CmpKey(apkVKey(v), apkVKey(minV)) < 0 {
 			lifted = false
 		}
 		if v == "" {
@@ -140,7 +136,7 @@ func cmdBlocked(args []string) int {
 		{"git", "push", "origin", "HEAD:main"},
 	} {
 		c := exec.Command(cmd[0], cmd[1:]...)
-		c.Dir, c.Stdout, c.Stderr = imagesRoot, os.Stdout, os.Stderr
+		c.Dir, c.Stdout, c.Stderr = core.ImagesRoot, os.Stdout, os.Stderr
 		if err := c.Run(); err != nil {
 			return 2
 		}

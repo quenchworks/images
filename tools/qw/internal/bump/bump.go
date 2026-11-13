@@ -1,13 +1,4 @@
-package main
-
-// qw bump <app> <version>... rewrites build.conf VERSIONS to the versions given and
-// derives every `declare -A` map from the real upstream artifact, never from a
-// neighbouring entry: SHA256/SHA512/SRC_SHA (the tarball at the recipe's uri), SHA_AMD /
-// SHA_ARM (per arch), COMMIT(S) (tag -> commit), PIN (exact Wolfi apk revision), PKG
-// (Wolfi package name per line), and any other map render() pairs with a fetch uri. A map
-// it cannot derive stops the bump (exit 3): a hand-copied hash valid for the WRONG version
-// builds the previous release and no gate catches it. It refuses (exit 4) a list that
-// leaves out the line a same-named chart pins.
+package bump
 
 import (
 	"crypto/sha256"
@@ -25,6 +16,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/quenchworks/images/tools/qw/internal/common"
+	"github.com/quenchworks/images/tools/qw/internal/core"
 )
 
 var hex40 = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -44,7 +38,7 @@ var mapShapes = map[string]*regexp.Regexp{
 }
 
 func readApp(app, file string) string {
-	b, _ := os.ReadFile(filepath.Join(imagesRoot, "apps", app, file))
+	b, _ := os.ReadFile(filepath.Join(core.ImagesRoot, "apps", app, file))
 	return string(b)
 }
 
@@ -146,6 +140,7 @@ func melangeURIs(app, v, arch string) []string {
 }
 
 var amdToks = []string{"x86_64", "amd64", "x86-64", "x64"}
+
 var armToks = []string{"aarch64", "arm64", "arm_64"}
 
 func perArch(url, arch string) string {
@@ -232,7 +227,7 @@ func pinNames(conf, v, mel string) []string {
 }
 
 func wolfiPin(pkg, v string) string {
-	idx, err := loadWolfi()
+	idx, err := core.LoadWolfi()
 	if err != nil {
 		return ""
 	}
@@ -252,7 +247,7 @@ func wolfiPin(pkg, v string) string {
 // chartLineDropped: the chart's appVersion when no given version is on its major.minor line
 // (rqlite, ollama and victorialogs were stranded that way on 2026-10-04).
 func chartLineDropped(app string, versions []string) string {
-	b, err := os.ReadFile(filepath.Join(imagesRoot, "..", "charts", "quench", app, "Chart.yaml"))
+	b, err := os.ReadFile(filepath.Join(core.ImagesRoot, "..", "charts", "quench", app, "Chart.yaml"))
 	if err != nil {
 		return ""
 	}
@@ -270,7 +265,7 @@ func chartLineDropped(app string, versions []string) string {
 	return m[1]
 }
 
-func cmdBump(args []string) int {
+func Run(args []string) int {
 	if len(args) < 2 {
 		fmt.Println("usage: qw bump <app> <version> [<version> ...]")
 		return 2
@@ -280,7 +275,7 @@ func cmdBump(args []string) int {
 		fmt.Printf("!! %s: the chart pins %s and no version given is on its line; pass %s (or a newer patch of it) too, or move the chart first\n", app, p, p)
 		return 4
 	}
-	confPath := filepath.Join(imagesRoot, "apps", app, "build.conf")
+	confPath := filepath.Join(core.ImagesRoot, "apps", app, "build.conf")
 	cb, err := os.ReadFile(confPath)
 	if err != nil {
 		fmt.Println(err)
@@ -310,7 +305,7 @@ func cmdBump(args []string) int {
 		unknown = append(unknown, m)
 	}
 	if len(unknown) > 0 {
-		fmt.Printf("!! %s: unhandled map(s) %s -- bump by hand\n", app, pyList(unknown))
+		fmt.Printf("!! %s: unhandled map(s) %s -- bump by hand\n", app, common.PyList(unknown))
 		return 3
 	}
 	entries := map[string]map[string]string{}
@@ -364,7 +359,7 @@ func cmdBump(args []string) int {
 				// url carrying this arch's token
 				picked := au[0]
 				for _, u := range au {
-					if containsAny(u, toks) {
+					if common.ContainsAny(u, toks) {
 						picked = u
 						break
 					}
@@ -395,7 +390,7 @@ func cmdBump(args []string) int {
 					}
 				}
 				if val == "" {
-					return fail("none of %s at %s found in the Wolfi index", pyList(cands), v)
+					return fail("none of %s at %s found in the Wolfi index", common.PyList(cands), v)
 				}
 			case m == "PKG":
 				// carry the existing name forward on this version's line: go-1.26 takes the
@@ -417,7 +412,7 @@ func cmdBump(args []string) int {
 	text = regexp.MustCompile(`(?m)^VERSIONS=\(.*\)$`).ReplaceAllLiteralString(text, "VERSIONS=("+strings.Join(versions, " ")+")")
 	// a recipe another app renders (trivy-scanner renders trivy) keeps its other entries
 	borrowed := false
-	dirs, _ := os.ReadDir(filepath.Join(imagesRoot, "apps"))
+	dirs, _ := os.ReadDir(filepath.Join(core.ImagesRoot, "apps"))
 	for _, d := range dirs {
 		if d.Name() == app {
 			continue
@@ -469,7 +464,7 @@ func cmdBump(args []string) int {
 				}
 			}
 			if !shape.MatchString(val) {
-				return fail("refusing to write %s[%s]=%s -- wrong shape", m, v, pyRepr(val[:min(60, len(val))]))
+				return fail("refusing to write %s[%s]=%s -- wrong shape", m, v, common.PyRepr(val[:min(60, len(val))]))
 			}
 		}
 	}

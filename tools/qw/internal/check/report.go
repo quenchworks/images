@@ -1,30 +1,15 @@
-package main
+package check
 
 import (
 	"fmt"
 	"io"
-	"os/exec"
 	"regexp"
+	"slices"
 	"strings"
+
+	"github.com/quenchworks/images/tools/qw/internal/common"
+	"github.com/quenchworks/images/tools/qw/internal/core"
 )
-
-// imagesRoot is the images/ checkout; main sets it.
-var imagesRoot = "."
-
-// current is the app's VERSIONS array from its build.conf (bash, because build.conf is bash).
-func current(app string) []string {
-	out, _ := exec.Command("bash", "-c", "source "+imagesRoot+"/apps/"+app+"/build.conf; echo ${VERSIONS[@]}").Output()
-	return strings.Fields(string(out))
-}
-
-// pyList prints like Python's repr of a list of strings, so the output matches the old checkers.
-func pyList(vs []string) string {
-	q := make([]string, len(vs))
-	for i, v := range vs {
-		q[i] = "'" + v + "'"
-	}
-	return "[" + strings.Join(q, ", ") + "]"
-}
 
 type filter struct {
 	keep  func(string) bool
@@ -40,7 +25,7 @@ func (f filter) apply(cands []string) []string {
 		if f.clean != nil {
 			c = f.clean(c)
 		}
-		if startsDigit.MatchString(c) {
+		if core.StartsDigit.MatchString(c) {
 			out = append(out, c)
 		}
 	}
@@ -53,11 +38,7 @@ func (f filter) apply(cands []string) []string {
 func report(w io.Writer, app string, cands []string, n int, f filter) []string {
 	// Oldest first: bump puts a new version FIRST and the chart-pinned one stays last, so
 	// "last entry" read opa as behind on the 1.22.4 it already shipped (2026-11-13).
-	cur := current(app)
-	sortDesc(cur)
-	for i, j := 0, len(cur)-1; i < j; i, j = i+1, j-1 {
-		cur[i], cur[j] = cur[j], cur[i]
-	}
+	cur := sortedAsc(core.Current(app))
 	if n == 0 {
 		n = len(cur)
 		if n == 0 {
@@ -73,17 +54,17 @@ func report(w io.Writer, app string, cands []string, n int, f filter) []string {
 			top = append(top, c)
 		}
 	}
-	sortDesc(top)
+	core.SortDesc(top)
 	if len(top) > n {
 		top = top[:n]
 	}
 	have := []int{0}
 	if len(cur) > 0 {
-		have = vkey(cur[len(cur)-1])
+		have = core.Vkey(cur[len(cur)-1])
 	}
 	var behind []string
 	for _, v := range top {
-		if cmpKey(vkey(v), have) > 0 {
+		if core.CmpKey(core.Vkey(v), have) > 0 {
 			behind = append(behind, v)
 		}
 	}
@@ -91,7 +72,7 @@ func report(w io.Writer, app string, cands []string, n int, f filter) []string {
 	switch {
 	case len(top) == 0:
 		status = "BROKEN CHECK -- upstream returned NO candidates (not 'up to date')"
-	case cmpKey(vkey(top[0]), have) < 0:
+	case core.CmpKey(core.Vkey(top[0]), have) < 0:
 		status = fmt.Sprintf("BROKEN CHECK -- we ship %s but upstream's newest is %s; wrong source?", cur[len(cur)-1], top[0])
 	default:
 		// A patch on an OLDER line we still ship is outside the newest-n window
@@ -109,46 +90,37 @@ func report(w io.Writer, app string, cands []string, n int, f filter) []string {
 			}
 			best := ""
 			for _, v := range all {
-				if strings.HasPrefix(v, p) && strings.Count(v, ".") == strings.Count(c, ".") && !shipped[v] && vless(c, v) {
-					if best == "" || vless(best, v) {
+				if strings.HasPrefix(v, p) && strings.Count(v, ".") == strings.Count(c, ".") && !shipped[v] && core.Vless(c, v) {
+					if best == "" || core.Vless(best, v) {
 						best = v
 					}
 				}
 			}
-			if best != "" && !contains(behind, best) {
+			if best != "" && !slices.Contains(behind, best) {
 				behind = append(behind, best)
 			}
 		}
 		status = "ok"
 		if len(behind) > 0 {
-			status = "UPDATE -> " + pyList(behind)
+			status = "UPDATE -> " + common.PyList(behind)
 		}
 	}
 	h := "?"
 	if len(cur) > 0 {
 		h = cur[len(cur)-1]
 	}
-	fmt.Fprintf(w, "%-20s have=%14s  latest%d=%s  %s\n", app, h, n, pyList(top), status)
+	fmt.Fprintf(w, "%-20s have=%14s  latest%d=%s  %s\n", app, h, n, common.PyList(top), status)
 	return behind
-}
-
-func contains(vs []string, s string) bool {
-	for _, v := range vs {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }
 
 // reportLines: newest per version line (depth numeric components), against our newest
 // entry on each line, plus EVERY newer line (sealed-secrets sat two lines behind).
 func reportLines(w io.Writer, app string, cands []string, depth int, f filter) []string {
-	cur := current(app)
+	cur := core.Current(app)
 	wmap := map[string]string{}
 	for _, c := range f.apply(cands) {
-		lk := lineKey(c, depth)
-		if old, ok := wmap[lk]; !ok || vless(old, c) {
+		lk := core.LineKey(c, depth)
+		if old, ok := wmap[lk]; !ok || core.Vless(old, c) {
 			wmap[lk] = c
 		}
 	}
@@ -159,14 +131,14 @@ func lineReport(w io.Writer, app string, cur []string, wmap map[string]string, d
 	fmt.Fprintln(w, app)
 	top := map[string]string{}
 	for _, c := range cur {
-		lk := lineKey(c, depth)
-		if old, ok := top[lk]; !ok || vless(old, c) {
+		lk := core.LineKey(c, depth)
+		if old, ok := top[lk]; !ok || core.Vless(old, c) {
 			top[lk] = c
 		}
 	}
 	var behind []string
 	for _, c := range cur {
-		lk := lineKey(c, depth)
+		lk := core.LineKey(c, depth)
 		if label == "" && top[lk] != c {
 			continue // two shipped entries on one line: only the newest is compared
 		}
@@ -174,9 +146,9 @@ func lineReport(w io.Writer, app string, cur []string, wmap map[string]string, d
 		upd := false
 		if ok {
 			if lineOnly {
-				upd = cmpKey(vkey(lineKey(v, depth)), vkey(c)) > 0
+				upd = core.CmpKey(core.Vkey(core.LineKey(v, depth)), core.Vkey(c)) > 0
 			} else {
-				upd = vless(c, v)
+				upd = core.Vless(c, v)
 			}
 		}
 		if upd {
@@ -194,23 +166,23 @@ func lineReport(w io.Writer, app string, cur []string, wmap map[string]string, d
 	}
 	oursTop := []int{0}
 	for _, c := range cur {
-		if k := vkey(lineKey(c, depth)); cmpKey(k, oursTop) > 0 {
+		if k := core.Vkey(core.LineKey(c, depth)); core.CmpKey(k, oursTop) > 0 {
 			oursTop = k
 		}
 	}
 	var newer []string
 	for k := range wmap {
-		if cmpKey(vkey(k), oursTop) > 0 {
+		if core.CmpKey(core.Vkey(k), oursTop) > 0 {
 			newer = append(newer, k)
 		}
 	}
-	sortDesc(newer)
+	core.SortDesc(newer)
 	for _, k := range newer {
 		fmt.Fprintf(w, "  NEW LINE available: %s%s (%s)\n", label, k, wmap[k])
 	}
 	switch {
 	case len(behind) > 0:
-		fmt.Fprintf(w, "  => UPDATE -> %s\n", pyList(behind))
+		fmt.Fprintf(w, "  => UPDATE -> %s\n", common.PyList(behind))
 	case len(newer) > 0:
 		fmt.Fprintf(w, "  => NEW LINE %s\n", strings.Join(newer, " "))
 	default:
@@ -224,7 +196,7 @@ var gitSuffix = regexp.MustCompile(`_git\d+$`)
 // reportWolfiLines: per shipped line, Wolfi's newest patch of prefix+<line> (go-1.26,
 // openjdk-21, php-8.4). lineOnly: we pin the line and the patch floats.
 func reportWolfiLines(w io.Writer, app, prefix string, depth int, lineOnly bool) ([]string, error) {
-	majors, err := wolfiMajors(prefix, 12)
+	majors, err := core.WolfiMajors(prefix, 12)
 	if err != nil {
 		return nil, err
 	}
@@ -232,7 +204,49 @@ func reportWolfiLines(w io.Writer, app, prefix string, depth int, lineOnly bool)
 	for _, m := range majors {
 		x, _, _ := strings.Cut(m[1], "-r")
 		x = gitSuffix.ReplaceAllString(x, "") // 3.14.7_git20260925 is a snapshot of 3.14.7
-		wmap[lineKey(x, depth)] = x
+		wmap[core.LineKey(x, depth)] = x
 	}
-	return lineReport(w, app, current(app), wmap, depth, prefix, lineOnly), nil
+	return lineReport(w, app, core.Current(app), wmap, depth, prefix, lineOnly), nil
+}
+
+// reportWolfiSuffix: apks named <x>-<major>-<y> (dotnet-8-sdk); the first number in the
+// name is the line, compared with our entry on that line.
+func reportWolfiSuffix(app, re, label string) func(io.Writer) error {
+	return func(w io.Writer) error {
+		m, err := core.WolfiMatch(re)
+		if err != nil {
+			return err
+		}
+		byLine := map[string]string{}
+		for p, v := range m {
+			maj := core.Digits.FindString(p)
+			if old, ok := byLine[maj]; !ok || core.Vless(old, v) {
+				byLine[maj] = v
+			}
+		}
+		fmt.Fprintln(w, app)
+		var behind []string
+		for _, c := range core.Current(app) {
+			maj := core.Digits.FindString(c)
+			v, ok := byLine[maj]
+			upd := ok && core.Vless(c, v)
+			if upd {
+				behind = append(behind, v)
+			}
+			if !ok {
+				v = "?"
+			}
+			mark := "ok"
+			if upd {
+				mark = "UPDATE"
+			}
+			fmt.Fprintf(w, "  %s: have=%10s  latest=%10s  %s\n", strings.ReplaceAll(label, "{maj}", maj), c, v, mark)
+		}
+		if len(behind) > 0 {
+			fmt.Fprintf(w, "  => UPDATE -> %s\n", common.PyList(behind))
+		} else {
+			fmt.Fprintln(w, "  => ok")
+		}
+		return nil
+	}
 }

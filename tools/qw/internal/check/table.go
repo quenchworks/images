@@ -1,7 +1,23 @@
-package main
+package check
 
-// Generated once from scripts/check/*.py (2026-11-13); edit rows by hand from now on.
-// One row per app whose check is "a source, maybe a regex filter, report or per-line".
+import (
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/quenchworks/images/tools/qw/internal/common"
+	"github.com/quenchworks/images/tools/qw/internal/core"
+)
+
+// One row per app: a source, an optional filter, and how to report. Generated from
+// scripts/check/*.py on 2026-11-13; edited by hand since.
 var table = map[string]check{
 	"3proxy":                            {src: ghRel("3proxy/3proxy"), n: 1, f: filter{keep: full(`[1-9]\d*\.\d+\.\d+`)}},
 	"actions-runner":                    {src: ghRel("actions/runner"), n: 1},
@@ -365,4 +381,588 @@ var table = map[string]check{
 	"zitadel":     {src: ghRel("zitadel/zitadel")},
 	"zoraxy":      {src: ghRel("tobychui/zoraxy"), n: 1},
 	"zot":         {src: ghRel("project-zot/zot"), n: 1},
+
+	"actual":                          {src: npmPkg("@actual-app/sync-server"), n: 1, f: filter{keep: noDash}},
+	"airflow":                         {src: pypiPkg("apache-airflow"), lines: 2, f: filter{keep: numDots}},
+	"ansible":                         {src: pypiPkg("ansible"), n: 2, f: filter{keep: numDots}},
+	"apache-pinot":                    {src: ghRel("apache/pinot"), n: 1, f: group(`(?:release-)?(\d+\.\d+\.\d+)`)},
+	"apache-polaris":                  {src: ghRel("apache/polaris"), n: 1, f: group(`apache-polaris-(\d+\.\d+\.\d+)`)},
+	"aspnet":                          {run: reportWolfiSuffix("aspnet", `^aspnet-\d+-runtime$`, "aspnet-{maj}-runtime")},
+	"dotnet-runtime":                  {run: reportWolfiSuffix("dotnet-runtime", `^dotnet-\d+-runtime$`, "dotnet-{maj}-runtime")},
+	"dotnet":                          {run: reportWolfiSuffix("dotnet", `^dotnet-\d+-sdk$`, "dotnet-{maj}-sdk")},
+	"backdrop":                        {src: ghRel("backdrop/backdrop"), lines: 2},
+	"buildah":                         {src: ghRel("containers/buildah"), lines: 2},
+	"fulcio":                          {src: ghRel("sigstore/fulcio"), lines: 2},
+	"joomla":                          {src: ghRel("joomla/joomla-cms"), lines: 2},
+	"matomo":                          {src: ghRel("matomo-org/matomo"), lines: 2},
+	"percona-xtradb-cluster-operator": {src: ghRel("percona/percona-xtradb-cluster-operator"), lines: 2},
+	"podman":                          {src: ghRel("containers/podman"), lines: 2},
+	"rekor-tiles":                     {src: ghRel("sigstore/rekor-tiles"), lines: 2},
+	"timestamp-authority":             {src: ghRel("sigstore/timestamp-authority"), lines: 2},
+	"calico-cni":                      {src: wolfiVals(calicoNode), n: 1},
+	"calico-csi":                      {src: wolfiVals(calicoNode), n: 1},
+	"calico-key-cert-provisioner":     {src: wolfiVals(calicoNode), n: 1},
+	"calico-kube-controllers":         {src: wolfiVals(calicoNode), n: 1},
+	"calico-node-driver-registrar":    {src: wolfiVals(calicoNode), n: 1},
+	"calico-node":                     {src: wolfiVals(calicoNode), n: 1},
+	"calico-pod2daemon-flexvol":       {src: wolfiVals(calicoNode), n: 1},
+	"calico-typha":                    {src: wolfiVals(calicoNode), n: 1},
+	"clamav":                          {src: ghRel("Cisco-Talos/clamav"), lines: 2, f: filter{keep: prefix("clamav-"), clean: trim("clamav-")}},
+	"clickhouse": {src: ghRel("ClickHouse/ClickHouse"), lines: 2, f: filter{
+		keep:  func(t string) bool { return strings.Contains(t, "-stable") },
+		clean: func(t string) string { return strings.SplitN(t, "-", 2)[0] }}},
+	"coolify-app": {src: ghRel("coollabsio/coolify"), n: 1, f: filter{keep: full(`4\.\d+\.\d+`)}},
+	"coolify-helper": {src: jsonList("https://raw.githubusercontent.com/coollabsio/coolify/main/upstream.json",
+		func(d any) []string { return []string{common.Str(common.Path(d, "helper", "version"))} })},
+	"couchdb":     {src: ghTags("apache/couchdb"), f: filter{keep: full(`\d+\.\d+\.\d+`)}},
+	"haproxy":     {src: ghTags("haproxy/haproxy"), f: filter{keep: full(`\d+\.\d+\.\d+`)}},
+	"memcached":   {src: ghTags("memcached/memcached"), f: filter{keep: full(`\d+\.\d+\.\d+`)}},
+	"mosquitto":   {src: ghTags("eclipse/mosquitto"), f: filter{keep: full(`\d+\.\d+\.\d+`)}},
+	"descheduler": {src: ghRel("kubernetes-sigs/descheduler"), n: 1, f: filter{keep: notPrefix("descheduler-helm-chart")}},
+	"documentdb": {src: ghTags("microsoft/documentdb"), f: filter{keep: full(`\d+\.\d+-\d+`),
+		clean: func(t string) string { return strings.ReplaceAll(t, "-", ".") }}},
+	"filebrowser-quantum": {src: ghRel("gtsteffaniak/filebrowser"), n: 1, f: filter{
+		keep:  func(t string) bool { return strings.HasSuffix(t, "-stable") },
+		clean: func(t string) string { return strings.TrimSuffix(t, "-stable") }}},
+	"flyway":                               {src: ghRel("flyway/flyway"), n: 1, f: mapThen(trim("flyway-"), full(`\d+\.\d+\.\d+`))},
+	"unbound":                              {src: ghRel("NLnetLabs/unbound"), n: 1, f: mapThen(trim("release-"), full(`\d+\.\d+\.\d+`))},
+	"clickhouse-operator":                  {src: ghRel("Altinity/clickhouse-operator"), n: 1, f: mapThen(trim("release-"), full(`\d+\.\d+\.\d+`))},
+	"clickhouse-operator-metrics-exporter": {src: ghRel("Altinity/clickhouse-operator"), n: 1, f: mapThen(trim("release-"), full(`\d+\.\d+\.\d+`))},
+	"friendica":                            {src: scrapeSrc("https://files.friendi.ca/", `friendica-full-(\d{4}\.\d{2}(?:-\d+)?)\.tar\.gz"`), n: 1},
+	"garage": {src: jsonList("https://git.deuxfleurs.fr/api/v1/repos/Deuxfleurs/garage/tags?limit=50",
+		func(d any) []string {
+			return common.Each(d, func(t any) string { return strings.TrimLeft(common.Str(common.Path(t, "name")), "v") })
+		}), lines: 2},
+	"ghost":    {src: npmPkg("ghost"), f: filter{keep: noDash}},
+	"renovate": {src: npmPkg("renovate"), f: filter{keep: noDash}},
+	"pnpm":     {src: npmPkg("pnpm"), lines: 1, f: filter{keep: noDash}},
+	"gitlab-runner": {src: jsonList("https://gitlab.com/api/v4/projects/gitlab-org%2Fgitlab-runner/releases?per_page=40",
+		func(d any) []string {
+			return common.Each(d, func(r any) string {
+				if b, _ := common.Path(r, "upcoming_release").(bool); b {
+					return ""
+				}
+				return strings.TrimLeft(common.Str(common.Path(r, "tag_name")), "v")
+			})
+		})},
+	"gravitee-console":          graviteeCheck,
+	"gravitee-gateway":          graviteeCheck,
+	"gravitee-management-api":   graviteeCheck,
+	"guacamole":                 {src: ghTags("apache/guacamole-client"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
+	"guacd":                     {src: ghTags("apache/guacamole-server"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
+	"hasura":                    {src: ghRel("hasura/graphql-engine"), lines: 2, f: filter{keep: prefix("2.")}},
+	"influxdb":                  {src: ghRel("influxdata/influxdb"), f: filter{keep: prefix("2.")}},
+	"jaeger":                    {src: ghRel("jaegertracing/jaeger"), n: 1, f: filter{keep: prefix("2.")}},
+	"metabase":                  {src: ghRel("metabase/metabase"), n: 1, f: filter{keep: prefix("0.")}},
+	"jmeter":                    {src: ghRel("apache/jmeter"), f: filter{clean: func(t string) string { return strings.ReplaceAll(t, "rel/v", "") }}},
+	"linkerd-cni":               {src: ghRel("linkerd/linkerd2-proxy-init"), n: 1, f: filter{keep: prefix("cni-plugin/v"), clean: trim("cni-plugin/v")}},
+	"linkerd-extension-init":    {src: ghRel("linkerd/linkerd-extension-init"), n: 1, f: filter{keep: prefix("release/v"), clean: trim("release/v")}},
+	"linkerd-control-plane":     linkerdEdge,
+	"linkerd-policy-controller": linkerdEdge,
+	"linkerd-viz-metrics-api":   linkerdEdge,
+	"linkerd-viz-tap":           linkerdEdge,
+	"mariadb-operator":          {src: ghRel("mariadb-operator/mariadb-operator"), lines: 2, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
+	"metallb-controller":        {src: ghRel("metallb/metallb"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
+	"metallb-speaker":           {src: ghRel("metallb/metallb"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
+	"metrics-server":            {src: ghRel("kubernetes-sigs/metrics-server"), n: 1, f: filter{keep: notPrefix("metrics-server-helm-chart")}},
+	"mimir":                     {src: ghRel("grafana/mimir"), f: filter{clean: trim("mimir-")}},
+	"mlflow":                    {src: pypiPkg("mlflow"), f: filter{keep: numDots}},
+	"vllm":                      {src: pypiPkg("vllm"), f: filter{keep: numDots}},
+	"mongo-express": {src: jsonList("https://registry.npmjs.org/mongo-express",
+		func(d any) []string { return []string{common.Str(common.Path(d, "dist-tags", "latest"))} }), n: 1},
+	"mysql":  {src: jsonList("https://endoflife.date/api/mysql.json", endoflifeLatest), lines: 2},
+	"neo4j":  {src: ghTags("neo4j/neo4j"), lines: 2, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
+	"nessie": {src: ghRel("projectnessie/nessie"), n: 1, f: group(`nessie-(\d+\.\d+\.\d+)`)},
+	"nifi":   {src: ghTags("apache/nifi"), n: 1, f: group(`rel/nifi-(\d+\.\d+\.\d+)`)},
+	"odoo": {src: func() ([]string, error) {
+		ds, err := core.Scrape("https://nightly.odoo.com/19.0/nightly/src/", `odoo_19\.0\.([0-9]{8})\.tar\.gz`)
+		for i := range ds {
+			ds[i] = "19.0." + ds[i]
+		}
+		return ds, err
+	}, n: 1},
+	"openresty": {src: ghTags("openresty/openresty"), lines: 2, f: filter{keep: full(`\d+\.\d+\.\d+\.\d+`)}},
+	"pgbouncer": {src: ghRel("pgbouncer/pgbouncer"), f: filter{clean: func(t string) string {
+		return strings.ReplaceAll(strings.ReplaceAll(t, "pgbouncer_", ""), "_", ".")
+	}}},
+	"phpmyadmin": {src: jsonList("https://www.phpmyadmin.net/home_page/version.json",
+		func(d any) []string { return []string{common.Str(common.Path(d, "version"))} }), n: 1},
+	"postgres-documentdb": {src: ghRel("FerretDB/documentdb"), f: filter{clean: func(t string) string { return strings.SplitN(t, "-ferretdb", 2)[0] }}},
+	"reloader":            {src: ghRel("stakater/Reloader"), n: 1, f: filter{keep: notPrefix("chart")}},
+	"rustfs": {src: ghAssets("rustfs/rustfs"), f: filter{keep: func(v string) bool {
+		for _, p := range strings.Split(v, ".") {
+			if p == "" || strings.Trim(p, "0123456789") != "" {
+				return false
+			}
+		}
+		return true
+	}}},
+	"sealed-secrets":        {src: ghRel("bitnami-labs/sealed-secrets"), lines: 2, f: filter{keep: notPrefix("helm-")}},
+	"selenium-node-firefox": {src: ghRel("SeleniumHQ/selenium"), n: 2, f: group(`selenium-(\d+\.\d+\.\d+)`)},
+	"selenium-server":       {src: ghRel("SeleniumHQ/selenium"), n: 2, f: group(`selenium-(\d+\.\d+\.\d+)`)},
+	"solr":                  {src: ghTags("apache/solr"), f: filter{keep: prefix("releases/solr/"), clean: trim("releases/solr/")}},
+	"support-bundle-kit":    {src: ghRel("rancher/support-bundle-kit"), n: 1, f: filter{keep: notPrefix("0.0.")}},
+	"tailscale": {src: ghRel("tailscale/tailscale"), lines: 2, f: filter{keep: func(t string) bool {
+		k := core.Vkey(t) // even minor = stable release
+		return len(k) > 1 && k[1]%2 == 0
+	}}},
+	"trafficserver": {src: scrapeSrc("https://downloads.apache.org/trafficserver/", `trafficserver-(\d+\.\d+\.\d+)\.tar\.bz2"`), n: 1,
+		f: filter{keep: func(v string) bool {
+			return !strings.HasPrefix(v, "9.") && !strings.HasPrefix(v, "10.0.") && !strings.HasPrefix(v, "10.1.")
+		}}},
+	"tyk":     {src: ghRel("TykTechnologies/tyk"), n: 1, f: filter{keep: noDash}},
+	"wildfly": {src: ghRel("wildfly/wildfly"), n: 1, f: group(`(\d+\.\d+\.\d+)\.Final`)},
+	"wordpress": {src: jsonList("https://api.wordpress.org/core/stable-check/1.0/",
+		func(d any) []string { m, _ := d.(map[string]any); return common.Keys(m) }), lines: 2},
+	"ztunnel": {src: ghTags("istio/ztunnel"), lines: 2, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
+
+	"proxysql": {run: func(w io.Writer) error {
+		vs, err := core.Wolfi("proxysql")
+		if err != nil {
+			return err
+		}
+		reportLines(w, "proxysql", vs, 1, filter{})
+		up, err := core.Github("sysown/proxysql")
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(w, "  upstream (github.com/sysown/proxysql): %s\n", strings.Join(up[:min(3, len(up))], ", "))
+		return nil
+	}},
+	"bifrost": {src: ghTags("maximhq/bifrost"), lines: 2, f: filter{
+		keep:  func(t string) bool { return strings.HasPrefix(t, "transports/v") && !strings.Contains(t, "-") },
+		clean: func(t string) string { return strings.TrimLeft(strings.SplitN(t, "/", 2)[1], "v") }}},
+	"cassandra": {src: ghTags("apache/cassandra"), f: filter{keep: full(`cassandra-\d+\.\d+\.\d+`), clean: trim("cassandra-")}},
+	"scylladb":  {src: ghTags("scylladb/scylladb"), f: filter{keep: full(`scylla-\d+\.\d+\.\d+`), clean: trim("scylla-")}},
+	"zookeeper": {src: ghTags("apache/zookeeper"), f: filter{keep: full(`release-\d+\.\d+\.\d+`), clean: trim("release-")}},
+	"cluster-autoscaler": {src: ghRel("kubernetes/autoscaler"), lines: 2, f: filter{
+		keep: regexp.MustCompile(`^cluster-autoscaler-\d`).MatchString, clean: trim("cluster-autoscaler-")}},
+	// deno is frozen at 2.9.7 until its hold clears (apps/deno/build.conf).
+	"deno": {src: ghRel("denoland/deno"), f: filter{keep: func(t string) bool {
+		for _, p := range strings.Split(t, ".") {
+			if p == "" || strings.Trim(p, "0123456789") != "" {
+				return false
+			}
+		}
+		return !core.Vless("2.9.7", t)
+	}}},
+	// RE2 has no lookahead: "not followed by a dot" (skips the .asc/.sha files) as a class.
+	"httpd": {src: scrapeSrc("https://downloads.apache.org/httpd/", `httpd-(2\.4\.\d+)\.tar\.bz2(?:[^.]|$)`), n: 1},
+	"mongodb": {src: jsonList("https://downloads.mongodb.org/current.json", func(d any) []string {
+		return common.Each(common.Path(d, "versions"), func(v any) string { return common.Str(common.Path(v, "version")) })
+	}), f: filter{keep: full(`\d+\.0\.\d+`)}},
+	"powerdns":          pdnsRefs("auth-"),
+	"powerdns-recursor": pdnsRefs("rec-"),
+	"storm":             {src: scrapeSrc("https://archive.apache.org/dist/storm/", `href="apache-storm-(\d+\.\d+\.\d+)/"`), n: 1},
+	"tomcat":            {src: scrapeSrc("https://downloads.apache.org/tomcat/tomcat-11/", `href="v(11\.0\.\d+)/"`), n: 1},
+	"tomee":             {src: scrapeSrc("https://archive.apache.org/dist/tomee/", `href="tomee-(\d+\.\d+\.\d+)/"`), n: 1},
+	// github() strips the leading "v" of every tag, so these tags read "ertical-pod-autoscaler-".
+	"vertical-pod-autoscaler": {src: ghRel("kubernetes/autoscaler"), lines: 2, f: filter{
+		keep: func(t string) bool {
+			return strings.HasPrefix(t, "ertical-pod-autoscaler-") && !strings.HasPrefix(t, "ertical-pod-autoscaler-chart")
+		},
+		clean: trim("ertical-pod-autoscaler-")}},
+	"static": {run: func(w io.Writer) error {
+		ver := "datestamped"
+		if b, err := os.ReadFile(filepath.Join(core.ImagesRoot, "apps", "static", "build.conf")); err == nil {
+			if m := regexp.MustCompile(`VERSIONS=\(([^)]*)\)`).FindStringSubmatch(string(b)); m != nil {
+				if f := strings.Fields(m[1]); len(f) > 0 {
+					ver = f[len(f)-1]
+				}
+			}
+		}
+		fmt.Fprintf(w, "static               have=%13s  latest=%13s  ok  (datestamped base, no upstream to track)\n", ver, ver)
+		return nil
+	}},
+	"drupal": {src: scrapeSrc("https://updates.drupal.org/release-history/drupal/current", `<version>(\d+\.\d+\.\d+)</version>`), lines: 2},
+	"nginx": {src: ghTags("nginx/nginx"), f: filter{keep: func(t string) bool {
+		m := regexp.MustCompile(`^release-\d+\.(\d+)\.\d+$`).FindStringSubmatch(t)
+		return m != nil && core.Vkey(m[1])[0]%2 == 0 // even minor = stable
+	}, clean: trim("release-")}},
+
+	"apisix-ingress-controller": {src: scrapeSrc("https://archive.apache.org/dist/apisix/ingress-controller/", `href="(\d+\.\d+\.\d+)/"`), n: 1},
+	// the newest four 1.x lines, each listing page scraped for its tarballs
+	"mediawiki": {src: func() ([]string, error) {
+		const base = "https://releases.wikimedia.org/mediawiki/"
+		ls, err := core.Scrape(base, `href="(1\.\d+)/"`)
+		if err != nil {
+			return nil, err
+		}
+		ls = uniq(ls)
+		core.SortDesc(ls)
+		ls = ls[:min(4, len(ls))]
+		var out []string
+		for _, l := range ls {
+			vs, err := core.Scrape(base+l+"/", `mediawiki-(\d+\.\d+\.\d+)\.tar\.gz"`)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, vs...)
+		}
+		return out, nil
+	}, lines: 2},
+	"n8n":         {src: n8nStable, lines: 2},
+	"n8n-runners": {src: n8nStable, lines: 2},
+	"vault":       {src: ghRel("hashicorp/vault"), lines: 2, f: filter{keep: numDots}},
+	"yarn": {src: ghRel("yarnpkg/berry"), f: filter{keep: prefix("@yarnpkg/cli/"),
+		clean: func(t string) string { return t[strings.LastIndex(t, "/")+1:] }}},
+	"zabbix-server": {src: zabbixSources, lines: 2},
+	"zabbix-web":    {src: zabbixSources, lines: 2},
+	"graylog":       {src: ghTags("Graylog2/graylog2-server"), lines: 2, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
+	// coolify pins its realtime image in versions.json; read it at the newest 4.0-4.3 tag that has one.
+	"coolify-realtime": {src: func() ([]string, error) {
+		tags, err := core.Github("coollabsio/coolify")
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range tags {
+			p := strings.SplitN(t, ".", 3)
+			// Python compared the first two fields as STRINGS: ["4","10"] < ["4","4"]. Kept as is.
+			if len(p) < 2 || !(p[0] < "4" || (p[0] == "4" && p[1] < "4")) {
+				continue
+			}
+			var vj map[string]any
+			if core.JsonGet("https://raw.githubusercontent.com/coollabsio/coolify/v"+t+"/versions.json", &vj) != nil {
+				continue
+			}
+			for _, o := range vj {
+				if v := common.Str(common.Path(o, "realtime", "version")); v != "" {
+					return []string{v}, nil
+				}
+			}
+		}
+		return nil, nil
+	}, n: 1},
+
+	"authentik": {src: ghRel("goauthentik/authentik"), lines: 2, f: filter{
+		keep:  func(t string) bool { return strings.Contains(t, "/") },
+		clean: func(t string) string { return t[strings.LastIndex(t, "/")+1:] }}},
+	// Codeberg's API first; its git refs when the API is down.
+	"forgejo": {src: func() ([]string, error) {
+		var rels []map[string]any
+		if err := core.JsonGet("https://codeberg.org/api/v1/repos/forgejo/forgejo/releases?limit=50", &rels); err == nil {
+			var tags []string
+			for _, r := range rels {
+				if p, _ := r["prerelease"].(bool); p {
+					continue
+				}
+				if d, _ := r["draft"].(bool); d {
+					continue
+				}
+				tags = append(tags, strings.TrimLeft(common.Str(r["tag_name"]), "v"))
+			}
+			return tags, nil
+		}
+		out, err := exec.Command("git", "ls-remote", "--tags", "https://codeberg.org/forgejo/forgejo.git").Output()
+		if err != nil {
+			return nil, err
+		}
+		var tags []string
+		for _, m := range regexp.MustCompile(`(?m)refs/tags/v(\d+\.\d+\.\d+)$`).FindAllStringSubmatch(string(out), -1) {
+			tags = append(tags, m[1])
+		}
+		return uniq(tags), nil
+	}, lines: 2},
+	"varnish": {run: func(w io.Writer) error {
+		vs, err := core.Wolfi("varnish")
+		if err != nil {
+			return err
+		}
+		reportLines(w, "varnish", vs, 2, filter{})
+		tags, err := core.Github("varnish/varnish")
+		if err != nil {
+			return err
+		}
+		up := map[string]string{}
+		for _, t := range tags {
+			v := regexp.MustCompile(`^v?arnish-`).ReplaceAllString(t, "")
+			if !core.StartsDigit.MatchString(v) {
+				continue
+			}
+			l := core.LineKey(v, 2)
+			if old, ok := up[l]; !ok || core.Vless(old, v) {
+				up[l] = v
+			}
+		}
+		ls := common.Keys(up)
+		core.SortDesc(ls)
+		var parts []string
+		for _, l := range ls[:min(4, len(ls))] {
+			parts = append(parts, l+"->"+up[l])
+		}
+		fmt.Fprintf(w, "  upstream (github.com/varnish/varnish): %s\n", strings.Join(parts, ", "))
+		return nil
+	}},
+	// the Kafka version marked default in the newest operator release's kafka-versions.yaml
+	"strimzi-kafka": {src: func() ([]string, error) {
+		tags, err := core.Github("strimzi/strimzi-kafka-operator")
+		if err != nil {
+			return nil, err
+		}
+		var ts []string
+		for _, t := range tags {
+			if core.StartsDigit.MatchString(t) {
+				ts = append(ts, t)
+			}
+		}
+		if len(ts) == 0 {
+			return nil, nil
+		}
+		core.SortDesc(ts)
+		newest := ts[0]
+		b, err := core.Fetch("https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/" + newest + "/kafka-versions.yaml")
+		if err != nil {
+			return nil, err
+		}
+		var out []string
+		for _, block := range strings.Split(string(b), "\n- ") {
+			m := regexp.MustCompile(`version:\s*(\S+)`).FindStringSubmatch(block)
+			if m != nil && regexp.MustCompile(`(?m)^\s*default:\s*true`).MatchString(block) {
+				out = append(out, newest+"-kafka-"+m[1])
+			}
+		}
+		return out, nil
+	}, n: 1},
+	// kgateway-envoy moves in lockstep with kgateway: same VERSIONS and ENVOY_PKG.
+	"kgateway-envoy": {run: func(w io.Writer) error {
+		tags, err := core.Github("kgateway-dev/kgateway")
+		if err != nil {
+			return err
+		}
+		report(w, "kgateway-envoy", tags, 0, filter{})
+		window := func(app string) string {
+			out, _ := exec.Command("bash", "-c", "source "+core.ImagesRoot+"/apps/"+app+"/build.conf; echo ${VERSIONS[@]} '|' ${ENVOY_PKG[@]}").Output()
+			return strings.Join(strings.Fields(string(out)), " ")
+		}
+		cp, dp := window("kgateway"), window("kgateway-envoy")
+		if cp != dp {
+			fmt.Fprintf(w, "  LOCKSTEP BROKEN:    apps/kgateway %s\n                      apps/kgateway-envoy %s\n", common.PyList(strings.Fields(cp)), common.PyList(strings.Fields(dp)))
+			return nil
+		}
+		fmt.Fprintf(w, "  lockstep:           matches apps/kgateway (%s)\n", strings.Join(core.Current("kgateway"), " "))
+		return nil
+	}},
+	// CockroachDB has no release feed we trust: probe the binary URL for nearby versions.
+	"cockroachdb": {src: func() ([]string, error) {
+		cands := map[string]bool{}
+		for _, v := range core.Current("cockroachdb") {
+			k := core.Vkey(v)
+			y, m, p := k[0], k[1], k[2]
+			for q := p; q < p+6; q++ {
+				cands[fmt.Sprintf("%d.%d.%d", y, m, q)] = true
+			}
+			for _, d := range []int{1, 2} {
+				for q := 0; q < 3; q++ {
+					cands[fmt.Sprintf("%d.%d.%d", y, m+d, q)] = true
+				}
+			}
+			for q := 0; q < 3; q++ {
+				cands[fmt.Sprintf("%d.1.%d", y+1, q)] = true // YY.1 opens each year
+			}
+		}
+		hc := &http.Client{Timeout: 20 * time.Second}
+		var out []string
+		for v := range cands {
+			r, err := hc.Head("https://binaries.cockroachdb.com/cockroach-v" + v + ".linux-amd64.tgz")
+			if err == nil {
+				r.Body.Close()
+				if r.StatusCode == 200 {
+					out = append(out, v)
+				}
+			}
+		}
+		sort.Strings(out)
+		return out, nil
+	}},
+
+	// Wolfi ships elixir per Erlang major (erl28-elixir-1.19); compare per elixir line.
+	"elixir": {run: func(w io.Writer) error {
+		m, err := core.WolfiMatch(`^erl\d+-elixir-\d+\.\d+$`)
+		if err != nil {
+			return err
+		}
+		lines := map[string]string{}
+		for _, v := range m {
+			l := core.LineKey(v, 2)
+			if old, ok := lines[l]; !ok || core.Vless(old, v) {
+				lines[l] = v
+			}
+		}
+		fmt.Fprintln(w, "elixir")
+		var behind []string
+		for _, c := range core.Current("elixir") {
+			l := core.LineKey(c, 2)
+			v, ok := lines[l]
+			upd := ok && core.Vless(c, v)
+			if upd {
+				behind = append(behind, v)
+			}
+			if !ok {
+				v = "?"
+			}
+			fmt.Fprintf(w, "  elixir-%s: have=%10s  latest=%10s  %s\n", l, c, v, okOr(upd))
+		}
+		fmt.Fprintf(w, "  => %s\n", updOr(behind))
+		return nil
+	}},
+	// 22 is built from the nodejs.org tarball (Wolfi moved nodejs-22 to enterprise,
+	// 2026-08-14); 24 and 26 come from Wolfi.
+	"node": {run: func(w io.Writer) error {
+		cur := map[string]string{}
+		for _, v := range core.Current("node") {
+			cur[strings.SplitN(v, ".", 2)[0]] = v
+		}
+		fmt.Fprintln(w, "node")
+		var behind []string
+		for _, maj := range []string{"22", "24", "26"} {
+			var cands []string
+			var err error
+			if maj == "22" {
+				var idx []map[string]any
+				err = core.JsonGet("https://nodejs.org/dist/index.json", &idx)
+				for _, r := range idx {
+					if v := common.Str(r["version"]); strings.HasPrefix(v, "v22.") {
+						cands = append(cands, v[1:])
+					}
+				}
+			} else {
+				cands, err = core.Wolfi("nodejs-" + maj)
+			}
+			if err != nil {
+				return err
+			}
+			core.SortDesc(cands)
+			newest := cands[0]
+			have, ok := cur[maj]
+			if !ok {
+				have = "?"
+			}
+			upd := !ok || core.Vless(have, newest)
+			if upd {
+				behind = append(behind, newest)
+			}
+			fmt.Fprintf(w, "  nodejs-%s: have=%10s  latest=%10s  %s\n", maj, have, newest, okOr(upd))
+		}
+		fmt.Fprintf(w, "  => %s\n", updOr(behind))
+		return nil
+	}},
+	// step-ca ships the step CLI too, pinned separately in STEP.
+	"step-ca": {run: func(w io.Writer) error {
+		tags, err := core.Github("smallstep/certificates")
+		if err != nil {
+			return err
+		}
+		report(w, "step-ca", tags, 1, filter{})
+		out, _ := exec.Command("bash", "-c", "source "+core.ImagesRoot+"/apps/step-ca/build.conf; echo ${STEP[@]}").Output()
+		step := strings.Fields(string(out))
+		cli, err := core.Github("smallstep/cli")
+		if err != nil {
+			return err
+		}
+		var cands []string
+		for _, t := range cli {
+			if core.StartsDigit.MatchString(t) {
+				cands = append(cands, t)
+			}
+		}
+		core.SortDesc(cands)
+		have, newest := "", ""
+		if len(step) > 0 {
+			core.SortDesc(step)
+			have = step[0]
+		}
+		if len(cands) > 0 {
+			newest = cands[0]
+		}
+		var status string
+		switch {
+		case newest == "":
+			status = "BROKEN CHECK -- smallstep/cli returned NO candidates"
+		case have == "":
+			status = "BROKEN CHECK -- no STEP pin found in build.conf"
+		case core.Vless(have, newest):
+			status = "UPDATE -> ['" + newest + "']"
+		default:
+			status = "ok"
+		}
+		h, l := have, "[]"
+		if h == "" {
+			h = "?"
+		}
+		if newest != "" {
+			l = common.PyList([]string{newest})
+		}
+		fmt.Fprintf(w, "%-20s have=%14s  latest1=%s  %s\n", "step-ca (step cli)", h, l, status)
+		return nil
+	}},
+	// NGF pins its nginx, njs and agent per release: shown, not bumped on their own.
+	"nginx-gateway-fabric-nginx": {run: func(w io.Writer) error {
+		tags, err := core.Github("nginx/nginx-gateway-fabric")
+		if err != nil {
+			return err
+		}
+		const app = "nginx-gateway-fabric-nginx"
+		report(w, app, tags, 0, filter{})
+		ver := "?"
+		if cur := core.Current(app); len(cur) > 0 {
+			ver = cur[len(cur)-1]
+		}
+		b, _ := os.ReadFile(filepath.Join(core.ImagesRoot, "apps", app, "build.conf"))
+		pinned := func(name string) string {
+			m := regexp.MustCompile(`declare -A ` + name + `=\(\s*\[` + regexp.QuoteMeta(ver) + `\]=(\S+)`).FindStringSubmatch(string(b))
+			if m == nil {
+				return "?"
+			}
+			return m[1]
+		}
+		newest := func(cands []string) string {
+			best := "?"
+			for _, c := range cands {
+				if full(`\d+\.\d+\.\d+`)(c) && (best == "?" || core.Vless(best, c)) {
+					best = c
+				}
+			}
+			return best
+		}
+		nginx, err := core.GithubTags("nginx/nginx")
+		if err != nil {
+			return err
+		}
+		for i := range nginx {
+			nginx[i] = strings.ReplaceAll(nginx[i], "release-", "")
+		}
+		njs, err := core.GithubTags("nginx/njs")
+		if err != nil {
+			return err
+		}
+		agent, err := core.Github("nginx/agent")
+		if err != nil {
+			return err
+		}
+		var agent3 []string
+		for _, t := range agent {
+			if strings.HasPrefix(t, "3.") {
+				agent3 = append(agent3, t)
+			}
+		}
+		fmt.Fprintf(w, "  components pinned by NGF %s (bump only with the release):\n", ver)
+		for _, r := range [][3]string{
+			{"nginx", pinned("NGINX_VER"), newest(nginx)},
+			{"njs", pinned("NJS_VER"), newest(njs)},
+			{"nginx-agent", pinned("AGENT_VER"), newest(agent3)},
+		} {
+			state := "ok"
+			if r[1] != r[2] {
+				state = "upstream moved"
+			}
+			fmt.Fprintf(w, "    %-12s have=%10s  upstream-newest=%10s  %s\n", r[0], r[1], r[2], state)
+		}
+		return nil
+	}},
+
+	"linkerd-proxy": {run: linkerdProxy},
+	"adc":           {run: adcCheck},
+	"contour":       {run: envoyPaired("contour", "projectcontour/contour", contourEnvoyPin)},
+	"kgateway":      {run: envoyPaired("kgateway", "kgateway-dev/kgateway", kgatewayEnvoyPin)},
+	"apisix":        {run: apisixCheck},
 }

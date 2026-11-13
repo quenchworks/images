@@ -147,6 +147,14 @@ version:
 # ------------------------------------------
 # Help
 # ------------------------------------------
+# ------------------------------------------
+# qw tooling (tools/qw): make qw-check ARGS="-q", make qw-test, make qw-help
+# ------------------------------------------
+ARGS ?=
+.PHONY: qw-%
+qw-%:
+	@$(MAKE) -C tools/qw $* ARGS='$(ARGS)'
+
 .PHONY: help
 help:
 	@echo ""
@@ -168,6 +176,10 @@ help:
 	@echo "VERIFY (what users run — key-based)"
 	@echo "  make verify APP=redis [VERSION=…] - cosign verify signature + SBOM + provenance"
 	@echo "  make pubkey                       - print the public key (cosign.pub)"
+	@echo ""
+	@echo "QW TOOLING (tools/qw)"
+	@echo "  make qw-check ARGS=\"-q\"         - upstream version check (any qw command: qw-bump, qw-vex, ...)"
+	@echo "  make qw-test   make qw-lint   make qw-help"
 	@echo ""
 	@echo "HOUSEKEEPING"
 	@echo "  make check-tools   make version   make logs   make clean"

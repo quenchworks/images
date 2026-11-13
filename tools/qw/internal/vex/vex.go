@@ -1,25 +1,18 @@
-package main
-
-// qw vex validates every apps/*/vex.openvex.json against the house rules. A VEX file
-// REMOVES findings from the 0-CVE gate (build-image.sh and CI pass it to Trivy), so it is
-// suppression logic, not documentation. This cannot prove a claim true; it guarantees the
-// claim is well formed, narrow, and argued:
-//   - status is not_affected (under_investigation would let a hunch suppress a finding)
-//   - justification is one of the five OpenVEX values (free text is not auditable)
-//   - impact_statement is >= 120 chars and cites how it was checked
-//   - each CVE appears once per product
-//   - the app's workflow passes TRIVY_VEX and runs this validator
-// --stale also scans every published version and lists statements whose CVE is gone.
+package vex
 
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
+	"github.com/quenchworks/images/tools/qw/internal/common"
+	"github.com/quenchworks/images/tools/qw/internal/core"
 	"gopkg.in/yaml.v3"
 )
 
@@ -56,16 +49,6 @@ type vexDoc struct {
 	} `json:"statements"`
 }
 
-func pyRepr(v any) string {
-	if v == nil {
-		return "None"
-	}
-	if s, ok := v.(string); ok {
-		return "'" + s + "'"
-	}
-	return fmt.Sprint(v)
-}
-
 func checkVexFile(path string) ([]string, *vexDoc) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -77,7 +60,7 @@ func checkVexFile(path string) ([]string, *vexDoc) {
 	}
 	var errs []string
 	if ctx := fmt.Sprint(doc.Context); !strings.Contains(ctx, "openvex.dev/ns") {
-		errs = append(errs, fmt.Sprintf("@context is not an OpenVEX namespace: %s", pyRepr(doc.Context)))
+		errs = append(errs, fmt.Sprintf("@context is not an OpenVEX namespace: %s", common.PyRepr(doc.Context)))
 	}
 	for _, f := range []struct {
 		name string
@@ -112,35 +95,26 @@ func checkVexFile(path string) ([]string, *vexDoc) {
 			seen[k] = true
 		}
 		if st.Status != "not_affected" {
-			errs = append(errs, fmt.Sprintf("%s (%s): status is %s; only 'not_affected' may appear in a suppression file", where, cve, pyRepr(st.Status)))
+			errs = append(errs, fmt.Sprintf("%s (%s): status is %s; only 'not_affected' may appear in a suppression file", where, cve, common.PyRepr(st.Status)))
 		}
 		if j, _ := st.Justification.(string); !justifications[j] {
-			errs = append(errs, fmt.Sprintf("%s (%s): justification %s is not an OpenVEX value", where, cve, pyRepr(st.Justification)))
+			errs = append(errs, fmt.Sprintf("%s (%s): justification %s is not an OpenVEX value", where, cve, common.PyRepr(st.Justification)))
 		}
 		impact := strings.TrimSpace(st.ImpactStatement)
 		if n := len([]rune(impact)); n < minImpact {
 			errs = append(errs, fmt.Sprintf("%s (%s): impact_statement is %d chars; needs >= %d explaining what was checked and what it showed", where, cve, n, minImpact))
-		} else if !containsAny(strings.ToLower(impact), evidenceMarkers) {
+		} else if !common.ContainsAny(strings.ToLower(impact), evidenceMarkers) {
 			errs = append(errs, fmt.Sprintf("%s (%s): impact_statement cites no verification -- say how the claim was checked, not just that it is a false positive", where, cve))
 		}
 	}
 	return errs, &doc
 }
 
-func containsAny(s string, subs []string) bool {
-	for _, x := range subs {
-		if strings.Contains(s, x) {
-			return true
-		}
-	}
-	return false
-}
-
 // checkVexWiring: the local gate picks the file up by itself, so a workflow that does not
 // pass TRIVY_VEX fails only at publish time (grafana, jenkins-inbound-agent and kgateway,
 // all on 2026-08-27, each copied from an app without a VEX).
 func checkVexWiring(app string) []string {
-	wf := filepath.Join(imagesRoot, ".github", "workflows", "build-"+app+".yml")
+	wf := filepath.Join(core.ImagesRoot, ".github", "workflows", "build-"+app+".yml")
 	b, err := os.ReadFile(wf)
 	if err != nil {
 		return []string{"no workflow at .github/workflows/build-" + app + ".yml to check"}
@@ -160,7 +134,7 @@ func checkVexWiring(app string) []string {
 // stale on one can be live on another) without --vex, at every severity, and lists the
 // statements whose CVE none of them carries. It says why when it cannot run.
 func checkVexStale(app string, doc *vexDoc) []string {
-	b, err := os.ReadFile(filepath.Join(imagesRoot, "catalog.lock.yaml"))
+	b, err := os.ReadFile(filepath.Join(core.ImagesRoot, "catalog.lock.yaml"))
 	if err != nil {
 		return []string{"stale check skipped: no catalog.lock.yaml"}
 	}
@@ -220,7 +194,7 @@ func checkVexStale(app string, doc *vexDoc) []string {
 	return errs
 }
 
-func cmdVex(args []string) int {
+func Run(args []string) int {
 	stale := false
 	var only []string
 	for _, a := range args {
@@ -230,7 +204,7 @@ func cmdVex(args []string) int {
 			only = append(only, a)
 		}
 	}
-	files, _ := filepath.Glob(filepath.Join(imagesRoot, "apps", "*", "vex.openvex.json"))
+	files, _ := filepath.Glob(filepath.Join(core.ImagesRoot, "apps", "*", "vex.openvex.json"))
 	// by app name: whole-path order puts emissary-ingress/ before emissary/ ('-' < '/')
 	sort.Slice(files, func(i, j int) bool { return filepath.Dir(files[i]) < filepath.Dir(files[j]) })
 	if len(only) > 0 {
@@ -246,7 +220,7 @@ func cmdVex(args []string) int {
 			}
 		}
 		if len(want) > 0 {
-			for _, m := range sortedKeys(want) {
+			for _, m := range slices.Sorted(maps.Keys(want)) {
 				fmt.Printf("!! %s: no apps/%s/vex.openvex.json\n", m, m)
 			}
 			return 3
@@ -280,10 +254,4 @@ func cmdVex(args []string) int {
 		return 1
 	}
 	return 0
-}
-
-func sortedKeys(m map[string]bool) []string {
-	out := keys(m)
-	sort.Strings(out)
-	return out
 }

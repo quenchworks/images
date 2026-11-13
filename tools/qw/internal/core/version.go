@@ -1,4 +1,4 @@
-package main
+package core
 
 import (
 	"regexp"
@@ -7,12 +7,12 @@ import (
 	"strings"
 )
 
-var digits = regexp.MustCompile(`\d+`)
+var Digits = regexp.MustCompile(`\d+`)
 
 // vkey is every run of digits in v, so "REL_17_2" and "17.2" order the same way.
-func vkey(v string) []int {
+func Vkey(v string) []int {
 	var k []int
-	for _, d := range digits.FindAllString(v, -1) {
+	for _, d := range Digits.FindAllString(v, -1) {
 		n, _ := strconv.Atoi(d)
 		k = append(k, n)
 	}
@@ -20,7 +20,7 @@ func vkey(v string) []int {
 }
 
 // cmpKey compares like Python tuples: element by element, then the shorter is smaller.
-func cmpKey(a, b []int) int {
+func CmpKey(a, b []int) int {
 	for i := 0; i < len(a) && i < len(b); i++ {
 		if a[i] != b[i] {
 			if a[i] < b[i] {
@@ -32,19 +32,19 @@ func cmpKey(a, b []int) int {
 	return len(a) - len(b)
 }
 
-func vless(a, b string) bool { return cmpKey(vkey(a), vkey(b)) < 0 }
+func Vless(a, b string) bool { return CmpKey(Vkey(a), Vkey(b)) < 0 }
 
 // lineKey is the first depth numeric components of v, joined with dots.
-func lineKey(v string, depth int) string {
-	d := digits.FindAllString(v, -1)
+func LineKey(v string, depth int) string {
+	d := Digits.FindAllString(v, -1)
 	if len(d) > depth {
 		d = d[:depth]
 	}
 	return strings.Join(d, ".")
 }
 
-func sortDesc(vs []string) {
-	sort.SliceStable(vs, func(i, j int) bool { return vless(vs[j], vs[i]) })
+func SortDesc(vs []string) {
+	sort.SliceStable(vs, func(i, j int) bool { return Vless(vs[j], vs[i]) })
 }
 
-var startsDigit = regexp.MustCompile(`^\d`)
+var StartsDigit = regexp.MustCompile(`^\d`)

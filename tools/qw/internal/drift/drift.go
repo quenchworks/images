@@ -1,22 +1,19 @@
-package main
-
-// qw drift-scan scans every PUBLISHED version in the lock for fixable CVEs that appeared
-// after it was built: the build gate proves an image clean the day it was built and
-// nothing re-checks it (34 images had drifted unseen on 2026-09-20). Every version, not
-// just the newest: an old tag is still pullable and still claimed clean. The app's VEX
-// file is applied exactly as the build gate applies it, so the two scanners agree. A
-// failed scan is reported as failed, never as clean. Scans run one at a time.
+package drift
 
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/quenchworks/images/tools/qw/internal/common"
+	"github.com/quenchworks/images/tools/qw/internal/core"
 	"gopkg.in/yaml.v3"
 )
 
@@ -38,7 +35,7 @@ type dirtyImage struct {
 func driftScan(app, ref string) ([]finding, bool) {
 	args := []string{"image", "--ignore-unfixed", "--severity", "CRITICAL,HIGH,MEDIUM,LOW",
 		"--scanners", "vuln", "--detection-priority", "comprehensive", "--quiet", "-f", "json"}
-	if vex := filepath.Join(imagesRoot, "apps", app, "vex.openvex.json"); fileExists(vex) {
+	if vex := filepath.Join(core.ImagesRoot, "apps", app, "vex.openvex.json"); fileExists(vex) {
 		args = append(args, "--vex", vex)
 	}
 	out, err := exec.Command("trivy", append(args, ref)...).Output()
@@ -66,7 +63,7 @@ func driftScan(app, ref string) ([]finding, bool) {
 
 func fileExists(p string) bool { _, err := os.Stat(p); return err == nil }
 
-func cmdDriftScan(args []string) int {
+func Run(args []string) int {
 	shard, of, jsonOut := 0, 1, ""
 	var only []string
 	for i := 0; i < len(args); i++ {
@@ -85,7 +82,7 @@ func cmdDriftScan(args []string) int {
 			i = len(args)
 		}
 	}
-	b, err := os.ReadFile(filepath.Join(imagesRoot, "catalog.lock.yaml"))
+	b, err := os.ReadFile(filepath.Join(core.ImagesRoot, "catalog.lock.yaml"))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
@@ -105,7 +102,7 @@ func cmdDriftScan(args []string) int {
 	}
 	type target struct{ app, ver, image string }
 	var targets []target
-	names := keys(lock.Apps)
+	names := common.Keys(lock.Apps)
 	sort.Strings(names)
 	for _, n := range names {
 		a := lock.Apps[n]
@@ -143,7 +140,7 @@ func cmdDriftScan(args []string) int {
 				}
 				sev[s] = true
 			}
-			fmt.Printf("%-28s %-14s %d finding(s) [%s]\n", t.app, t.ver, len(fs), strings.Join(sortedKeys(sev), ","))
+			fmt.Printf("%-28s %-14s %d finding(s) [%s]\n", t.app, t.ver, len(fs), strings.Join(slices.Sorted(maps.Keys(sev)), ","))
 		default:
 			fmt.Printf("%-28s %-14s clean\n", t.app, t.ver)
 		}

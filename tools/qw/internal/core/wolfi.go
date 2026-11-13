@@ -1,4 +1,4 @@
-package main
+package core
 
 import (
 	"archive/tar"
@@ -6,15 +6,14 @@ import (
 	"compress/gzip"
 	"fmt"
 	"net/http"
-	"os"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
-)
 
-const wolfiIndex = "https://packages.wolfi.dev/os/%s/APKINDEX.tar.gz"
+	"github.com/quenchworks/images/tools/qw/internal/constants"
+)
 
 var (
 	wolfiMu  sync.Mutex
@@ -25,20 +24,20 @@ var (
 func apkKey(v string) []int {
 	xyz, rev, _ := strings.Cut(v, "-r")
 	r, _ := strconv.Atoi(regexp.MustCompile(`\D`).ReplaceAllString(rev, ""))
-	return append(vkey(xyz), -1, r) // -1 separates, so a longer X.Y.Z still wins
+	return append(Vkey(xyz), -1, r) // -1 separates, so a longer X.Y.Z still wins
 }
 
 // loadWolfi is the x86_64 index, which every check reads.
-func loadWolfi() (map[string][]string, error) { return loadWolfiArch("x86_64") }
+func LoadWolfi() (map[string][]string, error) { return LoadWolfiArch("x86_64") }
 
 // loadWolfiArch reads one arch's APKINDEX once per run: package -> every published version.
-func loadWolfiArch(arch string) (map[string][]string, error) {
+func LoadWolfiArch(arch string) (map[string][]string, error) {
 	wolfiMu.Lock()
 	defer wolfiMu.Unlock()
 	if idx, ok := wolfiIdx[arch]; ok {
 		return idx, nil
 	}
-	idx, err := fetchWolfi(fmt.Sprintf(wolfiIndex, arch))
+	idx, err := fetchWolfi(fmt.Sprintf(constants.WolfiIndex, arch))
 	if err == nil {
 		wolfiIdx[arch] = idx
 	}
@@ -90,11 +89,11 @@ func fetchWolfi(url string) (map[string][]string, error) {
 }
 
 // bestPerRelease keeps the highest -rN of each X.Y.Z, newest first.
-func bestPerRelease(versions []string) []string {
+func BestPerRelease(versions []string) []string {
 	by := map[string]string{}
 	for _, v := range versions {
 		x, _, _ := strings.Cut(v, "-r")
-		if cur, ok := by[x]; !ok || cmpKey(apkKey(v), apkKey(cur)) > 0 {
+		if cur, ok := by[x]; !ok || CmpKey(apkKey(v), apkKey(cur)) > 0 {
 			by[x] = v
 		}
 	}
@@ -102,13 +101,13 @@ func bestPerRelease(versions []string) []string {
 	for _, v := range by {
 		out = append(out, v)
 	}
-	sort.Slice(out, func(i, j int) bool { return cmpKey(apkKey(out[i]), apkKey(out[j])) > 0 })
+	sort.Slice(out, func(i, j int) bool { return CmpKey(apkKey(out[i]), apkKey(out[j])) > 0 })
 	return out
 }
 
 // wolfiMajors: for prefix "go-", the newest version of each go-<N> package, newest N lines first.
-func wolfiMajors(prefix string, n int) ([][2]string, error) {
-	idx, err := loadWolfi()
+func WolfiMajors(prefix string, n int) ([][2]string, error) {
+	idx, err := LoadWolfi()
 	if err != nil {
 		return nil, err
 	}
@@ -120,68 +119,14 @@ func wolfiMajors(prefix string, n int) ([][2]string, error) {
 		}
 	}
 	sort.Slice(names, func(i, j int) bool {
-		return cmpKey(vkey(re.FindStringSubmatch(names[i])[1]), vkey(re.FindStringSubmatch(names[j])[1])) > 0
+		return CmpKey(Vkey(re.FindStringSubmatch(names[i])[1]), Vkey(re.FindStringSubmatch(names[j])[1])) > 0
 	})
 	if len(names) > n {
 		names = names[:n]
 	}
 	var out [][2]string
 	for _, p := range names {
-		out = append(out, [2]string{p, bestPerRelease(idx[p])[0]})
+		out = append(out, [2]string{p, BestPerRelease(idx[p])[0]})
 	}
 	return out, nil
-}
-
-// cmdWolfiLatest keeps the wolfi-latest.py command line: <pkg> [N] | --majors <prefix> [N] | --match <re>.
-func cmdWolfiLatest(args []string) int {
-	idx, err := loadWolfi()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 2
-	}
-	w := bufio.NewWriter(os.Stdout)
-	defer w.Flush()
-	switch {
-	case len(args) > 1 && args[0] == "--majors":
-		n := 4
-		if len(args) > 2 {
-			n, _ = strconv.Atoi(args[2])
-		}
-		ms, _ := wolfiMajors(args[1], n)
-		for _, m := range ms {
-			fmt.Fprintf(w, "%s  ->  %s\n", m[0], m[1])
-		}
-	case len(args) > 1 && args[0] == "--match":
-		re := regexp.MustCompile(args[1])
-		var names []string
-		for p := range idx {
-			if re.MatchString(p) {
-				names = append(names, p)
-			}
-		}
-		sort.Strings(names)
-		for _, p := range names {
-			fmt.Fprintf(w, "%s\t%s\n", p, bestPerRelease(idx[p])[0])
-		}
-	case len(args) > 0:
-		n := 3
-		if len(args) > 1 {
-			n, _ = strconv.Atoi(args[1])
-		}
-		vs, ok := idx[args[0]]
-		if !ok {
-			fmt.Fprintf(os.Stderr, "NOT IN WOLFI: %s\n", args[0])
-			return 1
-		}
-		for i, v := range bestPerRelease(vs) {
-			if i == n {
-				break
-			}
-			fmt.Fprintln(w, v)
-		}
-	default:
-		fmt.Fprintln(os.Stderr, "usage: qw wolfi-latest <pkg> [N] | --majors <prefix> [N] | --match <regex>")
-		return 2
-	}
-	return 0
 }
