@@ -184,7 +184,12 @@ func (t *T) LabelVersion() string {
 // RunInput runs the image once with input on stdin (docker run -i); it returns the output
 // and the error instead of failing.
 func (t *T) RunInput(input string, args ...string) (string, error) {
-	c := exec.Command("docker", append([]string{"run", "--rm", "-i", t.Image}, args...)...)
+	return t.RunInputFlags(nil, input, args...)
+}
+
+// RunInputFlags is RunInput with docker run flags before the image.
+func (t *T) RunInputFlags(flags []string, input string, args ...string) (string, error) {
+	c := exec.Command("docker", append(append(append([]string{"run", "--rm", "-i"}, flags...), t.Image), args...)...)
 	c.Stdin = strings.NewReader(input)
 	out, err := c.CombinedOutput()
 	return strings.TrimRight(string(out), "\n"), err
