@@ -77,14 +77,16 @@ echo applets-ok`)
 		t.csiSidecar("--csi-address=/csi/csi.sock", "--v=5")
 		t.Logf("smoke test passed (csi-livenessprobe; user %q)", u)
 	})
-	register("csi-attacher", func(t *T) {
-		u := t.rootLikeUpstream()
-		if t.Want != "" {
-			t.Contains(t.Run("--version"), "v"+t.Want, "version")
-		}
-		t.csiSidecar("--csi-address=/csi/csi.sock", "--kubeconfig=/csi/kubeconfig", "--v=5")
-		t.Logf("smoke test passed (csi-attacher; user %q)", u)
-	})
+	for _, app := range []string{"csi-attacher", "csi-provisioner", "csi-resizer", "csi-snapshotter"} {
+		register(app, func(t *T) {
+			u := t.rootLikeUpstream()
+			if t.Want != "" {
+				t.Contains(t.Run("--version"), "v"+t.Want, "version")
+			}
+			t.csiSidecar("--csi-address=/csi/csi.sock", "--kubeconfig=/csi/kubeconfig", "--v=5")
+			t.Logf("smoke test passed (%s; user %q)", t.App, u)
+		})
+	}
 	register("dependency-track-frontend", func(t *T) {
 		dir := t.TempDir()
 		os.WriteFile(filepath.Join(dir, "api.conf"), []byte(`location /api/ { default_type text/plain; return 200 "conf.d include works\n"; }`+"\n"), 0o644)
