@@ -78,13 +78,7 @@ func init() {
 			t.Fatalf("clean directory reported (exit %d): %s", code, out)
 		}
 		// commit the key, then delete it: only history holds it now (git from the image itself)
-		git := []string{"-v", leaky + ":/repo", "-w", "/repo", "--tmpfs", "/tmp", "-e", "HOME=/tmp", "-e", "GIT_AUTHOR_NAME=t", "-e", "GIT_AUTHOR_EMAIL=t@t",
-			"-e", "GIT_COMMITTER_NAME=t", "-e", "GIT_COMMITTER_EMAIL=t@t", "--entrypoint", "/usr/bin/git"}
-		for _, c := range [][]string{{"init", "-q"}, {"add", "config.ini"}, {"commit", "-qm", "leak"}, {"rm", "-q", "config.ini"}, {"commit", "-qm", "clean"}} {
-			if out, err := t.RunFlags(git, c...); err != nil {
-				t.Fatalf("git %v: %s", c, out)
-			}
-		}
+		t.leakHistory(leaky)
 		if out, code := t.RunCode([]string{"--read-only", "--tmpfs", "/tmp", "-e", "GIT_CONFIG_COUNT=1", "-e", "GIT_CONFIG_KEY_0=safe.directory", "-e", "GIT_CONFIG_VALUE_0=*",
 			"-v", leaky + ":/repo:ro"}, "git", "/repo", "--no-banner"); code != 1 {
 			t.Fatalf("key in history not reported (exit %d): %s", code, out)

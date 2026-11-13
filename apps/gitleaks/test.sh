@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
-# Smoke test for a built gitleaks image: tools/qw/internal/smoke/servers18.go: tools/qw/internal/smoke/servers18.go. Usage: test.sh <image-ref> [version]
+# Smoke test for a built gitleaks image: tools/qw/internal/smoke/servers18.go. Usage: test.sh <image-ref> [version]
 exec go -C "$(cd "$(dirname "$0")/../../tools/qw" && pwd)" run . smoke gitleaks "$@"
