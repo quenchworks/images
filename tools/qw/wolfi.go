@@ -14,12 +14,11 @@ import (
 	"sync"
 )
 
-const wolfiIndex = "https://packages.wolfi.dev/os/x86_64/APKINDEX.tar.gz"
+const wolfiIndex = "https://packages.wolfi.dev/os/%s/APKINDEX.tar.gz"
 
 var (
-	wolfiOnce sync.Once
-	wolfiPkgs map[string][]string
-	wolfiErr  error
+	wolfiMu  sync.Mutex
+	wolfiIdx = map[string]map[string][]string{}
 )
 
 // apkKey orders "10.33.0-r1": the X.Y.Z digits, then the -rN revision.
@@ -29,55 +28,65 @@ func apkKey(v string) []int {
 	return append(vkey(xyz), -1, r) // -1 separates, so a longer X.Y.Z still wins
 }
 
-func loadWolfi() (map[string][]string, error) {
-	wolfiOnce.Do(func() {
-		resp, err := http.Get(wolfiIndex)
+// loadWolfi is the x86_64 index, which every check reads.
+func loadWolfi() (map[string][]string, error) { return loadWolfiArch("x86_64") }
+
+// loadWolfiArch reads one arch's APKINDEX once per run: package -> every published version.
+func loadWolfiArch(arch string) (map[string][]string, error) {
+	wolfiMu.Lock()
+	defer wolfiMu.Unlock()
+	if idx, ok := wolfiIdx[arch]; ok {
+		return idx, nil
+	}
+	idx, err := fetchWolfi(fmt.Sprintf(wolfiIndex, arch))
+	if err == nil {
+		wolfiIdx[arch] = idx
+	}
+	return idx, err
+}
+
+func fetchWolfi(url string) (map[string][]string, error) {
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	gz, err := gzip.NewReader(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	tr := tar.NewReader(gz)
+	for {
+		h, err := tr.Next()
 		if err != nil {
-			wolfiErr = err
-			return
+			return nil, fmt.Errorf("APKINDEX not found in %s: %v", url, err)
 		}
-		defer resp.Body.Close()
-		gz, err := gzip.NewReader(resp.Body)
-		if err != nil {
-			wolfiErr = err
-			return
+		if h.Name == "APKINDEX" {
+			break
 		}
-		tr := tar.NewReader(gz)
-		for {
-			h, err := tr.Next()
-			if err != nil {
-				wolfiErr = fmt.Errorf("APKINDEX not found in %s: %v", wolfiIndex, err)
-				return
-			}
-			if h.Name == "APKINDEX" {
-				break
-			}
+	}
+	out := map[string][]string{}
+	var p, v string
+	flush := func() {
+		if p != "" && v != "" {
+			out[p] = append(out[p], v)
 		}
-		out := map[string][]string{}
-		var p, v string
-		sc := bufio.NewScanner(tr)
-		sc.Buffer(make([]byte, 1<<20), 1<<20)
-		flush := func() {
-			if p != "" && v != "" {
-				out[p] = append(out[p], v)
-			}
-			p, v = "", ""
+		p, v = "", ""
+	}
+	sc := bufio.NewScanner(tr)
+	sc.Buffer(make([]byte, 1<<20), 1<<20)
+	for sc.Scan() {
+		switch ln := sc.Text(); {
+		case ln == "":
+			flush()
+		case strings.HasPrefix(ln, "P:"):
+			p = ln[2:]
+		case strings.HasPrefix(ln, "V:"):
+			v = ln[2:]
 		}
-		for sc.Scan() {
-			ln := sc.Text()
-			switch {
-			case ln == "":
-				flush()
-			case strings.HasPrefix(ln, "P:"):
-				p = ln[2:]
-			case strings.HasPrefix(ln, "V:"):
-				v = ln[2:]
-			}
-		}
-		flush()
-		wolfiPkgs, wolfiErr = out, sc.Err()
-	})
-	return wolfiPkgs, wolfiErr
+	}
+	flush()
+	return out, sc.Err()
 }
 
 // bestPerRelease keeps the highest -rN of each X.Y.Z, newest first.
