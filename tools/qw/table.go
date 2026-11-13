@@ -278,6 +278,7 @@ var table = map[string]check{
 	"questdb":                           {src: ghRel("questdb/questdb"), n: 3},
 	"quickwit":                          {src: ghRel("quickwit-oss/quickwit"), n: 1},
 	"rabbitmq":                          {src: ghRel("rabbitmq/rabbitmq-server")},
+	"rabbitmq-cluster-operator":         {src: ghRel("rabbitmq/cluster-operator"), n: 1},
 	"rclone":                            {src: ghRel("rclone/rclone")},
 	"redis-exporter":                    {src: ghRel("oliver006/redis_exporter")},
 	"redis":                             {src: ghRel("redis/redis")},
