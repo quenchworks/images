@@ -95,6 +95,7 @@ var table = map[string]check{
 	"dnscrypt-proxy":                    {src: ghRel("DNSCrypt/dnscrypt-proxy"), n: 1},
 	"dragonfly":                         {src: ghRel("dragonflydb/dragonfly")},
 	"dragonfly-operator":                {src: ghRel("dragonflydb/dragonfly-operator"), n: 1},
+	"opensearch-operator":               {src: ghRel("opensearch-project/opensearch-k8s-operator"), n: 1},
 	"duckdb":                            {src: ghRel("duckdb/duckdb")},
 	"easegress":                         {src: ghRel("easegress-io/easegress"), lines: 2},
 	"elasticsearch":                     {src: ghRel("elastic/elasticsearch")},
