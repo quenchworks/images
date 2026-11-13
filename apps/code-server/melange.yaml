@@ -141,11 +141,11 @@ pipeline:
       # compression 1.8.2 newly depends on destroy 1.2.0 (no deps of its own), absent from the tree
       patch_pkg "$dest/node_modules"            destroy     https://registry.npmjs.org/destroy/-/destroy-1.2.0.tgz         8dfd27e86cf54949a76ab5171df6c242d8b007d3ace136b67984fd64a171cfa8
       patch_pkg "$dest/lib/vscode/node_modules" katex       https://registry.npmjs.org/katex/-/katex-0.18.2.tgz            a71df261a7080b53a4be44ea1b40e8e73e84cdd5d3311239310568e76437c018
-      # basic-ftp 5.3.1 -> 6.2.1 (GHSA-c475-qrg2-pj4r, 2026-10-04; fixed only on 6.x, whose one
+      # basic-ftp 5.3.1 -> 6.2.4 (GHSA-c475-qrg2-pj4r 2026-10-04, CVE-2026-126345/126346 2026-11-13; fixed only on 6.x, whose one
       # break is no separate transfer hosts by default). Every copy, wherever the proxy agent sits.
       n=0
       for d in $(find "$dest" -type d -path '*/node_modules/basic-ftp'); do
-        patch_pkg "$(dirname "$d")" basic-ftp https://registry.npmjs.org/basic-ftp/-/basic-ftp-6.2.1.tgz ce98b3508df1292431a7f591747385ceef971b55030aea32c976a3715dbe455e
+        patch_pkg "$(dirname "$d")" basic-ftp https://registry.npmjs.org/basic-ftp/-/basic-ftp-6.2.4.tgz e0f0ffffbb7e9884c6c70dc193c4635d3cccadc93d0e69c7a4a5410d0a209975
         n=$((n+1))
       done
       [ "$n" -gt 0 ] || { echo "no basic-ftp in the tree; drop this patch"; exit 1; }
