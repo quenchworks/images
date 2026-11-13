@@ -185,6 +185,7 @@ var table = map[string]check{
 	"kubescape":                         {src: ghRel("kubescape/kubescape"), n: 1},
 	"kubevuln":                          {src: ghRel("kubescape/kubevuln"), n: 1},
 	"kubo":                              {src: ghRel("ipfs/kubo"), lines: 2},
+	"kueue":                             {src: ghRel("kubernetes-sigs/kueue"), n: 1},
 	"kuma":                              {src: ghRel("kumahq/kuma"), n: 1},
 	"kured":                             {src: ghRel("kubereboot/kured"), lines: 2},
 	"kvrocks":                           {src: ghRel("apache/kvrocks"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
