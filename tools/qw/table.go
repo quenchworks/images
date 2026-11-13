@@ -126,6 +126,7 @@ var table = map[string]check{
 	"gradle":                            {src: wolfiPkg("gradle-9"), n: 1},
 	"grafana-alloy":                     {src: ghRel("grafana/alloy"), lines: 2},
 	"grafana":                           {src: ghRel("grafana/grafana")},
+	"grafana-operator":                  {src: ghRel("grafana/grafana-operator"), n: 1},
 	"grist":                             {src: ghRel("gristlabs/grist-core"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
 	"grype":                             {src: ghRel("anchore/grype")},
 	"hadolint":                          {src: ghRel("hadolint/hadolint"), n: 1},
