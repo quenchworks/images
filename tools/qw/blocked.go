@@ -72,7 +72,11 @@ func cmdBlocked(args []string) int {
 		if !blockedRe.Match(b) {
 			continue
 		}
-		if strings.Contains(string(b), pkg) {
+		// the CURRENT reason only: the newest STATUS line or BLOCKED_BY. Matching anywhere
+		// in the file counted envoy, jellyfin, ml-metadata-store-server and quickwit as
+		// zlib-blocked from their history notes, and --dispatch would have unblocked them
+		// (2026-11-13; their real walls are Wolfi, SkiaSharp, static C++ libs and thrift).
+		if strings.Contains(currentReason(string(b)), pkg) {
 			mine = append(mine, c)
 		} else {
 			other = append(other, filepath.Base(filepath.Dir(c)))
@@ -150,4 +154,16 @@ func cmdBlocked(args []string) int {
 	}
 	fmt.Printf("dispatched %d; check each run's headSha matches the push\n", len(names))
 	return 0
+}
+
+// currentReason is the first "# STATUS" line plus BLOCKED_BY, where a block names its cause.
+func currentReason(conf string) string {
+	var out []string
+	if m := regexp.MustCompile(`(?m)^#\s*STATUS.*$`).FindString(conf); m != "" {
+		out = append(out, m)
+	}
+	if m := regexp.MustCompile(`(?m)^BLOCKED_BY=.*$`).FindString(conf); m != "" {
+		out = append(out, m)
+	}
+	return strings.Join(out, "\n")
 }
