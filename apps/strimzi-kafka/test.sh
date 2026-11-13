@@ -9,6 +9,8 @@
 # /v1/ready/, 204 only at broker state RUNNING) succeeds, a message round-trips
 # through a topic in KRaft combined mode, and :9404 serves kafka_server metrics.
 set -euo pipefail
+# qw (tools/qw, Go) provides the helpers this test needs; go run reuses the build cache.
+QWD="$(cd "$(dirname "$0")/../../tools/qw" && pwd)"; qw() { go -C "$QWD" run . "$@"; }
 
 IMAGE="${1:?usage: test.sh <image-ref> [version]}"
 NAME="quench-strimzi-kafka-smoke-$$"
@@ -35,37 +37,14 @@ openssl req -new -key "$W/node.key" -out "$W/node.csr" -subj "/CN=$HOST" 2>/dev/
 openssl x509 -req -in "$W/node.csr" -CA "$W/ca.crt" -CAkey "$W/ca.key" -CAcreateserial -out "$W/node.crt" -days 2 2>/dev/null
 
 # --- fake Kubernetes API: GET .../namespaces/default/secrets/<name> ---
-cat > "$W/api.py" <<'PY'
-import base64, http.server, json, sys
-w, host = sys.argv[1], sys.argv[2]
-b = lambda p: base64.b64encode(open(f"{w}/{p}", "rb").read()).decode()
-secrets = {
-    "smoke-cluster-ca-cert": {"ca.crt": b("ca.crt")},
-    host: {f"{host}.crt": b("node.crt"), f"{host}.key": b("node.key")},
-}
-class H(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        name = self.path.split("?")[0].rstrip("/").rsplit("/", 1)[-1]
-        if "/namespaces/default/secrets/" in self.path and name in secrets:
-            body = {"apiVersion": "v1", "kind": "Secret", "type": "Opaque",
-                    "metadata": {"name": name, "namespace": "default"}, "data": secrets[name]}
-            code = 200
-        else:
-            body = {"kind": "Status", "apiVersion": "v1", "status": "Failure", "code": 404}
-            code = 404
-        out = json.dumps(body).encode()
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(out)))
-        self.end_headers()
-        self.wfile.write(out)
-        sys.stderr.write(f"fake-api {code} {self.path}\n")
-    def log_message(self, *a): pass
-s = http.server.ThreadingHTTPServer(("0.0.0.0", 0), H)
-open(f"{w}/port", "w").write(str(s.server_address[1]))
-s.serve_forever()
-PY
-python3 "$W/api.py" "$W" "$HOST" 2>"$W/api.log" &
+# the fake API serves two Secrets: the cluster CA and this broker's keypair
+jq -n --arg ca "$(base64 -w0 "$W/ca.crt")" '{apiVersion: "v1", kind: "Secret", type: "Opaque", metadata: {name: "smoke-cluster-ca-cert", namespace: "default"}, data: {"ca.crt": $ca}}' > "$W/ca-secret.json"
+jq -n --arg h "$HOST" --arg c "$(base64 -w0 "$W/node.crt")" --arg k "$(base64 -w0 "$W/node.key")" \
+  '{apiVersion: "v1", kind: "Secret", type: "Opaque", metadata: {name: $h, namespace: "default"}, data: {($h + ".crt"): $c, ($h + ".key"): $k}}' > "$W/node-secret.json"
+go -C "$QWD" build -o "$W/qw" .
+"$W/qw" fakeapi --addr 0.0.0.0:0 --port-file "$W/port" --log "$W/api.log" \
+  --route "GET /api/v1/namespaces/default/secrets/smoke-cluster-ca-cert=200:$W/ca-secret.json" \
+  --route "GET /api/v1/namespaces/default/secrets/$HOST=200:$W/node-secret.json" &
 API_PID=$!
 for _ in $(seq 1 50); do [ -s "$W/port" ] && break; sleep 0.1; done
 PORT="$(cat "$W/port")"

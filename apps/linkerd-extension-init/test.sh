@@ -1,40 +1,21 @@
 #!/usr/bin/env bash
 # Smoke test for a built linkerd-extension-init image. Usage: test.sh <image-ref> [version]
-# Runs the real Job command against a minimal fake API server (python3 on the runner, TLS with an
+# Runs the real Job command against a minimal fake API server (qw fakeapi on the runner, TLS with an
 # IP SAN so rustls accepts it). src/main.rs: GET the extension namespace, GET linkerd-config in the
 # control-plane namespace (cniEnabled), then a JSON patch of the namespace. The fake answers those
 # three calls and records the patch; the process must exit 0 and the patch must add the extension
 # label and pod-security "restricted" (cniEnabled: true). Labelling a real namespace: the chart's gate.
 set -euo pipefail
+# qw (tools/qw, Go) provides the helpers this test needs; go run reuses the build cache.
+QWD="$(cd "$(dirname "$0")/../../tools/qw" && pwd)"; qw() { go -C "$QWD" run . "$@"; }
 IMAGE="${1:?usage: test.sh <image-ref> [version]}"
 D="$(mktemp -d)"; FAKE=""
 cleanup() { [ -z "$FAKE" ] || kill "$FAKE" 2>/dev/null || true; rm -rf "$D"; }
 trap cleanup EXIT
-cat > "$D/fakeapi.py" <<'P'
-import http.server, json, ssl, sys
-NS = {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "linkerd-viz"}}
-CM = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "linkerd-config", "namespace": "linkerd"},
-      "data": {"values": "cniEnabled: true\n"}}
-class H(http.server.BaseHTTPRequestHandler):
-    def send(self, code, body):
-        b = json.dumps(body).encode()
-        self.send_response(code); self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
-    def do_GET(self):
-        p = self.path.split("?")[0]
-        if p == "/api/v1/namespaces/linkerd-viz": return self.send(200, NS)
-        if p == "/api/v1/namespaces/linkerd/configmaps/linkerd-config": return self.send(200, CM)
-        self.send(404, {"kind": "Status", "apiVersion": "v1", "status": "Failure", "code": 404})
-    def do_PATCH(self):
-        body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
-        if self.path.split("?")[0] == "/api/v1/namespaces/linkerd-viz":
-            open(sys.argv[3], "wb").write(body); return self.send(200, NS)
-        self.send(404, {"kind": "Status", "apiVersion": "v1", "status": "Failure", "code": 404})
-    def log_message(self, *a): pass
-s = http.server.ThreadingHTTPServer(("127.0.0.1", 16444), H)
-c = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); c.load_cert_chain(sys.argv[1], sys.argv[2])
-s.socket = c.wrap_socket(s.socket, server_side=True); s.serve_forever()
-P
+# the fake API: the namespace and linkerd-config for GET, and the namespace PATCH recorded to patch.json
+printf '%s' '{"apiVersion":"v1","kind":"Namespace","metadata":{"name":"linkerd-viz"}}' > "$D/ns.json"
+jq -n '{apiVersion: "v1", kind: "ConfigMap", metadata: {name: "linkerd-config", namespace: "linkerd"}, data: {values: "cniEnabled: true\n"}}' > "$D/cm.json"
+go -C "$QWD" build -o "$D/qw" .
 # A CA plus a leaf cert: rustls/webpki rejects a self-signed CA cert served as the end entity
 # (CaUsedAsEndEntity, run 37806161800).
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 1 -subj /CN=fake-ca \
@@ -44,7 +25,10 @@ openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj /CN=fa
 printf 'subjectAltName=IP:127.0.0.1\nbasicConstraints=CA:FALSE\nextendedKeyUsage=serverAuth\n' > "$D/ext.cnf"
 openssl x509 -req -in "$D/api.csr" -CA "$D/ca.crt" -CAkey "$D/ca.key" -CAcreateserial -days 1 \
   -extfile "$D/ext.cnf" -out "$D/api.crt" 2>/dev/null
-python3 "$D/fakeapi.py" "$D/api.crt" "$D/api.key" "$D/patch.json" & FAKE=$!
+"$D/qw" fakeapi --addr 127.0.0.1:16444 --cert "$D/api.crt" --key "$D/api.key" \
+  --route "GET /api/v1/namespaces/linkerd-viz=200:$D/ns.json" \
+  --route "GET /api/v1/namespaces/linkerd/configmaps/linkerd-config=200:$D/cm.json" \
+  --route "PATCH /api/v1/namespaces/linkerd-viz=200:$D/ns.json" --record "PATCH /api/v1/namespaces/linkerd-viz=$D/patch.json" & FAKE=$!
 cat > "$D/kubeconfig" <<K
 apiVersion: v1
 kind: Config
@@ -68,12 +52,8 @@ echo "$out"
 [ "$rc" = 0 ] || { echo "extension-init exited $rc"; exit 1; }
 [ -s "$D/patch.json" ] || { echo "no PATCH reached the API server"; exit 1; }
 echo "patch: $(cat "$D/patch.json")"
-python3 - "$D/patch.json" <<'PY'
-import json, sys
-ops = json.load(open(sys.argv[1]))
-got = {o["path"]: o.get("value") for o in ops if o.get("op") == "add"}
-assert got.get("/metadata/labels/linkerd.io~1extension") == "viz", got
-assert got.get("/metadata/labels/pod-security.kubernetes.io~1enforce") == "restricted", got
-PY
+jq -e '[.[] | select(.op == "add") | {(.path): .value}] | add
+  | .["/metadata/labels/linkerd.io~1extension"] == "viz" and .["/metadata/labels/pod-security.kubernetes.io~1enforce"] == "restricted"' "$D/patch.json" >/dev/null \
+  || { echo "PATCH lacks the extension and pod-security labels"; exit 1; }
 grep -q 'successfully patched namespace' <<<"$out" || { echo "no success log line"; exit 1; }
 echo "smoke test passed"

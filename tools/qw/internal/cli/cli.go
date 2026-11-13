@@ -34,6 +34,7 @@ var commands = map[string]struct {
 	"wolfi-latest": {wolfi.Run, "<pkg> [N] | --majors P [N] | --match RE", "newest Wolfi versions"},
 	"freeport":     {probe.FreePort, "", "print a free TCP port on 127.0.0.1 (smoke tests)"},
 	"tlsprobe":     {probe.TLSProbe, "--addr H:P (--ca F --name N | --plain) [--send S] [--expect T]...", "speak a few protocol bytes, check the reply"},
+	"fakeapi":      {probe.FakeAPI, "[--addr H:P] [--cert C --key K] [--route 'M /p=CODE:file']... [--record 'M /p=file']... [--log f] [--port-file f]", "canned JSON API server (smoke tests)"},
 	"serve":        {probe.Serve, "[--dir D] [--addr H:P]", "serve a directory over HTTP (smoke tests)"},
 }
 

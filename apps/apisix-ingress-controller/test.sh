@@ -42,7 +42,6 @@ EXPECTED="${2:-}"
 # `docker cp`, not a bind mount, because a bind mount of /tmp is refused under
 # Docker Desktop's file sharing. Ports are picked free at runtime -- a fixed port
 # collides with whatever else the build host happens to be running.
-command -v python3 >/dev/null || { echo "python3 is required for the stub API server"; exit 1; }
 
 freeport() { qw freeport; }
 API_PORT="$(freeport)"
@@ -95,39 +94,11 @@ grep -q "unable to load in-cluster configuration" <<<"$nout" \
   || { echo "unexpected failure mode with no kubeconfig"; echo "$nout"; exit 1; }
 
 # ------------------------------------------------- 3. real boot on a stub API
-cat > "$WORK/stub.py" <<'PY'
-import json, sys
-from http.server import BaseHTTPRequestHandler, HTTPServer
-
-LOG = open(sys.argv[2], "a", buffering=1)
-
-BODIES = {
-    "/version": {"major": "1", "minor": "31", "gitVersion": "v1.31.0", "platform": "linux/amd64"},
-    "/api": {"kind": "APIVersions", "versions": ["v1"], "serverAddressByClientCIDRs": []},
-    "/apis": {"kind": "APIGroupList", "apiVersion": "v1", "groups": []},
-}
-
-class H(BaseHTTPRequestHandler):
-    def log_message(self, *a):
-        pass
-
-    def do_GET(self):
-        path = self.path.split("?")[0]
-        LOG.write(path + "\n")
-        body = BODIES.get(path)
-        code = 200 if body else 404
-        if not body:
-            body = {"kind": "Status", "apiVersion": "v1", "status": "Failure",
-                    "reason": "NotFound", "message": "stub", "code": 404}
-        raw = json.dumps(body).encode()
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(raw)))
-        self.end_headers()
-        self.wfile.write(raw)
-
-HTTPServer(("0.0.0.0", int(sys.argv[1])), H).serve_forever()
-PY
+# the stub: /version and the discovery roots; everything else is a NotFound Status
+printf '%s' '{"major":"1","minor":"31","gitVersion":"v1.31.0","platform":"linux/amd64"}' > "$WORK/version.json"
+printf '%s' '{"kind":"APIVersions","versions":["v1"],"serverAddressByClientCIDRs":[]}' > "$WORK/api.json"
+printf '%s' '{"kind":"APIGroupList","apiVersion":"v1","groups":[]}' > "$WORK/apis.json"
+go -C "$QWD" build -o "$WORK/qw" .
 
 mkdir -p "$WORK/conf"
 cat > "$WORK/conf/kubeconfig" <<EOF
@@ -163,7 +134,8 @@ EOF
 
 chmod 755 "$WORK/conf"; chmod 644 "$WORK/conf"/*   # the image runs as uid 1001
 
-python3 "$WORK/stub.py" "$API_PORT" "$WORK/api.log" &
+"$WORK/qw" fakeapi --addr "0.0.0.0:$API_PORT" --log "$WORK/api.log" \
+  --route "GET /version=200:$WORK/version.json" --route "GET /api=200:$WORK/api.json" --route "GET /apis=200:$WORK/apis.json" &
 STUB_PID=$!
 for i in $(seq 1 10); do
   curl -fsS -m 2 "http://127.0.0.1:${API_PORT}/version" >/dev/null 2>&1 && break
