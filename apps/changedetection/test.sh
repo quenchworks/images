@@ -2,7 +2,10 @@
 # Smoke test for a built changedetection.io image. Usage: test.sh <image-ref> [version]
 # It runs on a read-only root with /datastore on a volume. The API key it generates into
 # changedetection.json on first start drives the REST API: a wrong key is refused, a watch on a
-# page served beside it is created, checked and listed, and both survive a restart.
+# page served beside it is created and its snapshot holds the page text, and both survive a restart.
+# The page is on a private Docker network, which changedetection.io refuses to fetch by default
+# (SSRF guard), so the test container sets ALLOW_IANA_RESTRICTED_ADDRESSES=true. last_checked alone
+# proves nothing: a BLOCKED fetch sets it too (the first version of this test passed that way).
 set -euo pipefail
 IMAGE="${1:?usage: test.sh <image-ref> [version]}"
 WANT="${2:-}"
@@ -26,6 +29,7 @@ docker run -d --name "$TAG-web" --network "$NET" --network-alias web --entrypoin
 docker volume create "$TAG" >/dev/null
 start() {
   docker run -d --name "$TAG" --network "$NET" --read-only --tmpfs /tmp:uid=1001,gid=1001 -v "$TAG:/datastore" \
+    -e ALLOW_IANA_RESTRICTED_ADDRESSES=true \
     -p 127.0.0.1:15000:5000 "$IMAGE" >/dev/null
   for i in $(seq 1 60); do curl -fsS "$URL/" >/dev/null 2>&1 && return 0
     [ "$i" = 60 ] && { echo "UI never answered"; docker logs "$TAG" 2>&1 | tail -30; exit 1; }; sleep 1; done
@@ -41,17 +45,19 @@ curl -fsS -H "x-api-key: $k" -H 'Content-Type: application/json' "$URL/api/v1/wa
   -d '{"url":"http://web:8080/","title":"quench-smoke-watch"}' >/dev/null
 watches() { curl -fsS -H "x-api-key: $k" "$URL/api/v1/watch"; }
 grep -q quench-smoke-watch <<<"$(watches)" || { echo "watch not listed: $(watches)"; exit 1; }
-# the first check fetches the page; last_checked turns non-zero
-checked=""
+# the first check fetches the page: its snapshot must hold the page text
+# by URL: first start also adds a default watch (news.ycombinator.com)
+uuid="$(watches | python3 -c 'import json,sys; print(next(u for u, w in json.load(sys.stdin).items() if w.get("url") == "http://web:8080/"))')"
+snap=""
 for i in $(seq 1 60); do
-  checked="$(watches | python3 -c 'import json,sys; d=json.load(sys.stdin); print(max((w.get("last_checked") or 0) for w in d.values()))' 2>/dev/null || true)"
-  [ -n "$checked" ] && [ "$checked" != 0 ] && break; sleep 2
+  snap="$(curl -fsS -H "x-api-key: $k" "$URL/api/v1/watch/$uuid/history/latest" 2>/dev/null || true)"
+  grep -q quench-watched-page <<<"$snap" && break; sleep 2
 done
-[ -n "$checked" ] && [ "$checked" != 0 ] || { echo "the watch was never checked"; docker logs "$TAG" 2>&1 | tail -20; exit 1; }
-echo "  wrong key refused ($code), watch created and checked"
+grep -q quench-watched-page <<<"$snap" || { echo "the page was never fetched: '$snap'"; docker logs "$TAG" 2>&1 | tail -20; exit 1; }
+echo "  wrong key refused ($code), watch created, page fetched into its snapshot"
 docker rm -f "$TAG" >/dev/null
 start
 grep -q quench-smoke-watch <<<"$(watches)" || { echo "watch lost across a restart"; exit 1; }
 echo "  watch and API key kept across a restart"
 if docker logs "$TAG" 2>&1 | grep -qiE 'read-only file system|Traceback'; then echo "error in the logs"; docker logs "$TAG" 2>&1 | tail -20; exit 1; fi
-echo "smoke test passed (changedetection.io $ver: API key, watch fetched from a page and kept on /datastore, read-only root; user $user)"
+echo "smoke test passed (changedetection.io $ver: API key, page text fetched into a snapshot, watch kept on /datastore, read-only root; user $user)"
