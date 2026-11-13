@@ -1,6 +1,9 @@
 package smoke
 
-import "regexp"
+import (
+	"regexp"
+	"strings"
+)
 
 // Short smoke tests: the image runs as uid 1001 and its binary answers. The component's
 // real test is its chart's kind gate.
@@ -200,5 +203,102 @@ echo tools present`))
 		// no API server: it logs its version, then fails to load a kubeconfig
 		t.WantVersionV(t.RunAny())
 		t.Logf("smoke test passed (grafana-operator %s: CLI, version in startup log, nonroot user %s)", t.Want, u)
+	})
+	register("vitess-operator", func(t *T) {
+		u := t.User("1001")
+		// without a cluster it logs its version and exits on the missing kubeconfig
+		t.Contains(t.RunAny(), "Operator Version: "+t.Want, "startup log")
+		t.Contains(t.RunAny("--help"), "cache_invalidate_interval", "--help")
+		t.Logf("smoke test passed (vitess-operator %s: startup version, CLI, nonroot user %s)", t.Want, u)
+	})
+	register("kueue", func(t *T) {
+		u := t.User("1001")
+		t.Contains(t.RunAny("--help"), "-config", "--help")
+		t.WantVersionV(t.RunAny())
+		t.Logf("smoke test passed (kueue %s: CLI, version in startup log, nonroot user %s)", t.Want, u)
+	})
+	register("calico-cni", func(t *T) {
+		// the CNI spec's VERSION handshake on every plugin
+		for _, b := range []string{"calico", "calico-ipam", "bandwidth", "host-local", "loopback", "portmap", "tuning", "flannel"} {
+			out, _ := t.RunFlags([]string{"-e", "CNI_COMMAND=VERSION", "--entrypoint", "/opt/cni/bin/" + b})
+			t.Contains(out, `"supportedVersions"`, b+" CNI VERSION reply")
+			t.Logf("%s: ok", b)
+		}
+		v := t.RunEntryAny("/opt/cni/bin/calico", "-v")
+		t.Logf("calico -v: %s", v)
+		t.WantVersionV(v)
+		t.Logf("smoke test passed")
+	})
+	register("emissary-apiext", func(t *T) {
+		// outside a cluster it stops at its in-cluster config, after its start line
+		out := t.RunAny()
+		t.Contains(out, "starting Emissary-ingress apiext webhook conversion server", "start line")
+		ver := t.Match(out, `"version": ?"([0-9]+\.[0-9]+\.[0-9]+[^"]*)"`, "version")
+		if strings.HasPrefix(ver, "MISSING") {
+			t.Fatalf("version not read: '%s'", ver)
+		}
+		if t.Want != "" && ver != t.Want {
+			t.Fatalf("version %s, expected %s", ver, t.Want)
+		}
+		u := t.User("8888")
+		t.Logf("smoke test passed (version %s, user %s)", ver, u)
+	})
+	register("hadolint", func(t *T) {
+		out, _ := t.RunInput("FROM ubuntu\nRUN apt-get update && apt-get install -y curl\n", "--no-color", "-")
+		t.Contains(out, "DL3006", "known-bad input")
+		t.Contains(out, "DL3008", "known-bad input")
+		f := strings.Fields(t.Run("--version"))
+		v := f[len(f)-1]
+		t.Logf("reported version: %s", v)
+		if t.Want != "" && v != t.Want {
+			t.Fatalf("expected %s", t.Want)
+		}
+		u := t.User("1001")
+		t.Logf("smoke test passed (hadolint %s, nonroot user: %s, known-bad input flagged)", v, u)
+	})
+	register("shellcheck", func(t *T) {
+		out, _ := t.RunInput("#!/bin/sh\necho $1\n", "-f", "gcc", "-")
+		t.Contains(out, "SC2086", "known-bad input")
+		v := t.Match(t.Run("--version"), `(?m)^version:\s*(\S+)`, "version")
+		t.Logf("reported version: %s", v)
+		if t.Want != "" && v != t.Want {
+			t.Fatalf("expected %s", t.Want)
+		}
+		u := t.User("1001")
+		t.Logf("smoke test passed (shellcheck %s, nonroot user: %s, known-bad input flagged)", v, u)
+	})
+	register("policy-reporter", func(t *T) {
+		out := t.Run("version")
+		t.Logf("%s", out)
+		if t.Want != "" {
+			t.Contains(out, "AppVersion: "+t.Want, "version")
+		}
+		t.Contains(strings.Join(t.Files("app/templates/"), "\n"), "summary.html", "email templates")
+		u := t.User("1001")
+		t.Logf("smoke test passed (version, templates, nonroot user: %s)", u)
+	})
+	register("rabbitmq-cluster-operator", func(t *T) {
+		u := t.User("1001")
+		t.LabelVersion()
+		t.Contains(t.RunAny("--help"), "-metrics-bind-address", "--help")
+		t.Contains(t.RunAny(), "unable to find operator namespace", "startup check")
+		t.Logf("smoke test passed (rabbitmq-cluster-operator %s: CLI, startup check, nonroot user %s)", t.Want, u)
+	})
+	register("redis-operator", func(t *T) {
+		u := t.User("1001")
+		t.LabelVersion()
+		t.Contains(t.RunAny("--help"), "--feature-gates", "manager --help")
+		// the init container runs the same image as "/operator agent bootstrap"
+		t.Contains(t.RunEntryAny("/operator", "agent", "bootstrap", "--help"), "--sentinel", "agent bootstrap --help")
+		t.Logf("smoke test passed (redis-operator %s: manager and agent CLI, image label, nonroot user %s)", t.Want, u)
+	})
+	register("tigera-operator", func(t *T) {
+		t.User("1001")
+		out := t.Run("-version")
+		t.Logf("%s", out)
+		t.WantVersionV(out)
+		// its built-in image list is the Calico release the calico-* images are built from
+		t.Contains(t.Run("-print-images", "list"), "calico/node:v3.32.0", "operator image list")
+		t.Logf("smoke test passed")
 	})
 }

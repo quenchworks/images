@@ -4,6 +4,7 @@
 package smoke
 
 import (
+	"archive/tar"
 	"bytes"
 	"fmt"
 	"io"
@@ -176,6 +177,43 @@ func (t *T) LabelVersion() string {
 		t.Fatalf("image label %s, expected %s", l, t.Want)
 	}
 	return l
+}
+
+// RunInput runs the image once with input on stdin (docker run -i); it returns the output
+// and the error instead of failing.
+func (t *T) RunInput(input string, args ...string) (string, error) {
+	c := exec.Command("docker", append([]string{"run", "--rm", "-i", t.Image}, args...)...)
+	c.Stdin = strings.NewReader(input)
+	out, err := c.CombinedOutput()
+	return strings.TrimRight(string(out), "\n"), err
+}
+
+// Files lists the paths in the image's filesystem that start with prefix (no leading "/"),
+// read from a docker export, so it works on images without a shell.
+func (t *T) Files(prefix string) []string {
+	id := t.Docker("create", t.Image)
+	defer docker("rm", id)
+	c := exec.Command("docker", "export", id)
+	r, err := c.StdoutPipe()
+	if err != nil {
+		t.Fatalf("docker export: %v", err)
+	}
+	if err := c.Start(); err != nil {
+		t.Fatalf("docker export: %v", err)
+	}
+	var out []string
+	tr := tar.NewReader(r)
+	for {
+		h, err := tr.Next()
+		if err != nil {
+			break
+		}
+		if strings.HasPrefix(h.Name, prefix) {
+			out = append(out, h.Name)
+		}
+	}
+	c.Wait()
+	return out
 }
 
 // regexpDev matches unstamped development versions.
