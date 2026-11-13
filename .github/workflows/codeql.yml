@@ -1,16 +1,16 @@
 name: codeql
 
-# Code scanning via CodeQL (advanced setup): the workflows and the Python
-# tooling in scripts/. Removed on 2026-06-17 while the repo was private (CodeQL
+# Code scanning via CodeQL (advanced setup): the workflows and the Go tooling
+# in tools/qw (the Python scripts it replaced were deleted 2026-11-13). Removed on 2026-06-17 while the repo was private (CodeQL
 # there needs paid Advanced Security); the repo is public now, where it is free.
 # Runs on workflow and script changes plus weekly, not on every recipe commit.
 on:
   push:
     branches: [main]
-    paths: ['.github/workflows/**', 'scripts/**']
+    paths: ['.github/workflows/**', 'scripts/**', 'tools/**']
   pull_request:
     branches: [main]
-    paths: ['.github/workflows/**', 'scripts/**']
+    paths: ['.github/workflows/**', 'scripts/**', 'tools/**']
   schedule:
     - cron: "0 5 * * 1"
   workflow_dispatch:
@@ -27,13 +27,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [actions, python]
+        include:
+          - language: actions
+            build-mode: none
+          - language: go
+            build-mode: manual
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
           queries: security-and-quality
+      - if: matrix.language == 'go'
+        run: go -C tools/qw build ./...
       - uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           category: "/language:${{ matrix.language }}"
