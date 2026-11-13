@@ -4,6 +4,8 @@
 # image ships: a "select" must load that plugin and come back as an "args"
 # instruction listing its connection parameters.
 set -euo pipefail
+# qw (tools/qw, Go) provides the helpers this test needs; go run reuses the build cache.
+QWD="$(cd "$(dirname "$0")/../../tools/qw" && pwd)"; qw() { go -C "$QWD" run . "$@"; }
 
 IMAGE="${1:?usage: test.sh <image-ref> [version]}"
 WANT="${2:-}"
@@ -25,15 +27,7 @@ if [ -n "$WANT" ]; then
 fi
 
 for p in rdp vnc ssh telnet; do
-  r="$(python3 - "$p" <<'PY'
-import socket, sys
-p = sys.argv[1]
-s = socket.create_connection(("127.0.0.1", 4822), 5)
-s.sendall(f"6.select,{len(p)}.{p};".encode())
-s.settimeout(10)
-print(s.recv(4096).decode(errors="replace"))
-PY
-)"
+  r="$(qw tlsprobe --plain --addr 127.0.0.1:4822 --send "6.select,${#p}.$p;" --print)"
   echo "$p: ${r:0:80}"
   grep -q '^4\.args,' <<<"$r" || { echo "no args reply for $p"; docker logs "$NAME" | tail -20; exit 1; }
   grep -q '8\.hostname' <<<"$r" || { echo "$p args lack hostname"; exit 1; }

@@ -13,6 +13,8 @@
 #      scanned both.
 #   5. clamscan, run as a one-shot container, flags the same file (exit 1).
 set -euo pipefail
+# qw (tools/qw, Go) provides the helpers this test needs; go run reuses the build cache.
+QWD="$(cd "$(dirname "$0")/../../tools/qw" && pwd)"; qw() { go -C "$QWD" run . "$@"; }
 
 IMAGE="${1:?usage: test.sh <image-ref> [version]}"
 NAME="quench-clamav-smoke-$$"
@@ -43,18 +45,14 @@ chmod -R a+rX "$work"
 docker run -d --name "$NAME" --read-only --tmpfs /tmp:rw,mode=1777 \
   -v "$work/db:/var/lib/clamav:ro" -p "127.0.0.1:${PORT}:3310" "$IMAGE" >/dev/null
 
+# clamd speaks z-terminated commands; INSTREAM sends <len:4 BE><bytes>, then a zero length
 clamd_cmd() {
-  python3 - "$PORT" "$@" <<'PY'
-import socket, struct, sys
-port, cmd = int(sys.argv[1]), sys.argv[2]
-s = socket.create_connection(("127.0.0.1", port), timeout=10)
-if cmd == "PING":
-    s.sendall(b"zPING\0")
-else:
-    data = open(sys.argv[3], "rb").read()
-    s.sendall(b"zINSTREAM\0" + struct.pack(">I", len(data)) + data + struct.pack(">I", 0))
-print(s.recv(4096).rstrip(b"\0").decode())
-PY
+  if [ "$1" = PING ]; then
+    qw tlsprobe --plain --addr "127.0.0.1:$PORT" --send 'zPING\x00' --print
+  else
+    qw tlsprobe --plain --addr "127.0.0.1:$PORT" --print \
+      --send-hex "$(printf '7a494e53545245414d00%08x' "$(wc -c <"$2")"; od -An -tx1 -v "$2" | tr -d ' \n'; printf 00000000)"
+  fi
 }
 
 pong=""

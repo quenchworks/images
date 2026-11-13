@@ -89,7 +89,7 @@ transaction.state.log.replication.factor=1
 transaction.state.log.min.isr=1
 group.initial.rebalance.delay.ms=0
 CFG
-python3 -c 'import base64,uuid;print(base64.urlsafe_b64encode(uuid.uuid4().bytes).decode().rstrip("="))' > "$W/cfg/cluster.id"
+head -c 16 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=' > "$W/cfg/cluster.id"
 echo "4.3-IV0" > "$W/cfg/metadata.version"
 printf '%s\n' 'name=smoke' 'appender.console.type=Console' 'appender.console.name=STDOUT' \
   'appender.console.layout.type=PatternLayout' 'appender.console.layout.pattern=%d %p %c - %m%n' \

@@ -47,7 +47,7 @@ for i in $(seq 1 60); do
   [ "$i" = 60 ] && { echo "the manager never received a node bundle"; docker logs "$NAME" 2>&1 | tail -30; exit 1; }
   sleep 1
 done
-listing="$(python3 -c 'import sys,zipfile; print("\n".join(zipfile.ZipFile(sys.argv[1]).namelist()))' "$WORK/node_bundle.zip")"
+listing="$(unzip -Z1 "$WORK/node_bundle.zip")"
 grep -q '^smoke-node/hostinfos/hostinfo$' <<<"$listing" || { echo "bundle lacks hostinfos/hostinfo:"; head -20 <<<"$listing"; exit 1; }
 if docker logs "$NAME" 2>&1 | grep -q 'No such file or directory.*common'; then echo "collector could not source its common functions"; exit 1; fi
 

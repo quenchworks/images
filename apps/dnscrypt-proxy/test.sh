@@ -34,22 +34,13 @@ docker run -d --name "$NAME" --read-only -v "$WORK:/c:ro" -p 127.0.0.1:15353:535
   -config /c/dnscrypt-proxy.toml >/dev/null
 
 # q NAME: rcode and A records of a UDP query to the proxy, e.g. "0 192.0.2.10"
-q() { python3 - "$1" <<'PY'
-import socket, struct, sys
-name = sys.argv[1]
-qn = b"".join(bytes([len(p)]) + p.encode() for p in name.split(".")) + b"\0"
-s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(3)
-s.sendto(struct.pack(">HHHHHH", 0x5151, 0x0100, 1, 0, 0, 0) + qn + struct.pack(">HH", 1, 1), ("127.0.0.1", 15353))
-d = s.recv(4096)
-rcode, an = d[3] & 15, struct.unpack(">H", d[6:8])[0]
-i, ips = 12 + len(qn) + 4, []
-for _ in range(an):
-    i += 2 if d[i] & 0xC0 == 0xC0 else d.index(b"\0", i) + 1 - i
-    t, _c, _ttl, l = struct.unpack(">HHIH", d[i:i + 10]); i += 10
-    if t == 1: ips.append(socket.inet_ntoa(d[i:i + 4]))
-    i += l
-print(rcode, " ".join(ips))
-PY
+q() {
+  local o rc
+  o="$(dig @127.0.0.1 -p 15353 +tries=1 +time=3 +noall +comments +answer "$1" A)" || return 1
+  case "$(sed -n 's/.*status: \([A-Z]*\).*/\1/p' <<<"$o")" in
+    NOERROR) rc=0 ;; FORMERR) rc=1 ;; SERVFAIL) rc=2 ;; NXDOMAIN) rc=3 ;; NOTIMP) rc=4 ;; REFUSED) rc=5 ;; *) rc=? ;;
+  esac
+  echo "$rc $(awk '$4 == "A" {print $5}' <<<"$o" | xargs)"
 }
 out=""
 for _ in $(seq 1 30); do out="$(q smoke.quench.test 2>/dev/null || true)"; grep -q '192.0.2.10' <<<"$out" && break; sleep 1; done

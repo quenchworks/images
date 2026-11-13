@@ -19,11 +19,7 @@ fail() { echo "$1"; docker logs "$NAME" 2>&1 | grep -vE '^\s+at ' | tail -40; ex
 user="$(docker inspect "$IMAGE" --format '{{.Config.User}}')"
 [ "$user" = "1001" ] || { echo "expected user 1001, got '$user'"; exit 1; }
 
-python3 - "$WAR/quench.war" <<'PY'
-import sys, zipfile
-with zipfile.ZipFile(sys.argv[1], "w") as z:
-    z.writestr("index.jsp", '<%= "quench-" + (6*7) %>\n')
-PY
+printf '%s\n' '<%= "quench-" + (6*7) %>' > "$WAR/index.jsp" && (cd "$WAR" && zip -q quench.war index.jsp && rm index.jsp)
 chmod 0755 "$WAR"; chmod 0644 "$WAR/quench.war"
 
 boot() { # <extra args...>; leaves the container running

@@ -4,6 +4,8 @@
 # fetched through sish's HTTP port by its subdomain; an unknown subdomain must not reach it.
 # sish keeps a socket file per tunnel in /tmp, so /tmp is writable as it is in a pod.
 set -euo pipefail
+# qw (tools/qw, Go) provides the helpers this test needs; go run reuses the build cache.
+QWD="$(cd "$(dirname "$0")/../../tools/qw" && pwd)"; qw() { go -C "$QWD" run . "$@"; }
 IMAGE="${1:?usage: test.sh <image-ref> [version]}"
 WANT="${2:-}"
 NAME="sish-smoke-$$"
@@ -24,7 +26,7 @@ docker run -d --name "$NAME" --read-only --tmpfs /tmp:uid=1001,gid=1001 --tmpfs 
   --authentication-keys-directory=/pubkeys >/dev/null
 
 echo quench-tunneled > "$WORK/index.html"
-(cd "$WORK" && exec python3 -m http.server 18888 --bind 127.0.0.1 >/dev/null 2>&1) & pids+=($!)
+go -C "$QWD" build -o "$WORK/qw" . && { "$WORK/qw" serve --dir "$WORK" --addr 127.0.0.1:18888 >/dev/null 2>&1 & pids+=($!); }
 ssh-keygen -q -t ed25519 -N '' -f "$WORK/id" >/dev/null
 # wait for sish itself: Docker's port proxy accepts TCP before the container listens
 for _ in $(seq 1 30); do grep -q 'starting SSH service' <<<"$(docker logs "$NAME" 2>&1)" && break; sleep 1; done

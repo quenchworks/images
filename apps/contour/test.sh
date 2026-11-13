@@ -78,35 +78,19 @@ for f in envoy.json resources/sds/xds-tls-certificate.json resources/sds/xds-val
   echo "  wrote $f ($(wc -c <"$WORK/$f") bytes)"
 done
 
-python3 - "$WORK" <<'PY'
-import json, sys, pathlib
-work = pathlib.Path(sys.argv[1])
-bs = json.loads((work / "envoy.json").read_text())
-
-# every ADS/LDS/CDS stream must point at the xDS cluster contour serves
-dyn = bs["dynamic_resources"]
-streams = [k for k in ("lds_config", "cds_config", "ads_config") if k in dyn]
-assert streams, sorted(dyn)
-for key in streams:
-    src = dyn[key].get("api_config_source", dyn[key])
-    grpc = src["grpc_services"][0]["envoy_grpc"]
-    assert grpc["cluster_name"] == "contour", (key, grpc)
-    assert src["api_type"] == "GRPC", (key, src["api_type"])
-
-# the static cluster must carry the --xds-address/--xds-port we passed on the CLI
-clusters = {c["name"]: c for c in bs["static_resources"]["clusters"]}
-assert "contour" in clusters, sorted(clusters)
-sock = clusters["contour"]["load_assignment"]["endpoints"][0]["lb_endpoints"][0]["endpoint"]["address"]["socket_address"]
-assert sock["address"] == "contour" and sock["port_value"] == 8001, sock
-
-# the --admin-address unix socket we passed must be the admin listener
-assert bs["admin"]["address"]["pipe"]["path"] == "/admin/admin.sock", bs["admin"]["address"]
-
+# every LDS/CDS/ADS stream points at the contour xDS cluster over gRPC; the static cluster carries
+# --xds-address/--xds-port; the admin listener is the --admin-address unix socket
+jq -e '
+  .dynamic_resources as $d
+  | [("lds_config", "cds_config", "ads_config") as $k | select($d | has($k)) | $d[$k] | (.api_config_source // .)] as $s
+  | ($s | length > 0)
+    and all($s[]; .grpc_services[0].envoy_grpc.cluster_name == "contour" and .api_type == "GRPC")
+    and ([.static_resources.clusters[] | select(.name == "contour")][0].load_assignment.endpoints[0].lb_endpoints[0].endpoint.address.socket_address
+         | .address == "contour" and .port_value == 8001)
+    and .admin.address.pipe.path == "/admin/admin.sock"' "$WORK/envoy.json" >/dev/null \
+  || { echo "bootstrap assertions failed"; jq '{dynamic_resources, admin}' "$WORK/envoy.json"; exit 1; }
 # both SDS documents must be real JSON, not empty files
-for f in ("xds-tls-certificate.json", "xds-validation-context.json"):
-    json.loads((work / "resources" / "sds" / f).read_text())
-
-print("  bootstrap assertions ok: ads->contour, cluster contour:8001, admin /admin/admin.sock, 2 SDS docs")
-PY
+for f in xds-tls-certificate.json xds-validation-context.json; do jq -e type "$WORK/resources/sds/$f" >/dev/null; done
+echo "  bootstrap assertions ok: ads->contour, cluster contour:8001, admin /admin/admin.sock, 2 SDS docs"
 
 echo "PASS: contour smoke test green (version $VER, sha ${SHA:0:12}, nonroot uid $USER_CFG)"
