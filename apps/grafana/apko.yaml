@@ -62,6 +62,33 @@ paths:
     uid: 1001
     gid: 1001
     permissions: 0o755
+  # The entrypoint mkdir -p's these; shipped here so it is a no-op on a read-only rootfs
+  # when nothing is mounted over provisioning (the Grafana Operator's pods, 2026-11-13).
+  - path: /etc/grafana/provisioning/datasources
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /etc/grafana/provisioning/dashboards
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /etc/grafana/provisioning/plugins
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /etc/grafana/provisioning/alerting
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /etc/grafana/provisioning/access-control
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
 
 archs:
   - x86_64

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Smoke test for a built Grafana image. Usage: test.sh <image-ref> [expected-version]
-# Runs read-only rootfs + writable tmpfs for data/logs/provisioning + /tmp (the read-only
-# posture the chart ships). Waits for /api/health, then asserts the DB is ok and (when a
+# Runs read-only rootfs + writable tmpfs for data/logs + /tmp, with nothing over provisioning
+# (the Grafana Operator mounts none there; the shipped dirs must do), the read-only
+# posture of the chart and the operator. Waits for /api/health, then asserts the DB is ok and (when a
 # version is given as $2) that it matches, the login page serves HTML (frontend assets
 # present), and basic-auth admin login reaches /api/org (the default org). Confirms
 # nonroot uid 1001.
@@ -16,12 +17,11 @@ ADMIN_PW="quenchtest"
 cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
-echo "starting $IMAGE (read-only rootfs, tmpfs /var/lib/grafana + /var/log/grafana + /etc/grafana/provisioning + /tmp)"
+echo "starting $IMAGE (read-only rootfs, tmpfs /var/lib/grafana + /var/log/grafana + /tmp, provisioning from the image)"
 docker run -d --name "$NAME" \
   --read-only \
   --tmpfs /var/lib/grafana:rw,mode=1777 \
   --tmpfs /var/log/grafana:rw,mode=1777 \
-  --tmpfs /etc/grafana/provisioning:rw,mode=1777 \
   --tmpfs /tmp:rw,mode=1777 \
   -e GF_SECURITY_ADMIN_PASSWORD="$ADMIN_PW" \
   -p 127.0.0.1:3000:3000 \
