@@ -373,10 +373,16 @@ func Post(url, ctype, body string) (int, string) {
 }
 
 // Do sends one HTTP request with a body (empty for none) and returns the status and body.
-func Do(method, url, body string) (int, string) {
+func Do(method, url, body string) (int, string) { return DoH(method, url, body, nil) }
+
+// DoH is Do with request headers.
+func DoH(method, url, body string, hdr map[string]string) (int, string) {
 	req, err := http.NewRequest(method, url, strings.NewReader(body))
 	if err != nil {
 		return 0, err.Error()
+	}
+	for k, v := range hdr {
+		req.Header.Set(k, v)
 	}
 	r, err := httpc.Do(req)
 	if err != nil {
