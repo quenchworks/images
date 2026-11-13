@@ -148,6 +148,13 @@ func (t *T) WantVersion(s string) {
 	}
 }
 
+// WantVersionV is WantVersion for tools that print the version as v<version>.
+func (t *T) WantVersionV(s string) {
+	if t.Want != "" && !strings.Contains(s, "v"+t.Want) {
+		t.Fatalf("expected v%s in:\n%s", t.Want, s)
+	}
+}
+
 // regexpDev matches unstamped development versions.
 var regexpDev = regexp.MustCompile(`dev`)
 
