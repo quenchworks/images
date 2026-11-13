@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"sort"
@@ -285,6 +286,32 @@ func (t *T) RunAnyFor(d time.Duration, flags []string, args ...string) (string, 
 		return o, -1
 	}
 	return o, 0
+}
+
+// TempDir makes a world-readable temp dir (under TMPDIR, which build-image.sh points at a
+// path Docker can mount) and removes it when the test ends.
+func (t *T) TempDir() string {
+	d, err := os.MkdirTemp("", "quench-smoke-")
+	if err != nil {
+		t.Fatalf("temp dir: %v", err)
+	}
+	os.Chmod(d, 0o777)
+	t.Cleanup(func() { os.RemoveAll(d) })
+	return d
+}
+
+// DeadKubeconfig writes a kubeconfig whose API server (127.0.0.1:1) never answers, for
+// controllers that must start, dial it, and stop or retry without crashing.
+func (t *T) DeadKubeconfig() string {
+	p := filepath.Join(t.TempDir(), "kubeconfig")
+	os.WriteFile(p, []byte(`apiVersion: v1
+kind: Config
+clusters: [{name: none, cluster: {server: "https://127.0.0.1:1", insecure-skip-tls-verify: true}}]
+users: [{name: none, user: {token: none}}]
+contexts: [{name: none, context: {cluster: none, user: none}}]
+current-context: none
+`), 0o644)
+	return p
 }
 
 // regexpDev matches unstamped development versions.
