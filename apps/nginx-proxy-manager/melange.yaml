@@ -180,7 +180,7 @@ pipeline:
           const p = JSON.parse(fs.readFileSync("package.json"));
           p.resolutions = Object.assign(p.resolutions || {}, {
             "proxy-addr": "2.0.8", "body-parser": "2.4.0", "qs": "6.16.1", "fast-uri": "3.1.9",
-            "ip-address": "10.7.4", "basic-ftp": "6.2.1",
+            "ip-address": "10.7.4", "basic-ftp": "6.2.4",
             // archiver > readdir-glob uses minimatch 10; 11 keeps its CJS export and the
             // Minimatch class readdir-glob calls (checked 2026-11-11)
             "minimatch": "11.0.1", "brace-expansion": "5.0.13",
@@ -206,7 +206,7 @@ pipeline:
         # every pin must be what got installed, nested copies included
         node -e '
           const fs = require("fs"), path = require("path");
-          const want = { "proxy-addr": "2.0.8", "body-parser": "2.4.0", "qs": "6.16.1", "fast-uri": "3.1.9", "ip-address": "10.7.4", "basic-ftp": "6.2.1", "minimatch": "11.0.1", "brace-expansion": "5.0.13" };
+          const want = { "proxy-addr": "2.0.8", "body-parser": "2.4.0", "qs": "6.16.1", "fast-uri": "3.1.9", "ip-address": "10.7.4", "basic-ftp": "6.2.4", "minimatch": "11.0.1", "brace-expansion": "5.0.13" };
           const older = (a, b) => { const x = a.split(".").map(Number), y = b.split(".").map(Number); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i]; return false; };
           const seen = {};
           (function walk(dir) {
