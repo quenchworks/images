@@ -51,7 +51,13 @@ func (f filter) apply(cands []string) []string {
 // result, or upstream older than us, is a BROKEN CHECK and never "ok" (mongodb sat at
 // latest3=[] for weeks while the old checker printed ok).
 func report(w io.Writer, app string, cands []string, n int, f filter) []string {
+	// Oldest first: bump puts a new version FIRST and the chart-pinned one stays last, so
+	// "last entry" read opa as behind on the 1.22.4 it already shipped (2026-11-13).
 	cur := current(app)
+	sortDesc(cur)
+	for i, j := 0, len(cur)-1; i < j; i, j = i+1, j-1 {
+		cur[i], cur[j] = cur[j], cur[i]
+	}
 	if n == 0 {
 		n = len(cur)
 		if n == 0 {
