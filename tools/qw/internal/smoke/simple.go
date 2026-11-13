@@ -35,6 +35,17 @@ func stamped(re string, args ...string) func(*T) {
 	}
 }
 
+// stampedEntry is stamped with another entrypoint.
+func stampedEntry(entry, re string, args ...string) func(*T) {
+	return func(t *T) {
+		out := t.RunEntry(entry, args...)
+		t.Logf("%s", out)
+		t.Match(out, "(?i)"+re, "version not stamped")
+		u := t.User("1001")
+		t.Logf("smoke test passed (nonroot user: %s)", u)
+	}
+}
+
 // helpFlag: nonroot, and entry's help output (exit code ignored) lists flag.
 func helpFlag(entry, helpArg, flag string) func(*T) {
 	return func(t *T) {
@@ -367,5 +378,56 @@ echo tools present`))
 			t.Fatalf("operator panicked:\n%s", out)
 		}
 		t.Logf("smoke test passed (trivy-operator %s, uid %s; the chart gate exercises it against a cluster)", t.Want, u)
+	})
+	register("tyk", stamped(`Release version:\s*v[0-9]+\.[0-9]+\.[0-9]+`, "version"))
+	register("vikunja", stamped(`Vikunja api version\s+[0-9]+\.[0-9]+\.[0-9]+`, "version"))
+	register("cadvisor", stamped(`cAdvisor version\s+v[0-9]+\.[0-9]+`, "--version"))
+	register("chartmuseum", stamped(`ChartMuseum version\s+[0-9]+\.[0-9]+\.[0-9]+`, "--version"))
+	register("external-dns", stamped(`v[0-9]+\.[0-9]+\.[0-9]+`, "--version"))
+	register("kube-state-metrics", stamped(`version[ :]+[0-9]+\.[0-9]+\.[0-9]+`, "version"))
+	register("forgejo", stampedEntry("/usr/bin/forgejo", `version\s+[0-9]+\.[0-9]+\.[0-9]+`, "--version"))
+	register("pocketbase", stampedEntry("/usr/bin/pocketbase", `version\s+[0-9]+\.[0-9]+\.[0-9]+`, "--version"))
+	register("istio-cni", func(t *T) {
+		out, _ := t.RunFlags([]string{"-e", "CNI_COMMAND=VERSION", "--entrypoint", "/opt/cni/bin/istio-cni"})
+		t.Contains(out, `"supportedVersions"`, "istio-cni CNI VERSION reply")
+		// install-cni is found by name on PATH, as the chart runs it
+		v := t.RunEntry("install-cni", "version")
+		t.Logf("install-cni version: %s", v)
+		t.WantVersion(v)
+		// every iptables variant the ambient agent picks between
+		for _, b := range []string{"iptables-legacy", "iptables-nft", "ip6tables-legacy", "ip6tables-nft", "iptables-legacy-save",
+			"iptables-nft-save", "iptables-legacy-restore", "iptables-nft-restore", "ip6tables-legacy-restore", "ip6tables-nft-restore"} {
+			t.Logf("%s: %s", b, t.RunEntry(b, "--version"))
+		}
+		// no user check: the CNI node agent runs as root by design
+		t.Logf("smoke test passed")
+	})
+	register("kserve-controller", func(t *T) {
+		t.User("1001")
+		help, _ := t.RunFlags([]string{"--read-only"}, "--help")
+		for _, f := range []string{"health-probe-addr", "metrics-addr", "leader-elect"} {
+			t.Contains(help, "-"+f, "manager --help")
+		}
+		t.Logf("manager flags present\nsmoke test passed")
+	})
+	register("kubescape-operator", func(t *T) {
+		// an in-cluster daemon: outside a cluster it must start and print its own output,
+		// not fail to exec (missing loader, wrong arch, bad mode)
+		out, rc := t.RunCode([]string{"--entrypoint", "/usr/bin/operator"}, "--help")
+		t.Logf("/usr/bin/operator (exit %d): %.300s", rc, out)
+		if rc == 126 || rc == 127 || out == "" || regexp.MustCompile(`(?i)exec format error|no such file or directory.*exec|permission denied`).MatchString(out) {
+			t.Fatalf("/usr/bin/operator did not execute")
+		}
+		u := t.User("1001")
+		t.Logf("smoke test passed (nonroot user: %s)", u)
+	})
+	register("sonar-scanner-cli", func(t *T) {
+		// a real scan needs a SonarQube server: check the CLI is on PATH and the bundled JRE runs
+		t.RunEntry("/bin/sh", "-c", `set -e
+command -v sonar-scanner-cli >/dev/null || { echo "sonar-scanner-cli not on PATH"; exit 1; }
+java="$(command -v java || true)"; [ -n "$java" ] || java="$JAVA_HOME/bin/java"
+"$java" -version 2>&1 | grep -qiE "openjdk|version" || { echo "no working JRE (JAVA_HOME=$JAVA_HOME)"; exit 1; }`)
+		u := t.User("1001")
+		t.Logf("smoke test passed (nonroot user: %s)", u)
 	})
 }

@@ -6,6 +6,7 @@ package smoke
 import (
 	"archive/tar"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -225,6 +226,20 @@ func (t *T) WaitLog(name, sub string, tries int) {
 		time.Sleep(time.Second)
 	}
 	t.Fatalf("%q never appeared in the logs of %s:\n%s", sub, name, t.Logs(name))
+}
+
+// RunCode runs the image once with docker run flags before the image and returns the
+// output and the exit code (-1 when docker itself failed to report one).
+func (t *T) RunCode(flags []string, args ...string) (string, int) {
+	out, err := t.RunFlags(flags, args...)
+	if err == nil {
+		return out, 0
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return out, ee.ExitCode()
+	}
+	return out, -1
 }
 
 // regexpDev matches unstamped development versions.
