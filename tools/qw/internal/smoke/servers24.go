@@ -10,6 +10,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
+	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -226,16 +227,8 @@ func init() {
 				return 0, err.Error()
 			}
 			defer r.Body.Close()
-			out := new(strings.Builder)
-			buf := make([]byte, 64<<10)
-			for {
-				n, err := r.Body.Read(buf)
-				out.Write(buf[:n])
-				if err != nil {
-					break
-				}
-			}
-			return r.StatusCode, out.String()
+			out, _ := io.ReadAll(r.Body)
+			return r.StatusCode, string(out)
 		}
 		if code, r := do("POST", "/auth/simple/login", `{"username":"admin","password":"`+adminPW+`"}`); code/100 != 2 {
 			t.Fatalf("admin login: %d %s", code, r)
