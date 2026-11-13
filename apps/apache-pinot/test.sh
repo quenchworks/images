@@ -8,6 +8,8 @@
 # segments next to its examples, so they are copied to a writable dir first; the image has no
 # wget, so the host queries a published port.
 set -euo pipefail
+# qw (tools/qw, Go) provides the helpers this test needs; go run reuses the build cache.
+QWD="$(cd "$(dirname "$0")/../../tools/qw" && pwd)"; qw() { go -C "$QWD" run . "$@"; }
 IMAGE="${1:?usage: test.sh <image-ref> [version]}"
 WANT="${2:-}"
 NAME="pinot-smoke-$$"
@@ -22,7 +24,7 @@ if [ -n "$WANT" ]; then
   grep -q "pinot-all-${WANT}-jar-with-dependencies.jar" <<<"$jar" || { echo "expected pinot $WANT: $jar"; exit 1; }
 fi
 
-PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
+PORT="$(qw freeport)"
 docker run -d --name "$NAME" --read-only --tmpfs /tmp:rw,exec,size=3g --memory 5g \
   -e JAVA_OPTS="-Xms512m -Xmx2g" -e HOME=/tmp -p "127.0.0.1:${PORT}:8000" --entrypoint /bin/sh "$IMAGE" \
   -c 'mkdir -p /tmp/w && cp -r /opt/pinot/examples /tmp/w/ && cd /tmp/w && exec /opt/pinot/bin/pinot-admin.sh QuickStart -type batch -dataDir /tmp/qs' >/dev/null

@@ -10,12 +10,14 @@
 #   4. A request on the HTTP port (8080) with Host: smoke.test comes back from the
 #      admin UI, through the new proxy host.
 set -euo pipefail
+# qw (tools/qw, Go) provides the helpers this test needs; go run reuses the build cache.
+QWD="$(cd "$(dirname "$0")/../../tools/qw" && pwd)"; qw() { go -C "$QWD" run . "$@"; }
 IMAGE="${1:?usage: test.sh <image-ref> [version]}"
 WANT="${2:-}"
 NAME="npm-smoke-$$"
 cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; docker volume rm "$NAME-data" "$NAME-le" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
-free_port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'; }
+free_port() { qw freeport; }
 
 user="$(docker inspect "$IMAGE" --format '{{.Config.User}}')"
 [ "$user" = "1001" ] || { echo "expected user 1001, got '$user'"; exit 1; }

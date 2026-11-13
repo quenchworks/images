@@ -12,12 +12,14 @@
 #      cryptography/pyOpenSSL), opened TLS upstream to web's reverse listener, which forwarded
 #      to the mitmweb UI. The page coming back proves every hop and tornado.
 set -euo pipefail
+# qw (tools/qw, Go) provides the helpers this test needs; go run reuses the build cache.
+QWD="$(cd "$(dirname "$0")/../../tools/qw" && pwd)"; qw() { go -C "$QWD" run . "$@"; }
 
 IMAGE="${1:?usage: test.sh <image-ref> [version]}"
 NAME="quench-mitmproxy-smoke-$$"
 WORK="$(mktemp -d)"
 PY=/opt/mitmproxy/venv/bin/python
-free_port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'; }
+free_port() { qw freeport; }
 
 cleanup() { docker rm -f "$NAME" "$NAME-web" >/dev/null 2>&1 || true; docker network rm "$NAME-net" >/dev/null 2>&1 || true; rm -rf "$WORK"; }
 trap cleanup EXIT

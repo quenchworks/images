@@ -31,6 +31,8 @@
 # the image has no shell, and node is the one interpreter it does have. That also
 # avoids a bind mount of the socket dir, which Docker Desktop refuses for /tmp.
 set -euo pipefail
+# qw (tools/qw, Go) provides the helpers this test needs; go run reuses the build cache.
+QWD="$(cd "$(dirname "$0")/../../tools/qw" && pwd)"; qw() { go -C "$QWD" run . "$@"; }
 
 IMAGE="${1:?usage: test.sh <image-ref> [expected-version]}"
 EXPECTED="${2:-}"
@@ -40,8 +42,7 @@ NAME="quench-adc-smoke-$$"
 cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
-command -v python3 >/dev/null || { echo "python3 is required to pick a free port"; exit 1; }
-STATUS_PORT="$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')"
+STATUS_PORT="$(qw freeport)"
 
 # ---------------------------------------------------------------- 1. version
 echo "checking the stamped version"

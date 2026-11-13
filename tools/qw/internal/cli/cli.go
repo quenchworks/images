@@ -14,6 +14,7 @@ import (
 	"github.com/quenchworks/images/tools/qw/internal/check"
 	"github.com/quenchworks/images/tools/qw/internal/core"
 	"github.com/quenchworks/images/tools/qw/internal/drift"
+	"github.com/quenchworks/images/tools/qw/internal/probe"
 	"github.com/quenchworks/images/tools/qw/internal/unbuilt"
 	"github.com/quenchworks/images/tools/qw/internal/vex"
 	"github.com/quenchworks/images/tools/qw/internal/wolfi"
@@ -31,6 +32,9 @@ var commands = map[string]struct {
 	"blocked":      {blocked.Run, "[--pkg P --min V] [--dispatch]", "re-test BLOCKED apps against Wolfi"},
 	"unbuilt":      {unbuilt.Run, "[--all] [app...]", "VERSIONS entries missing on GHCR"},
 	"wolfi-latest": {wolfi.Run, "<pkg> [N] | --majors P [N] | --match RE", "newest Wolfi versions"},
+	"freeport":     {probe.FreePort, "", "print a free TCP port on 127.0.0.1 (smoke tests)"},
+	"tlsprobe":     {probe.TLSProbe, "--addr H:P (--ca F --name N | --plain) [--send S] [--expect T]...", "speak a few protocol bytes, check the reply"},
+	"serve":        {probe.Serve, "[--dir D] [--addr H:P]", "serve a directory over HTTP (smoke tests)"},
 }
 
 func usage() {

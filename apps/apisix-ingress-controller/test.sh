@@ -30,6 +30,8 @@
 # and the caches never sync -- deliberately. Readiness of the CONTROLLER LOGIC is
 # the chart's kind-install gate's job; this proves the IMAGE boots and serves.
 set -euo pipefail
+# qw (tools/qw, Go) provides the helpers this test needs; go run reuses the build cache.
+QWD="$(cd "$(dirname "$0")/../../tools/qw" && pwd)"; qw() { go -C "$QWD" run . "$@"; }
 
 IMAGE="${1:?usage: test.sh <image-ref> [expected-version]}"
 EXPECTED="${2:-}"
@@ -42,7 +44,7 @@ EXPECTED="${2:-}"
 # collides with whatever else the build host happens to be running.
 command -v python3 >/dev/null || { echo "python3 is required for the stub API server"; exit 1; }
 
-freeport() { python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()'; }
+freeport() { qw freeport; }
 API_PORT="$(freeport)"
 PROBE_PORT="$(freeport)"
 METRICS_PORT="$(freeport)"
