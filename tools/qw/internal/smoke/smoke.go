@@ -46,6 +46,7 @@ func Apps() []string {
 // T is one smoke test run. Its check helpers stop the test on failure, as testing.T's do.
 type T struct {
 	App, Image, Want string
+	Args             []string // arguments after the version, for tests that take more than one
 	name             string
 	failed           bool
 	cleanup          []func()
@@ -425,7 +426,7 @@ func Run(args []string) int {
 	}
 	t := &T{App: args[0], Image: args[1], name: fmt.Sprintf("quench-%s-smoke-%d", args[0], os.Getpid())}
 	if len(args) > 2 {
-		t.Want = args[2]
+		t.Want, t.Args = args[2], args[3:]
 	}
 	done := make(chan struct{})
 	go func() {
