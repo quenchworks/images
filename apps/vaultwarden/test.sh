@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Smoke test for a built Vaultwarden image. Usage: test.sh <image-ref> [version]
-# Vaultwarden runs on a read-only root with /data on a volume. A Python client does what a Bitwarden
+# Vaultwarden runs on a read-only root with /data on a volume. A shell client (curl, jq, openssl) does what a Bitwarden
 # client does: derive the master password hash (PBKDF2), register, log in with the password grant,
 # store a cipher and read it back from /api/sync, also after a restart. A wrong password must be
 # refused and the web vault must be served.
@@ -9,7 +9,7 @@ IMAGE="${1:?usage: test.sh <image-ref> [version]}"
 WANT="${2:-}"
 NAME="vaultwarden-smoke-$$"
 URL=http://127.0.0.1:18081
-cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; docker volume rm "$NAME" >/dev/null 2>&1 || true; }
+cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; docker volume rm "$NAME" >/dev/null 2>&1 || true; rm -rf -- "${T:-}"; }
 trap cleanup EXIT
 
 user="$(docker inspect "$IMAGE" --format '{{.Config.User}}')"
@@ -28,49 +28,41 @@ start
 curl -fsS "$URL/" | grep -qi '<html' || { echo "web vault not served"; exit 1; }
 echo "  /alive ok, web vault served"
 
-client() { python3 - "$URL" "$@" <<'PY'
-import base64, hashlib, json, sys, urllib.parse, urllib.request, uuid
-url, action = sys.argv[1], sys.argv[2]
-email, pw = "smoke@quench.test", sys.argv[3] if len(sys.argv) > 3 else "smoke-master-pass-2026"
-def mhash(p):
-    key = hashlib.pbkdf2_hmac("sha256", p.encode(), email.encode(), 600000)
-    return base64.b64encode(hashlib.pbkdf2_hmac("sha256", key, p.encode(), 1)).decode()
-def req(path, data=None, form=None, tok=None):
-    h = {}
-    body = None
-    if data is not None: body, h["Content-Type"] = json.dumps(data).encode(), "application/json"
-    if form is not None: body, h["Content-Type"] = urllib.parse.urlencode(form).encode(), "application/x-www-form-urlencoded"
-    if tok: h["Authorization"] = "Bearer " + tok
-    h["Accept"] = "application/json"
-    r = urllib.request.Request(url + path, data=body, headers=h, method="POST" if body is not None else "GET")
-    try:
-        with urllib.request.urlopen(r, timeout=30) as resp: return resp.status, resp.read().decode()
-    except urllib.error.HTTPError as e: return e.code, e.read().decode()
-enc = "2.c21va2VpdjEyMzQ1Njc4OQ==|c21va2VjdA==|c21va2VtYWNtYWNtYWNtYWNtYWNtYWNtYWNtYWM="
-if action == "register":
-    body = {"email": email, "name": "Smoke", "masterPasswordHash": mhash(pw), "masterPasswordHint": None,
-            "key": enc, "kdf": 0, "kdfIterations": 600000,
-            "keys": {"publicKey": "c21va2UtcHVibGljLWtleQ==", "encryptedPrivateKey": enc}}
+EMAIL=smoke@quench.test
+ENC="2.c21va2VpdjEyMzQ1Njc4OQ==|c21va2VjdA==|c21va2VtYWNtYWNtYWNtYWNtYWNtYWNtYWNtYWM="
+T="$(mktemp -d)"
+# Bitwarden's master password hash: PBKDF2-SHA256(PBKDF2-SHA256(password, email, 600000), password, 1)
+mhash() { local k; k="$(openssl kdf -keylen 32 -kdfopt digest:SHA256 -kdfopt pass:"$1" -kdfopt salt:"$EMAIL" -kdfopt iter:600000 PBKDF2 | tr -d ':')"; openssl kdf -keylen 32 -kdfopt digest:SHA256 -kdfopt hexpass:"$k" -kdfopt salt:"$1" -kdfopt iter:1 -binary PBKDF2 | base64 -w0; }
+# http PATH [curl args]: body to $T/out, prints the status code
+http() { local p="$1"; shift; curl -s -m 30 -o "$T/out" -w '%{http_code}' -H 'Accept: application/json' "$@" "$URL$p"; }
+json() { http "$1" -H 'Content-Type: application/json' -d "$2" "${@:3}"; }
+# client ACTION [password]: what a Bitwarden client does, one step per action
+client() {
+  local action="$1" pw="${2:-smoke-master-pass-2026}" code tok sub n body
+  if [ "$action" = register ]; then
     # two steps since 1.35: with mail off the verification call returns the token itself
-    code, out = req("/identity/accounts/register/send-verification-email", {"email": email, "name": "Smoke"})
-    if code != 200: print("verification", code, out[:300]); sys.exit(1)
-    body["emailVerificationToken"] = json.loads(out)
-    code, out = req("/identity/accounts/register/finish", body)
-    print(code, out[:300]); sys.exit(0 if code in (200, 204) else 1)
-form = {"grant_type": "password", "username": email, "password": mhash(pw), "scope": "api offline_access",
-        "client_id": "web", "deviceType": "9", "deviceIdentifier": str(uuid.uuid4()), "deviceName": "smoke"}
-code, out = req("/identity/connect/token", form=form)
-if action == "badlogin": print(code); sys.exit(0 if code in (400, 401) else 1)
-if code != 200: print("login failed", code, out[:300]); sys.exit(1)
-tok = json.loads(out)["access_token"]
-if action == "store":
-    seg = tok.split(".")[1]; sub = json.loads(base64.urlsafe_b64decode(seg + "=" * (-len(seg) % 4)))["sub"]
-    code, out = req("/api/ciphers", {"type": 2, "name": enc, "notes": None, "secureNote": {"type": 0}, "favorite": False, "encryptedFor": sub}, tok=tok)
-    print(code); sys.exit(0 if code == 200 else 1)
-code, out = req("/api/sync", tok=tok)
-n = len(json.loads(out).get("ciphers") or json.loads(out).get("Ciphers") or [])
-print(n); sys.exit(0 if code == 200 and n == 1 else 1)
-PY
+    code="$(json /identity/accounts/register/send-verification-email "$(jq -nc --arg e "$EMAIL" '{email: $e, name: "Smoke"}')")"
+    [ "$code" = 200 ] || { echo "verification $code $(head -c 300 "$T/out")"; return 1; }
+    body="$(jq -nc --arg e "$EMAIL" --arg h "$(mhash "$pw")" --arg k "$ENC" --slurpfile t "$T/out" \
+      '{email: $e, name: "Smoke", masterPasswordHash: $h, masterPasswordHint: null, key: $k, kdf: 0, kdfIterations: 600000,
+        keys: {publicKey: "c21va2UtcHVibGljLWtleQ==", encryptedPrivateKey: $k}, emailVerificationToken: $t[0]}')"
+    code="$(json /identity/accounts/register/finish "$body")"
+    echo "$code $(head -c 300 "$T/out")"; [ "$code" = 200 ] || [ "$code" = 204 ]; return
+  fi
+  code="$(http /identity/connect/token --data-urlencode grant_type=password --data-urlencode "username=$EMAIL" \
+    --data-urlencode "password=$(mhash "$pw")" --data-urlencode 'scope=api offline_access' --data-urlencode client_id=web \
+    --data-urlencode deviceType=9 --data-urlencode "deviceIdentifier=$(cat /proc/sys/kernel/random/uuid)" --data-urlencode deviceName=smoke)"
+  if [ "$action" = badlogin ]; then echo "$code"; [ "$code" = 400 ] || [ "$code" = 401 ]; return; fi
+  [ "$code" = 200 ] || { echo "login failed $code $(head -c 300 "$T/out")"; return 1; }
+  tok="$(jq -er .access_token "$T/out")"
+  if [ "$action" = store ]; then
+    sub="$(cut -d. -f2 <<<"$tok" | tr '_-' '/+' | awk '{l=length($0)%4; if(l) $0=$0 substr("===",1,4-l); print}' | base64 -d | jq -er .sub)"
+    code="$(json /api/ciphers "$(jq -nc --arg n "$ENC" --arg s "$sub" '{type: 2, name: $n, notes: null, secureNote: {type: 0}, favorite: false, encryptedFor: $s}')" -H "Authorization: Bearer $tok")"
+    echo "$code"; [ "$code" = 200 ]; return
+  fi
+  code="$(http /api/sync -H "Authorization: Bearer $tok")"
+  n="$(jq '(.ciphers // .Ciphers // []) | length' "$T/out")"
+  echo "$n"; [ "$code" = 200 ] && [ "$n" = 1 ]
 }
 client register || { echo "register failed"; docker logs "$NAME" 2>&1 | tail -20; exit 1; }
 code="$(client badlogin wrong-master-pass)" || { echo "a wrong password got HTTP $code"; exit 1; }

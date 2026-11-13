@@ -4,12 +4,13 @@
 # create a database and table, insert a document and read it back, and checks
 # the reported version and the web admin UI.
 set -euo pipefail
+# qw (tools/qw, Go) provides the helpers this test needs; go run reuses the build cache.
+QWD="$(cd "$(dirname "$0")/../../tools/qw" && pwd)"; qw() { go -C "$QWD" run . "$@"; }
 
 IMAGE="${1:?usage: test.sh <image-ref> [version]}"
 WANT="${2:-}"
 NAME="quench-rethinkdb-smoke-$$"
-VENV="$(mktemp -d "$PWD/.smoketest.XXXXXX")"
-cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; rm -rf "$VENV"; }
+cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
 user="$(docker inspect "$IMAGE" --format '{{.Config.User}}')"
@@ -25,20 +26,6 @@ code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/)"
 echo "web admin: HTTP $code"
 [ "$code" = 200 ] || { echo "web admin not served"; exit 1; }
 
-python3 -m venv "$VENV" && "$VENV/bin/pip" install -q rethinkdb==2.4.10.post1
-"$VENV/bin/python" - "$WANT" <<'PY'
-import sys
-from rethinkdb import r
-c = r.connect(host="127.0.0.1", port=28015)
-r.db_create("smoke").run(c)
-r.db("smoke").table_create("t").run(c)
-r.db("smoke").table("t").insert({"id": 1, "name": "quench"}).run(c)
-doc = r.db("smoke").table("t").get(1).run(c)
-assert doc == {"id": 1, "name": "quench"}, doc
-ver = r.db("rethinkdb").table("server_status").nth(0)["process"]["version"].run(c)
-print("document:", doc)
-print("version:", ver)
-assert not sys.argv[1] or ver.startswith("rethinkdb " + sys.argv[1]), ver
-PY
+qw rethinkdb-smoke --addr 127.0.0.1:28015 --want "$WANT"
 
 echo "smoke test passed (rethinkdb ${WANT:-?}: create, insert, read over the driver; web admin; nonroot user: $user)"

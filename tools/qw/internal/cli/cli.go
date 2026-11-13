@@ -24,18 +24,19 @@ var commands = map[string]struct {
 	run         func([]string) int
 	args, about string
 }{
-	"check":        {check.Run, "[-q] [-j N] [app...]", "upstream versions vs build.conf; exit code = updates"},
-	"bump":         {bump.Run, "<app> <version>...", "add versions to a recipe with fresh shas"},
-	"gen-catalog":  {catalog.Run, "[--meta] [-o file]", "write catalog.lock.yaml from GHCR"},
-	"drift-scan":   {drift.Run, "[--shard N --of M] [--json f] [--only app...]", "rescan published images"},
-	"vex":          {vex.Run, "[--stale] [app...]", "lint VEX files and their wiring"},
-	"blocked":      {blocked.Run, "[--pkg P --min V] [--dispatch]", "re-test BLOCKED apps against Wolfi"},
-	"unbuilt":      {unbuilt.Run, "[--all] [app...]", "VERSIONS entries missing on GHCR"},
-	"wolfi-latest": {wolfi.Run, "<pkg> [N] | --majors P [N] | --match RE", "newest Wolfi versions"},
-	"freeport":     {probe.FreePort, "", "print a free TCP port on 127.0.0.1 (smoke tests)"},
-	"tlsprobe":     {probe.TLSProbe, "--addr H:P (--ca F --name N | --plain) [--send S] [--expect T]...", "speak a few protocol bytes, check the reply"},
-	"fakeapi":      {probe.FakeAPI, "[--addr H:P] [--cert C --key K] [--route 'M /p=CODE:file']... [--record 'M /p=file']... [--log f] [--port-file f]", "canned JSON API server (smoke tests)"},
-	"serve":        {probe.Serve, "[--dir D] [--addr H:P]", "serve a directory over HTTP (smoke tests)"},
+	"check":           {check.Run, "[-q] [-j N] [app...]", "upstream versions vs build.conf; exit code = updates"},
+	"bump":            {bump.Run, "<app> <version>...", "add versions to a recipe with fresh shas"},
+	"gen-catalog":     {catalog.Run, "[--meta] [-o file]", "write catalog.lock.yaml from GHCR"},
+	"drift-scan":      {drift.Run, "[--shard N --of M] [--json f] [--only app...]", "rescan published images"},
+	"vex":             {vex.Run, "[--stale] [app...]", "lint VEX files and their wiring"},
+	"blocked":         {blocked.Run, "[--pkg P --min V] [--dispatch]", "re-test BLOCKED apps against Wolfi"},
+	"unbuilt":         {unbuilt.Run, "[--all] [app...]", "VERSIONS entries missing on GHCR"},
+	"wolfi-latest":    {wolfi.Run, "<pkg> [N] | --majors P [N] | --match RE", "newest Wolfi versions"},
+	"freeport":        {probe.FreePort, "", "print a free TCP port on 127.0.0.1 (smoke tests)"},
+	"tlsprobe":        {probe.TLSProbe, "--addr H:P (--ca F --name N | --plain) [--send S] [--expect T]...", "speak a few protocol bytes, check the reply"},
+	"fakeapi":         {probe.FakeAPI, "[--addr H:P] [--cert C --key K] [--route 'M /p=CODE:file']... [--record 'M /p=file']... [--log f] [--port-file f]", "canned JSON API server (smoke tests)"},
+	"rethinkdb-smoke": {probe.RethinkSmoke, "[--addr H:P] [--want V]", "RethinkDB driver round trip (smoke tests)"},
+	"serve":           {probe.Serve, "[--dir D] [--addr H:P]", "serve a directory over HTTP (smoke tests)"},
 }
 
 func usage() {
