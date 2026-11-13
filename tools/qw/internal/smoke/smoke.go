@@ -91,6 +91,15 @@ func (t *T) RunEntry(entry string, args ...string) string {
 	return t.Docker(append([]string{"run", "--rm", "--entrypoint", entry, t.Image}, args...)...)
 }
 
+// RunAny runs the image once and returns its output whatever the exit code (bash "|| true").
+func (t *T) RunAny(args ...string) string { out, _ := t.TryRun(args...); return out }
+
+// RunEntryAny is RunEntry whatever the exit code.
+func (t *T) RunEntryAny(entry string, args ...string) string {
+	out, _ := docker(append([]string{"run", "--rm", "--entrypoint", entry, t.Image}, args...)...)
+	return out
+}
+
 // TryRun is Run that returns the error instead of failing (for commands expected to fail).
 func (t *T) TryRun(args ...string) (string, error) {
 	return docker(append([]string{"run", "--rm", t.Image}, args...)...)

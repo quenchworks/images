@@ -1,12 +1,3 @@
 #!/usr/bin/env bash
-# Smoke test for the NATS JetStream Controller image. Usage: test.sh <image-ref> [version]
-# The real test is the chart's kind gate (a Stream resource created on a NATS server). Here: nonroot user and
-# the version stamped by the build.
-set -euo pipefail
-IMAGE="${1:?usage: test.sh <image-ref> [version]}"
-WANT="${2:-}"
-user="$(docker inspect "$IMAGE" --format '{{.Config.User}}')"
-[ "$user" = "1001" ] || { echo "expected user 1001, got '$user'"; exit 1; }
-v="$(docker run --rm "$IMAGE" -version 2>&1)"; echo "$v" | head -2
-[ -z "$WANT" ] || grep -qF "$WANT" <<<"$v" || { echo "expected $WANT"; exit 1; }
-echo "smoke test passed (jetstream-controller ${WANT:-?}: version, nonroot user $user)"
+# Smoke test for the NATS JetStream Controller image: tools/qw/internal/smoke/simple.go. Usage: test.sh <image-ref> [version]
+exec go -C "$(cd "$(dirname "$0")/../../tools/qw" && pwd)" run . smoke nats-jetstream-controller "$@"

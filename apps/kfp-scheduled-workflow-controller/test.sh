@@ -1,12 +1,3 @@
 #!/usr/bin/env bash
-# Smoke test for a built kfp-scheduled-workflow-controller image. Usage: test.sh <image-ref> [version]
-# Checks the user and that the binary starts and parses its flags. The component itself
-# needs a cluster, MySQL and the API server: the kubeflow-pipelines chart gate runs it.
-set -euo pipefail
-IMAGE="${1:?usage: test.sh <image-ref> [version]}"
-user="$(docker inspect "$IMAGE" --format "{{.Config.User}}")"
-[ "$user" = "1001" ] || { echo "expected user 1001, got $user"; exit 1; }
-out="$(docker run --rm --entrypoint /usr/bin/controller "$IMAGE" --help 2>&1 || true)"
-grep -q -- "-recurringRunResyncIntervalSeconds" <<<"$out" || { echo "/usr/bin/controller --help lacks -recurringRunResyncIntervalSeconds:"; echo "$out" | head -20; exit 1; }
-
-echo "smoke test passed"
+# Smoke test for a built kfp-scheduled-workflow-controller image: tools/qw/internal/smoke/simple.go. Usage: test.sh <image-ref> [version]
+exec go -C "$(cd "$(dirname "$0")/../../tools/qw" && pwd)" run . smoke kfp-scheduled-workflow-controller "$@"
