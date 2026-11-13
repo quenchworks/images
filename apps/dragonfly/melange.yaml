@@ -108,6 +108,18 @@ pipeline:
       exec dragonfly "$@"
       EOS
       chmod 0755 "${{targets.destdir}}/usr/bin/docker-entrypoint.sh"
+      # The Dragonfly Operator probes every pod with `/bin/sh /usr/local/bin/healthcheck.sh` (the
+      # official image's path) and sets HEALTHCHECK_PORT. Upstream's script needs netstat and nc,
+      # which this image does not ship; bash's /dev/tcp sends the same PING.
+      install -d "${{targets.destdir}}/usr/local/bin"
+      cat > "${{targets.destdir}}/usr/local/bin/healthcheck.sh" <<'EOS'
+      #!/bin/sh
+      exec bash -c 'exec 3<>"/dev/tcp/127.0.0.1/${HEALTHCHECK_PORT:-6379}" || exit 1
+      printf "PING\r\n" >&3
+      IFS= read -r -t 3 reply <&3 || exit 1
+      case "$reply" in "+PONG"*) exit 0 ;; *) exit 1 ;; esac'
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/local/bin/healthcheck.sh"
 
 test:
   pipeline:
@@ -115,3 +127,4 @@ test:
         test -x /usr/bin/dragonfly
         dragonfly --version
         test -x /usr/bin/docker-entrypoint.sh
+        test -x /usr/local/bin/healthcheck.sh

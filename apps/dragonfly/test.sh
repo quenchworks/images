@@ -51,6 +51,11 @@ for i in $(seq 1 60); do
   sleep 1
 done
 
+echo "operator probe: /bin/sh /usr/local/bin/healthcheck.sh (HEALTHCHECK_PORT=6379)"
+docker exec -e HEALTHCHECK_PORT=6379 "$NAME" /bin/sh /usr/local/bin/healthcheck.sh || { echo "FAIL: healthcheck.sh did not pass"; exit 1; }
+if docker exec -e HEALTHCHECK_PORT=6390 "$NAME" /bin/sh /usr/local/bin/healthcheck.sh 2>/dev/null; then
+  echo "FAIL: healthcheck.sh passed on a closed port"; exit 1; fi
+
 echo "SET/GET roundtrip:"
 rcli SET gate quench >/dev/null
 VAL="$(rcli GET gate)"
