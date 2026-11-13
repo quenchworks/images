@@ -1,0 +1,55 @@
+# redis-operator from the release tag, CGO-free, installed at /operator (upstream's path, used by the init container).
+package:
+  name: quench-redis-operator
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened redis-operator, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - go-1.27
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/OT-CONTAINER-KIT/redis-operator/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - runs: |
+      set -eu
+      export CGO_ENABLED=0 GOTOOLCHAIN=local GOFLAGS=-mod=mod GOWORK=off
+      # floors, raised only when below (a bare go get downgrades once upstream passes it); the
+      # golang.org/x set moves together, as in the other recipes
+      FLOOR="golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/net@v0.62.0 golang.org/x/text@v0.43.0 golang.org/x/sys@v0.49.0"
+      # grpc 1.82.1 (CVE-2026-84303, CVE-2026-84304, CVE-2026-84445), gorilla/websocket 1.5.0 (GHSA-w67g-5rqw-f597), and the
+      # otel family (otlptrace 1.24, sdk 1.43: CVE-2026-81870) moved together
+      FLOOR="$FLOOR google.golang.org/grpc@v1.83.2 github.com/gorilla/websocket@v1.5.3 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0"
+      need=""
+      for f in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${f%@*}")"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        [ "$(printf '%s\n%s\n' "$have" "${f#*@}" | sort -V | head -1)" = "${f#*@}" ] || need="$need $f"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
+      go mod tidy
+      go build -trimpath -ldflags "-s -w" \
+        -o "${{targets.destdir}}/operator" ./cmd/main.go
+
+test:
+  pipeline:
+    - runs: |
+        /operator manager --help 2>&1 | grep -q -- --feature-gates
