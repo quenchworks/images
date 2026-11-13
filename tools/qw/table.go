@@ -286,6 +286,7 @@ var table = map[string]check{
 	"rqlite":                            {src: ghRel("rqlite/rqlite"), n: 1},
 	"ruby":                              {wolfiPrefix: "ruby-", lines: 2, lineOnly: false},
 	"rust":                              {wolfiPrefix: "rust-", lines: 2, lineOnly: false},
+	"shlink":                            {src: ghRel("shlinkio/shlink"), n: 1},
 	"satosa":                            {src: pypiPkg("satosa"), lines: 2, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
 	"seaweedfs":                         {src: ghRel("seaweedfs/seaweedfs")},
 	"secrets-store-csi-driver":          {src: ghRel("kubernetes-sigs/secrets-store-csi-driver"), n: 2},

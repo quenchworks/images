@@ -1,0 +1,107 @@
+# Shlink on RoadRunner. Read-only root: /etc/shlink/data (sqlite db, cache, locks, logs) is the
+# one writable directory and belongs on a volume; /tmp is a tmpfs in the chart.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - busybox
+    - tzdata
+    - quench-shlink@local
+    - php-8.4
+    - php-8.4-config
+    - php-8.4-curl
+    - php-8.4-curl-config
+    - php-8.4-mbstring
+    - php-8.4-mbstring-config
+    - php-8.4-pdo
+    - php-8.4-pdo-config
+    - php-8.4-pdo_mysql
+    - php-8.4-pdo_mysql-config
+    - php-8.4-mysqlnd
+    - php-8.4-mysqlnd-config
+    - php-8.4-pdo_pgsql
+    - php-8.4-pdo_pgsql-config
+    - php-8.4-pdo_sqlite
+    - php-8.4-pdo_sqlite-config
+    - php-8.4-intl
+    - php-8.4-intl-config
+    - php-8.4-calendar
+    - php-8.4-calendar-config
+    - php-8.4-sockets
+    - php-8.4-sockets-config
+    - php-8.4-bcmath
+    - php-8.4-bcmath-config
+    - php-8.4-zip
+    - php-8.4-zip-config
+    - php-8.4-xml
+    - php-8.4-xml-config
+    - php-8.4-dom
+    - php-8.4-dom-config
+    - php-8.4-simplexml
+    - php-8.4-simplexml-config
+    - php-8.4-xmlwriter
+    - php-8.4-xmlwriter-config
+    - php-8.4-openssl
+    - php-8.4-openssl-config
+    - php-8.4-ctype
+    - php-8.4-ctype-config
+    - php-8.4-iconv
+    - php-8.4-iconv-config
+    - php-8.4-fileinfo
+    - php-8.4-fileinfo-config
+    - php-8.4-opcache
+    - php-8.4-opcache-config
+    - php-8.4-posix
+    - php-8.4-posix-config
+    - php-8.4-pcntl
+    - php-8.4-pcntl-config
+    - php-8.4-sodium
+    - php-8.4-sodium-config
+
+accounts:
+  groups:
+    - groupname: shlink
+      gid: 1001
+  users:
+    - username: shlink
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/shlink-start
+
+work-dir: /etc/shlink
+
+environment:
+  SHLINK_RUNTIME: rr
+
+paths:
+  - path: /tmp
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o1777
+  - path: /etc/shlink/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-shlink"
+  org.opencontainers.image.licenses: "MIT"
+  org.opencontainers.image.version: "__VER__"

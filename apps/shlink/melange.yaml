@@ -1,0 +1,215 @@
+# Shlink from the release tag (composer --no-dev, Symfony patch floor) and RoadRunner built from
+# source; the PHP runtime and extensions come from Wolfi.
+package:
+  name: quench-shlink
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Shlink (release tag + composer) on RoadRunner, Wolfi PHP 8.4"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - php-8.4
+      - php-8.4-config
+      - php-8.4-curl
+      - php-8.4-curl-config
+      - php-8.4-mbstring
+      - php-8.4-mbstring-config
+      - php-8.4-pdo
+      - php-8.4-pdo-config
+      - php-8.4-pdo_mysql
+      - php-8.4-pdo_mysql-config
+      - php-8.4-mysqlnd
+      - php-8.4-mysqlnd-config
+      - php-8.4-pdo_pgsql
+      - php-8.4-pdo_pgsql-config
+      - php-8.4-pdo_sqlite
+      - php-8.4-pdo_sqlite-config
+      - php-8.4-intl
+      - php-8.4-intl-config
+      - php-8.4-calendar
+      - php-8.4-calendar-config
+      - php-8.4-sockets
+      - php-8.4-sockets-config
+      - php-8.4-bcmath
+      - php-8.4-bcmath-config
+      - php-8.4-zip
+      - php-8.4-zip-config
+      - php-8.4-xml
+      - php-8.4-xml-config
+      - php-8.4-dom
+      - php-8.4-dom-config
+      - php-8.4-simplexml
+      - php-8.4-simplexml-config
+      - php-8.4-xmlwriter
+      - php-8.4-xmlwriter-config
+      - php-8.4-openssl
+      - php-8.4-openssl-config
+      - php-8.4-ctype
+      - php-8.4-ctype-config
+      - php-8.4-iconv
+      - php-8.4-iconv-config
+      - php-8.4-fileinfo
+      - php-8.4-fileinfo-config
+      - php-8.4-opcache
+      - php-8.4-opcache-config
+      - php-8.4-posix
+      - php-8.4-posix-config
+      - php-8.4-pcntl
+      - php-8.4-pcntl-config
+      - php-8.4-sodium
+      - php-8.4-sodium-config
+      - busybox
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - composer
+      - go-1.26
+      - php-8.4
+      - php-8.4-config
+      - php-8.4-curl
+      - php-8.4-curl-config
+      - php-8.4-mbstring
+      - php-8.4-mbstring-config
+      - php-8.4-pdo
+      - php-8.4-pdo-config
+      - php-8.4-pdo_mysql
+      - php-8.4-pdo_mysql-config
+      - php-8.4-mysqlnd
+      - php-8.4-mysqlnd-config
+      - php-8.4-pdo_pgsql
+      - php-8.4-pdo_pgsql-config
+      - php-8.4-pdo_sqlite
+      - php-8.4-pdo_sqlite-config
+      - php-8.4-intl
+      - php-8.4-intl-config
+      - php-8.4-calendar
+      - php-8.4-calendar-config
+      - php-8.4-sockets
+      - php-8.4-sockets-config
+      - php-8.4-bcmath
+      - php-8.4-bcmath-config
+      - php-8.4-zip
+      - php-8.4-zip-config
+      - php-8.4-xml
+      - php-8.4-xml-config
+      - php-8.4-dom
+      - php-8.4-dom-config
+      - php-8.4-simplexml
+      - php-8.4-simplexml-config
+      - php-8.4-xmlwriter
+      - php-8.4-xmlwriter-config
+      - php-8.4-openssl
+      - php-8.4-openssl-config
+      - php-8.4-ctype
+      - php-8.4-ctype-config
+      - php-8.4-iconv
+      - php-8.4-iconv-config
+      - php-8.4-fileinfo
+      - php-8.4-fileinfo-config
+      - php-8.4-opcache
+      - php-8.4-opcache-config
+      - php-8.4-posix
+      - php-8.4-posix-config
+      - php-8.4-pcntl
+      - php-8.4-pcntl-config
+      - php-8.4-sodium
+      - php-8.4-sodium-config
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/shlinkio/shlink/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - runs: mkdir -p rr-src
+
+  - uses: fetch
+    with:
+      uri: https://github.com/roadrunner-server/roadrunner/archive/refs/tags/v__RR_VER__.tar.gz
+      expected-sha256: __RR_SHA__
+      directory: rr-src
+
+  - name: Shlink with composer, Symfony floor raised
+    runs: |
+      set -eu
+      export COMPOSER_HOME="$(mktemp -d)" COMPOSER_ALLOW_SUPERUSER=1
+      composer install --no-dev --no-interaction --no-progress --prefer-dist --optimize-autoloader
+      # 8.1.9 carries CVE-2026-121971 (http-client) and the http-foundation / yaml advisories;
+      # the newest 8.1 patch inside the tag's own constraints fixes them
+      composer update --no-dev --no-interaction --no-progress --optimize-autoloader \
+        symfony/http-client symfony/http-foundation symfony/yaml
+      for p in symfony/http-client symfony/http-foundation symfony/yaml; do
+        v="$(composer show --locked "$p" | sed -n 's/^versions : \* v//p')"
+        echo "$p $v"
+        [ "$(printf '%s\n%s\n' 8.1.11 "$v" | sort -V | head -1)" = 8.1.11 ] || { echo "$p $v is below 8.1.11"; exit 1; }
+      done
+      # the RoadRunner binary must match what the PHP worker library speaks
+      grep -q '"name": "spiral/roadrunner",' vendor/composer/installed.json
+      sed -i "s/%SHLINK_VERSION%/${{package.version}}/g" module/Core/src/Config/Options/AppOptions.php
+      if grep -q '%SHLINK_VERSION%' module/Core/src/Config/Options/AppOptions.php; then echo "version not stamped"; exit 1; fi
+      app="${{targets.destdir}}/etc/shlink"
+      install -d -m 0755 "$app"
+      for f in *; do case "$f" in melange-out|rr-src|docker|composer.*|phpunit*|phpstan*|phpcs*|infection*|docs|*.md|Dockerfile|data) ;; *) cp -a "$f" "$app/" ;; esac; done
+      # data/ is the writable volume (cache, locks, logs, sqlite db): ship it empty
+      install -d -m 0755 "$app/data"
+      test -f "$app/vendor/autoload.php" && php -l "$app/public/index.php" >/dev/null
+
+  - name: RoadRunner from source
+    working-directory: rr-src
+    runs: |
+      set -eu
+      # the repo carries a go.work for its plugins; build the module on its own
+      export CGO_ENABLED=0 GOTOOLCHAIN=local GOFLAGS=-mod=mod GOWORK=off
+      FLOOR="golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/net@v0.62.0 golang.org/x/text@v0.43.0 golang.org/x/sys@v0.49.0"
+      # rr compiles in every plugin; their dependencies' fixes (measured on v2025.1.15):
+      # amqp091-go 1.12.0 (11 CVEs incl. CRITICAL CVE-2026-77405), grpc 1.81.1 (CVE-2026-84304,
+      # -84445, -84303, GHSA-hrxh-6v49-42gf), klauspost/compress CVE-2026-63209, fiber
+      # CVE-2026-45045, otel exporters CVE-2026-81870
+      FLOOR="$FLOOR github.com/rabbitmq/amqp091-go@v1.14.0 google.golang.org/grpc@v1.83.2"
+      FLOOR="$FLOOR github.com/klauspost/compress@v1.18.7 github.com/gofiber/fiber/v2@v2.52.14"
+      # the otel modules move as one family: a partial bump breaks the build (otel-is-many-modules)
+      for m in $(go list -m -f '{{.Path}} {{.Version}}' all | awk '$1 ~ /^go\.opentelemetry\.io\/otel(\/|$)/ && $2 ~ /^v1\./ {print $1}'); do
+        FLOOR="$FLOOR $m@v1.45.0"
+      done
+      need=""
+      for f in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${f%@*}")"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        [ "$(printf '%s\n%s\n' "$have" "${f#*@}" | sort -V | head -1)" = "${f#*@}" ] || need="$need $f"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
+      go mod tidy
+      go build -trimpath -ldflags "-s -w -X github.com/roadrunner-server/roadrunner/v2025/internal/meta.version=__RR_VER__" \
+        -o "${{targets.destdir}}/etc/shlink/bin/rr" ./cmd/rr
+      "${{targets.destdir}}/etc/shlink/bin/rr" -v | grep -F "__RR_VER__"
+
+  - name: Start script (upstream's docker-entrypoint.sh, data dir on the volume)
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/usr/bin"
+      printf '%s\n' \
+        '#!/bin/sh' \
+        'set -e' \
+        'cd /etc/shlink' \
+        'mkdir -p data/cache data/locks data/log data/proxies data/temp-geolite' \
+        'flags="--no-interaction --clear-db-cache"' \
+        'geo="$(bin/cli env-var:read GEOLITE_LICENSE_KEY)"' \
+        'skip="$(bin/cli env-var:read SKIP_INITIAL_GEOLITE_DOWNLOAD)"' \
+        'key="$(bin/cli env-var:read INITIAL_API_KEY)"' \
+        'if [ -z "$geo" ] || [ "$skip" = true ]; then flags="$flags --skip-download-geolite"; fi' \
+        'if [ -n "$key" ]; then flags="$flags --initial-api-key=$key"; fi' \
+        'php vendor/bin/shlink-installer init $flags' \
+        'exec ./bin/rr serve -c config/roadrunner/.rr.yml' \
+        > "$d/usr/bin/shlink-start"
+      chmod 0755 "$d/usr/bin/shlink-start"
+      ln -s /etc/shlink/bin/cli "$d/usr/bin/shlink"
