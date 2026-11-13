@@ -224,6 +224,7 @@ var table = map[string]check{
 	"nginx-gateway-fabric":              {src: ghRel("nginx/nginx-gateway-fabric")},
 	"nginx-proxy-manager":               {src: ghRel("NginxProxyManager/nginx-proxy-manager"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
 	"node-exporter":                     {src: ghRel("prometheus/node_exporter")},
+	"node-feature-discovery":            {src: ghRel("kubernetes-sigs/node-feature-discovery"), n: 1},
 	"notation":                          {src: ghRel("notaryproject/notation"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
 	"nsq":                               {src: ghRel("nsqio/nsq"), n: 3},
 	"ntfy":                              {src: ghRel("binwiederhier/ntfy"), n: 1},
