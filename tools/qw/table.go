@@ -215,6 +215,7 @@ var table = map[string]check{
 	"ml-metadata-store-server":          {src: ghRel("google/ml-metadata"), n: 1},
 	"mongodb-exporter":                  {src: ghRel("percona/mongodb_exporter")},
 	"mysqld-exporter":                   {src: ghRel("prometheus/mysqld_exporter")},
+	"nats-jetstream-controller":         {src: ghRel("nats-io/nack"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
 	"nats-server-config-reloader":       {src: ghRel("nats-io/nack"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
 	"nats":                              {src: ghRel("nats-io/nats-server")},
 	"navidrome":                         {src: ghRel("navidrome/navidrome"), n: 1},
