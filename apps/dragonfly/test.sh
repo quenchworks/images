@@ -56,6 +56,18 @@ docker exec -e HEALTHCHECK_PORT=6379 "$NAME" /bin/sh /usr/local/bin/healthcheck.
 if docker exec -e HEALTHCHECK_PORT=6390 "$NAME" /bin/sh /usr/local/bin/healthcheck.sh 2>/dev/null; then
   echo "FAIL: healthcheck.sh passed on a closed port"; exit 1; fi
 
+echo "container args reach dragonfly (the operator passes --admin_port):"
+docker rm -f "$NAME-args" >/dev/null 2>&1 || true
+docker run -d --name "$NAME-args" --network "$NET" --read-only --tmpfs /data:rw,mode=1777 --tmpfs /tmp:rw,mode=1777 \
+  "$IMAGE" --admin_port=9999 --admin_nopass >/dev/null
+for i in $(seq 1 30); do
+  docker exec -e HEALTHCHECK_PORT=9999 "$NAME-args" /bin/sh /usr/local/bin/healthcheck.sh 2>/dev/null && break
+  [ "$i" = 30 ] && { echo "FAIL: --admin_port=9999 was not applied"; docker logs "$NAME-args" 2>&1 | tail -20; docker rm -f "$NAME-args" >/dev/null; exit 1; }
+  sleep 1
+done
+docker rm -f "$NAME-args" >/dev/null
+echo "  --admin_port=9999 answers PING"
+
 echo "SET/GET roundtrip:"
 rcli SET gate quench >/dev/null
 VAL="$(rcli GET gate)"

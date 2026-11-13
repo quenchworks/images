@@ -98,14 +98,16 @@ pipeline:
       # read-only rootfs: snapshots/persistence land in --dir, which must be writable.
       mkdir -p "$DATA"
 
-      set -- --dir="$DATA" --bind "$BIND" --port "$PORT"
-      case "$FORCE_EPOLL" in 1|true|TRUE|yes|on) set -- "$@" --force_epoll ;; esac
-      [ -n "$THREADS" ]     && set -- "$@" --proactor_threads="$THREADS"
-      [ -n "$MAXMEM" ]      && set -- "$@" --maxmemory="$MAXMEM"
-      [ -n "$REQUIREPASS" ] && set -- "$@" --requirepass="$REQUIREPASS"
+      # The env-derived defaults go first and the container's own args after them, so a caller's
+      # flag (the Dragonfly Operator's --admin_port, a chart's extra args) wins over a default.
+      # Building these with `set --` used to replace the caller's args instead.
+      args=(--dir="$DATA" --bind "$BIND" --port "$PORT")
+      case "$FORCE_EPOLL" in 1|true|TRUE|yes|on) args+=(--force_epoll) ;; esac
+      [ -n "$THREADS" ]     && args+=(--proactor_threads="$THREADS")
+      [ -n "$MAXMEM" ]      && args+=(--maxmemory="$MAXMEM")
+      [ -n "$REQUIREPASS" ] && args+=(--requirepass="$REQUIREPASS")
 
-      # append any extra args passed to the container (env overrides + CLI flags)
-      exec dragonfly "$@"
+      exec dragonfly "${args[@]}" "$@"
       EOS
       chmod 0755 "${{targets.destdir}}/usr/bin/docker-entrypoint.sh"
       # The Dragonfly Operator probes every pod with `/bin/sh /usr/local/bin/healthcheck.sh` (the
