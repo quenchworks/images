@@ -188,11 +188,11 @@ VEX_ARG=()
 if [ -f "$APPDIR/vex.openvex.json" ]; then
   # Validate BEFORE Trivy consumes it. This file removes findings from the gate that
   # is the entire product guarantee, so a malformed or unargued entry must fail the
-  # build rather than silently suppress a real CVE. check-vex.py enforces: status is
+  # build rather than silently suppress a real CVE. `qw vex` enforces: status is
   # not_affected only (never under_investigation), an OpenVEX justification value, and
   # an impact_statement that actually says how the claim was verified.
   echo "🔎 validating $APPDIR/vex.openvex.json ..."
-  uv run "$ROOT/scripts/check-vex.py" "$APP" || {
+  go -C "$ROOT/tools/qw" run . vex "$APP" || {
     echo "❌ VEX file rejected -- refusing to scan with it. Fix it or remove it."
     exit 1
   }

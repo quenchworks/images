@@ -6,12 +6,12 @@ and passed to Trivy as `--vex`. **A statement in that file removes a finding fro
 it is production suppression logic, and it is the one place where a careless entry can
 hide a real vulnerability from the check designed to catch it.
 
-Every file is validated by `scripts/check-vex.py` before Trivy is allowed to use it.
+Every file is validated by `qw vex` (tools/qw) before Trivy is allowed to use it.
 An invalid file fails the build. Run it over the whole catalog any time:
 
 ```sh
-uv run scripts/check-vex.py            # every app that has a VEX file
-uv run scripts/check-vex.py jenkins-inbound-agent
+go -C tools/qw run . vex            # every app that has a VEX file
+go -C tools/qw run . vex jenkins-inbound-agent
 ```
 
 ## The bar
@@ -73,5 +73,5 @@ because it may suppress a future finding that IS real. Bump the document `versio
 and the date in `@id` on every edit, and prune entries whose CVE no longer appears in
 a scan of the current image.
 
-`scripts/check-vex.py` can prove a file is well-formed and argued. It cannot prove a
+`qw vex` (tools/qw) can prove a file is well-formed and argued. It cannot prove a
 claim is true. That part is review.

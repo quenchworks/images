@@ -9,7 +9,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: qw wolfi-latest ... | qw check [app...]")
+		fmt.Fprintln(os.Stderr, "usage: qw wolfi-latest ... | qw check [app...] | qw vex [--stale] [app...]")
 		os.Exit(2)
 	}
 	if wd, err := os.Getwd(); err == nil {
@@ -20,6 +20,8 @@ func main() {
 		os.Exit(cmdWolfiLatest(os.Args[2:]))
 	case "check":
 		os.Exit(cmdCheck(os.Args[2:]))
+	case "vex":
+		os.Exit(cmdVex(os.Args[2:]))
 	default:
 		fmt.Fprintf(os.Stderr, "qw: unknown command %q\n", os.Args[1])
 		os.Exit(2)
