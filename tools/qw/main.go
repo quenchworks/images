@@ -9,7 +9,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: qw wolfi-latest ... | qw check [app...] | qw vex [--stale] [app...] | qw gen-catalog [--meta] [-o file]")
+		fmt.Fprintln(os.Stderr, "usage: qw wolfi-latest ... | qw check [app...] | qw vex [--stale] [app...] | qw gen-catalog [--meta] [-o file] | qw unbuilt [--all] [app...]")
 		os.Exit(2)
 	}
 	if wd, err := os.Getwd(); err == nil {
@@ -22,6 +22,8 @@ func main() {
 		os.Exit(cmdCheck(os.Args[2:]))
 	case "gen-catalog":
 		os.Exit(cmdGenCatalog(os.Args[2:]))
+	case "unbuilt":
+		os.Exit(cmdUnbuilt(os.Args[2:]))
 	case "vex":
 		os.Exit(cmdVex(os.Args[2:]))
 	default:
