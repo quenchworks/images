@@ -56,7 +56,7 @@ pipeline:
       cd ../..
       # --- npm server tree ----------------------------------------------------------------
       mkdir -p /tmp/cube && cd /tmp/cube
-      # basic-ftp 6.2.1 (CVE-2026-102990): get-uri (proxy-agent, pac+ftp:// proxies) calls access,
+      # basic-ftp 6.2.4 (CVE-2026-102990; CVE-2026-126345/126346 fixed in 6.2.4, 2026-11-13): get-uri (proxy-agent, pac+ftp:// proxies) calls access,
       # lastMod, list, downloadTo and close, all kept in 6.x. graphql-scalars stays at 1.26.0 with a
       # VEX (vex.openvex.json): its fix needs graphql 16, Cube runs 15.11.0.
       cat > package.json <<'EOF'
@@ -66,10 +66,10 @@ pipeline:
          "@cubejs-backend/postgres-driver":"__VER__",
          "@cubejs-backend/mysql-driver":"__VER__",
          "@cubejs-backend/clickhouse-driver":"__VER__"},
-       "overrides":{"basic-ftp":"6.2.1"}}
+       "overrides":{"basic-ftp":"6.2.4"}}
       EOF
       npm install --omit=dev --ignore-scripts --no-audit --no-fund
-      test "$(node -p 'require("basic-ftp/package.json").version')" = 6.2.1
+      test "$(node -p 'require("basic-ftp/package.json").version')" = 6.2.4
       install -m 0755 "$OLDPWD/packages/cubejs-backend-native/target/release/libcubejs_native.so" \
         node_modules/@cubejs-backend/native/index.node
       node -e 'require("@cubejs-backend/native"); console.log("native addon loads")'
