@@ -155,6 +155,29 @@ func (t *T) WantVersionV(s string) {
 	}
 }
 
+// ContainsFold is Contains, case-insensitive (grep -qi).
+func (t *T) ContainsFold(s, sub, what string) {
+	if !strings.Contains(strings.ToLower(s), strings.ToLower(sub)) {
+		t.Fatalf("%s: %q not found in:\n%s", what, sub, s)
+	}
+}
+
+// RunFlags runs the image once with docker run flags before the image; it returns the
+// output and the error instead of failing.
+func (t *T) RunFlags(flags []string, args ...string) (string, error) {
+	return docker(append(append(append([]string{"run", "--rm"}, flags...), t.Image), args...)...)
+}
+
+// LabelVersion fails if the test was given a version and the image's
+// org.opencontainers.image.version label differs; it returns the label.
+func (t *T) LabelVersion() string {
+	l := t.Docker("inspect", t.Image, "--format", `{{index .Config.Labels "org.opencontainers.image.version"}}`)
+	if t.Want != "" && l != t.Want {
+		t.Fatalf("image label %s, expected %s", l, t.Want)
+	}
+	return l
+}
+
 // regexpDev matches unstamped development versions.
 var regexpDev = regexp.MustCompile(`dev`)
 

@@ -136,4 +136,69 @@ func init() {
 		u := t.User("1001")
 		t.Logf("smoke test passed (nonroot user: %s)", u)
 	})
+	for _, c := range []string{"acmesolver", "cainjector", "controller", "webhook"} {
+		register("cert-manager-"+c, func(t *T) {
+			out := t.Run("--help")
+			t.ContainsFold(out, "Usage:", "--help")
+			t.ContainsFold(out, c, "--help")
+			u := t.User("1001")
+			t.Logf("smoke test passed (%s CLI responds, nonroot user: %s)", c, u)
+		})
+	}
+	register("dragonfly-operator", func(t *T) {
+		u := t.User("1001")
+		t.LabelVersion()
+		// upstream's Version is a const, "source": the label carries the release
+		if v := t.Run("-version"); v != "source" {
+			t.Fatalf("unexpected -version output: %s", v)
+		}
+		t.Contains(t.RunAny("--help"), "-dragonfly-image", "--help")
+		t.Logf("smoke test passed (dragonfly-operator %s: CLI, image label, nonroot user %s)", t.Want, u)
+	})
+	register("opensearch-operator", func(t *T) {
+		u := t.User("1001")
+		t.LabelVersion()
+		h := t.RunAny("--help")
+		t.Contains(h, "-watch-namespace", "--help")
+		t.Contains(h, "-enable-webhooks", "--help")
+		t.Logf("smoke test passed (opensearch-operator %s: CLI, image label, nonroot user %s)", t.Want, u)
+	})
+	register("kfp-launcher", func(t *T) {
+		t.User("1001")
+		t.Contains(t.RunEntryAny("/usr/bin/launcher-v2", "--help"), "-copy", "launcher-v2 --help")
+		// every task pod runs this image as an init container that copies the binary out
+		if out, err := t.RunFlags([]string{"--tmpfs", "/kfp-launcher:uid=1001,exec", "--entrypoint", "/usr/bin/launcher-v2"}, "--copy", "/kfp-launcher/launch"); err != nil {
+			t.Fatalf("launcher-v2 --copy failed: %v %s", err, out)
+		}
+		t.Logf("smoke test passed")
+	})
+	register("cephcsi", func(t *T) {
+		out := t.Run("--version")
+		t.Logf("%s", out)
+		ver := t.Match(out, `(?m)^Cephcsi Version: v([0-9.]*)`, "cephcsi version")
+		if t.Want != "" && ver != t.Want {
+			t.Fatalf("expected cephcsi %s, got '%s'", t.Want, ver)
+		}
+		t.Logf("%s", t.RunEntry("/bin/bash", "-c", `set -e
+for b in rbd ceph ceph-fuse mount umount blkid blockdev fsck findmnt lsblk mkfs.ext4 e2fsck resize2fs mkfs.xfs xfs_growfs cryptsetup modprobe mount.nfs; do command -v $b >/dev/null || { echo "missing $b"; exit 1; }; done
+echo tools present`))
+		t.Logf("smoke test passed")
+	})
+	register("ceph-csi-operator", func(t *T) {
+		t.User("1001")
+		// the manager panics without OPERATOR_NAMESPACE, even for --help
+		env := []string{"-e", "OPERATOR_NAMESPACE=smoke"}
+		help, _ := t.RunFlags(env, "--help")
+		t.Contains(help, "leader-elect", "manager --help")
+		out, _ := t.RunFlags(env)
+		t.Match(out, `(?i)kubeconfig|in-cluster|KUBERNETES_SERVICE_HOST|unable to get kubeconfig`, "start without an API server")
+		t.Logf("manager runs and stops on the missing API server\nsmoke test passed")
+	})
+	register("grafana-operator", func(t *T) {
+		u := t.User("1001")
+		t.Contains(t.RunAny("--help"), "--leader-elect", "--help")
+		// no API server: it logs its version, then fails to load a kubeconfig
+		t.WantVersionV(t.RunAny())
+		t.Logf("smoke test passed (grafana-operator %s: CLI, version in startup log, nonroot user %s)", t.Want, u)
+	})
 }
