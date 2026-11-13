@@ -13,15 +13,16 @@ echo "$ver"
 
 # a random AWS-shaped key pair made here: Trivy's allow rules skip AWS's documented
 # EXAMPLE keys, so a fixed sample would pass unnoticed
-KEYID="$(python3 -c 'import secrets; print("AKIA" + "".join(secrets.choice("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567") for _ in range(16)))')"
-SECRET="$(python3 -c 'import secrets, string; print("".join(secrets.choice(string.ascii_letters + string.digits + "/+") for _ in range(40)))')"
+# random each run, so no real-looking key sits in the repo; head finishes before tr writes past the pipe buffer
+KEYID="AKIA$(head -c 4096 /dev/urandom | tr -dc 'A-Z2-7' | head -c 16)"
+SECRET="$(head -c 4096 /dev/urandom | tr -dc 'A-Za-z0-9/+' | head -c 40)"
 out="$(docker run --rm --read-only --tmpfs /tmp -e KEYID="$KEYID" -e SECRET="$SECRET" --entrypoint /bin/sh "$IMAGE" -c '
   mkdir -p /tmp/scan /tmp/fs/etc && printf "aws_access_key_id = %s\naws_secret_access_key = %s\n" "$KEYID" "$SECRET" > /tmp/fs/etc/creds
   trivy fs --scanners secret --format json --output /tmp/scan/result.json /tmp/fs 2>/tmp/scan/result.json.log
   rc=$?; if [ $rc -eq 1 ]; then cat /tmp/scan/result.json.log; else bzip2 -c /tmp/scan/result.json | base64; fi; exit $rc
 ')"
 echo "$out" | base64 -d | bzip2 -dc > /tmp/scanner-smoke.$$.json
-python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); s=[x for r in d.get("Results",[]) for x in r.get("Secrets") or []]; print("secrets found:", len(s)); sys.exit(0 if s else 1)' /tmp/scanner-smoke.$$.json \
+jq -e '[.Results[]?.Secrets // [] | .[]] | length | ("secrets found: \(.)" | stderr) > 0' /tmp/scanner-smoke.$$.json >/dev/null \
   || { rm -f /tmp/scanner-smoke.$$.json; echo "the planted secret was not found"; exit 1; }
 rm -f /tmp/scanner-smoke.$$.json
 echo "smoke test passed (trivy-scanner ${WANT:-?}, uid $user, sh + trivy + bzip2 + base64 pipeline)"

@@ -23,7 +23,7 @@ start() {
 rpc() { # $1 password, $2 method, $3 params (JSON)
   curl -sS -u "admin:$1" -H 'Content-Type: application/json' "$URL/jsonrpc.php" \
     -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$2\",\"params\":${3:-{\}}}"; }
-result() { python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(1) if "error" in d else print(json.dumps(d["result"]))'; }
+result() { jq -ec 'if has("error") then halt_error(1) else .result end'; }
 start
 curl -fsS "$URL/?controller=AuthController&action=login" | grep -qi 'password' || { echo "login page not rendered"; exit 1; }
 ver="$(rpc admin getVersion | result | tr -d '"')"

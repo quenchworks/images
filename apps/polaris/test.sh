@@ -28,11 +28,7 @@ chmod -R a+rX "$DIR"
 # CLI: the privileged, :latest, probe-less container must fail these checks
 out="$(docker run --rm -v "$DIR:/audit:ro" "$IMAGE" audit --audit-path /audit --format json)"
 for check in runAsPrivileged tagNotSpecified livenessProbeMissing; do
-  python3 -c 'import json,sys
-d=json.loads(sys.argv[1]); c=sys.argv[2]
-r=[x for x in d["Results"] if x["Name"]=="weak"][0]
-res=r["PodResult"]["ContainerResults"][0]["Results"]
-assert c in res and res[c]["Success"] is False, (c, res.get(c))' "$out" "$check" \
+  jq -e --arg c "$check" '[.Results[] | select(.Name == "weak")][0].PodResult.ContainerResults[0].Results[$c].Success == false' <<<"$out" >/dev/null \
     || { echo "audit did not flag $check"; exit 1; }
 done
 

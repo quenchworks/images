@@ -47,7 +47,7 @@ watches() { curl -fsS -H "x-api-key: $k" "$URL/api/v1/watch"; }
 grep -q quench-smoke-watch <<<"$(watches)" || { echo "watch not listed: $(watches)"; exit 1; }
 # the first check fetches the page: its snapshot must hold the page text
 # by URL: first start also adds a default watch (news.ycombinator.com)
-uuid="$(watches | python3 -c 'import json,sys; print(next(u for u, w in json.load(sys.stdin).items() if w.get("url") == "http://web:8080/"))')"
+uuid="$(watches | jq -er 'first(to_entries[] | select(.value.url == "http://web:8080/") | .key)')"
 snap=""
 for i in $(seq 1 60); do
   snap="$(curl -fsS -H "x-api-key: $k" "$URL/api/v1/watch/$uuid/history/latest" 2>/dev/null || true)"

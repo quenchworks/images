@@ -56,10 +56,10 @@ now="$(($(date +%s) * 1000))"
 stats=""
 for _ in $(seq 1 10); do
   stats="$(curl -fsS "${auth[@]}" "$URL/api/websites/$id/stats?startAt=$((now - 3600000))&endAt=$((now + 60000))")"
-  python3 -c 'import json,sys;s=json.loads(sys.argv[1]);v=s["pageviews"];v=v["value"] if isinstance(v,dict) else v;sys.exit(0 if v>=1 else 1)' "$stats" && break
+  jq -e '.pageviews | (if type == "object" then .value else . end) >= 1' <<<"$stats" >/dev/null && break
   sleep 1
 done
-python3 -c 'import json,sys;s=json.loads(sys.argv[1]);v=s["pageviews"];v=v["value"] if isinstance(v,dict) else v;sys.exit(0 if v>=1 else 1)' "$stats" \
+jq -e '.pageviews | (if type == "object" then .value else . end) >= 1' <<<"$stats" >/dev/null \
   || { echo "page view not counted: $stats"; docker logs "$TAG-app" 2>&1 | tail -20; exit 1; }
 echo "  page view sent and counted: $stats"
 if docker logs "$TAG-app" 2>&1 | grep -qiE 'read-only file system|EROFS'; then echo "wrote to the root"; docker logs "$TAG-app" 2>&1 | tail -20; exit 1; fi

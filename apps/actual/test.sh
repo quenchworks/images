@@ -23,7 +23,7 @@ start() {
   for i in $(seq 1 60); do curl -fsS "$URL/health" >/dev/null 2>&1 && return 0
     [ "$i" = 60 ] && { echo "/health never answered"; docker logs "$NAME" 2>&1 | tail -30; exit 1; }; sleep 1; done
 }
-field() { python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["data"][sys.argv[1]])' "$1"; }
+field() { jq -er --arg k "$1" '.data[$k]'; }
 start
 curl -fsS "$URL/" | grep -qi '<html' || { echo "web client not served"; exit 1; }
 curl -fsS "${J[@]}" "$URL/account/bootstrap" -d '{"password":"smoke-pass-2026"}' >/dev/null

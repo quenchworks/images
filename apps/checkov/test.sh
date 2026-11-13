@@ -32,7 +32,7 @@ spec:
 YAML
 chmod -R a+rX "$WORK"
 run() { docker run --rm --read-only --tmpfs /tmp --tmpfs /home/nonroot:uid=1001,gid=1001 -v "$WORK:/src:ro" "$IMAGE" "$@"; }
-summary() { python3 -c 'import json,sys; d=json.load(sys.stdin); d=d[0] if isinstance(d,list) else d; s=d["summary"]; print(s["failed"], s["passed"])'; }
+summary() { jq -er 'if type == "array" then .[0] else . end | .summary | "\(.failed) \(.passed)"'; }
 
 set +e
 pub="$(run -d /src/public --framework terraform --check CKV_AWS_20 -o json 2>/dev/null | summary)"

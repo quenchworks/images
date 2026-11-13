@@ -25,13 +25,7 @@ LOG
 chmod 0777 "$WORK"; chmod a+r "$WORK/access.log"
 docker run --rm --read-only -v "$WORK:/w" "$IMAGE" /w/access.log --log-format=COMBINED -o /w/report.json >/dev/null 2>&1
 docker run --rm --read-only -v "$WORK:/w" "$IMAGE" /w/access.log --log-format=COMBINED -o /w/report.html >/dev/null 2>&1
-python3 - "$WORK/report.json" <<'PY'
-import json, sys
-g = json.load(open(sys.argv[1]))["general"]
-print("total_requests", g["total_requests"], "unique_visitors", g["unique_visitors"], "failed", g["failed_requests"])
-assert g["total_requests"] == 6, g
-assert g["unique_visitors"] == 3, g
-assert g["failed_requests"] == 0, g
-PY
+jq -r '.general | "total_requests \(.total_requests) unique_visitors \(.unique_visitors) failed \(.failed_requests)"' "$WORK/report.json"
+jq -e '.general | .total_requests == 6 and .unique_visitors == 3 and .failed_requests == 0' "$WORK/report.json" >/dev/null || { echo "report counts wrong"; exit 1; }
 grep -q '<html' "$WORK/report.html" || { echo "no HTML report"; exit 1; }
 echo "smoke test passed: JSON totals match the log, HTML report rendered, user 1001"

@@ -35,13 +35,9 @@ for _ in $(seq 1 30); do
   grep -q '"up-backend"' <<<"$out" && grep -q '"down-backend"' <<<"$out" && grep -q '"results":\[{' <<<"$out" && break
   sleep 2
 done
-python3 - "$out" <<'PY' || { docker logs "$TAG" 2>&1 | tail -15; exit 1; }
-import json, sys
-s = {e["name"]: e["results"][-1]["success"] for e in json.loads(sys.argv[1]) if e.get("results")}
-print("latest results:", s)
-assert s.get("up-backend") is True, "up-backend not reported healthy"
-assert s.get("down-backend") is False, "down-backend not reported failing"
-PY
+s="$(jq -c 'map(select(.results | length > 0) | {(.name): .results[-1].success}) | add' <<<"$out")"
+echo "latest results: $s"
+jq -e '.["up-backend"] == true and .["down-backend"] == false' <<<"$s" >/dev/null || { echo "up-backend not healthy or down-backend not failing"; docker logs "$TAG" 2>&1 | tail -15; exit 1; }
 curl -fsS http://127.0.0.1:18080/health | grep -qi up || { echo "/health did not answer UP"; exit 1; }
 if docker logs "$TAG" 2>&1 | grep -qE 'panic|read-only file system'; then echo "crashed or wrote to the root"; exit 1; fi
 echo "smoke test passed: healthy and failing endpoints reported, /health up, user 1001"

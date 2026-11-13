@@ -41,15 +41,8 @@ query() {
   local r n
   r="$(curl -fsS -X POST -H 'X-Trino-User: smoke' --data "$1" http://127.0.0.1:8080/v1/statement)"
   while :; do
-    python3 - "$r" <<'PY'
-import json, sys
-j = json.loads(sys.argv[1])
-if j.get("error"):
-    sys.exit("query failed: " + j["error"].get("message", ""))
-if j.get("data"):
-    print(json.dumps(j["data"]))
-PY
-    n="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("nextUri", ""))' "$r")"
+    jq -c 'if .error then ("query failed: " + (.error.message // "") + "\n" | halt_error(1)) else (.data // empty) end' <<<"$r"
+    n="$(jq -r '.nextUri // ""' <<<"$r")"
     [ -z "$n" ] && return 0
     r="$(curl -fsS -H 'X-Trino-User: smoke' "$n")"
   done
