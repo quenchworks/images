@@ -1,5 +1,5 @@
 # Packages the Selenium Grid server jar (the upstream release asset) as a Firefox node:
-# Wolfi firefox + geckodriver, and a node config that names both explicitly.
+# Wolfi firefox, geckodriver built from source here (zip 9.0.5), and a node config that names both explicitly.
 package:
   name: quench-selenium-node-firefox
   version: __VER__
@@ -12,7 +12,6 @@ package:
       - openjdk-21-jre       # main classes are major 55 (Java 11); 21 is the tested LTS
       - ca-certificates-bundle
       - firefox
-      - geckodriver
       - font-liberation      # headless Firefox still lays out text; one font family is enough
 
 environment:
@@ -23,6 +22,10 @@ environment:
       - https://packages.wolfi.dev/os
     packages:
       - busybox
+      - build-base
+      - glibc-2.44-dev
+      - rust-1.100
+      - cargo-auditable
 
 pipeline:
   - uses: fetch
@@ -30,6 +33,28 @@ pipeline:
       uri: https://github.com/SeleniumHQ/selenium/releases/download/selenium-${{package.version}}/selenium-server-${{package.version}}.jar
       expected-sha256: __SHA256__
       extract: false
+  - uses: fetch
+    with:
+      uri: https://github.com/mozilla/geckodriver/archive/refs/tags/v0.37.1.tar.gz
+      expected-sha256: 57ee05afde1696bb094481150eebd93bf08af180292ab8368165cfb5f003788b
+      extract: false
+
+  # Wolfi's geckodriver pins zip =9.0.0 (CVE-2026-115905, critical, is fixed in 9.0.5). Same
+  # build as Wolfi's recipe with the pin at 9.0.5: zip 9 renamed the flate2 feature and made
+  # ZipFile::name() fallible. cargo auditable keeps the dependency list visible to scanners.
+  - name: geckodriver from source
+    runs: |
+      set -eu
+      mkdir -p /tmp/gd && tar -xzf v0.37.1.tar.gz -C /tmp/gd --strip-components=1
+      cd /tmp/gd
+      sed -i 's/^zip = { version = "2\.1\.2", default-features = false, features = \["deflate-flate2", "flate2"\] }$/zip = { version = "=9.0.5", default-features = false, features = ["deflate-flate2"] }/' Cargo.toml
+      grep -qx 'zip = { version = "=9.0.5", default-features = false, features = \["deflate-flate2"\] }' Cargo.toml
+      sed -i 's/file\.name()/file.name().as_deref().unwrap_or("<invalid>")/g' src/capabilities.rs
+      cargo update -p zip --precise 9.0.5
+      awk '/^name = "zip"$/{getline; print}' Cargo.lock | grep -qx 'version = "9.0.5"'
+      cargo auditable build --release --locked
+      install -Dm755 target/release/geckodriver "${{targets.destdir}}/usr/bin/geckodriver"
+
   # The jar carries a short sh launcher before the zip data; `java -jar` reads it as is.
   - runs: |
       set -eu
@@ -53,3 +78,4 @@ test:
     - runs: |
         test -s /usr/share/selenium/selenium-server.jar
         test -s /etc/selenium/config.toml
+        geckodriver --version | grep -q '^geckodriver 0.37.1'
