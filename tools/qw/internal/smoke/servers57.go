@@ -4,10 +4,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -214,5 +218,70 @@ rules:
 		// the published host ports can change on restart
 		t.WaitHTTP("http://127.0.0.1:"+t.hostPort(name, "10080")+"/apis/v2/healthz", 60, name)
 		t.Logf("smoke test passed (%s, nonroot user: %s, proxy data path, objects kept across restart)", strings.SplitN(v, "\n", 2)[0], u)
+	})
+}
+
+func init() {
+	// The Go daemon needs a Longhorn volume device, so the test drives the part this image builds
+	// from source: ganesha.nfsd from Longhorn's fork, with the share-manager's config shape (NFSv4
+	// only, RecoveryBackend = longhorn) and a VFS export of a tmpfs. A host stub answers the fork's
+	// recovery backend (longhorn-manager's longhorn-recovery-backend:9503 in a cluster); ganesha
+	// must register there, read its client list, listen on 2049 and stay up.
+	register("longhorn-share-manager", func(t *T) {
+		u := t.rootLikeUpstream()
+		// the CLI has no --version flag; the build stamps main.Version into the binary
+		if t.Want != "" {
+			if _, err := docker("run", "--rm", "--entrypoint", "grep", t.Image, "-aq", "v"+t.Want, "/longhorn-share-manager"); err != nil {
+				t.Fatalf("binary not stamped v%s", t.Want)
+			}
+		}
+		t.Run("daemon", "--help")
+
+		// the fork dials longhorn-recovery-backend:9503, so the stub takes that port on the host
+		var mu sync.Mutex
+		var calls []string
+		ln, err := net.Listen("tcp", "0.0.0.0:9503")
+		if err != nil {
+			t.Fatalf("stub listen on 9503: %v", err)
+		}
+		t.Cleanup(func() { ln.Close() })
+		go http.Serve(ln, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			io.Copy(io.Discard, r.Body)
+			mu.Lock()
+			calls = append(calls, r.Method+" "+r.URL.Path)
+			mu.Unlock()
+			w.Write([]byte(`{"clients": []}`))
+		}))
+
+		name := t.Name("")
+		conf := `NFS_CORE_PARAM { Protocols = 4; }
+NFSV4 { Lease_Lifetime = 60; Grace_Period = 90; Minor_Versions = 0, 1, 2; RecoveryBackend = longhorn; Only_Numeric_Owners = true; }
+LOG { Default_Log_Level = INFO; Facility { name = FILE; destination = "/tmp/ganesha.log"; enable = active; } }
+EXPORT { Export_Id = 1; Path = /export/vol; Pseudo = /vol; Protocols = 4; Transports = TCP; Access_Type = RW; SecType = sys; Squash = No_Root_Squash; FSAL { Name = VFS; } }
+`
+		t.Start(name, []string{"--add-host", "longhorn-recovery-backend:host-gateway", "--cap-add", "DAC_READ_SEARCH", "--cap-add", "SYS_RESOURCE",
+			"--tmpfs", "/export/vol:exec", "-e", "VFS_CONF=" + conf, "--entrypoint", "sh"},
+			"-c", `printf '%s' "$VFS_CONF" > /tmp/vfs.conf && exec ganesha.nfsd -F -p /var/run/ganesha.pid -f /tmp/vfs.conf`)
+		state := func() string { return t.Docker("inspect", "-f", "{{.State.Status}}", name) }
+		ganeshaLog := func() string { out, _ := docker("exec", name, "cat", "/tmp/ganesha.log"); return out }
+		t.waitFor(30, time.Second, name, "nothing listens on 2049", func() bool {
+			if st := state(); st == "exited" || st == "dead" {
+				t.Fatalf("ganesha.nfsd exited\n%s\n%s", t.Logs(name), ganeshaLog())
+			}
+			ports, _ := docker("exec", name, "netstat", "-ltn")
+			return strings.Contains(ports, ":2049 ")
+		})
+		time.Sleep(3 * time.Second)
+		log := ganeshaLog()
+		if state() != "running" {
+			t.Fatalf("ganesha.nfsd died after binding\n%s", log)
+		}
+		t.Contains(log, "NFS SERVER INITIALIZED", "ganesha initialised")
+		mu.Lock()
+		all := strings.Join(calls, "\n")
+		mu.Unlock()
+		t.Contains(all, "POST /v1/recoverybackend", "registration with the recovery backend")
+		t.Contains(all, "GET /v1/recoverybackend/", "read of the recovery client list")
+		t.Logf("smoke test passed (longhorn-share-manager %s: ganesha (Longhorn fork) registers with the recovery backend, serves NFSv4 on 2049; user %s)", t.Want, u)
 	})
 }
