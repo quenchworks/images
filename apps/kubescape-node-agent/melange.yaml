@@ -63,28 +63,11 @@ pipeline:
         fi
       done
       go build -buildvcs=false -trimpath -ldflags "-s -w" -o "$B/node-agent" ./cmd
-      # node-agent links containerd v1.7.36 (through inspektor-gadget) and no containerd/v2, so it
-      # builds on upstream's tested pins: containerd/v2 v2.2.0 and runtime-spec v1.2.1. Built on the
-      # overrides below (runtime-spec 1.3, a patched containerd v1.7.36), 0.3.310's node-agent never
-      # saw a container start after its own, and recorded no profile (charts CI 42792511808).
-      # The containerd/v2 CVEs are in sbom-scanner (syft), so only it is built on the overrides.
-      # go.mod replaces containerd/v2 with v2.2.0 (it requires 2.4.1). A go get floor follows the
-      # replace and downgrades the tree, so move the replace within its line: 2.2.10 closes
-      # CVE-2026-46680, -53488, -53489, -53492, -53493, -53495, -95837 and -95838.
-      grep -q '^replace github.com/containerd/containerd/v2 => github.com/containerd/containerd/v2 v2.2.0$' go.mod
-      go mod edit -replace=github.com/containerd/containerd/v2=github.com/containerd/containerd/v2@v2.2.10
-      # containerd 2.2.x builds against runtime-spec 1.3 (Pids.Limit is a pointer); go.mod replaces it with 1.2.1.
-      grep -q '^replace github.com/opencontainers/runtime-spec => github.com/opencontainers/runtime-spec v1.2.1$' go.mod
-      go mod edit -replace=github.com/opencontainers/runtime-spec=github.com/opencontainers/runtime-spec@v1.3.0
-      # containerd v1.7.36 (still in the graph) has exactly one 1.2-only line, WithPidsLimit assigning
-      # an int64 to Pids.Limit; a local copy takes its address, which is what 2.x does.
-      CD1="$(go mod download -json github.com/containerd/containerd@v1.7.36 | sed -n 's/.*"Dir": "\(.*\)",/\1/p')"
-      cp -r "$CD1" "$PWD/.containerd-v1" && chmod -R u+w "$PWD/.containerd-v1"
-      f="$PWD/.containerd-v1/oci/spec_opts.go"
-      grep -q '^		s.Linux.Resources.Pids.Limit = limit$' "$f"
-      sed -i 's/^		s.Linux.Resources.Pids.Limit = limit$/		s.Linux.Resources.Pids.Limit = \&limit/' "$f"
-      go mod edit -replace=github.com/containerd/containerd="$PWD/.containerd-v1"
-      go mod tidy
+      # sbom-scanner (syft) builds on upstream's own pins: since 0.3.325 go.mod replaces
+      # containerd/v2 with the patched v2.0.13 and containerd/api with v1.10.0, which stay compatible
+      # with containerd v1.7.36 (Inspektor Gadget) and runtime-spec 1.2.1. That retires our
+      # containerd 2.2.10 override and the copied containerd v1 Pids.Limit patch.
+      grep -q '^replace github.com/containerd/containerd/v2 => github.com/containerd/containerd/v2 v2.0.13$' go.mod
       go build -buildvcs=false -trimpath -ldflags "-s -w" -o "$B/sbom-scanner" ./cmd/sbom-scanner
       v="$(go version -m "$B/node-agent" | awk '$2 == "golang.org/x/sys" { print $3 }')"
       [ -z "$v" ] || ! vlt "$v" v0.47.0 || { echo "FATAL: links golang.org/x/sys $v"; exit 1; }
