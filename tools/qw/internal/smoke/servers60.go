@@ -5,6 +5,10 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -49,5 +53,59 @@ func init() {
 		}
 		der, _ := x509.MarshalPKIXPublicKey(&k.PublicKey)
 		return []string{"APISERVER_PUBLIC_KEY=" + string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))}
+	})
+
+	// The importer's real job: fetch a qcow2 over HTTP (nbdkit curl plugin) and convert it to the raw
+	// disk.img in /data (qemu-img), as an importer pod does for an http DataVolume.
+	register("cdi-importer", func(t *T) {
+		u := t.User("1001")
+		t.LabelVersion()
+		src, data := t.TempDir(), t.TempDir()
+		t.Docker("run", "--rm", "--entrypoint", "qemu-img", "-v", src+":/w", t.Image, "create", "-f", "qcow2", "/w/src.qcow2", "16M")
+		term := filepath.Join(t.TempDir(), "termination-log")
+		os.WriteFile(term, nil, 0o666)
+		os.Chmod(term, 0o666)
+		url := t.hostStub(http.FileServer(http.Dir(src)))
+		flags := append(append([]string{}, hostStubFlag...), "-v", data+":/data", "-v", term+":/dev/termination-log",
+			"-e", "IMPORTER_SOURCE=http", "-e", "IMPORTER_ENDPOINT="+url+"/src.qcow2", "-e", "IMPORTER_CONTENTTYPE=kubevirt",
+			"-e", "IMPORTER_IMAGE_SIZE=16Mi", "-e", "FILESYSTEM_OVERHEAD=0", "-e", "PREALLOCATION=false")
+		// pass 1, as the first importer pod: nbdkit opens the URL, validation runs, then CDI asks for
+		// scratch space (the controller would add a scratch PVC and start a second pod)
+		out, code := t.RunAnyFor(180*time.Second, flags, "-v=3")
+		t.Contains(out, "nbdkit ready", "nbdkit started on the HTTP source")
+		if b, _ := os.ReadFile(term); code != 0 || !strings.Contains(string(b), `"scratchSpaceRequired":true`) {
+			t.Fatalf("pass 1 exited %d, termination message %q\n%s", code, b, out)
+		}
+		// pass 2, with scratch: download, convert to raw, resize, done
+		out, code = t.RunAnyFor(180*time.Second, append(flags, "-v", t.TempDir()+":/scratch"), "-v=3")
+		if b, _ := os.ReadFile(term); code != 0 || !strings.Contains(string(b), `"scratchSpaceRequired":false`) {
+			t.Fatalf("pass 2 exited %d, termination message %q\n%s", code, b, out)
+		}
+		info := t.Docker("run", "--rm", "--entrypoint", "qemu-img", "-v", data+":/data:ro", t.Image, "info", "/data/disk.img")
+		t.Contains(info, "file format: raw", "converted disk image")
+		t.Contains(info, "virtual size: 16 MiB", "disk image size")
+		t.Logf("smoke test passed (cdi-importer %s: qcow2 over HTTP: nbdkit validation, then scratch transfer and qemu-img conversion to raw /data/disk.img; user %s)", t.Want, u)
+	})
+	register("cdi-uploadserver", func(t *T) {
+		u := t.User("1001")
+		t.LabelVersion()
+		t.Contains(t.RunEntryAny("qemu-img", "--version"), "qemu-img version", "qemu-img")
+		out, _ := t.RunAnyFor(30*time.Second, nil, "-h")
+		t.Contains(out, "Usage of /usr/bin/cdi-uploadserver", "upload server starts")
+		t.Logf("smoke test passed (cdi-uploadserver %s starts, qemu-img present; user %s)", t.Want, u)
+	})
+	// the cloner's entrypoint script needs bash, du and blockdev; a filesystem clone with nothing
+	// listening must get as far as the upload
+	register("cdi-cloner", func(t *T) {
+		u := t.User("1001")
+		t.LabelVersion()
+		have := t.RunEntryAny("/usr/bin/bash", "-c", "command -v du blockdev tar")
+		for _, b := range []string{"/du", "/blockdev", "/tar"} {
+			t.Contains(have, b, "cloner tool")
+		}
+		out, _ := t.RunAnyFor(60*time.Second, []string{"-e", "VOLUME_MODE=filesystem", "-e", "MOUNT_POINT=/tmp", "-e", "PREALLOCATION=false",
+			"-e", "UPLOAD_URL=https://127.0.0.1:1/upload"})
+		t.Contains(out, "UPLOAD_BYTES=", "startup script measured the volume")
+		t.Logf("smoke test passed (cdi-cloner %s: startup script runs; user %s)", t.Want, u)
 	})
 }

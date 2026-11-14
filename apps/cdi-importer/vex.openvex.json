@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/cdi-importer/2026-11-14",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-14T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-33997"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/docker/docker@v28.5.2%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "CVE-2026-33997 is a privilege-validation bypass in the Moby daemon's plugin installation. cdi-importer (./cmd/cdi-importer) links one package from the module, github.com/docker/docker/api/types/versions (API version string comparison, pulled in by the registry client). Checked with `go list -deps` at CDI v1.66.1 with docker v28.5.2: no daemon, plugin manager, client or API server package is in the build. The melange build fails if any other docker/docker package is linked. The fix (29.3.1) exists only under the github.com/moby/moby module path, so the +incompatible module cannot be floated to it."
+    }
+  ]
+}

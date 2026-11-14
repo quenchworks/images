@@ -1,0 +1,103 @@
+# KubeVirt CDI importer (with nbdkit and the oVirt and OpenStack populators), at upstream's /usr/bin paths.
+package:
+  name: quench-cdi-importer
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened KubeVirt CDI importer (with nbdkit and the oVirt and OpenStack populators), built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - tzdata
+      - qemu-utils
+      - gnutar
+      - coreutils
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - go-1.26
+      - build-base
+      - pkgconf
+      - curl-dev
+      - xz-dev
+      - zlib-dev
+      - libnbd-dev
+      - bash
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/kubevirt/containerized-data-importer/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - uses: fetch
+    with:
+      uri: https://download.libguestfs.org/nbdkit/1.48-stable/nbdkit-1.48.1.tar.gz
+      expected-sha256: 21ddcdd0bb3cd49ec47aa2d7ca3e69941426e991932b44dc34a856d063f41ead
+      extract: false
+
+  - name: nbdkit from source (the curl and file plugins and the filters CDI's importer passes)
+    runs: |
+      set -eu
+      mkdir -p /tmp/nbdkit && tar -xzf nbdkit-1.48.1.tar.gz -C /tmp/nbdkit --strip-components=1
+      cd /tmp/nbdkit
+      ./configure --prefix=/usr --sbindir=/usr/bin --disable-perl --disable-python --disable-ocaml \
+        --disable-rust --disable-ruby --disable-tcl --disable-lua --disable-golang --disable-libguestfs-tests \
+        --without-libvirt --without-libguestfs --without-ext2 --without-iso --without-ssh --without-gnutls \
+        --without-selinux --without-libzstd --without-libnbd
+      make -j"$(nproc)"
+      make install DESTDIR=/tmp/nbdkit-root
+      d="${{targets.destdir}}"
+      mkdir -p "$d/usr/bin" "$d/usr/lib/nbdkit/plugins" "$d/usr/lib/nbdkit/filters"
+      cp /tmp/nbdkit-root/usr/bin/nbdkit "$d/usr/bin/nbdkit"
+      for p in curl file; do cp "/tmp/nbdkit-root/usr/lib/nbdkit/plugins/nbdkit-$p-plugin.so" "$d/usr/lib/nbdkit/plugins/"; done
+      # cacheextents is passed only on the VMware VDDK path, which this image does not support
+      for f in gzip xz tar retry readahead; do cp "/tmp/nbdkit-root/usr/lib/nbdkit/filters/nbdkit-$f-filter.so" "$d/usr/lib/nbdkit/filters/"; done
+
+  - runs: |
+      set -eu
+      # GOWORK=off: go.mod already replaces the staging API module with its local path.
+      export GOTOOLCHAIN=local GOFLAGS=-mod=mod GOWORK=off
+      # floors, raised only when below (a bare go get downgrades once upstream passes it)
+      FLOOR="golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/net@v0.62.0 golang.org/x/text@v0.43.0 golang.org/x/sys@v0.49.0 google.golang.org/grpc@v1.83.2 github.com/go-jose/go-jose/v3@v3.0.5 go.opentelemetry.io/otel@v1.47.0 go.opentelemetry.io/otel/sdk@v1.47.0 go.opentelemetry.io/otel/trace@v1.47.0 go.opentelemetry.io/otel/metric@v1.47.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.47.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.47.0 github.com/go-jose/go-jose/v4@v4.1.6 github.com/klauspost/compress@v1.19.1 github.com/moby/sys/user@v0.4.1 github.com/ulikunitz/xz@v0.5.15 github.com/docker/docker@v28.5.2+incompatible"
+      need=""
+      for f in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${f%@*}")"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        [ "$(printf '%s\n%s\n' "$have" "${f#*@}" | sort -V | head -1)" = "${f#*@}" ] || need="$need $f"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
+      # the otel floor would lift otelgrpc/otelhttp past what k8s.io/apiserver 0.31 calls; keep
+      # upstream's 0.53.0, which builds against otel 1.47
+      for c in google.golang.org/grpc/otelgrpc net/http/otelhttp; do
+        go mod edit -replace go.opentelemetry.io/contrib/instrumentation/$c=go.opentelemetry.io/contrib/instrumentation/$c@v0.53.0
+      done
+      LDFLAGS="-s -w -X kubevirt.io/containerized-data-importer/pkg/version.gitVersion=v${{package.version}} -X kubevirt.io/containerized-data-importer/pkg/version.gitTreeState=clean"
+      mkdir -p "${{targets.destdir}}/usr/bin"
+      # cgo throughout: the importer and the source-update poller link libnbd
+      for c in cmd/cdi-importer cmd/ovirt-populator cmd/openstack-populator tools/cdi-containerimage-server tools/cdi-image-size-detection tools/cdi-source-update-poller; do
+        CGO_ENABLED=1 go build -trimpath -ldflags "$LDFLAGS" -o "${{targets.destdir}}/usr/bin/${c##*/}" ./$c
+      done
+
+  - name: Guard the docker/docker VEX (only api/types/versions may link)
+    runs: |
+      export GOTOOLCHAIN=local GOFLAGS=-mod=mod GOWORK=off CGO_ENABLED=1
+      bad="$(go list -deps ./cmd/cdi-importer ./tools/cdi-source-update-poller ./tools/cdi-containerimage-server ./tools/cdi-image-size-detection ./cmd/ovirt-populator ./cmd/openstack-populator | sort -u | grep '^github.com/docker/docker/' | grep -v '^github.com/docker/docker/api/types/versions$' || true)"
+      [ -z "$bad" ] || { echo "docker/docker packages beyond api/types/versions are linked, the VEX no longer holds: $bad"; exit 1; }
+
+test:
+  pipeline:
+    - runs: |
+        grep -aq 'v${{package.version}}' /usr/bin/cdi-importer
+        nbdkit --version
+        nbdkit --dump-plugin curl | grep -q curl_
+        qemu-img --version
