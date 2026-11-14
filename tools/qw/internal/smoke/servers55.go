@@ -174,3 +174,22 @@ func init() {
 		t.Logf("smoke test passed (kubeflow-trainer %s: CLI, configuration, API server dial, nonroot user %s)", t.Want, u)
 	})
 }
+
+func init() {
+	// Against an API server that never answers: it must log the stamped version on startup and
+	// fail at the API server dial, not earlier.
+	register("jobset", func(t *T) {
+		u := t.User("1001")
+		t.LabelVersion()
+		t.Contains(t.RunAny("--help"), "-health-probe-bind-address", "--help")
+		kc := t.DeadKubeconfig()
+		out, _ := t.RunAnyFor(90*time.Second, []string{"--read-only", "--tmpfs", "/tmp", "-v", kc + ":/w/kubeconfig:ro",
+			"-e", "KUBECONFIG=/w/kubeconfig"})
+		line := t.Match(out, `(?m)^.*\tInitializing\t.*$`, "startup line")
+		if t.Want != "" {
+			t.Contains(line, `"gitVersion": "v`+t.Want+`"`, "stamped version")
+		}
+		t.Contains(out, "127.0.0.1:1", "reached the API server step")
+		t.Logf("smoke test passed (jobset %s: CLI, stamped version, API server dial, nonroot user %s)", t.Want, u)
+	})
+}
