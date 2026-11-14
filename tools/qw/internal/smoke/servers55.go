@@ -137,3 +137,22 @@ func init() {
 		t.Logf("PASS: contour smoke test green (version %s, sha %s, nonroot uid %s)", ver, sha[:12], user)
 	})
 }
+
+func init() {
+	// One image, three control-plane binaries; each must start and report the stamped version.
+	register("volcano", func(t *T) {
+		u := t.User("1001")
+		t.LabelVersion()
+		for _, c := range []string{"scheduler", "controller-manager", "webhook-manager"} {
+			out, err := t.RunFlags([]string{"--read-only", "--entrypoint", "/vc-" + c}, "--version")
+			if err != nil {
+				t.Fatalf("vc-%s --version: %s", c, out)
+			}
+			v := t.Match(out, `(?m)^Version: v(\S+)`, "vc-"+c+" version")
+			if t.Want != "" && v != t.Want {
+				t.Fatalf("vc-%s reports %s, expected %s", c, v, t.Want)
+			}
+		}
+		t.Logf("smoke test passed (volcano %s: scheduler, controller-manager and webhook-manager start and report their version; nonroot user %s)", t.Want, u)
+	})
+}
