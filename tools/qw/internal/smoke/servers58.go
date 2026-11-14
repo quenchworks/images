@@ -251,3 +251,25 @@ func init() {
 		t.Logf("smoke test passed (flink-kubernetes-operator %s: entrypoint dispatches, operator JVM starts and dials the API server; nonroot user %s)", t.Want, u)
 	})
 }
+
+func init() {
+	// The server renders its config from env vars and serves the embedded UI; with no Temporal
+	// frontend behind it (127.0.0.1:1) the UI and its settings API must still come up on a
+	// read-only root.
+	register("temporal-ui", func(t *T) {
+		u := t.User("1001")
+		t.LabelVersion()
+		name := t.Name("")
+		t.Start(name, []string{"--read-only", "--tmpfs", "/tmp", "-e", "TEMPORAL_ADDRESS=127.0.0.1:1",
+			"-e", "TEMPORAL_DEFAULT_NAMESPACE=smoke-ns", "-p", "127.0.0.1::8080"})
+		base := "http://127.0.0.1:" + t.hostPort(name, "8080")
+		page := t.WaitHTTP(base+"/", 60, name)
+		t.ContainsFold(page, "<html", "UI page")
+		settings := t.WaitHTTP(base+"/api/v1/settings", 5, name)
+		t.Contains(settings, "smoke-ns", "settings rendered from TEMPORAL_DEFAULT_NAMESPACE")
+		if t.Want != "" {
+			t.Contains(settings, t.Want, "version in settings")
+		}
+		t.Logf("smoke test passed (temporal-ui %s: UI served, config templated from env, read-only root; nonroot user %s)", t.Want, u)
+	})
+}

@@ -344,6 +344,7 @@ var table = map[string]check{
 	"tempo":                             {src: ghRel("grafana/tempo")},
 	"temporal-cli":                      {src: ghRel("temporalio/cli")},
 	"temporal":                          {src: ghRel("temporalio/temporal")},
+	"temporal-ui":                       {src: ghRel("temporalio/ui-server"), n: 1},
 	"terragrunt":                        {src: ghRel("gruntwork-io/terragrunt"), n: 1},
 	"terralist":                         {src: ghRel("terralist/terralist"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
 	"tetragon-operator":                 {src: ghRel("cilium/tetragon"), n: 1},
