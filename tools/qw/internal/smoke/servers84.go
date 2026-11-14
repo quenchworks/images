@@ -118,6 +118,23 @@ func init() {
 				t.Fatalf("bookmark %s: title %q, thumbnail %q (want one for good, none for evil)", b.URL, b.Title, b.Image)
 			}
 		}
-		t.Logf("smoke test passed (shiori %s: login, bookmark with page title, crafted BMP thumbnail rejected and the server kept serving; user %s)", t.Want, u)
+
+		// the build reads the first owner from SHIORI_INITIAL_USERNAME/PASSWORD (upstream hardcodes
+		// shiori/gopher); with them set the defaults must not log in
+		own := t.Name("owner")
+		t.Start(own, []string{"--tmpfs", "/shiori:rw,uid=1001,gid=1001", "-p", "127.0.0.1:18096:8080",
+			"-e", "SHIORI_INITIAL_USERNAME=quench", "-e", "SHIORI_INITIAL_PASSWORD=Smoke-Owner-2026"})
+		t.waitFor(60, time.Second, own, "shiori (owner from env) never served /", func() bool { c, _ := Get("http://127.0.0.1:18096/"); return c == 200 })
+		loginAs := func(user, pw string) int {
+			c, _ := DoH("POST", "http://127.0.0.1:18096/api/v1/auth/login", `{"username":"`+user+`","password":"`+pw+`"}`, map[string]string{"Content-Type": "application/json"})
+			return c
+		}
+		if c := loginAs("quench", "Smoke-Owner-2026"); c != 200 {
+			t.Fatalf("login as the owner from SHIORI_INITIAL_*: %d\n%s", c, t.Logs(own))
+		}
+		if c := loginAs("shiori", "gopher"); c == 200 {
+			t.Fatalf("shiori/gopher still logs in with SHIORI_INITIAL_* set")
+		}
+		t.Logf("smoke test passed (shiori %s: owner from env, login, bookmark with page title, crafted BMP thumbnail rejected and the server kept serving; user %s)", t.Want, u)
 	})
 }

@@ -2,7 +2,7 @@
 package:
   name: quench-shiori
   version: __VER__
-  epoch: 0
+  epoch: 1
   description: "Quenchworks hardened Shiori bookmark manager, built from source on Wolfi"
   copyright:
     - license: MIT
@@ -42,6 +42,12 @@ pipeline:
       echo "raising:${need:- nothing}"
       [ -z "$need" ] || go get $need
       go mod tidy
+      # Upstream creates the first owner as shiori/gopher with no way to change it before the
+      # server is reachable. Take it from SHIORI_INITIAL_USERNAME / SHIORI_INITIAL_PASSWORD
+      # (first start only, defaults unchanged) so the chart can set a generated password.
+      sed -i 's|Username: "shiori",|Username: quenchEnvOr("SHIORI_INITIAL_USERNAME", "shiori"),|; s|Password: "gopher",|Password: quenchEnvOr("SHIORI_INITIAL_PASSWORD", "gopher"),|' internal/cmd/root.go
+      printf '\nfunc quenchEnvOr(k, d string) string {\n\tif v := os.Getenv(k); v != "" {\n\t\treturn v\n\t}\n\treturn d\n}\n' >> internal/cmd/root.go
+      grep -c 'quenchEnvOr("SHIORI_INITIAL_' internal/cmd/root.go | grep -qx 2
       # CVE-2023-36308: imaging 1.6.2 (no fixed release, upstream inactive since 2020) indexes its
       # palette table with raw pixel values. Before x/image v0.41.0, x/image/bmp (registered by
       # imaging) returned Paletted images with indexes past the palette, and a crafted thumbnail
