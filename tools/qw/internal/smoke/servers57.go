@@ -169,3 +169,50 @@ LEVEL = Info
 		t.Logf("smoke test passed (gogs %s, uid %s, repo created, clone and push through the hooks)", t.Want, u)
 	})
 }
+
+func init() {
+	// Creates an HTTPServer and a Pipeline through the admin API, then sends a request through
+	// the new traffic port: the Pipeline's Proxy filter forwards it to the admin API itself, so a
+	// reply proves the data path. Objects live in the embedded etcd and survive a restart.
+	register("easegress", func(t *T) {
+		v := t.RunAny("--version")
+		t.Logf("reported: %s", v)
+		t.WantVersionV(v)
+		u := t.User("1001")
+		name := t.Name("")
+		t.Start(name, []string{"-p", "127.0.0.1::2381", "-p", "127.0.0.1::10080"})
+		admin := "http://127.0.0.1:" + t.hostPort(name, "2381") + "/apis/v2"
+		t.WaitHTTP(admin+"/healthz", 60, name)
+		yaml := map[string]string{"Content-Type": "text/x-yaml"}
+		for _, obj := range []string{`name: qw-pipeline
+kind: Pipeline
+flow:
+  - filter: proxy
+filters:
+  - name: proxy
+    kind: Proxy
+    pools:
+      - servers:
+          - url: http://127.0.0.1:2381
+`, `name: qw-server
+kind: HTTPServer
+port: 10080
+rules:
+  - paths:
+      - pathPrefix: /apis
+        backend: qw-pipeline
+`} {
+			if code, body := DoH("POST", admin+"/objects", obj, yaml); code/100 != 2 {
+				t.Fatalf("creating an object failed: %d %s\n--- logs:\n%s", code, body, t.Logs(name))
+			}
+		}
+		got := t.WaitHTTP("http://127.0.0.1:"+t.hostPort(name, "10080")+"/apis/v2/objects/qw-pipeline", 30, name)
+		t.Contains(got, "qw-pipeline", "proxied reply")
+		t.Logf("  HTTPServer :10080 -> Pipeline -> Proxy -> admin API round-trips")
+
+		t.Docker("restart", name)
+		// the published host ports can change on restart
+		t.WaitHTTP("http://127.0.0.1:"+t.hostPort(name, "10080")+"/apis/v2/healthz", 60, name)
+		t.Logf("smoke test passed (%s, nonroot user: %s, proxy data path, objects kept across restart)", strings.SplitN(v, "\n", 2)[0], u)
+	})
+}
