@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/shiori/2026-11-14",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-14T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2023-36308"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/disintegration/imaging@v1.6.2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "inline_mitigations_already_exist",
+      "impact_statement": "Measured 2026-11-14. imaging 1.6.2 has no fixed release (upstream inactive since 2020); its scanner indexes the palette table with raw pixel values (scanner.go:242), so an image.Paletted whose pixel indexes exceed its palette panics it. Shiori decodes bookmark thumbnails with image.Decode (internal/core/processing.go:225) and resizes them with imaging (:243-248). The decoders this binary registers cannot produce such an image: the recipe floors golang.org/x/image at v0.47.0 (apps/shiori/melange.yaml FLOOR), whose bmp reader rejects out-of-range palette indexes (fixed in v0.41.0, 'bmp: reject input with invalid palette index') and whose tiff reader rejects them ('invalid color index'); Go's gif decoder rejects bad pixels and its png decoder grows the palette to fit. The recipe also patches imaging's scanner.go at build time to size the palette table for every uint8 index (apps/shiori/melange.yaml, go mod vendor + sed, asserted by grep). Proven by the smoke test (tools/qw/internal/smoke/servers84.go): a 62-byte BMP with a 2-entry palette and pixel index 70, served as a bookmark's og:image and processed on the async path, leaves the server running and the bookmark without a thumbnail, while a valid PNG gets one; the same test kills the upstream v1.8.0 image (x/image v0.24.0) with 'index out of range [70] with length 2'. Revisit if Shiori drops the floor or adds a decoder."
+    }
+  ]
+}

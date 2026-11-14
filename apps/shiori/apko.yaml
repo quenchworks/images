@@ -1,0 +1,53 @@
+# Shiori runtime: `shiori server` on :8080, data (sqlite + archives) in SHIORI_DIR=/shiori.
+# Nonroot 1001; mount a writable volume at /shiori.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-shiori@local
+
+accounts:
+  groups:
+    - groupname: shiori
+      gid: 1001
+  users:
+    - username: shiori
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  - path: /shiori
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  SHIORI_DIR: /shiori
+  PORT: "8080"
+
+work-dir: /shiori
+
+entrypoint:
+  command: /usr/bin/shiori
+
+cmd: server
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-shiori"
+  org.opencontainers.image.licenses: "MIT"
+  org.opencontainers.image.version: "__VER__"
