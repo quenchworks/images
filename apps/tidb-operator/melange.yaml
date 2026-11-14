@@ -44,9 +44,12 @@ pipeline:
       done
       echo "raising:${need:- nothing}"
       [ -z "$need" ] || go get $need
-      # the otel 1.45 family raises otelgrpc to 0.61, which dropped UnaryClientInterceptor that
-      # k8s.io/apiserver 0.29 (admission webhook) calls; 0.49.0 still builds against otel 1.45
-      go mod edit -replace go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc=go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc@v0.49.0
+      # the otel floor raises otelgrpc and otelhttp past what k8s.io/apiserver 0.29 (admission
+      # webhook) calls (otelgrpc.UnaryClientInterceptor, otelhttp.WithPublicEndpoint); 0.49.0 of
+      # both still builds against the otel 1.47 floor
+      for c in google.golang.org/grpc/otelgrpc net/http/otelhttp; do
+        go mod edit -replace go.opentelemetry.io/contrib/instrumentation/$c=go.opentelemetry.io/contrib/instrumentation/$c@v0.49.0
+      done
       LDFLAGS="-s -w -X github.com/pingcap/tidb-operator/pkg/version.gitVersion=v${{package.version}} -X github.com/pingcap/tidb-operator/pkg/version.gitTreeState=clean"
       mkdir -p "${{targets.destdir}}/usr/local/bin"
       for c in controller-manager scheduler discovery admission-webhook; do

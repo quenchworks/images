@@ -88,7 +88,7 @@ pipeline:
       # becomes a DOWNGRADE once upstream requires more than vX -- re-introducing
       # the CVE it was added to clear. So float only what is below the floor, then
       # assert the SHIPPED BINARY carries nothing below it.
-      FLOOR="github.com/moby/sys/user@v0.4.1 golang.org/x/net@v0.62.0 golang.org/x/text@v0.43.0 golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/sys@v0.49.0 golang.org/x/mod@v0.41.0 google.golang.org/grpc@v1.83.2 go.opentelemetry.io/otel@v1.47.0 go.opentelemetry.io/otel/trace@v1.47.0 go.opentelemetry.io/otel/metric@v1.47.0 go.opentelemetry.io/otel/sdk@v1.47.0 go.opentelemetry.io/otel/sdk/metric@v1.47.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.47.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.47.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.47.0 go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc@v1.47.0 go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp@v1.47.0 go.opentelemetry.io/otel/exporters/stdout/stdouttrace@v1.47.0 go.opentelemetry.io/otel/exporters/stdout/stdoutmetric@v1.47.0 go.opentelemetry.io/otel/log@v1.47.0 go.opentelemetry.io/otel/sdk/log@v1.47.0 go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc@v0.23.0 go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp@v0.23.0 go.opentelemetry.io/otel/exporters/stdout/stdoutlog@v0.21.0 go.opentelemetry.io/otel/exporters/prometheus@v0.67.0 go.opentelemetry.io/contrib/bridges/otelzap@v0.20.0 go.opentelemetry.io/contrib/bridges/otellogrus@v0.20.0 github.com/go-jose/go-jose/v4@v4.1.6"
+      FLOOR="github.com/moby/sys/user@v0.4.1 golang.org/x/net@v0.62.0 golang.org/x/text@v0.43.0 golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/sys@v0.49.0 golang.org/x/mod@v0.41.0 google.golang.org/grpc@v1.83.2 go.opentelemetry.io/otel@v1.47.0 go.opentelemetry.io/otel/trace@v1.47.0 go.opentelemetry.io/otel/metric@v1.47.0 go.opentelemetry.io/otel/sdk@v1.47.0 go.opentelemetry.io/otel/sdk/metric@v1.47.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.47.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.47.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.47.0 go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc@v1.47.0 go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp@v1.47.0 go.opentelemetry.io/otel/exporters/stdout/stdouttrace@v1.47.0 go.opentelemetry.io/otel/exporters/stdout/stdoutmetric@v1.47.0 go.opentelemetry.io/otel/log@v1.47.0 go.opentelemetry.io/otel/sdk/log@v1.47.0 go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc@v0.23.0 go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp@v0.23.0 go.opentelemetry.io/otel/exporters/stdout/stdoutlog@v0.23.0 go.opentelemetry.io/otel/exporters/prometheus@v0.69.0 go.opentelemetry.io/contrib/bridges/otelzap@v0.21.0 go.opentelemetry.io/contrib/bridges/otellogrus@v0.21.0 github.com/go-jose/go-jose/v4@v4.1.6"
       MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
       # prints "<mod>@<floor> (<tag> has <ver>)" for every module below its floor
       below_floor() {
@@ -113,7 +113,15 @@ pipeline:
       need="$(GOFLAGS=-mod=mod go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
       if [ -n "$need" ]; then
         GOFLAGS=-mod=mod go get $need
-        GOFLAGS=-mod=mod go mod vendor
+        # a floor can lift a module whose new packages pull one with no go.sum entry yet (otel 1.47
+        # lifted go-openapi/swag into swag/pools); run the go get that go itself names, then vendor
+        if ! out="$(GOFLAGS=-mod=mod go mod vendor 2>&1)"; then
+          fix="$(printf '%s\n' "$out" | awk '/to add:/ { getline; if ($1 == "go" && $2 == "get") print $3 }' | sort -u)"
+          [ -n "$fix" ] || { printf '%s\n' "$out"; exit 1; }
+          echo "adding go.sum entries: $fix"
+          GOFLAGS=-mod=mod go get $fix
+          GOFLAGS=-mod=mod go mod vendor
+        fi
       fi
       # Stamp version exactly like upstream's Makefile GO_FLAGS: it sets the
       # pkg/util/version package vars (MIMIR_VERSION), so `mimir -version` and the

@@ -102,7 +102,7 @@ pipeline:
       # shipped binary carries nothing below it.
       FLOOR="golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/net@v0.62.0 google.golang.org/grpc@v1.83.2 github.com/prometheus/prometheus@v0.311.3"
       # CVE-2026-128085 (otel 1.47.0): floor every otel v1 module the build uses, as one family
-      for m in $(go list -m -f '{{.Path}} {{.Version}}' all | awk '$1 ~ /^go\.opentelemetry\.io\/otel(\/|$)/ && $1 !~ /\/exporters\/jaeger$/ { if ($1 ~ /\/exporters\/otlp\/otlplog\//) print $1"@v0.23.0"; else if ($2 ~ /^v1\./ || $1 ~ /\/(sdk\/)?log$/) print $1"@v1.47.0" }'); do
+      for m in $(go list -m -f '{{.Path}} {{.Version}}' all | awk '$1 ~ /^go\.opentelemetry\.io\/otel(\/|$)/ && $1 !~ /\/exporters\/jaeger$/ { if ($1 ~ /\/exporters\/(otlp\/otlplog\/|stdout\/stdoutlog$)/) print $1"@v0.23.0"; else if ($1 ~ /\/exporters\/prometheus$/) print $1"@v0.69.0"; else if ($2 ~ /^v1\./ || $1 ~ /\/(sdk\/)?log$/) print $1"@v1.47.0" }'); do
         FLOOR="$FLOOR $m"
       done
       MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
@@ -171,7 +171,7 @@ pipeline:
       # The float is only real if it reached the binaries.
       FLOOR="golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/net@v0.62.0 google.golang.org/grpc@v1.83.2 github.com/prometheus/prometheus@v0.311.3"
       # CVE-2026-128085 (otel 1.47.0): floor every otel v1 module the build uses, as one family
-      for m in $(go list -m -f '{{.Path}} {{.Version}}' all | awk '$1 ~ /^go\.opentelemetry\.io\/otel(\/|$)/ && $1 !~ /\/exporters\/jaeger$/ { if ($1 ~ /\/exporters\/otlp\/otlplog\//) print $1"@v0.23.0"; else if ($2 ~ /^v1\./ || $1 ~ /\/(sdk\/)?log$/) print $1"@v1.47.0" }'); do
+      for m in $(go list -m -f '{{.Path}} {{.Version}}' all | awk '$1 ~ /^go\.opentelemetry\.io\/otel(\/|$)/ && $1 !~ /\/exporters\/jaeger$/ { if ($1 ~ /\/exporters\/(otlp\/otlplog\/|stdout\/stdoutlog$)/) print $1"@v0.23.0"; else if ($1 ~ /\/exporters\/prometheus$/) print $1"@v0.69.0"; else if ($2 ~ /^v1\./ || $1 ~ /\/(sdk\/)?log$/) print $1"@v1.47.0" }'); do
         FLOOR="$FLOOR $m"
       done
       for b in "$d/usr/libexec/netdata/plugins.d/go.d.plugin"; do
