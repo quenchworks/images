@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 func init() {
@@ -154,5 +155,22 @@ func init() {
 			}
 		}
 		t.Logf("smoke test passed (volcano %s: scheduler, controller-manager and webhook-manager start and report their version; nonroot user %s)", t.Want, u)
+	})
+}
+
+func init() {
+	// Against an API server that never answers: it must load its default configuration, create
+	// the manager (which dials the API server) and fail there, not earlier.
+	register("kubeflow-trainer", func(t *T) {
+		u := t.User("1001")
+		t.LabelVersion()
+		t.Contains(t.RunAny("--help"), "-feature-gates", "--help")
+		kc := t.DeadKubeconfig()
+		out, _ := t.RunAnyFor(90*time.Second, []string{"--read-only", "--tmpfs", "/tmp", "-v", kc + ":/w/kubeconfig:ro",
+			"-e", "KUBECONFIG=/w/kubeconfig"})
+		t.Contains(out, "Loading configuration", "configuration load")
+		t.Contains(out, "Creating manager", "manager creation")
+		t.Contains(out, "127.0.0.1:1", "reached the API server step")
+		t.Logf("smoke test passed (kubeflow-trainer %s: CLI, configuration, API server dial, nonroot user %s)", t.Want, u)
 	})
 }
