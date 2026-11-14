@@ -43,7 +43,12 @@ pipeline:
       done
       echo "raising:${need:- nothing}"
       if [ -n "$need" ]; then
+        OG=go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc
+        og="$(GOFLAGS=-mod=mod go list -m -f '{{.Version}}' $OG 2>/dev/null || true)"
         GOFLAGS=-mod=mod go get $need
+        # otelgrpc 0.61 removed the interceptors pre-0.61 callers use (vendored csi-lib-utils, the
+        # embedded etcd); the otel 1.47 floor lifts it, so keep the upstream version for those lines
+        case "$og" in v0.[0-5][0-9].*|v0.60.*) GOFLAGS=-mod=mod go mod edit -replace "$OG=$OG@$og" ;; esac
         GOFLAGS=-mod=mod go mod tidy
         [ ! -d vendor ] || GOFLAGS=-mod=mod go mod vendor
       fi

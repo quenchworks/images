@@ -72,7 +72,12 @@ pipeline:
       # the EFFECTIVE version and a replace cannot hide behind the require line.
       go list -m -e $MODS
       need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      OG=go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc
+      og="$(GOFLAGS=-mod=mod go list -m -f '{{.Version}}' $OG 2>/dev/null || true)"
       if [ -n "$need" ]; then go get $need; fi
+      # otelgrpc 0.61 removed the interceptors pre-0.61 callers use (vendored csi-lib-utils, the
+      # embedded etcd); the otel 1.47 floor lifts it, so keep the upstream version for those lines
+      case "$og" in v0.[0-5][0-9].*|v0.60.*) GOFLAGS=-mod=mod go mod edit -replace "$OG=$OG@$og" ;; esac
       # the two API renames the float brings in (see above); no-ops if absent
       sed -i 's#"github.com/mitchellh/mapstructure"#"github.com/go-viper/mapstructure/v2"#' pkg/option/option.go
       sed -i 's/\bQuicConfig\b/QUICConfig/g' pkg/object/httpserver/runtime.go
@@ -95,6 +100,9 @@ pipeline:
       done
       echo "raising:${need:- nothing}"
       [ -z "$need" ] || go get $need
+      # otelgrpc 0.61 removed the interceptors pre-0.61 callers use (vendored csi-lib-utils, the
+      # embedded etcd); the otel 1.47 floor lifts it, so keep the upstream version for those lines
+      case "$og" in v0.[0-5][0-9].*|v0.60.*) GOFLAGS=-mod=mod go mod edit -replace "$OG=$OG@$og" ;; esac
       go mod tidy
       LD="-s -w -X github.com/megaease/easegress/v2/pkg/version.RELEASE=v${{package.version}} -X github.com/megaease/easegress/v2/pkg/version.REPO=https://github.com/easegress-io/easegress"
       go build -trimpath -ldflags "$LD" -o "${{targets.destdir}}/usr/bin/easegress-server" ./cmd/server
