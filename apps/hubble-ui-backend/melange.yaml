@@ -33,7 +33,7 @@ pipeline:
       # 0-CVE floor (raise only below it): x/net v0.60.0 closes CVE-2026-78659 and its siblings.
       FLOOR="github.com/moby/sys/user@v0.4.1 golang.org/x/net@v0.62.0"
       # CVE-2026-128085 (otel 1.47.0): floor every otel v1 module the build uses, as one family
-      for m in $(go list -m -f '{{.Path}} {{.Version}}' all | awk '$1 ~ /^go\.opentelemetry\.io\/otel(\/|$)/ && $1 !~ /\/exporters\/jaeger$/ { if ($1 ~ /\/exporters\/(otlp\/otlplog\/|stdout\/stdoutlog$)/) print $1"@v0.23.0"; else if ($1 ~ /\/exporters\/prometheus$/) print $1"@v0.69.0"; else if ($2 ~ /^v1\./ || $1 ~ /\/(sdk\/)?log$/) print $1"@v1.47.0" }'); do
+      for m in $(go list -m -f '{{.Path}} {{.Version}}' all | awk '($1 ~ /^go\.opentelemetry\.io\/otel(\/|$)/ || $1 ~ /^go\.opentelemetry\.io\/contrib\/bridges\/otel(zap|logrus|slog)$/) && $1 !~ /\/exporters\/jaeger$/ { if ($1 ~ /\/contrib\/bridges\//) print $1"@v0.21.0"; else if ($1 ~ /\/exporters\/(otlp\/otlplog\/|stdout\/stdoutlog$)/) print $1"@v0.23.0"; else if ($1 ~ /\/exporters\/prometheus$/) print $1"@v0.69.0"; else if ($2 ~ /^v1\./ || $1 ~ /\/(sdk\/)?log$/) print $1"@v1.47.0" }'); do
         FLOOR="$FLOOR $m"
       done
       # Go semver order (a release outranks its prereleases); busybox sort -V does not.
