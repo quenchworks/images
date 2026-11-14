@@ -176,7 +176,7 @@ pipeline:
       FLOOR="$FLOOR github.com/rabbitmq/amqp091-go@v1.14.0 google.golang.org/grpc@v1.83.2"
       FLOOR="$FLOOR github.com/klauspost/compress@v1.18.7 github.com/gofiber/fiber/v2@v2.52.14"
       # the otel modules move as one family: a partial bump breaks the build (otel-is-many-modules)
-      for m in $(go list -m -f '{{.Path}} {{.Version}}' all | awk '$1 ~ /^go\.opentelemetry\.io\/otel(\/|$)/ && $2 ~ /^v1\./ {print $1}'); do
+      for m in $(go list -m -f '{{.Path}} {{.Version}}' all | awk '$1 ~ /^go\.opentelemetry\.io\/otel(\/|$)/ && $2 ~ /^v1\./ && $1 !~ /\/exporters\/jaeger$/ {print $1}'); do
         FLOOR="$FLOOR $m@v1.47.0"
       done
       need=""

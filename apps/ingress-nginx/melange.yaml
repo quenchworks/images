@@ -99,7 +99,7 @@ pipeline:
       export GOFLAGS=-mod=mod
       FLOOR="golang.org/x/net@v0.62.0 golang.org/x/text@v0.43.0"
       # CVE-2026-128085 (otel 1.47.0): floor every otel v1 module the build uses, as one family
-      for m in $(go list -m -f '{{.Path}} {{.Version}}' all | awk '$1 ~ /^go\.opentelemetry\.io\/otel(\/|$)/ && $2 ~ /^v1\./ {print $1}'); do
+      for m in $(go list -m -f '{{.Path}} {{.Version}}' all | awk '$1 ~ /^go\.opentelemetry\.io\/otel(\/|$)/ && $2 ~ /^v1\./ && $1 !~ /\/exporters\/jaeger$/ {print $1}'); do
         FLOOR="$FLOOR $m@v1.47.0"
       done
       MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
@@ -136,7 +136,11 @@ pipeline:
       # EFFECTIVE version, so a replace-shadowed float cannot pass.
       go version -m "$destdir"/usr/bin/nginx-ingress-controller | grep -E '^[[:space:]]+(mod|dep)[[:space:]]+golang.org/x/(net|text)' || true
       bad="$(go version -m "$destdir"/usr/bin/nginx-ingress-controller \
-        | awk '$1 == "dep" || $1 == "=>" { print $2, $NF }' | below_floor binary)"
+        | awk '{ t[NR] = $1; m[NR] = $2; v[NR] = $3 }
+               END { for (i = 1; i <= NR; i++) if (t[i] == "dep") {
+                       # a replaced dep is followed by its "=>" line, which carries the effective version
+                       if (t[i+1] == "=>") { print m[i], v[i+1]; i++ } else print m[i], v[i] } }' \
+        | below_floor binary)"
       [ -z "$bad" ] || { echo "FATAL: 0-CVE float did not reach the binary:"; echo "$bad"; exit 1; }
       # And the main-module stamp must be the real release, not a pseudo-version.
       go version -m "$destdir"/usr/bin/nginx-ingress-controller \

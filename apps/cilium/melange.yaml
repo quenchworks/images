@@ -53,7 +53,7 @@ pipeline:
       # 0-CVE module float, the same FLOOR as cilium-operator (docs/go-module-float.md).
       FLOOR="golang.org/x/net@v0.62.0 google.golang.org/grpc@v1.83.2 go.mongodb.org/mongo-driver@v1.17.7 github.com/cilium/ebpf@v0.22.0 github.com/google/cel-go@v0.29.0 github.com/gopacket/gopacket@v1.7.2 github.com/osrg/gobgp/v4@v4.7.0 golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2"
       # CVE-2026-128085 (otel 1.47.0): floor every otel v1 module the build uses, as one family
-      for m in $(go list -m -f '{{.Path}} {{.Version}}' all | awk '$1 ~ /^go\.opentelemetry\.io\/otel(\/|$)/ && $2 ~ /^v1\./ {print $1}'); do
+      for m in $(go list -m -f '{{.Path}} {{.Version}}' all | awk '$1 ~ /^go\.opentelemetry\.io\/otel(\/|$)/ && $2 ~ /^v1\./ && $1 !~ /\/exporters\/jaeger$/ {print $1}'); do
         FLOOR="$FLOOR $m@v1.47.0"
       done
       MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"

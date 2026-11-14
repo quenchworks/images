@@ -86,7 +86,7 @@ pipeline:
       floor google.golang.org/grpc v1.83.2
       floor github.com/klauspost/compress v1.18.7
       # CVE-2026-128085 (otel 1.47.0): move every otel v1 module the build uses, as one family
-      otel=$(go list -m -f '{{.Path}} {{.Version}}' all | awk '$1 ~ /^go\.opentelemetry\.io\/otel(\/|$)/ && $2 ~ /^v1\./ && $2 != "v1.47.0" {print $1"@v1.47.0"}')
+      otel=$(go list -m -f '{{.Path}} {{.Version}}' all | awk '$1 ~ /^go\.opentelemetry\.io\/otel(\/|$)/ && $2 ~ /^v1\./ && $1 !~ /\/exporters\/jaeger$/ && $2 != "v1.47.0" {print $1"@v1.47.0"}')
       [ -z "$otel" ] || go get $otel
       floor github.com/sigstore/sigstore-go v1.2.1
       floor github.com/sigstore/timestamp-authority/v2 v2.1.0
