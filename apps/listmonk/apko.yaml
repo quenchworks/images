@@ -1,0 +1,55 @@
+# listmonk runtime: no config file (--config=), settings from LISTMONK_* env, e.g.
+# LISTMONK_app__address=0.0.0.0:9000 and LISTMONK_db__host/port/user/password/database.
+# The schema needs a one-off `listmonk --config= --install --idempotent --yes` (and --upgrade
+# --yes on version bumps) against the database before the server starts. Nonroot 1001; uploads
+# go to /listmonk/uploads.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-listmonk@local
+
+accounts:
+  groups:
+    - groupname: listmonk
+      gid: 1001
+  users:
+    - username: listmonk
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  - path: /listmonk/uploads
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  LISTMONK_app__address: 0.0.0.0:9000
+
+work-dir: /listmonk
+
+entrypoint:
+  command: /usr/bin/listmonk
+
+cmd: --config=
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-listmonk"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"
+  org.opencontainers.image.version: "__VER__"

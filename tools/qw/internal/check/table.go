@@ -227,6 +227,7 @@ var table = map[string]check{
 	"kyverno":                           {src: ghRel("kyverno/kyverno"), n: 1},
 	"label-studio":                      {src: pypiPkg("label-studio"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
 	"linkding":                          {src: ghRel("sissbruecker/linkding"), n: 1},
+	"listmonk":                          {src: ghRel("knadh/listmonk"), n: 1},
 	"litellm":                           {src: pypiPkg("litellm"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
 	"litestream":                        {src: ghRel("benbjohnson/litestream")},
 	"livekit":                           {src: ghRel("livekit/livekit"), n: 1},

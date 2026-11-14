@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/listmonk/2026-11-15",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-15T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2023-36308"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/disintegration/imaging@v1.6.2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "inline_mitigations_already_exist",
+      "impact_statement": "Measured 2026-11-15. imaging 1.6.2 has no fixed release (upstream inactive since 2020); its scanner indexes the palette table with raw pixel values (scanner.go:242), so an image.Paletted whose pixel indexes exceed its palette panics it. listmonk decodes every media upload with imaging.Decode (cmd/media.go:219) and thumbnails it with imaging.Resize (:226). The decoders this binary registers cannot produce such an image: the recipe floors golang.org/x/image at v0.47.0 (apps/listmonk/melange.yaml FLOOR), whose bmp reader rejects out-of-range palette indexes (fixed in v0.41.0, 'bmp: reject input with invalid palette index') and whose tiff reader rejects them ('invalid color index'); Go's gif decoder rejects bad pixels and its png decoder grows the palette to fit. The recipe also patches imaging's scanner.go at build time to size the palette table for every uint8 index (apps/listmonk/melange.yaml, go mod vendor + sed, asserted by grep). Proven by the smoke test (tools/qw/internal/smoke/servers85.go): a 62-byte BMP with a 2-entry palette and pixel index 70, uploaded as evil.png through POST /api/media, is refused with the server still serving, while a valid PNG gets a thumbnail; the same test kills the upstream v6.2.0 image (x/image v0.38.0) with 'index out of range [70] with length 2'. Revisit if listmonk drops the floor or adds a decoder."
+    }
+  ]
+}
