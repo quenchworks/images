@@ -3,12 +3,21 @@ package smoke
 import (
 	"crypto/pbkdf2"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
+	"time"
 )
 
 func init() {
@@ -59,7 +68,9 @@ func init() {
 		const pw = "smoke-master-pass-2026"
 		token := func() string {
 			code, body := login(pw)
-			var r struct{ AccessToken string `json:"access_token"` }
+			var r struct {
+				AccessToken string `json:"access_token"`
+			}
 			if json.Unmarshal([]byte(body), &r); code != 200 || r.AccessToken == "" {
 				t.Fatalf("login failed %d %.300s", code, body)
 			}
@@ -67,7 +78,9 @@ func init() {
 		}
 		sync := func() {
 			code, body := DoH("GET", base+"/api/sync", "", map[string]string{"Authorization": "Bearer " + token(), "Accept": "application/json"})
-			var r struct{ Ciphers []json.RawMessage `json:"ciphers"` }
+			var r struct {
+				Ciphers []json.RawMessage `json:"ciphers"`
+			}
 			if json.Unmarshal([]byte(body), &r); code != 200 || len(r.Ciphers) != 1 {
 				t.Fatalf("cipher not in /api/sync (%d, %d ciphers): %.300s", code, len(r.Ciphers), body)
 			}
@@ -108,5 +121,89 @@ func init() {
 			t.Fatalf("crashed or wrote to the root:\n%s", t.Logs(name))
 		}
 		t.Logf("smoke test passed (vaultwarden %s: Bitwarden register/login, cipher stored and synced across a restart on /data, read-only root; user %s)", t.Want, u)
+	})
+}
+
+func init() {
+	// Boots the proxy on a read-only root with a minimal config (SAML2 backend exposing its
+	// metadata, ping frontend), hits both endpoints, then signs the proxy metadata with the
+	// satosa-saml-metadata CLI (pysaml2 -> xmlsec1) and verifies the signature with xmlsec1.
+	register("satosa", func(t *T) {
+		u := t.User("1001")
+		ver := strings.TrimSpace(t.RunEntry("/opt/satosa/venv/bin/python", "-c", "import importlib.metadata as m; print(m.version('satosa'))"))
+		if t.Want != "" && ver != t.Want {
+			t.Fatalf("version mismatch: %s", ver)
+		}
+		t.Logf("%s", t.RunEntry("/usr/bin/xmlsec1", "--version"))
+
+		// BASE is in the config and the metadata, so the host port is fixed
+		const b = "http://127.0.0.1:18080"
+		w := t.TempDir()
+		k, _ := rsa.GenerateKey(rand.Reader, 2048)
+		tpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "satosa-smoke"},
+			NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(48 * time.Hour)}
+		der, _ := x509.CreateCertificate(rand.Reader, tpl, tpl, &k.PublicKey, k)
+		kd, _ := x509.MarshalPKCS8PrivateKey(k)
+		write := func(name string, b []byte) {
+			if err := os.WriteFile(filepath.Join(w, name), b, 0o644); err != nil {
+				t.Fatalf("write %s: %v", name, err)
+			}
+		}
+		write("tls.crt", pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+		write("tls.key", pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: kd}))
+		write("proxy_conf.yaml", []byte(fmt.Sprintf(`BASE: %[1]s
+COOKIE_STATE_NAME: SATOSA_STATE
+STATE_ENCRYPTION_KEY: smoke-state-key-%[2]d-0123456789
+INTERNAL_ATTRIBUTES:
+  attributes:
+    mail:
+      saml: [mail]
+BACKEND_MODULES:
+  - module: satosa.backends.saml2.SAMLBackend
+    name: Saml2
+    config:
+      entityid_endpoint: true
+      sp_config:
+        entityid: %[1]s/Saml2/metadata.xml
+        key_file: /etc/satosa/tls.key
+        cert_file: /etc/satosa/tls.crt
+        metadata:
+          local: []
+        service:
+          sp:
+            endpoints:
+              assertion_consumer_service:
+                - [%[1]s/Saml2/acs/post, "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"]
+FRONTEND_MODULES:
+  - module: satosa.frontends.ping.PingFrontend
+    name: ping
+    config: {}
+`, b, time.Now().UnixNano())))
+		out := filepath.Join(w, "out")
+		os.Mkdir(out, 0o777)
+		os.Chmod(out, 0o777)
+		mounts := []string{"--read-only", "--tmpfs", "/tmp", "-v", w + "/proxy_conf.yaml:/etc/satosa/proxy_conf.yaml:ro",
+			"-v", w + "/tls.key:/etc/satosa/tls.key:ro", "-v", w + "/tls.crt:/etc/satosa/tls.crt:ro"}
+
+		name := t.Name("")
+		t.Start(name, append(mounts, "-p", "127.0.0.1:18080:8080"))
+		t.WaitHTTP(b+"/ping", 60, name)
+		md := t.WaitHTTP(b+"/Saml2/metadata.xml", 5, name)
+		t.Contains(md, `entityID="`+b+`/Saml2/metadata.xml"`, "SP metadata")
+		t.Contains(md, "X509Certificate", "certificate in the metadata")
+
+		// signed metadata through pysaml2 + xmlsec1, then the verify command pysaml2 runs. One
+		// backend, so backend.xml is a bare EntityDescriptor, not an EntitiesDescriptor.
+		t.Docker(append(append([]string{"run", "--rm"}, mounts...), "-v", out+":/out", "--entrypoint", "/opt/satosa/venv/bin/satosa-saml-metadata",
+			t.Image, "/etc/satosa/proxy_conf.yaml", "/etc/satosa/tls.key", "/etc/satosa/tls.crt", "--dir", "/out")...)
+		signed, _ := os.ReadFile(filepath.Join(out, "backend.xml"))
+		t.Contains(string(signed), "SignatureValue", "signed backend.xml")
+		t.Docker(append(append([]string{"run", "--rm"}, mounts...), "-v", out+":/out:ro", "--entrypoint", "/usr/bin/xmlsec1", t.Image,
+			"--verify", "--enabled-reference-uris", "empty,same-doc", "--enabled-key-data", "raw-x509-cert", "--lax-key-search",
+			"--pubkey-cert-pem", "/etc/satosa/tls.crt", "--id-attr:ID", "urn:oasis:names:tc:SAML:2.0:metadata:EntityDescriptor", "/out/backend.xml")...)
+		if m := regexp.MustCompile(`Traceback|CRITICAL`).FindString(t.Logs(name)); m != "" {
+			t.Fatalf("satosa logged errors:\n%s", t.Logs(name))
+		}
+		t.Logf("smoke test passed (satosa %s, uid %s, /ping + SP metadata served, metadata signed and verified by xmlsec1)", ver, u)
 	})
 }
