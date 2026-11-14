@@ -1,6 +1,8 @@
 package smoke
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -77,5 +79,93 @@ firewall:
 			t.Fatalf("lighthouse crashed or wrote to the root:\n%s", lhLog)
 		}
 		t.Logf("smoke test passed: CA and certs from nebula-cert, lighthouse handshake, foreign CA refused, user 1001")
+	})
+}
+
+func init() {
+	// Real Git service work on a read-only root with /data on a tmpfs: Gogs starts from a locked
+	// config (SQLite, built-in SSH), an admin is created from the CLI, a repository is
+	// auto-initialised through the API (git in the image), and a clone plus push over HTTP runs
+	// the server-side hooks (bash in the image) and shows up through the API.
+	register("gogs", func(t *T) {
+		u := t.User("1001")
+		v, err := t.RunFlags([]string{"--read-only", "--tmpfs", "/tmp"}, "--version")
+		if err != nil {
+			t.Fatalf("--version: %v\n%s", err, v)
+		}
+		t.WantVersion(v)
+		w := t.TempDir()
+		ini := fmt.Sprintf(`RUN_USER = git
+RUN_MODE = prod
+[server]
+HTTP_PORT = 3000
+EXTERNAL_URL = http://127.0.0.1:3000/
+START_SSH_SERVER = true
+SSH_PORT = 2222
+SSH_LISTEN_PORT = 2222
+[database]
+TYPE = sqlite3
+PATH = /data/gogs.db
+[repository]
+ROOT = /data/repositories
+[security]
+INSTALL_LOCK = true
+SECRET_KEY = smoke-%d
+[log]
+MODE = console
+LEVEL = Info
+`, time.Now().UnixNano())
+		if err := os.WriteFile(filepath.Join(w, "app.ini"), []byte(ini), 0o644); err != nil {
+			t.Fatalf("write app.ini: %v", err)
+		}
+		name := t.Name("")
+		// exec on /data: the hooks Gogs writes into each repository run from there
+		t.Start(name, []string{"--read-only", "--tmpfs", "/tmp", "--tmpfs", "/data:exec,uid=1001,gid=1001",
+			"-v", w + "/app.ini:/etc/gogs/app.ini:ro", "-p", "127.0.0.1::3000"}, "web", "--config", "/etc/gogs/app.ini")
+		port := t.hostPort(name, "3000")
+		base := "http://127.0.0.1:" + port
+		t.waitFor(60, time.Second, name, "gogs never became healthy", func() bool {
+			_, b := Get(base + "/healthcheck")
+			return strings.Contains(b, "Database connection: OK")
+		})
+		t.Contains(t.Logs(name), "SSH server started", "built-in SSH server")
+
+		pw := fmt.Sprintf("Quench-smoke-%d", time.Now().UnixNano()%100000)
+		t.Docker("exec", name, "/usr/bin/gogs", "admin", "create-user", "--name", "quench", "--password", pw,
+			"--email", "smoke@example.com", "--admin", "--config", "/etc/gogs/app.ini")
+		basic := "Basic " + base64.StdEncoding.EncodeToString([]byte("quench:"+pw))
+		code, body := DoH("POST", base+"/api/v1/users/quench/tokens", `{"name":"smoke"}`,
+			map[string]string{"Authorization": basic, "Content-Type": "application/json"})
+		var tk struct{ Sha1 string }
+		if json.Unmarshal([]byte(body), &tk); code != 201 || tk.Sha1 == "" {
+			t.Fatalf("no API token (%d): %s", code, body)
+		}
+		auth := map[string]string{"Authorization": "token " + tk.Sha1, "Content-Type": "application/json"}
+		if code, body := DoH("POST", base+"/api/v1/user/repos", `{"name":"smoke","auto_init":true,"readme":"Default"}`, auth); code != 201 {
+			t.Fatalf("create repo: %d %s", code, body)
+		}
+		_, readme := DoH("GET", base+"/api/v1/repos/quench/smoke/raw/master/README.md", "", auth)
+		t.Contains(readme, "# smoke", "auto-init README")
+
+		clone := filepath.Join(w, "clone")
+		git := func(args ...string) {
+			if out, err := runHost("git", append([]string{"-C", clone, "-c", "user.email=smoke@example.com", "-c", "user.name=smoke"}, args...)...); err != nil {
+				t.Fatalf("git %v: %v\n%s\n--- logs:\n%s", args, err, out, t.Logs(name))
+			}
+		}
+		if out, err := runHost("git", "clone", "-q", "http://quench:"+pw+"@127.0.0.1:"+port+"/quench/smoke.git", clone); err != nil {
+			t.Fatalf("clone: %v\n%s", err, out)
+		}
+		os.WriteFile(filepath.Join(clone, "pushed.txt"), []byte("quench\n"), 0o644)
+		git("add", "pushed.txt")
+		git("commit", "-qm", "push")
+		git("push", "-q", "origin", "master")
+		if _, b := DoH("GET", base+"/api/v1/repos/quench/smoke/raw/master/pushed.txt", "", auth); strings.TrimSpace(b) != "quench" {
+			t.Fatalf("pushed file not served: %q\n--- logs:\n%s", b, t.Logs(name))
+		}
+		if m := regexp.MustCompile(`(?m)^.*(\[ERROR\]|\[FATAL\]|panic:).*$`).FindString(t.Logs(name)); m != "" {
+			t.Fatalf("gogs logged errors: %s", m)
+		}
+		t.Logf("smoke test passed (gogs %s, uid %s, repo created, clone and push through the hooks)", t.Want, u)
 	})
 }
