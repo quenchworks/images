@@ -17,6 +17,11 @@ var noRedirect = &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*ht
 // s3Do sends one SigV4-signed S3 request (region us-east-1, path-style, no query signing
 // beyond the raw query string, which must already be in canonical order).
 func s3Do(method, rawURL, body, ak, sk string) (int, string) {
+	return s3DoIn("us-east-1", method, rawURL, body, ak, sk)
+}
+
+// s3DoIn is s3Do signed for region (Garage, for one, rejects a scope for any other region).
+func s3DoIn(region, method, rawURL, body, ak, sk string) (int, string) {
 	req, err := http.NewRequest(method, rawURL, strings.NewReader(body))
 	if err != nil {
 		return 0, err.Error()
@@ -30,11 +35,11 @@ func s3Do(method, rawURL, body, ak, sk string) (int, string) {
 	signed := "host;x-amz-content-sha256;x-amz-date"
 	canon := strings.Join([]string{method, req.URL.EscapedPath(), req.URL.RawQuery,
 		"host:" + req.URL.Host + "\nx-amz-content-sha256:" + ph + "\nx-amz-date:" + amz + "\n", signed, ph}, "\n")
-	scope := day + "/us-east-1/s3/aws4_request"
+	scope := day + "/" + region + "/s3/aws4_request"
 	ch := sha256.Sum256([]byte(canon))
 	sts := "AWS4-HMAC-SHA256\n" + amz + "\n" + scope + "\n" + hex.EncodeToString(ch[:])
 	mac := func(k []byte, s string) []byte { h := hmac.New(sha256.New, k); h.Write([]byte(s)); return h.Sum(nil) }
-	k := mac(mac(mac(mac([]byte("AWS4"+sk), day), "us-east-1"), "s3"), "aws4_request")
+	k := mac(mac(mac(mac([]byte("AWS4"+sk), day), region), "s3"), "aws4_request")
 	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential="+ak+"/"+scope+", SignedHeaders="+signed+", Signature="+hex.EncodeToString(mac(k, sts)))
 	r, err := httpc.Do(req)
 	if err != nil {

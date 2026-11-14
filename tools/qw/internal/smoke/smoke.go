@@ -202,7 +202,8 @@ func (t *T) RunInputFlags(flags []string, input string, args ...string) (string,
 // Entries returns the tar headers of the image's files whose path starts with prefix (no
 // leading "/"), read from a docker export, so it works on images without a shell.
 func (t *T) Entries(prefix string) []*tar.Header {
-	id := t.Docker("create", t.Image)
+	// a command, never run: an image with no entrypoint or cmd cannot be created without one
+	id := t.Docker("create", t.Image, "/nonexistent")
 	defer docker("rm", id)
 	c := exec.Command("docker", "export", id)
 	r, err := c.StdoutPipe()
