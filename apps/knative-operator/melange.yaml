@@ -1,0 +1,57 @@
+# knative-operator from the release tag, CGO-free, installed at /manager (upstream's path).
+package:
+  name: quench-knative-operator
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened knative-operator, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - go-1.27
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/knative/operator/archive/refs/tags/knative-v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - runs: |
+      set -eu
+      export CGO_ENABLED=0 GOTOOLCHAIN=local GOFLAGS=-mod=mod GOWORK=off
+      # floors, raised only when below (a bare go get downgrades once upstream passes it); the
+      # golang.org/x set moves together, as in the other recipes
+      FLOOR="golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/net@v0.62.0 golang.org/x/text@v0.43.0 golang.org/x/sys@v0.49.0"
+      need=""
+      for f in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${f%@*}")"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        [ "$(printf '%s\n%s\n' "$have" "${f#*@}" | sort -V | head -1)" = "${f#*@}" ] || need="$need $f"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
+      go mod tidy
+      for c in operator webhook; do
+        go build -trimpath -ldflags "-s -w" -o "${{targets.destdir}}/$c" ./cmd/$c
+      done
+      # the release manifests the operator installs, where ko puts them (KO_DATA_PATH in apko.yaml);
+      # cp -L follows the links ko would follow
+      mkdir -p "${{targets.destdir}}/usr/share/knative-operator/kodata"
+      cp -rL cmd/operator/kodata/. "${{targets.destdir}}/usr/share/knative-operator/kodata/"
+
+test:
+  pipeline:
+    - runs: |
+        test -d /usr/share/knative-operator/kodata/knative-serving && /webhook --help 2>&1 | grep -q -- -kubeconfig

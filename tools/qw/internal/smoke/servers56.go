@@ -60,3 +60,25 @@ func init() {
 		t.Logf("smoke test passed (jupyterhub %s: hub API, proxy route, plugins; nonroot user: %s)", ver, user)
 	})
 }
+
+func init() {
+	// The operator installs Knative from the release manifests in its kodata, so the image must
+	// carry them where KO_DATA_PATH points; against a dead API server both binaries must start
+	// and fail at the dial.
+	register("knative-operator", func(t *T) {
+		u := t.User("1001")
+		t.LabelVersion()
+		t.Contains(t.Docker("inspect", t.Image, "--format", "{{json .Config.Env}}"), "KO_DATA_PATH=/usr/share/knative-operator/kodata", "KO_DATA_PATH")
+		if n := len(t.Files("usr/share/knative-operator/kodata/knative-serving/")); n < 10 {
+			t.Fatalf("only %d files under /usr/share/knative-operator/kodata/knative-serving: the release manifests are missing", n)
+		}
+		kc := t.DeadKubeconfig()
+		for _, b := range []string{"/operator", "/webhook"} {
+			out, _ := t.RunAnyFor(60*time.Second, []string{"--read-only", "--tmpfs", "/tmp", "--entrypoint", b, "-v", kc + ":/w/kubeconfig:ro",
+				"-e", "KUBECONFIG=/w/kubeconfig", "-e", "SYSTEM_NAMESPACE=knative-operator", "-e", "POD_NAME=smoke", "-e", "WEBHOOK_NAME=operator-webhook"}, "--kubeconfig=/w/kubeconfig")
+			// the first API call is the config-logging ConfigMap read; its error does not name the address
+			t.Match(out, `127\.0\.0\.1:1|Error reading/parsing logging configuration`, b+" reached the API server step")
+		}
+		t.Logf("smoke test passed (knative-operator %s: kodata present, operator and webhook reach the API server; nonroot user %s)", t.Want, u)
+	})
+}
