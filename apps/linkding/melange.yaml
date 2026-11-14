@@ -56,10 +56,11 @@ pipeline:
       # upstream's lockfile, production deps and psycopg built from source
       uv sync --frozen --no-dev --group postgres
       # floors over upstream's lock for fixed advisories (Django CVE-2026-15307, PyJWT
-      # CVE-2026-102268 and -101918, certifi GHSA-6q48-6c7w-9gw2, DRF CVE-2026-114136, soupsieve
-      # CVE-2026-85999, urllib3 CVE-2026-97687); same majors, so the app is unchanged
+      # CVE-2026-102268 and -101918, certifi GHSA-6q48-6c7w-9gw2, DRF CVE-2026-114136, soupsieve 4.1
+      # (CVE-2026-85999, CVE-2026-126190..126193; a new major, bs4 only uses its select API),
+      # urllib3 CVE-2026-97687)
       uv pip install --python .venv/bin/python 'django==6.0.8' 'pyjwt==2.15.0' 'certifi==2026.10.18' \
-        'djangorestframework==3.18.2' 'soupsieve==2.9.0' 'urllib3==2.8.0'
+        'djangorestframework==3.18.2' 'soupsieve==4.1' 'urllib3==2.8.0'
       # upstream's SQLite ICU extension (case-insensitive search in non-ASCII text); the source
       # file is pinned to the revision upstream's Dockerfile names
       curl -fsSL -o icu.c 'https://www.sqlite.org/src/raw/ext/icu/icu.c?name=91c021c7e3e8bbba286960810fa303295c622e323567b2e6def4ce58e4466e60'
