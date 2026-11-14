@@ -33,10 +33,8 @@ var commands = map[string]struct {
 	"blocked":         {blocked.Run, "[--pkg P --min V] [--dispatch]", "re-test BLOCKED apps against Wolfi"},
 	"unbuilt":         {unbuilt.Run, "[--all] [app...]", "VERSIONS entries missing on GHCR"},
 	"wolfi-latest":    {wolfi.Run, "<pkg> [N] | --majors P [N] | --match RE", "newest Wolfi versions"},
-	"freeport":        {probe.FreePort, "", "print a free TCP port on 127.0.0.1 (smoke tests)"},
 	"smoke":           {smoke.Run, "<app> <image-ref> [version] | --list", "the app's Go smoke test against an image"},
 	"tlsprobe":        {probe.TLSProbe, "--addr H:P (--ca F --name N | --plain) [--send S] [--expect T]...", "speak a few protocol bytes, check the reply"},
-	"fakeapi":         {probe.FakeAPI, "[--addr H:P] [--cert C --key K] [--route 'M /p=CODE:file']... [--record 'M /p=file']... [--log f] [--port-file f]", "canned JSON API server (smoke tests)"},
 	"rethinkdb-smoke": {probe.RethinkSmoke, "[--addr H:P] [--want V]", "RethinkDB driver round trip (smoke tests)"},
 	"serve":           {probe.Serve, "[--dir D] [--addr H:P]", "serve a directory over HTTP (smoke tests)"},
 }
