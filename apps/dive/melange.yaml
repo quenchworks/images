@@ -43,7 +43,7 @@ pipeline:
         [ "$(printf '%s\n%s\n' "$have" "$w" | sort -V | head -1)" = "$w" ] || go get "$want"
       done
       # CVE-2026-128085 (otel 1.47.0): move every otel v1 module the build uses, as one family
-      otel=$(go list -m -f '{{.Path}} {{.Version}}' all | awk '($1 ~ /^go\.opentelemetry\.io\/otel(\/|$)/ || $1 ~ /^go\.opentelemetry\.io\/contrib\/bridges\/otel(zap|logrus|slog)$/) && $1 !~ /\/exporters\/jaeger$/ { if ($1 ~ /\/contrib\/bridges\//) print $1"@v0.21.0"; else if ($1 ~ /\/exporters\/(otlp\/otlplog\/|stdout\/stdoutlog$)/) print $1"@v0.23.0"; else if ($1 ~ /\/exporters\/prometheus$/) print $1"@v0.69.0"; else if ($2 ~ /^v1\./ || $1 ~ /\/(sdk\/)?log$/) print $1"@v1.47.0" }')
+      otel=$(go list -mod=mod -m -e -f '{{.Path}} {{.Version}}' all | awk '($1 ~ /^go\.opentelemetry\.io\/otel(\/|$)/ || $1 ~ /^go\.opentelemetry\.io\/contrib\/bridges\/otel(zap|logrus|slog)$/) && $1 !~ /\/exporters\/jaeger$/ { if ($1 ~ /\/contrib\/bridges\//) print $1"@v0.21.0"; else if ($1 ~ /\/exporters\/(otlp\/otlplog\/|stdout\/stdoutlog$)/) print $1"@v0.23.0"; else if ($1 ~ /\/exporters\/prometheus$/) print $1"@v0.69.0"; else if ($2 ~ /^v1\./ || $1 ~ /\/(sdk\/)?log$/) print $1"@v1.47.0" }')
       [ -z "$otel" ] || go get $otel
       go mod tidy
       go build -trimpath \
