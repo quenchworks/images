@@ -2,9 +2,9 @@ package smoke
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
-	"fmt"
 	"regexp"
 	"strings"
 	"time"
