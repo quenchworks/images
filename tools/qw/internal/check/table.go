@@ -246,6 +246,7 @@ var table = map[string]check{
 	"mealie":                            {src: ghRel("mealie-recipes/mealie"), n: 1},
 	"mediamtx":                          {src: ghRel("bluenviron/mediamtx"), n: 1},
 	"meilisearch":                       {src: ghRel("meilisearch/meilisearch")},
+	"memos":                             {src: ghRel("usememos/memos"), n: 1},
 	"miniflux":                          {src: ghRel("miniflux/v2"), n: 1},
 	"mitmproxy":                         {src: pypiPkg("mitmproxy"), n: 1},
 	"ml-metadata-store-server":          {src: ghRel("google/ml-metadata"), n: 1},

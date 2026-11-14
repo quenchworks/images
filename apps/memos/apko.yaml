@@ -1,0 +1,53 @@
+# Memos runtime: memos on :5230, data (SQLite, attachments) in MEMOS_DATA=/var/opt/memos.
+# PostgreSQL or MySQL: MEMOS_DRIVER=postgres|mysql and MEMOS_DSN. Nonroot 1001; mount a writable
+# volume at /var/opt/memos.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-memos@local
+
+accounts:
+  groups:
+    - groupname: memos
+      gid: 1001
+  users:
+    - username: memos
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  - path: /var/opt/memos
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  MEMOS_PORT: "5230"
+  MEMOS_DATA: /var/opt/memos
+
+work-dir: /var/opt/memos
+
+entrypoint:
+  command: /usr/bin/memos
+
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-memos"
+  org.opencontainers.image.licenses: "MIT"
+  org.opencontainers.image.version: "__VER__"
