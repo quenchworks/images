@@ -385,6 +385,10 @@ func DoH(method, url, body string, hdr map[string]string) (int, string) {
 	for k, v := range hdr {
 		req.Header.Set(k, v)
 	}
+	// net/http sends req.Host, not a Host header
+	if h, ok := hdr["Host"]; ok {
+		req.Host = h
+	}
 	r, err := httpc.Do(req)
 	if err != nil {
 		return 0, err.Error()
