@@ -154,6 +154,7 @@ var table = map[string]check{
 	"go":                                {wolfiPrefix: "go-", lines: 2, lineOnly: false},
 	"goaccess":                          {src: ghTags("allinurl/goaccess"), n: 1},
 	"gogs":                              {src: ghRel("gogs/gogs"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
+	"goalert":                           {src: ghRel("target/goalert"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
 	"gost":                              {src: ghRel("go-gost/gost"), n: 1},
 	"gotenberg":                         {src: ghRel("gotenberg/gotenberg"), n: 1},
 	"gotify":                            {src: ghRel("gotify/server"), n: 1},
