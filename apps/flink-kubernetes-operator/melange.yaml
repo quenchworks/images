@@ -1,0 +1,78 @@
+# Builds the Flink Kubernetes Operator from the Apache source release with Maven and installs it
+# in upstream's image layout (Dockerfile in the source). The jars are noarch; the arch comes from
+# the JRE and the jemalloc link.
+package:
+  name: quench-flink-kubernetes-operator
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Flink Kubernetes Operator, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-17-jre   # maven.compiler.target 17 upstream
+      - bash             # docker-entrypoint.sh is bash
+      - busybox          # uname in docker-entrypoint.sh
+      - jemalloc         # upstream preloads it; linked where the script looks
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - bash
+      - ca-certificates-bundle
+      - openjdk-17
+      - openjdk-17-default-jvm
+      - maven-3.9
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://archive.apache.org/dist/flink/flink-kubernetes-operator-${{package.version}}/flink-kubernetes-operator-${{package.version}}-src.tgz
+      expected-sha256: __SHA256__
+
+  - runs: |
+      set -eux
+      export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
+      export PATH="${JAVA_HOME}/bin:${PATH}"
+      export MAVEN_OPTS="-Dmaven.repo.local=$(pwd)/.m2repo -Duser.home=$(pwd)"
+      # --- QuenchWorks CVE floors (measured on 1.16.1, 2026-11-14) ---------------------------------
+      #   guava 33.4.0 -> 33.7.2 and log4j 2.25.4 -> 2.26.1: pom properties, set on the command line.
+      #   jackson-bom 2.21.5 -> 2.21.7: a literal version in the root dependencyManagement.
+      #   at.yawk.lz4:lz4-java 1.10.3 -> 1.11.4 (transitive): pinned first in that block.
+      grep -q '<artifactId>lz4-java</artifactId>' pom.xml && { echo "root pom now declares lz4-java; revisit the pin"; exit 1; }
+      sed -i '/<artifactId>jackson-bom<\/artifactId>/,/<\/dependency>/s|<version>2.21.5</version>|<version>2.21.7</version>|' pom.xml
+      sed -i '/<dependencyManagement>/{n;s|<dependencies>|<dependencies><dependency><groupId>at.yawk.lz4</groupId><artifactId>lz4-java</artifactId><version>1.11.4</version></dependency>|}' pom.xml
+      grep -q '<version>2.21.7</version>' pom.xml
+      grep -q '<version>1.11.4</version>' pom.xml
+      mvn -B -ntp install -DskipTests -Dfabric8.httpclient.impl=okhttp -Dguava.version=33.7.2-jre -Dlog4j.version=2.26.1 \
+        -pl flink-kubernetes-standalone,flink-kubernetes-operator-api,flink-kubernetes-operator,flink-autoscaler,flink-kubernetes-webhook
+
+      v=${{package.version}}
+      d="${{targets.destdir}}"
+      install -d "$d/flink-kubernetes-operator" "$d/opt/flink/operator-lib/log4j" "$d/opt/flink/operator-lib/logback"
+      install -m 0644 flink-kubernetes-operator/target/flink-kubernetes-operator-$v-shaded.jar \
+        flink-kubernetes-webhook/target/flink-kubernetes-webhook-$v-shaded.jar \
+        flink-kubernetes-standalone/target/flink-kubernetes-standalone-$v.jar "$d/flink-kubernetes-operator/"
+      cp -r flink-kubernetes-operator/target/plugins "$d/opt/flink/plugins"
+      cp -r flink-kubernetes-operator/target/log4j/. "$d/opt/flink/operator-lib/log4j/"
+      cp -r flink-kubernetes-operator/target/logback/. "$d/opt/flink/operator-lib/logback/"
+      install -m 0644 LICENSE "$d/flink-kubernetes-operator/LICENSE"
+      install -m 0755 docker-entrypoint.sh "$d/docker-entrypoint.sh"
+      # docker-entrypoint.sh preloads /usr/lib/$(uname -m)-linux-gnu/libjemalloc.so (Debian's path)
+      install -d "$d/usr/lib/$(uname -m)-linux-gnu"
+      ln -s ../libjemalloc.so.2 "$d/usr/lib/$(uname -m)-linux-gnu/libjemalloc.so"
+      # every pin must have reached what ships
+      unzip -l "$d/flink-kubernetes-operator/flink-kubernetes-operator-$v-shaded.jar" > jarlist.txt
+      grep -q 'META-INF/maven/com.fasterxml.jackson.core/jackson-databind/pom.properties' jarlist.txt
+      unzip -p "$d/flink-kubernetes-operator/flink-kubernetes-operator-$v-shaded.jar" META-INF/maven/com.fasterxml.jackson.core/jackson-databind/pom.properties | grep -qx 'version=2.21.7'
+
+test:
+  pipeline:
+    - runs: |
+        test -f /flink-kubernetes-operator/flink-kubernetes-operator-${{package.version}}-shaded.jar
+        test -x /docker-entrypoint.sh

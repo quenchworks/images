@@ -123,6 +123,7 @@ var table = map[string]check{
 	"ferretdb":                          {src: ghRel("FerretDB/FerretDB")},
 	"filebrowser":                       {src: ghRel("filebrowser/filebrowser")},
 	"flink":                             {src: scrapeSrc("https://dlcdn.apache.org/flink/", `href="flink-(\d+\.\d+\.\d+)/"`), n: 1},
+	"flink-kubernetes-operator":         {src: scrapeSrc("https://dlcdn.apache.org/flink/", `href="flink-kubernetes-operator-(\d+\.\d+\.\d+)/"`), n: 1},
 	"floci-full":                        {src: ghRel("floci-io/floci"), n: 1},
 	"floci":                             {src: ghRel("floci-io/floci"), n: 3},
 	"fluent-bit":                        {src: ghRel("fluent/fluent-bit")},

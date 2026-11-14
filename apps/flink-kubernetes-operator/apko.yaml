@@ -1,0 +1,58 @@
+# Flink Kubernetes Operator runtime: Wolfi JRE 17, bash and upstream's layout and environment
+# (Dockerfile in the source), so upstream's chart commands (/docker-entrypoint.sh operator|webhook)
+# work unchanged. Nonroot 1001 (upstream uses 9999).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - openjdk-17-jre
+    - bash
+    - busybox
+    - jemalloc
+    - quench-flink-kubernetes-operator@local
+
+accounts:
+  groups:
+    - groupname: flink
+      gid: 1001
+  users:
+    - username: flink
+      uid: 1001
+      gid: 1001
+      homedir: /opt/flink
+  run-as: 1001
+
+entrypoint:
+  command: /docker-entrypoint.sh
+cmd: help
+
+environment:
+  JAVA_HOME: /usr/lib/jvm/java-17-openjdk
+  PATH: /usr/lib/jvm/java-17-openjdk/bin:/usr/bin:/bin
+  FLINK_HOME: /opt/flink
+  FLINK_PLUGINS_DIR: /opt/flink/plugins
+  OPERATOR_VERSION: __VER__
+  OPERATOR_JAR: flink-kubernetes-operator-__VER__-shaded.jar
+  WEBHOOK_JAR: flink-kubernetes-webhook-__VER__-shaded.jar
+  KUBERNETES_STANDALONE_JAR: flink-kubernetes-standalone-__VER__.jar
+  OPERATOR_LIB: /opt/flink/operator-lib
+
+work-dir: /flink-kubernetes-operator
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-flink-kubernetes-operator"
+  org.opencontainers.image.licenses: "Apache-2.0"
+  org.opencontainers.image.version: "__VER__"

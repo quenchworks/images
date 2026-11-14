@@ -228,3 +228,26 @@ func init() {
 		t.Logf("smoke test passed (tidb-operator %s: four binaries report the release, controller manager dials the API server; nonroot user %s)", t.Want, u)
 	})
 }
+
+func init() {
+	// Upstream's bash entrypoint dispatches operator|webhook to the shaded jars; against a dead
+	// API server the operator JVM must start from the jars and fail at the dial.
+	register("flink-kubernetes-operator", func(t *T) {
+		u := t.User("1001")
+		t.LabelVersion()
+		t.Contains(t.RunAny("help"), "(operator|webhook)", "entrypoint usage")
+		for _, j := range []string{"flink-kubernetes-operator/flink-kubernetes-operator-", "flink-kubernetes-operator/flink-kubernetes-webhook-"} {
+			if len(t.Files(j)) == 0 {
+				t.Fatalf("%s*.jar missing", j)
+			}
+		}
+		kc := t.DeadKubeconfig()
+		out, _ := t.RunAnyFor(90*time.Second, []string{"--read-only", "--tmpfs", "/tmp", "-v", kc + ":/w/kubeconfig:ro", "-e", "KUBECONFIG=/w/kubeconfig"}, "operator")
+		t.Contains(out, "Starting Operator", "entrypoint")
+		t.Match(out, `127\.0\.0\.1:1|java\.net\.ConnectException`, "operator reached the API server step")
+		if regexp.MustCompile(`ClassNotFoundException|NoClassDefFoundError|UnsupportedClassVersionError`).MatchString(out) {
+			t.Fatalf("classpath broken:\n%s", out)
+		}
+		t.Logf("smoke test passed (flink-kubernetes-operator %s: entrypoint dispatches, operator JVM starts and dials the API server; nonroot user %s)", t.Want, u)
+	})
+}
