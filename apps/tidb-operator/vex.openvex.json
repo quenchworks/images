@@ -1,0 +1,37 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/tidb-operator/2026-11-14",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-14T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": { "name": "CVE-2026-42151" },
+      "products": [ { "@id": "pkg:golang/github.com/prometheus/prometheus@v0.49.1" } ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "CVE-2026-42151 is in the config API (web/api/v1) returning the Azure OAuth client secret. tidb-operator imports one package of the module, model/relabel (pkg/apis/pingcap/v1alpha1/tidbmonitor_types.go: the RelabelConfig type of TidbMonitor), and links no Prometheus server code. The fixed line (v0.311.3) requires k8s.io 0.35, which breaks the controller-runtime 0.7.2 and apiserver 0.29 the operator is built on. Verified on 2026-11-14 on the x86_64 local gate build: the guard grep over the four built binaries returned 0 matches for those packages. The melange recipe repeats that search on every build output for symbols under prometheus/prometheus/{web,config,storage,promql,tsdb,scrape,rules,notifier} and fails the build if one appears."
+    },
+    {
+      "vulnerability": { "name": "CVE-2026-42154" },
+      "products": [ { "@id": "pkg:golang/github.com/prometheus/prometheus@v0.49.1" } ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "CVE-2026-42154 is in the remote read endpoint (storage/remote) allocating without bound. tidb-operator imports one package of the module, model/relabel (pkg/apis/pingcap/v1alpha1/tidbmonitor_types.go: the RelabelConfig type of TidbMonitor), and links no Prometheus server code. The fixed line (v0.311.3) requires k8s.io 0.35, which breaks the controller-runtime 0.7.2 and apiserver 0.29 the operator is built on. Verified on 2026-11-14 on the x86_64 local gate build: the guard grep over the four built binaries returned 0 matches for those packages. The melange recipe repeats that search on every build output for symbols under prometheus/prometheus/{web,config,storage,promql,tsdb,scrape,rules,notifier} and fails the build if one appears."
+    },
+    {
+      "vulnerability": { "name": "CVE-2026-40179" },
+      "products": [ { "@id": "pkg:golang/github.com/prometheus/prometheus@v0.49.1" } ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "CVE-2026-40179 is in the web UI (web/ui) rendering metric names and label values in tooltips. tidb-operator imports one package of the module, model/relabel (pkg/apis/pingcap/v1alpha1/tidbmonitor_types.go: the RelabelConfig type of TidbMonitor), and links no Prometheus server code. The fixed line (v0.311.3) requires k8s.io 0.35, which breaks the controller-runtime 0.7.2 and apiserver 0.29 the operator is built on. Verified on 2026-11-14 on the x86_64 local gate build: the guard grep over the four built binaries returned 0 matches for those packages. The melange recipe repeats that search on every build output for symbols under prometheus/prometheus/{web,config,storage,promql,tsdb,scrape,rules,notifier} and fails the build if one appears."
+    },
+    {
+      "vulnerability": { "name": "CVE-2026-44903" },
+      "products": [ { "@id": "pkg:golang/github.com/prometheus/prometheus@v0.49.1" } ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "CVE-2026-44903 is in the Prometheus server (web, config, storage). tidb-operator imports one package of the module, model/relabel (pkg/apis/pingcap/v1alpha1/tidbmonitor_types.go: the RelabelConfig type of TidbMonitor), and links no Prometheus server code. The fixed line (v0.311.3) requires k8s.io 0.35, which breaks the controller-runtime 0.7.2 and apiserver 0.29 the operator is built on. Verified on 2026-11-14 on the x86_64 local gate build: the guard grep over the four built binaries returned 0 matches for those packages. The melange recipe repeats that search on every build output for symbols under prometheus/prometheus/{web,config,storage,promql,tsdb,scrape,rules,notifier} and fails the build if one appears."
+    }
+  ]
+}

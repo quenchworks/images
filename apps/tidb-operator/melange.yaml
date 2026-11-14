@@ -1,0 +1,66 @@
+# tidb-operator control plane from the release tag, CGO-free, at upstream's /usr/local/bin paths.
+package:
+  name: quench-tidb-operator
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened tidb-operator, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - go-1.27
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/pingcap/tidb-operator/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - runs: |
+      set -eu
+      export CGO_ENABLED=0 GOTOOLCHAIN=local GOFLAGS=-mod=mod GOWORK=off
+      # floors, raised only when below (a bare go get downgrades once upstream passes it). No
+      # go mod tidy: it fails on a go-openapi test-only import; -mod=mod builds without it.
+      # prometheus/prometheus stays at v0.49.1: its fixed line pulls k8s 0.35, which breaks
+      # controller-runtime 0.7.2; the VEX guard below covers it.
+      FLOOR="golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/net@v0.62.0 golang.org/x/text@v0.43.0 golang.org/x/sys@v0.49.0 google.golang.org/grpc@v1.83.2 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0 github.com/go-jose/go-jose/v4@v4.1.6"
+      need=""
+      for f in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${f%@*}")"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        [ "$(printf '%s\n%s\n' "$have" "${f#*@}" | sort -V | head -1)" = "${f#*@}" ] || need="$need $f"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
+      # the otel 1.45 family raises otelgrpc to 0.61, which dropped UnaryClientInterceptor that
+      # k8s.io/apiserver 0.29 (admission webhook) calls; 0.49.0 still builds against otel 1.45
+      go mod edit -replace go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc=go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc@v0.49.0
+      LDFLAGS="-s -w -X github.com/pingcap/tidb-operator/pkg/version.gitVersion=v${{package.version}} -X github.com/pingcap/tidb-operator/pkg/version.gitTreeState=clean"
+      mkdir -p "${{targets.destdir}}/usr/local/bin"
+      for c in controller-manager scheduler discovery admission-webhook; do
+        go build -trimpath -ldflags "$LDFLAGS" -o "${{targets.destdir}}/usr/local/bin/tidb-$c" ./cmd/$c
+      done
+
+  - name: Guard the prometheus/prometheus VEX (only model/relabel and what it imports may link)
+    runs: |
+      # the four open advisories sit in web, web/api, config and storage/remote
+      if grep -rlE 'prometheus/prometheus/(web|config|storage|promql|tsdb|scrape|rules|notifier)[./]' "${{targets.destdir}}"; then
+        echo "a prometheus/prometheus server package is linked: the VEX no longer holds"; exit 1
+      fi
+
+test:
+  pipeline:
+    - runs: |
+        /usr/local/bin/tidb-scheduler -V 2>&1 | grep -q 'v${{package.version}}'

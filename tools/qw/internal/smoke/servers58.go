@@ -207,3 +207,24 @@ FRONTEND_MODULES:
 		t.Logf("smoke test passed (satosa %s, uid %s, /ping + SP metadata served, metadata signed and verified by xmlsec1)", ver, u)
 	})
 }
+
+func init() {
+	// The image carries upstream's four control-plane binaries at /usr/local/bin. Each must report
+	// the release; against a dead API server the controller manager must start and dial it.
+	register("tidb-operator", func(t *T) {
+		u := t.User("1001")
+		t.LabelVersion()
+		for _, b := range []string{"tidb-scheduler", "tidb-admission-webhook"} {
+			v := t.RunEntryAny("/usr/local/bin/"+b, "-V")
+			t.WantVersionV(v)
+		}
+		if n := len(t.Files("usr/local/bin/tidb-")); n != 4 {
+			t.Fatalf("expected 4 tidb-* binaries, found %d", n)
+		}
+		kc := t.DeadKubeconfig()
+		out, _ := t.RunAnyFor(60*time.Second, []string{"--read-only", "--tmpfs", "/tmp", "-v", kc + ":/w/kubeconfig:ro",
+			"-e", "KUBECONFIG=/w/kubeconfig", "-e", "NAMESPACE=tidb-admin"})
+		t.Contains(out, "127.0.0.1:1", "tidb-controller-manager reached the API server step")
+		t.Logf("smoke test passed (tidb-operator %s: four binaries report the release, controller manager dials the API server; nonroot user %s)", t.Want, u)
+	})
+}

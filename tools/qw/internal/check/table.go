@@ -350,6 +350,7 @@ var table = map[string]check{
 	"thanos":                            {src: ghRel("thanos-io/thanos")},
 	"tigera-operator":                   {src: ghRel("tigera/operator"), n: 1},
 	"tigerbeetle":                       {src: ghRel("tigerbeetle/tigerbeetle"), n: 3},
+	"tidb-operator":                     {src: ghRel("pingcap/tidb-operator"), n: 1, f: filter{keep: full(`1\.\d+\.\d+`)}}, // v1 line; v2 is a rewrite with new CRDs
 	"tika":                              {src: scrapeSrc("https://archive.apache.org/dist/tika/", `href="(\d+\.\d+\.\d+)/"`), n: 1},
 	"timescaledb":                       {src: ghRel("timescale/timescaledb")},
 	"traefik":                           {src: ghRel("traefik/traefik")},
