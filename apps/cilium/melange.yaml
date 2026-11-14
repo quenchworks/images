@@ -72,7 +72,15 @@ pipeline:
       need="$(GOFLAGS=-mod=mod go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
       if [ -n "$need" ]; then
         GOFLAGS=-mod=mod go get $need
-        go mod vendor
+        # a raised floor can need a package with no go.sum entry yet (go-openapi/swag/pools for
+        # otel 1.47): run the go get that go itself names, then vendor (as in apps/mimir)
+        if ! out="$(GOFLAGS=-mod=mod go mod vendor 2>&1)"; then
+          fix="$(printf '%s\n' "$out" | awk '/to add:/ { getline; if ($1 == "go" && $2 == "get") print $3 }' | sort -u)"
+          [ -n "$fix" ] || { printf '%s\n' "$out"; exit 1; }
+          echo "adding go.sum entries: $fix"
+          GOFLAGS=-mod=mod go get $fix
+          GOFLAGS=-mod=mod go mod vendor
+        fi
       fi
       d="${{targets.destdir}}"
       make PKG_BUILD=1 DESTDIR="$d" build-container install-container-binary
