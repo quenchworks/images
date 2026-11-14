@@ -201,3 +201,40 @@ func init() {
 		t.Logf("smoke test passed (uid %s, admin token, v2 API list, portal, node healthy, %d plugins)", u, n)
 	})
 }
+
+func init() {
+	// The read-only posture the chart ships (tmpfs /data and /tmp), root S3 credentials from env:
+	// /health answers on the S3 port, then a signed S3 round trip makes a bucket, puts an object,
+	// gets it back and lists it. A wrong secret is refused.
+	register("rustfs", func(t *T) {
+		u := t.User("1001")
+		const ak, sk = "quenchadmin", "quenchsecret0123456789"
+		name := t.Name("")
+		t.Start(name, []string{"--read-only", "--tmpfs", "/data:rw,mode=1777", "--tmpfs", "/tmp:rw,mode=1777",
+			"-e", "RUSTFS_ACCESS_KEY=" + ak, "-e", "RUSTFS_SECRET_KEY=" + sk, "-p", "127.0.0.1::9000"})
+		b := "http://127.0.0.1:" + t.hostPort(name, "9000")
+		t.waitFor(60, time.Second, name, "rustfs /health did not become healthy", func() bool {
+			if st := t.Docker("inspect", "-f", "{{.State.Status}}", name); st != "running" {
+				t.Fatalf("container exited\n%s", t.Logs(name))
+			}
+			c, _ := Get(b + "/health")
+			return c == 200
+		})
+		payload := fmt.Sprintf("quenchworks-rustfs-roundtrip-%d", time.Now().UnixNano())
+		t.waitFor(15, 2*time.Second, name, "S3 roundtrip failed", func() bool {
+			s3Do("PUT", b+"/gate", "", ak, sk) // make the bucket; it may already exist
+			if c, _ := s3Do("PUT", b+"/gate/obj.txt", payload, ak, sk); c != 200 {
+				return false
+			}
+			_, got := s3Do("GET", b+"/gate/obj.txt", "", ak, sk)
+			return got == payload
+		})
+		_, list := s3Do("GET", b+"/gate?list-type=2", "", ak, sk)
+		t.Contains(list, "obj.txt", "object listed")
+		if c, _ := s3Do("GET", b+"/gate/obj.txt", "", ak, "not-the-secret-key-000"); c == 200 {
+			t.Fatalf("a wrong secret key was accepted")
+		}
+		t.Logf("version: %s", strings.SplitN(t.Docker("exec", name, "/usr/bin/rustfs", "--version"), "\n", 2)[0])
+		t.Logf("smoke test passed (nonroot user: %s, read-only rootfs, S3 /health, S3 bucket+object roundtrip OK, wrong key refused)", u)
+	})
+}
