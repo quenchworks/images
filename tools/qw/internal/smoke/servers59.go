@@ -222,20 +222,7 @@ func init() {
 			c, _ := Get(b + "/health")
 			return c == 200
 		})
-		payload := fmt.Sprintf("quenchworks-rustfs-roundtrip-%d", time.Now().UnixNano())
-		t.waitFor(15, 2*time.Second, name, "S3 roundtrip failed", func() bool {
-			s3Do("PUT", b+"/gate", "", ak, sk) // make the bucket; it may already exist
-			if c, _ := s3Do("PUT", b+"/gate/obj.txt", payload, ak, sk); c != 200 {
-				return false
-			}
-			_, got := s3Do("GET", b+"/gate/obj.txt", "", ak, sk)
-			return got == payload
-		})
-		_, list := s3Do("GET", b+"/gate?list-type=2", "", ak, sk)
-		t.Contains(list, "obj.txt", "object listed")
-		if c, _ := s3Do("GET", b+"/gate/obj.txt", "", ak, "not-the-secret-key-000"); c == 200 {
-			t.Fatalf("a wrong secret key was accepted")
-		}
+		t.s3RoundTrip(name, b, ak, sk, "gate")
 		t.Logf("version: %s", strings.SplitN(t.Docker("exec", name, "/usr/bin/rustfs", "--version"), "\n", 2)[0])
 		t.Logf("smoke test passed (nonroot user: %s, read-only rootfs, S3 /health, S3 bucket+object roundtrip OK, wrong key refused)", u)
 	})
@@ -315,5 +302,49 @@ spec:
 			t.Fatalf("controller crashed or wrote to the root (%s):\n%s", m, t.Logs(name))
 		}
 		t.Logf("smoke test passed (argo-events %s, uid %s, lint, argo CLI, controller manager up)", t.Want, u)
+	})
+}
+
+// s3RoundTrip makes bucket (retrying while the store warms up), puts an object, reads it back,
+// finds it in a listing and the bucket in the service listing, and checks a wrong secret key is
+// refused, all with signed requests against base.
+func (t *T) s3RoundTrip(name, base, ak, sk, bucket string) {
+	payload := fmt.Sprintf("quenchworks-roundtrip-%d", time.Now().UnixNano())
+	t.waitFor(15, 2*time.Second, name, "S3 roundtrip failed", func() bool {
+		s3Do("PUT", base+"/"+bucket, "", ak, sk) // may already exist
+		if c, _ := s3Do("PUT", base+"/"+bucket+"/obj.txt", payload, ak, sk); c != 200 {
+			return false
+		}
+		_, got := s3Do("GET", base+"/"+bucket+"/obj.txt", "", ak, sk)
+		return got == payload
+	})
+	_, list := s3Do("GET", base+"/"+bucket+"?list-type=2", "", ak, sk)
+	t.Contains(list, "obj.txt", "object listed")
+	_, buckets := s3Do("GET", base+"/", "", ak, sk)
+	t.Contains(buckets, "<Name>"+bucket+"</Name>", "bucket listed")
+	if c, _ := s3Do("GET", base+"/"+bucket+"/obj.txt", "", ak, "not-the-secret-key-000"); c == 200 {
+		t.Fatalf("a wrong secret key was accepted")
+	}
+	t.Logf("S3 bucket and object round trip OK, wrong key refused")
+}
+
+func init() {
+	// The read-only posture the chart ships (tmpfs /data and /tmp), S3 auth from env: the S3 API's
+	// /healthz answers, then the signed round trip above.
+	register("seaweedfs", func(t *T) {
+		u := t.User("1001")
+		const ak, sk = "quenchadmin", "quenchsecretkey123"
+		name := t.Name("")
+		t.Start(name, []string{"--read-only", "--tmpfs", "/data:rw,mode=1777", "--tmpfs", "/tmp:rw,mode=1777",
+			"-e", "SEAWEED_S3_ACCESS_KEY=" + ak, "-e", "SEAWEED_S3_SECRET_KEY=" + sk, "-p", "127.0.0.1::8333"})
+		b := "http://127.0.0.1:" + t.hostPort(name, "8333")
+		t.waitFor(40, time.Second, name, "seaweedfs S3 did not become healthy", func() bool {
+			c, _ := Get(b + "/healthz")
+			return c == 200
+		})
+		// the filer/volume can lag the S3 gateway's first healthz: s3RoundTrip retries the bucket
+		t.s3RoundTrip(name, b, ak, sk, "gate")
+		t.Logf("version: %s", t.Docker("exec", name, "/usr/bin/weed", "version"))
+		t.Logf("smoke test passed (nonroot user: %s, read-only rootfs, S3 bucket+object roundtrip OK)", u)
 	})
 }
