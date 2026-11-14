@@ -67,8 +67,9 @@ pipeline:
       grep -qx '__version__ = "${{package.version}}"' mealie/__init__.py
       uv sync --frozen --no-dev --no-editable --extra pgsql
       # CVE floors over the lock: nltk CVE-2026-81726 / GHSA-j456-xh4h-cpf2, oauthlib CVE-2026-49272,
-      # pyasn1 CVE-2026-119194..119197
-      uv pip install --python /opt/mealie/bin/python 'nltk==3.10.4' 'oauthlib==4.0.1' 'pyasn1==0.6.5'
+      # pyasn1 CVE-2026-119194..119197, soupsieve CVE-2026-126190..126193 (4.0: upstream's
+      # exclude-newer = "5 days" hides 4.1, released 2026-11-10)
+      uv pip install --python /opt/mealie/bin/python 'nltk==3.10.4' 'oauthlib==4.0.1' 'pyasn1==0.6.5' 'soupsieve==4.0'
       # psycopg2 from source against Wolfi libpq instead of the binary wheel
       v="$(/opt/mealie/bin/python -c 'import importlib.metadata as m; print(m.version("psycopg2-binary"))')"
       uv pip uninstall --python /opt/mealie/bin/python psycopg2-binary
