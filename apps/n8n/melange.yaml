@@ -142,6 +142,7 @@ pipeline:
         // transitive copies (+ direct deps already AT the fix: langsmith/uuid/@azure/identity/tar)
         p.overrides=Object.assign(p.overrides||{},{
           "xlsx":"npm:@e965/xlsx@0.20.3",
+          "@opentelemetry/instrumentation-http":"0.222.0", // CVE-2026-128080 on 0.221.0 (2026-11-14 scan)
           "@azure/identity":"4.14.1",     // 2026-11-01: msal-node 6.0.1 carries CVE-2026-109461 (fix 7.1.0 only); identity 4.14.1 requires ^7.1.0. The 5.1.5 copy under @microsoft/agents-hosting (no release past msal 5.6) is VEXed: it never calls acquireTokenByCode
           "@modelcontextprotocol/node":"2.1.0", // GHSA-f897-62hf-6gxq (2.0.0)
           "glob@11":"14.0.2",             // CVE-2026-118773 on the 11.1.0 copy too (2026-11-01 CI)
