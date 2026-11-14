@@ -37,7 +37,7 @@ pipeline:
       # through vitess.io/vitess v0.24: grpc (CVE-2026-84303/84304/84445, GHSA-hrxh-6v49-42gf), dd-trace-go
       # (CVE-2026-50274), go-jose (CVE-2026-116585..116587), klauspost/compress (CVE-2026-63209), cilium/ebpf
       # (CVE-2026-10722) and the otel family (CVE-2026-81870, sdk/metric moves with it)
-      FLOOR="$FLOOR google.golang.org/grpc@v1.83.2 github.com/DataDog/dd-trace-go/v2@v2.8.1 github.com/go-jose/go-jose/v4@v4.1.6 github.com/klauspost/compress@v1.18.7 github.com/cilium/ebpf@v0.22.0 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/sdk/metric@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0"
+      FLOOR="$FLOOR google.golang.org/grpc@v1.83.2 github.com/DataDog/dd-trace-go/v2@v2.8.1 github.com/go-jose/go-jose/v4@v4.1.6 github.com/klauspost/compress@v1.18.7 github.com/cilium/ebpf@v0.22.0 go.opentelemetry.io/otel@v1.47.0 go.opentelemetry.io/otel/metric@v1.47.0 go.opentelemetry.io/otel/trace@v1.47.0 go.opentelemetry.io/otel/sdk@v1.47.0 go.opentelemetry.io/otel/sdk/metric@v1.47.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.47.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.47.0"
       need=""
       for f in $FLOOR; do
         have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${f%@*}")"
