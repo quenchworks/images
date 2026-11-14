@@ -126,9 +126,10 @@ pipeline:
       done
 
       # kine v0.17.5: kine's scripts/build flags (cgo SQLite, static, the same tags), run
-      # directly because the script needs bash and git. Same x/crypto + x/net floor.
+      # directly because the script needs bash and git. The same floor set as the rest: the
+      # binary check below covers every module in it (otel 1.47 included).
       cd ../kine
-      need="$(go list -m -e golang.org/x/crypto golang.org/x/net | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor kine | awk '{ print $1 }')"
+      need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor kine | awk '{ print $1 }')"
       if [ -n "$need" ]; then go get $need; fi
       go mod tidy
       CGO_ENABLED=1 CGO_CFLAGS="-DSQLITE_DEFAULT_MEMSTATUS=0 -DSQLITE_DISABLE_INTRINSIC -DSQLITE_ENABLE_COLUMN_METADATA -DSQLITE_ENABLE_DBPAGE_VTAB -DSQLITE_ENABLE_DBSTAT_VTAB -DSQLITE_ENABLE_MATH_FUNCTIONS -DSQLITE_ENABLE_MEMORY_MANAGEMENT -DSQLITE_ENABLE_OFFSET_SQL_FUNC -DSQLITE_ENABLE_PREUPDATE_HOOK -DSQLITE_ENABLE_RBU -DSQLITE_ENABLE_RTREE -DSQLITE_ENABLE_SESSION -DSQLITE_ENABLE_SNAPSHOT -DSQLITE_ENABLE_STAT4 -DSQLITE_ENABLE_UNLOCK_NOTIFY -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_THREADSAFE=1 -DSQLITE_WITHOUT_ZONEMALLOC" \

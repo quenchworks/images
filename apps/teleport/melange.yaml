@@ -125,9 +125,10 @@ pipeline:
       sed -i 's|^\tcargo install --locked wasm-opt@\$(WASM_OPT_VERSION)$|\tcommand -v wasm-opt|' Makefile
       ! grep -q 'cargo install --locked wasm-opt' Makefile || { echo "FATAL: wasm-opt rule not replaced"; exit 1; }
       # Go 1.26.11/1.27.4 cgo refuses LLVM bitcode sections (.llvmbc, .llvmcmd) in the archives a
-      # package links; librdp_client.a carries them from Rust's prebuilt std. Strip them right after
-      # cargo builds the RDP client (the release and deps copies are hard links, so both are done).
-      sed -i '/cargo build -p rdp-client /a\\tfind target -name "librdp_client*.a" -exec objcopy --remove-section=.llvmbc --remove-section=.llvmcmd {} \\;' Makefile
+      # package links; librdp_client.a and librdp_decoder.a carry them from Rust's prebuilt std. Strip
+      # them right after cargo builds each (the release and deps copies are hard links, so both are done).
+      sed -i '/cargo build -p rdp-\(client\|decoder\) /a\\tfind target -name "librdp_*.a" -exec objcopy --remove-section=.llvmbc --remove-section=.llvmcmd {} \\;' Makefile
+      [ "$(grep -c 'find target -name "librdp_\*.a"' Makefile)" = 2 ] || { echo "FATAL: llvmbc strip not added after both rdp cargo builds"; exit 1; }
       grep -q 'objcopy --remove-section=.llvmbc' Makefile || { echo "FATAL: rdpclient strip not added"; exit 1; }
       make full
       for b in teleport tctl tsh tbot teleport-update; do test -x "build/$b"; done
