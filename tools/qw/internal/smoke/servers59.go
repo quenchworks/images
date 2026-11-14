@@ -2,6 +2,8 @@ package smoke
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"fmt"
 	"regexp"
 	"strings"
@@ -236,5 +238,82 @@ func init() {
 		}
 		t.Logf("version: %s", strings.SplitN(t.Docker("exec", name, "/usr/bin/rustfs", "--version"), "\n", 2)[0])
 		t.Logf("smoke test passed (nonroot user: %s, read-only rootfs, S3 /health, S3 bucket+object roundtrip OK, wrong key refused)", u)
+	})
+}
+
+func init() {
+	// On a read-only root: lint validates a real EventSource and Sensor, the bundled argo CLI
+	// reports v3, and the controller (its config file, image env and a dead kubeconfig) starts its
+	// manager with the stamped version and keeps retrying without a panic. The chart gate runs a
+	// webhook EventSource and a Sensor in kind.
+	register("argo-events", func(t *T) {
+		u := t.User("1001")
+		av, _ := t.RunFlags([]string{"--read-only", "--entrypoint", "/usr/bin/argo"}, "version", "--short")
+		t.Match(av, `(?m)^argo: v3\.`, "argo CLI")
+		w := t.TempDir()
+		write := func(rel, s string) {
+			p := filepath.Join(w, rel)
+			os.MkdirAll(filepath.Dir(p), 0o755)
+			if err := os.WriteFile(p, []byte(s), 0o644); err != nil {
+				t.Fatalf("write %s: %v", rel, err)
+			}
+		}
+		write("es.yaml", `apiVersion: argoproj.io/v1alpha1
+kind: EventSource
+metadata: { name: webhook }
+spec:
+  webhook:
+    example: { port: "12000", endpoint: /example, method: POST }
+`)
+		write("sensor.yaml", `apiVersion: argoproj.io/v1alpha1
+kind: Sensor
+metadata: { name: webhook }
+spec:
+  dependencies:
+    - { name: dep, eventSourceName: webhook, eventName: example }
+  triggers:
+    - template:
+        name: log
+        log: {}
+`)
+		// the controller loads its EventBus settings before anything else (the chart's ConfigMap);
+		// it validates that both lists are non-empty; nothing here is pulled
+		write("etc/controller-config.yaml", `eventBus:
+  nats:
+    versions:
+      - version: latest
+        natsStreamingImage: nats-streaming:latest
+        metricsExporterImage: natsio/prometheus-nats-exporter:latest
+  jetstream:
+    versions:
+      - version: latest
+        natsImage: nats:latest
+        metricsExporterImage: natsio/prometheus-nats-exporter:latest
+        configReloaderImage: natsio/nats-server-config-reloader:latest
+        startCommand: /nats-server
+`)
+		os.Chmod(filepath.Join(w, "etc"), 0o755)
+		lint, _ := t.RunFlags([]string{"--read-only", "-v", w + ":/w:ro"}, "lint", "/w/es.yaml", "/w/sensor.yaml")
+		if regexp.MustCompile(`(?i)error|invalid`).MatchString(lint) {
+			t.Fatalf("lint rejected valid resources:\n%s", lint)
+		}
+		kc := t.DeadKubeconfig()
+		name := t.Name("")
+		t.Start(name, []string{"--read-only", "--tmpfs", "/tmp", "-v", kc + ":/etc/kubeconfig:ro", "-v", filepath.Join(w, "etc") + ":/etc/argo-events:ro",
+			"-e", "KUBECONFIG=/etc/kubeconfig", "-e", "ARGO_EVENTS_IMAGE=" + t.Image}, "controller", "--leader-election=false")
+		t.WaitLog(name, `"Starting controller manager"`, 30)
+		out := t.Logs(name)
+		if t.Want != "" {
+			t.Match(out, `"Starting controller manager".*"version":"v`+regexp.QuoteMeta(t.Want), "stamped version")
+		}
+		time.Sleep(5 * time.Second)
+		// with the API server unreachable it keeps retrying rather than exiting
+		if t.Docker("inspect", name, "--format", "{{.State.Running}}") != "true" {
+			t.Fatalf("controller exited:\n%s", t.Logs(name))
+		}
+		if m := regexp.MustCompile(`panic:|read-only file system|"level":"fatal"`).FindString(t.Logs(name)); m != "" {
+			t.Fatalf("controller crashed or wrote to the root (%s):\n%s", m, t.Logs(name))
+		}
+		t.Logf("smoke test passed (argo-events %s, uid %s, lint, argo CLI, controller manager up)", t.Want, u)
 	})
 }
