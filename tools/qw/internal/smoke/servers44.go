@@ -126,16 +126,22 @@ func init() {
 		name := t.Name("")
 		t.Start(name, []string{"--privileged"})
 		t.Docker("exec", name, "mkdir", "-p", "/tmp/m")
-		dx := func(args ...string) (string, error) {
-			return docker(append([]string{"exec", "-e", "_EXPERIMENTAL_DAGGER_RUNNER_HOST=unix:///run/dagger/engine.sock", "-w", "/tmp/m", name, "dagger", "--progress=plain"}, args...)...)
+		dargs := func(args ...string) []string {
+			return append([]string{"exec", "-e", "_EXPERIMENTAL_DAGGER_RUNNER_HOST=unix:///run/dagger/engine.sock", "-w", "/tmp/m", name, "dagger", "--progress=plain"}, args...)
+		}
+		dx := func(args ...string) (string, error) { return docker(dargs(args...)...) }
+		// stdout alone: progress goes to stderr and, combined, can land mid-line ("Containerquench")
+		dout := func(args ...string) string {
+			out, _ := exec.Command("docker", dargs(args...)...).Output()
+			return string(out)
 		}
 		t.waitFor(90, 2*time.Second, name, "engine did not come up", func() bool { _, err := dx("core", "version"); return err == nil })
-		out, _ := dx("-c", "container | from cgr.dev/chainguard/busybox:latest | with-exec -- echo quench | stdout")
+		out := dout("-c", "container | from cgr.dev/chainguard/busybox:latest | with-exec -- echo quench | stdout")
 		t.Match(out, `(?m)^quench$`, "container through the engine")
 		if out, err := dx("init", "--sdk=go", "--name=hello"); err != nil {
 			t.Fatalf("dagger init: %s", out)
 		}
-		out, _ = dx("call", "container-echo", "--string-arg=quench", "stdout")
+		out = dout("call", "container-echo", "--string-arg=quench", "stdout")
 		t.Match(out, `(?m)^quench$`, "Go module call")
 		t.Logf("smoke test passed (%s)", strings.SplitN(v, "\n", 2)[0])
 	})
