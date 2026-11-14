@@ -37,7 +37,9 @@ func init() {
 		}
 		return e
 	})
-	cdi("cdi-controller", func(*T) []string {
+	cdi("cdi-controller", func(t *T) []string {
+		// the operator gives the controller pod a readiness probe of `cat /tmp/ready`
+		t.Contains(t.RunEntryAny("cat", "/etc/passwd"), "cdi:", "cat for the readiness probe")
 		e := []string{"UPLOADPROXY_SERVICE=cdi-uploadproxy"}
 		for _, i := range images {
 			e = append(e, i+"=x")
