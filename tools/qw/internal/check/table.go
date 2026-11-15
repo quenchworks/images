@@ -174,6 +174,7 @@ var table = map[string]check{
 	"harbor-registryctl":                {src: ghRel("goharbor/harbor")},
 	"harbor-trivy-adapter":              {src: ghRel("goharbor/harbor")},
 	"headscale":                         {src: ghRel("juanfont/headscale"), n: 1},
+	"healthchecks":                      {src: ghRel("healthchecks/healthchecks"), n: 1},
 	"homebox":                           {src: ghRel("sysadminsmedia/homebox"), n: 1},
 	"homepage":                          {src: ghRel("gethomepage/homepage"), n: 1},
 	"hubble-relay":                      {src: ghRel("cilium/cilium"), lines: 2, f: filter{keep: full(`\d+\.\d+\.\d+`)}},

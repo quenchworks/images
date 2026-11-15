@@ -1,0 +1,85 @@
+# Healthchecks from the release tag, laid out like upstream's image under /opt/healthchecks.
+package:
+  name: quench-healthchecks
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Healthchecks cron and heartbeat monitor, built from source on Wolfi"
+  copyright:
+    - license: BSD-3-Clause
+  dependencies:
+    runtime:
+      - bash               # upstream's run.sh (wait -n, process-group kill)
+      - ca-certificates-bundle
+      - python-3.13        # the venv references the system interpreter
+      - py3.13-cryptography  # Wolfi build on its scanned OpenSSL; the wheel links its own statically
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - curl-dev           # pycurl
+      - libffi-dev
+      - openssl-dev
+      - postgresql-17-dev  # libpq for psycopg[c]
+      - py3.13-cryptography
+      - python-3.13
+      - python-3.13-dev
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/healthchecks/healthchecks/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Python app
+    runs: |
+      set -eu
+      export PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1 HOME="$(mktemp -d)"
+      V=/opt/healthchecks/.venv
+      python3.13 -m venv --system-site-packages "$V"
+      # upstream's image installs the same set: its requirements plus apprise, gunicorn, minio
+      # (S3 ping bodies) and psycopg; mysqlclient is left out (SQLite and PostgreSQL only).
+      # pycurl and psycopg build from source against Wolfi's libcurl and libpq.
+      PYCURL_SSL_LIBRARY=openssl "$V/bin/pip" install --no-binary pycurl,psycopg-c \
+        apprise gunicorn 'minio==7.2.20' 'psycopg[c]' -r requirements.txt
+      "$V/bin/pip" check
+      SITE="$V/lib/python3.13/site-packages"
+      if ls -d "$SITE"/*.libs 2>/dev/null | grep -q .; then echo "bundled native libs:"; ls -d "$SITE"/*.libs; exit 1; fi
+      test ! -e "$SITE/cryptography" || { echo "cryptography installed into the venv instead of from Wolfi"; exit 1; }
+      "$V/bin/python" -c "import pycurl; print(pycurl.version)"
+      "$V/bin/python" -c "import psycopg; print('psycopg', psycopg.__version__, psycopg.pq.__impl__)" | tee /dev/stderr | grep -q ' c$'
+      # pip vendors its own urllib3 and is not needed at run time
+      "$V/bin/python" -m pip uninstall -y -q pip
+      # upstream's Dockerfile: static files collected and compressed at build
+      rm -f hc/local_settings.py
+      DEBUG=False SECRET_KEY=build-key "$V/bin/python" manage.py collectstatic --noinput >/dev/null
+      DEBUG=False SECRET_KEY=build-key "$V/bin/python" manage.py compress >/dev/null
+      cp docker/run.sh docker/gunicorn.conf.py docker/fetchstatus.py .
+      # manage.py's shebang is /usr/bin/env python and the image has no env: call the venv's python
+      sed -i 's|\./manage\.py|python manage.py|g' run.sh
+      if grep -q '\./manage' run.sh; then echo 'run.sh still calls ./manage.py'; exit 1; fi
+      rm -rf .git .github stuff docker
+      find . -name __pycache__ -prune -exec rm -rf {} +
+
+  - name: Install
+    runs: |
+      set -eu
+      D="${{targets.destdir}}/opt/healthchecks"
+      install -d "$D"
+      # the workspace holds melange-out (the package being built): copy everything else
+      tar -cf - --exclude=./melange-out . | tar -xf - -C "$D"
+      cp -a /opt/healthchecks/.venv "$D/.venv"
+      chmod -R a+rX "$D"
+
+test:
+  pipeline:
+    - runs: |
+        cd /opt/healthchecks
+        DEBUG=False SECRET_KEY=t .venv/bin/python manage.py check --deploy --fail-level ERROR

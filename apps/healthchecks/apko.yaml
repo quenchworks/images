@@ -1,0 +1,58 @@
+# Assembles the Healthchecks image: Wolfi python-3.13, nonroot uid 1001, upstream's layout under
+# /opt/healthchecks. run.sh runs the migrations, then sendalerts, sendreports and gunicorn on 8000.
+# The SQLite database defaults to /data/hc.sqlite, which should be a volume; DB=postgres switches.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-healthchecks@local
+
+accounts:
+  groups:
+    - groupname: hc
+      gid: 1001
+  users:
+    - username: hc
+      uid: 1001
+      gid: 1001
+      homedir: /opt/healthchecks
+  run-as: 1001
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  VIRTUAL_ENV: /opt/healthchecks/.venv
+  PATH: /opt/healthchecks/.venv/bin:/usr/sbin:/sbin:/usr/bin:/bin
+  PYTHONUNBUFFERED: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+  DEBUG: "False"
+  DB_NAME: /data/hc.sqlite
+  USE_GZIP_MIDDLEWARE: "True"
+
+work-dir: /opt/healthchecks
+
+entrypoint:
+  command: /opt/healthchecks/run.sh
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-healthchecks"
+  org.opencontainers.image.licenses: "BSD-3-Clause"
+  org.opencontainers.image.version: "__VER__"
