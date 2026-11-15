@@ -1,0 +1,56 @@
+# Kener runtime: node runs /app/build/main.js on 3000 (migrations and seeds at start). SQLite in
+# /app/database (the volume); set REDIS_URL (required by Kener v4) and KENER_SECRET_KEY. Nonroot uid 1001,
+# multi-arch, shell-free.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-kener@local
+
+accounts:
+  groups:
+    - groupname: kener
+      gid: 1001
+  users:
+    - username: kener
+      uid: 1001
+      gid: 1001
+      homedir: /app
+  run-as: 1001
+
+work-dir: /app
+
+environment:
+  NODE_ENV: production
+  PORT: "3000"
+  BODY_SIZE_LIMIT: 3M
+  TZ: UTC
+  NODE_OPTIONS: --experimental-strip-types
+  DATABASE_URL: sqlite:///app/database/kener.sqlite.db
+
+paths:
+  - path: /app/database
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+entrypoint:
+  command: /usr/bin/node /app/build/main.js
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-kener"
+  org.opencontainers.image.licenses: "MIT"

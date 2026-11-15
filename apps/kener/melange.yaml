@@ -1,0 +1,74 @@
+# Kener from the release tag into /app, built like upstream's Dockerfile.
+package:
+  name: quench-kener
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Kener status page, built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - nodejs-24
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - jq
+      - nodejs-24
+      - node-gyp
+      - npm
+      - python3
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/rajnandan1/kener/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - runs: |
+      set -eu
+      export HOME="$(mktemp -d)" npm_config_cache="$(mktemp -d)"
+      # CVE floors (both inside npm's 14-day release cooldown until 2026-11-19, see build.conf):
+      # @sveltejs/kit 2.70.4 (CVE-2026-128117; it stays in the pruned tree) and fast-xml-parser 5.12.0
+      jq '.devDependencies["@sveltejs/kit"] = "2.70.4" | .overrides = {"@sveltejs/kit": "2.70.4", "fast-xml-parser": "5.12.0"}' \
+        package.json > package.json.new && mv package.json.new package.json
+      npm install --no-fund --no-audit
+      # upstream's image without the bundled docs (they need a Redis index job and a second build)
+      rm -rf "src/routes/(docs)" .svelte-kit
+      npm run build
+      npm prune --omit=dev --no-fund --no-audit
+      # npm 12 runs no install scripts: compile the addons against Wolfi's Node headers, drop the prebuilds
+      for m in better-sqlite3 bcrypt; do
+        ( cd "node_modules/$m" && node-gyp rebuild --release --nodedir=/usr --force_build=1 )
+      done
+      find node_modules -type d -name prebuilds -prune -exec rm -rf {} +
+      # npm installs the musl variants of platform packages too (sharp's @img/*-linuxmusl-*); a glibc image
+      # cannot load them and melange would add a dependency on musl
+      find node_modules -type d \( -name '*linuxmusl*' -o -name '*-musl' -o -name '*-musl-*' \) -prune -exec rm -rf {} +
+      if find node_modules -type f -name '*.node' -exec readelf -d {} \; 2>/dev/null | grep -q 'libc.musl'; then
+        echo "a musl-linked native module is left"; exit 1
+      fi
+      [ "$(node -p "require('@sveltejs/kit/package.json').version")" = 2.70.4 ]
+      [ "$(node -p "require('fast-xml-parser/package.json').version")" = 5.12.0 ]
+      node -e 'require("better-sqlite3")(":memory:").prepare("select 1").get(); require("bcrypt"); require("sharp")'
+      grep -F "${{package.version}}" package.json
+      app="${{targets.destdir}}/app"
+      install -d "$app/database" "$app/src/lib/server/db" "$app/src/lib/server/templates"
+      cp -a node_modules package.json migrations seeds build "$app/"
+      cp src/lib/server/db/seedSiteData.ts src/lib/server/db/seedMonitorData.ts src/lib/server/db/seedPagesData.ts "$app/src/lib/server/db/"
+      cp src/lib/allPerms.ts "$app/src/lib/"
+      cp -a src/lib/server/templates/general "$app/src/lib/server/templates/"
+      cp -a src/lib/locales "$app/src/lib/"
+
+test:
+  pipeline:
+    - runs: test -f /app/build/main.js

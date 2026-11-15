@@ -106,3 +106,63 @@ func init() {
 		t.Logf("smoke test passed (grocy %s: read-only boot, first user from the environment, no admin/admin, wrong password refused, after a restart the session reads /api/system/info and adds a product; user %s)", t.Want, u)
 	})
 }
+
+// kenerForm posts a SvelteKit form action (with the Origin header SvelteKit's CSRF check wants) and
+// returns the status and the Location header.
+func kenerForm(base, action string, form url.Values) (int, string) {
+	req, _ := http.NewRequest("POST", base+"/account/signin?/"+action, strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", base)
+	c := &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	r, err := c.Do(req)
+	if err != nil {
+		return 0, err.Error()
+	}
+	defer r.Body.Close()
+	return r.StatusCode, r.Header.Get("Location")
+}
+
+func init() {
+	// On a read-only rootfs with /app/database on a volume and our valkey as its Redis: the migrations run,
+	// the first admin signs up through the form, a second sign-up is refused, a wrong password is refused,
+	// and the admin signs in after a restart.
+	register("kener", func(t *T) {
+		const base = "http://127.0.0.1:13000"
+		const pw = "Smoke-Pass-2026!"
+		u := t.User("1001")
+		net := t.Name("net")
+		t.Docker("network", "create", net)
+		t.Cleanup(func() { docker("network", "rm", net) })
+		redis := t.Name("redis")
+		t.Cleanup(func() { docker("rm", "-f", redis) })
+		t.Docker("run", "-d", "--name", redis, "--network", net, "ghcr.io/quenchworks/images/valkey:9.1.3")
+		vol := t.Name("data")
+		t.Docker("volume", "create", vol)
+		t.Cleanup(func() { docker("volume", "rm", vol) })
+		start := func(name string) {
+			t.Start(name, []string{"--read-only", "--tmpfs", "/tmp:rw,mode=1777", "--network", net, "-v", vol + ":/app/database",
+				"-e", "REDIS_URL=redis://" + redis + ":6379", "-e", "KENER_SECRET_KEY=quench-smoke-secret-key-0123456789", "-e", "ORIGIN=" + base,
+				"-p", "127.0.0.1:13000:3000"})
+			t.WaitHTTP(base+"/account/signin", 120, name)
+		}
+		name := t.Name("")
+		start(name)
+		signup := url.Values{"name": {"Smoke"}, "email": {"smoke@quench.test"}, "password": {pw}}
+		if code, loc := kenerForm(base, "signup", signup); code/100 != 3 || !strings.Contains(loc, "/manage") {
+			t.Fatalf("first sign-up: %d %q\n%s", code, loc, t.Logs(name))
+		}
+		signup.Set("email", "second@quench.test")
+		if code, loc := kenerForm(base, "signup", signup); code/100 == 3 {
+			t.Fatalf("a second sign-up was accepted (%d %q)", code, loc)
+		}
+		docker("rm", "-f", name)
+		start(t.Name("again"))
+		if code, _ := kenerForm(base, "login", url.Values{"email": {"smoke@quench.test"}, "password": {"wrong-password-1"}}); code/100 == 3 {
+			t.Fatalf("a wrong password signed in")
+		}
+		if code, loc := kenerForm(base, "login", url.Values{"email": {"smoke@quench.test"}, "password": {pw}}); code/100 != 3 || !strings.Contains(loc, "/manage") {
+			t.Fatalf("sign-in after a restart: %d %q", code, loc)
+		}
+		t.Logf("smoke test passed (kener %s: read-only boot with valkey, first admin signed up, second sign-up and a wrong password refused, sign-in after a restart; user %s)", t.Want, u)
+	})
+}

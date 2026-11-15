@@ -140,6 +140,7 @@ var table = map[string]check{
 	"readeck":                           {src: codebergRel("readeck/readeck"), n: 1},
 	"atuin-server":                      {src: ghRel("atuinsh/atuin"), n: 1},
 	"grocy":                             {src: ghRel("grocy/grocy"), n: 1},
+	"kener":                             {src: ghRel("rajnandan1/kener"), n: 1},
 	"etcd":                              {src: ghRel("etcd-io/etcd")},
 	"excalidraw":                        {src: ghRel("excalidraw/excalidraw")},
 	"external-dns":                      {src: ghRel("kubernetes-sigs/external-dns")},
