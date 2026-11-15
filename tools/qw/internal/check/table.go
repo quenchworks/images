@@ -115,6 +115,7 @@ var table = map[string]check{
 	"vitess-operator":                   {src: ghRel("planetscale/vitess-operator"), n: 1},
 	"duckdb":                            {src: ghRel("duckdb/duckdb")},
 	"dufs":                              {src: ghRel("sigoden/dufs"), n: 1},
+	"sftpgo":                            {src: ghRel("drakkan/sftpgo"), n: 1},
 	"easegress":                         {src: ghRel("easegress-io/easegress"), lines: 2},
 	"elasticsearch":                     {src: ghRel("elastic/elasticsearch")},
 	"emissary-apiext":                   {src: ghRel("emissary-ingress/emissary"), n: 1},
@@ -482,6 +483,10 @@ var table = map[string]check{
 				return strings.TrimLeft(common.Str(common.Path(r, "tag_name")), "v")
 			})
 		})},
+	"gitlab-shell": {src: jsonList("https://gitlab.com/api/v4/projects/gitlab-org%2Fgitlab-shell/repository/tags?per_page=40",
+		func(d any) []string {
+			return common.Each(d, func(r any) string { return strings.TrimLeft(common.Str(common.Path(r, "name")), "v") })
+		}), n: 1},
 	"gravitee-console":          graviteeCheck,
 	"gravitee-gateway":          graviteeCheck,
 	"gravitee-management-api":   graviteeCheck,

@@ -1,0 +1,83 @@
+# SFTPGo runtime: the static sftpgo binary, its web UI under /usr/share/sftpgo and upstream's
+# config at /etc/sftpgo/sftpgo.json. Nonroot uid 1001, multi-arch.
+#
+# Writable trees (volumes on a read-only rootfs), owned by 1001:
+#   /var/lib/sftpgo  the working dir: SQLite DB (sftpgo.db) and the generated SSH host keys
+#   /srv/sftpgo      users' files (data/) and backups (backups/)
+# Ports: SFTP 2022, web admin, web client and REST API 8080 (upstream defaults, both > 1024).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-sftpgo@local
+
+accounts:
+  groups:
+    - groupname: sftpgo
+      gid: 1001
+  users:
+    - username: sftpgo
+      uid: 1001
+      gid: 1001
+      homedir: /var/lib/sftpgo
+  run-as: 1001
+
+work-dir: /var/lib/sftpgo
+
+environment:
+  SFTPGO_CONFIG_FILE: /etc/sftpgo/sftpgo.json
+  SFTPGO_CONFIG_DIR: /var/lib/sftpgo
+  SFTPGO_LOG_FILE_PATH: ""
+  SFTPGO_DATA_PROVIDER__NAME: /var/lib/sftpgo/sftpgo.db
+  SFTPGO_HTTPD__TEMPLATES_PATH: /usr/share/sftpgo/templates
+  SFTPGO_HTTPD__STATIC_FILES_PATH: /usr/share/sftpgo/static
+  SFTPGO_HTTPD__OPENAPI_PATH: /usr/share/sftpgo/openapi
+
+paths:
+  - path: /var/lib/sftpgo
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+  # apko makes missing parents root-owned 0750, which locks uid 1001 out of /srv: declare them
+  - path: /srv
+    type: directory
+    uid: 0
+    gid: 0
+    permissions: 0o755
+  - path: /srv/sftpgo
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+  - path: /srv/sftpgo/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+  - path: /srv/sftpgo/backups
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+entrypoint:
+  command: /usr/bin/sftpgo
+cmd: serve
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-sftpgo"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"
