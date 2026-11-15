@@ -1,0 +1,52 @@
+# kanidmd from the release tag, built like upstream's server/Dockerfile (cargo auditable build -p daemon,
+# build profile container_generic), with the web assets from server/core/static.
+package:
+  name: quench-kanidm
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Kanidm identity server, built from source on Wolfi"
+  copyright:
+    - license: MPL-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - clang
+      - rust
+      - cargo-auditable
+      - openssl-dev
+      - sqlite-dev
+      - linux-pam-dev
+      - systemd-dev
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/kanidm/kanidm/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Build kanidmd
+    runs: |
+      set -eu
+      export CARGO_HOME="$(mktemp -d)" KANIDM_BUILD_PROFILE=container_generic CC=clang RUSTFLAGS="-Clinker=clang"
+      cargo auditable build --locked --release -p daemon
+      install -Dm755 target/release/kanidmd "${{targets.destdir}}/usr/bin/kanidmd"
+      # the container_generic profile serves the web UI from /hpkg, as upstream's image does
+      mkdir -p "${{targets.destdir}}/hpkg"
+      cp -r server/core/static/. "${{targets.destdir}}/hpkg/"
+      test -f "${{targets.destdir}}/hpkg/external/bootstrap.bundle.min.js"
+      "${{targets.destdir}}/usr/bin/kanidmd" version 2>&1 | grep -F "${{package.version}}"
+
+test:
+  pipeline:
+    - runs: kanidmd version

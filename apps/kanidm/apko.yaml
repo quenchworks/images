@@ -1,0 +1,57 @@
+# Kanidm runtime: kanidmd and its web assets. Nonroot uid 1001, multi-arch. kanidmd reads KANIDM_CONFIG
+# (server.toml); the chart mounts it with the TLS pair and keeps the database on the /data volume.
+# HTTPS on 8443 (LDAPS on 3636 when ldapbindaddress is set).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-kanidm@local
+
+accounts:
+  groups:
+    - groupname: kanidm
+      gid: 1001
+  users:
+    - username: kanidm
+      uid: 1001
+      gid: 1001
+      homedir: /data
+  run-as: 1001
+
+work-dir: /data
+
+environment:
+  KANIDM_CONFIG: /etc/kanidm/server.toml
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+  - path: /etc/kanidm
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /usr/bin/kanidmd
+cmd: server
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-kanidm"
+  org.opencontainers.image.licenses: "MPL-2.0"
