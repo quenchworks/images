@@ -73,7 +73,8 @@ environment:
     packages:
       - busybox
       - ca-certificates-bundle
-      - python3   # rewrites composer.json / asserts the remediated lock (build only)
+      - jq        # rewrites composer.json and asserts the remediated lock (build only)
+      - coreutils # sort -V for the floor checks
       # composer + just enough php to run it: the release tarball vendors five packages
       # with fixable CVEs (see the bump step). Build env only; NOT in the runtime image.
       - composer
@@ -122,23 +123,15 @@ pipeline:
       # export and two-factor auth. So we first restate the release's own resolved set
       # as exact requires -- making composer.json describe exactly what upstream shipped
       # -- and only then raise the five floors. Result: 5 upgrades, 0 removals.
-      python3 - "$src" <<'PY'
-      import json, sys
-      root = sys.argv[1]
-      bump = {"twig/twig": "^3.28.0", "symfony/cache": "^5.4.53",
-              "symfony/process": "^5.4.51", "paragonie/sodium_compat": "^1.24.0",
-              "symfony/expression-language": "^5.4.54", "symfony/config": "^5.4.56",
-              "symfony/filesystem": "^5.4.56"}
-      cj = json.load(open(root + "/composer.json"))
-      lock = json.load(open(root + "/composer.lock"))
-      req = dict(cj["require"])
-      for p in lock["packages"]:                 # non-dev = what the release ships
-          req[p["name"]] = bump.get(p["name"], p["version"])
-      req.update(bump)                           # floors win even if not yet in the lock
-      cj["require"] = req
-      json.dump(cj, open(root + "/composer.json", "w"), indent=4)
-      print("restated %d exact requires + %d CVE floors" % (len(req), len(bump)))
-      PY
+      # composer.json's require restated as the exact versions the release ships (its lock's
+      # non-dev packages), with the CVE floors on top, so composer update moves only the floors
+      bump='{"twig/twig": "^3.28.0", "symfony/cache": "^5.4.53", "symfony/process": "^5.4.51",
+        "paragonie/sodium_compat": "^1.24.0", "symfony/expression-language": "^5.4.54",
+        "symfony/config": "^5.4.56", "symfony/filesystem": "^5.4.56"}'
+      jq --argjson bump "$bump" --slurpfile lock "$src/composer.lock" \
+        '.require = (.require + ([$lock[0].packages[] | {(.name): ($bump[.name] // .version)}] | add) + $bump)' \
+        "$src/composer.json" > /tmp/composer.json && mv /tmp/composer.json "$src/composer.json"
+      echo "restated $(jq '.require | length' "$src/composer.json") requires"
 
       composer update -d "$src" --with-dependencies --no-dev --no-scripts --no-audit \
         --no-progress --no-interaction --ignore-platform-reqs \
@@ -148,29 +141,19 @@ pipeline:
       # Assert the fixed versions really landed in the vendored inventory AND that the
       # optional runtime packages survived the re-resolve (a silent prune would break
       # PDF export / 2FA without failing the build).
-      python3 - "$src" <<'PY'
-      import json, sys
-      root = sys.argv[1]
-      inst = json.load(open(root + "/vendor/composer/installed.json"))
-      have = {p["name"]: p["version"].lstrip("v") for p in inst["packages"]}
-      floors = {"twig/twig": (3, 27, 0), "symfony/cache": (5, 4, 52),
-                "symfony/process": (5, 4, 51), "paragonie/sodium_compat": (1, 24, 0),
-                "symfony/expression-language": (5, 4, 54), "symfony/config": (5, 4, 56),
-                "symfony/filesystem": (5, 4, 56)}
-      bad = []
-      for name, floor in floors.items():
-          v = have.get(name)
-          if not v or tuple(int(x) for x in v.split(".")[:3]) < floor:
-              bad.append("%s=%s (need >= %s)" % (name, v, ".".join(map(str, floor))))
-      for name in ("tecnickcom/tcpdf", "pragmarx/google2fa", "bacon/bacon-qr-code",
-                   "web-auth/webauthn-lib", "code-lts/u2f-php-server",
-                   "thecodingmachine/safe", "phpmyadmin/sql-parser"):
-          if name not in have:
-              bad.append("%s was PRUNED from vendor/" % name)
-      if bad:
-          sys.exit("composer remediation failed: " + "; ".join(bad))
-      print("composer remediation ok: %d packages, twig=%s" % (len(have), have["twig/twig"]))
-      PY
+      have() { jq -r --arg n "$1" '.packages[] | select(.name == $n) | .version | ltrimstr("v")' "$src/vendor/composer/installed.json"; }
+      bad=""
+      for f in twig/twig@3.27.0 symfony/cache@5.4.52 symfony/process@5.4.51 paragonie/sodium_compat@1.24.0 \
+               symfony/expression-language@5.4.54 symfony/config@5.4.56 symfony/filesystem@5.4.56; do
+        v="$(have "${f%@*}")"
+        if [ -z "$v" ] || [ "$(printf '%s\n%s\n' "$v" "${f#*@}" | sort -V | head -1)" != "${f#*@}" ]; then bad="$bad ${f%@*}=$v(need>=${f#*@})"; fi
+      done
+      for n in tecnickcom/tcpdf pragmarx/google2fa bacon/bacon-qr-code web-auth/webauthn-lib \
+               code-lts/u2f-php-server thecodingmachine/safe phpmyadmin/sql-parser; do
+        [ -n "$(have "$n")" ] || bad="$bad $n(pruned)"
+      done
+      [ -z "$bad" ] || { echo "composer remediation failed:$bad"; exit 1; }
+      echo "composer remediation ok: twig=$(have twig/twig)"
 
   - name: Patch the prototype-pollution hole in the bundled js-cookie asset
     runs: |
@@ -184,19 +167,12 @@ pipeline:
       # silently stop applying cookie attributes (path / secure / samesite) on a
       # session-security path. We patch the actual defect instead, keeping the 2.x API:
       # skip inherited keys and __proto__ when merging attribute objects.
-      python3 - "$src/js/vendor/js.cookie.js" <<'PY'
-      import sys
-      p = sys.argv[1]
-      s = open(p).read()
-      needle = "\t\t\tfor (var key in attributes) {\n"
-      guard = ("\t\t\t\tif (key === '__proto__' || "
-               "!Object.prototype.hasOwnProperty.call(attributes, key)) { continue; }\n")
-      if s.count(needle) != 1:
-          sys.exit("js.cookie.js: expected exactly 1 attribute-merge loop, found %d"
-                   % s.count(needle))
-      open(p, "w").write(s.replace(needle, needle + guard))
-      print("js.cookie.js: prototype-pollution guard applied")
-      PY
+      f="$src/js/vendor/js.cookie.js"
+      n="$(awk '/^\t\t\tfor \(var key in attributes\) \{$/ { c++ } END { print c + 0 }' "$f")"
+      [ "$n" = 1 ] || { echo "js.cookie.js: expected exactly 1 attribute-merge loop, found $n"; exit 1; }
+      awk '{ print } /^\t\t\tfor \(var key in attributes\) \{$/ { print "\t\t\t\tif (key === \047__proto__\047 || !Object.prototype.hasOwnProperty.call(attributes, key)) { continue; }" }' \
+        "$f" > "$f.new" && mv "$f.new" "$f"
+      echo "js.cookie.js: prototype-pollution guard applied"
       grep -q "__proto__" "$src/js/vendor/js.cookie.js"
 
   - name: Install the phpMyAdmin tree as the docroot at /var/www/html
