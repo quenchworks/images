@@ -1,0 +1,57 @@
+# ezBookkeeping runtime: the static binary, its built frontend (public/), conf/ and templates/ under
+# /ezbookkeeping. Nonroot uid 1001, multi-arch. The database, uploaded files and storage live on the
+# /ezbookkeeping/data volume (EBK_* below); logs go to the console. HTTP on 8080. Set
+# EBK_SECURITY_SECRET_KEY (the chart generates it): sessions are signed with it.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - tzdata
+    - quench-ezbookkeeping@local
+
+accounts:
+  groups:
+    - groupname: ezbookkeeping
+      gid: 1001
+  users:
+    - username: ezbookkeeping
+      uid: 1001
+      gid: 1001
+      homedir: /ezbookkeeping
+  run-as: 1001
+
+work-dir: /ezbookkeeping
+
+environment:
+  EBK_DATABASE_DB_PATH: /ezbookkeeping/data/ezbookkeeping.db
+  # must already exist at startup: the volume root always does (the app makes its own subfolders)
+  EBK_STORAGE_LOCAL_FILESYSTEM_PATH: /ezbookkeeping/data/
+  EBK_LOG_MODE: console
+
+paths:
+  - path: /ezbookkeeping/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+entrypoint:
+  command: /ezbookkeeping/ezbookkeeping
+cmd: server run
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-ezbookkeeping"
+  org.opencontainers.image.licenses: "MIT"

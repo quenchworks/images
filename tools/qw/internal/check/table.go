@@ -116,6 +116,7 @@ var table = map[string]check{
 	"duckdb":                            {src: ghRel("duckdb/duckdb")},
 	"cloudreve":                         {src: ghRel("cloudreve/cloudreve"), n: 1},
 	"dufs":                              {src: ghRel("sigoden/dufs"), n: 1},
+	"ezbookkeeping":                     {src: ghRel("mayswind/ezbookkeeping"), n: 1},
 	"adguardhome":                       {src: ghRel("AdguardTeam/AdGuardHome"), n: 1},
 	"kanidm":                            {src: ghRel("kanidm/kanidm"), n: 1},
 	"semaphore":                         {src: ghRel("semaphoreui/semaphore"), n: 1},
