@@ -1,0 +1,49 @@
+# GitLab Workhorse runtime: gitlab-workhorse plus its helpers (gitlab-resize-image, gitlab-zip-cat,
+# gitlab-zip-metadata). Nonroot uid 1001 (user git), multi-arch. The chart passes -authBackend (the Rails
+# Puma), -secretPath (the shared workhorse secret) and -documentRoot; it listens on 8181 by default here.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-gitlab-workhorse@local
+
+accounts:
+  groups:
+    - groupname: git
+      gid: 1001
+  users:
+    - username: git
+      uid: 1001
+      gid: 1001
+      homedir: /home/git
+  run-as: 1001
+
+work-dir: /home/git
+
+paths:
+  - path: /home/git
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /usr/bin/gitlab-workhorse
+cmd: -listenAddr 0.0.0.0:8181 -logFormat json
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-gitlab-workhorse"
+  org.opencontainers.image.licenses: "MIT"
