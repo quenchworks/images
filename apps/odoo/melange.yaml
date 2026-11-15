@@ -77,12 +77,9 @@ pipeline:
       # setup.py's install_requires, unpinned, with PyPDF2 swapped for pypdf. The Wolfi
       # packages already satisfy their entries, so pip leaves them in system site-packages;
       # C extensions pip would otherwise take as manylinux wheels build from source.
-      "$VENV/bin/python" - > requirements.txt <<'PY'
-      import importlib.metadata as m, re
-      for r in m.requires("odoo"):
-          name = re.split(r"[\s\[<>=!~;]", r, 1)[0]
-          print("pypdf" if name.lower() == "pypdf2" else r)
-      PY
+      # the Requires-Dist lines of odoo's installed metadata, PyPDF2 replaced by pypdf
+      grep -h '^Requires-Dist: ' "$VENV"/lib/python3.13/site-packages/odoo-*.dist-info/METADATA \
+        | sed -E 's/^Requires-Dist: //; s/^[Pp][Yy][Pp][Dd][Ff]2([^A-Za-z0-9._-].*)?$/pypdf/' > requirements.txt
       cat requirements.txt
       # Pillow 12.3.0 (Wolfi's newest) carries 28 CVEs fixed in 13.0.0 (2026-10-22), so it
       # builds from sdist against Wolfi's image libraries before the requirements, which it
