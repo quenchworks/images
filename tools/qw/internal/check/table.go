@@ -405,6 +405,7 @@ var table = map[string]check{
 	"woodpecker":  {src: ghRel("woodpecker-ci/woodpecker"), n: 1},
 	"xwiki":       {src: scrapeSrc("https://maven.xwiki.org/releases/org/xwiki/platform/xwiki-platform-distribution-war/maven-metadata.xml", `<version>(\d+\.\d+\.\d+)</version>`), lines: 2},
 	"xyops":       {src: ghRel("pixlcore/xyops")},
+	"yarr":        {src: ghRel("nkanaev/yarr"), n: 1},
 	"yourls":      {src: ghRel("YOURLS/YOURLS"), n: 1},
 	"zipkin":      {src: ghRel("openzipkin/zipkin"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
 	"zitadel":     {src: ghRel("zitadel/zitadel")},

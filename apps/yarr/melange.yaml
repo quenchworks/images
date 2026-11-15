@@ -1,0 +1,63 @@
+# yarr from the release tag: the frontend bundle, then a static cgo binary at /usr/bin/yarr.
+package:
+  name: quench-yarr
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened yarr RSS reader, built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - coreutils          # sort -V for the floor check
+      - go-1.26
+      - nodejs-24
+      - npm
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/nkanaev/yarr/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Frontend
+    runs: |
+      set -eu
+      export npm_config_cache="$(mktemp -d)" HOME="$(mktemp -d)"
+      # upstream's makefile: `npm run build -- --minify` writes the bundle into src/assets/static
+      npm ci
+      npm run build -- --minify
+      ls src/assets/static
+
+  - name: Build
+    runs: |
+      set -eu
+      export CGO_ENABLED=1 GOTOOLCHAIN=local GOFLAGS=-mod=mod
+      # house golang.org/x floor (yarr imports net, sys and text). go get is exact, so raise a
+      # module only when it is below the floor; a newer upstream pin stays
+      for m in golang.org/x/net@v0.62.0 golang.org/x/sys@v0.49.0 golang.org/x/text@v0.43.0; do
+        have="$(go list -m -f '{{.Version}}' "${m%@*}")"
+        [ "$(printf '%s\n%s\n' "${m#*@}" "$have" | sort -V | head -1)" = "${m#*@}" ] || go get "$m"
+      done
+      go mod tidy
+      go build -trimpath -tags "sqlite_foreign_keys sqlite_json sqlite_fts5" \
+        -ldflags "-s -w -X main.Version=${{package.version}} -X main.GitHash=v${{package.version}} -extldflags -static" \
+        -o "${{targets.destdir}}/usr/bin/yarr" ./cmd/yarr
+      go version -m "${{targets.destdir}}/usr/bin/yarr" | grep -E 'golang.org/x/(net|sys|text)'
+      "${{targets.destdir}}/usr/bin/yarr" -version | grep -F "${{package.version}}"
+
+test:
+  pipeline:
+    - runs: |
+        yarr -version
