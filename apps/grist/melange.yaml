@@ -64,45 +64,47 @@ pipeline:
       curl -fsSL -o /tmp/prewarmer.c "$raw/runsc/prewarmer/prewarmer.c"
       printf '%s  %s\n' __SENTRY_MAIN_SHA__ "$src/runsc/cmd/sentry/sentry_main.go" __PREWARMER_SHA__ /tmp/prewarmer.c | sha256sum -c -
       cd "$src"
-      python3.13 - <<'PY'
-      def sub(path, old, new, everywhere=False):
-          s = open(path).read()
-          n = s.count(old)
-          if n == 0 or (n != 1 and not everywhere):
-              raise SystemExit(f"{path}: expected one match, found {n}: {old[:60]!r}")
-          open(path, "w").write(s.replace(old, new))
-      sub("runsc/config/config.go",
-          '\tTestOnlyAllowRunAsCurrentUserWithoutChroot bool `flag:"TESTONLY-unsafe-nonroot"`\n',
-          '\tTestOnlyAllowRunAsCurrentUserWithoutChroot bool `flag:"TESTONLY-unsafe-nonroot"`\n\n'
-          '\t// Unprivileged starts the sandbox and gofer as the current user without new\n'
-          '\t// namespaces, chroot or capabilities (gristlabs/gvisor --unprivileged).\n'
-          '\tUnprivileged bool `flag:"unprivileged"`\n')
-      sub("runsc/config/flags.go", '\tflagSet.Bool("rootless", false,',
-          '\tflagSet.Bool("unprivileged", false, "start the sandbox and gofer as the current user without new namespaces, chroot or capabilities.")\n'
-          '\tflagSet.Bool("rootless", false,')
-      for f in ("runsc/cmd/run.go", "runsc/cmd/do.go"):
-          sub(f, "\t\tif err := specutils.MaybeRunAsRoot(); err != nil {",
-              "\t\tif conf.Unprivileged {\n\t\t} else if err := specutils.MaybeRunAsRoot(); err != nil {")
-      g = "runsc/cmd/gofer.go"
-      sub(g, "\tconf := args[0].(*config.Config)\n\n\t// Set traceback level",
-          "\tconf := args[0].(*config.Config)\n\tif conf.Unprivileged {\n\t\tg.applyCaps = false\n\t\tg.setUpRoot = false\n\t}\n\n\t// Set traceback level")
-      sub(g, "conf.TestOnlyAllowRunAsCurrentUserWithoutChroot",
-          "(conf.TestOnlyAllowRunAsCurrentUserWithoutChroot || conf.Unprivileged)", everywhere=True)
-      sub(g, "\tif err := unix.Chroot(root); err != nil {",
-          "\tif conf.Unprivileged {\n\t\tlog.Warningf(\"Unprivileged: gofer serves %q without chroot\", root)\n"
-          "\t} else if err := unix.Chroot(root); err != nil {")
-      sub("runsc/container/container.go",
-          "\tif !rootlessEUID {\n\t\tif userNS, ok := specutils.GetNS(specs.UserNamespace, c.Spec); ok {",
-          "\tif conf.Unprivileged {\n\t\tnss = nil\n\t\tpinGoferNetNS = false\n"
-          "\t} else if !rootlessEUID {\n\t\tif userNS, ok := specutils.GetNS(specs.UserNamespace, c.Spec); ok {")
-      sb = "runsc/sandbox/sandbox.go"
-      sub(sb, "\tif conf.Network == config.NetworkHost || conf.DirectFS {\n\t\tif userns, ok := specutils.GetNS(specs.UserNamespace, args.Spec); ok {",
-          "\tif conf.Unprivileged {\n\t\tlog.Warningf(\"Unprivileged: sandbox starts as the current user without new namespaces or chroot\")\n\t\tnss = nil\n"
-          "\t} else if conf.Network == config.NetworkHost || conf.DirectFS {\n\t\tif userns, ok := specutils.GetNS(specs.UserNamespace, args.Spec); ok {")
-      sub(sb, "\tif conf.Rootless || conf.TestOnlyAllowRunAsCurrentUserWithoutChroot {\n\t\t// Cannot change ownership without CAP_CHOWN.",
-          "\tif conf.Rootless || conf.Unprivileged || conf.TestOnlyAllowRunAsCurrentUserWithoutChroot {\n\t\t// Cannot change ownership without CAP_CHOWN.")
-      print("unprivileged port applied")
-      PY
+      cat > /tmp/gvport.go <<'GO'
+      package main
+
+      import (
+      	"fmt"
+      	"os"
+      	"strings"
+      )
+
+      // sub replaces old with new in path; old must match exactly once unless everywhere is set.
+      func sub(path, old, new string, everywhere bool) {
+      	b, err := os.ReadFile(path)
+      	if err != nil {
+      		panic(err)
+      	}
+      	s := string(b)
+      	n := strings.Count(s, old)
+      	if n == 0 || (n != 1 && !everywhere) {
+      		fmt.Fprintf(os.Stderr, "%s: expected one match, found %d: %.60q\n", path, n, old)
+      		os.Exit(1)
+      	}
+      	if err := os.WriteFile(path, []byte(strings.ReplaceAll(s, old, new)), 0o644); err != nil {
+      		panic(err)
+      	}
+      }
+
+      func main() {
+      	sub("runsc/config/config.go", "\tTestOnlyAllowRunAsCurrentUserWithoutChroot bool `flag:\"TESTONLY-unsafe-nonroot\"`\n", "\tTestOnlyAllowRunAsCurrentUserWithoutChroot bool `flag:\"TESTONLY-unsafe-nonroot\"`\n\n\t// Unprivileged starts the sandbox and gofer as the current user without new\n\t// namespaces, chroot or capabilities (gristlabs/gvisor --unprivileged).\n\tUnprivileged bool `flag:\"unprivileged\"`\n", false)
+      	sub("runsc/config/flags.go", "\tflagSet.Bool(\"rootless\", false,", "\tflagSet.Bool(\"unprivileged\", false, \"start the sandbox and gofer as the current user without new namespaces, chroot or capabilities.\")\n\tflagSet.Bool(\"rootless\", false,", false)
+      	sub("runsc/cmd/run.go", "\t\tif err := specutils.MaybeRunAsRoot(); err != nil {", "\t\tif conf.Unprivileged {\n\t\t} else if err := specutils.MaybeRunAsRoot(); err != nil {", false)
+      	sub("runsc/cmd/do.go", "\t\tif err := specutils.MaybeRunAsRoot(); err != nil {", "\t\tif conf.Unprivileged {\n\t\t} else if err := specutils.MaybeRunAsRoot(); err != nil {", false)
+      	sub("runsc/cmd/gofer.go", "\tconf := args[0].(*config.Config)\n\n\t// Set traceback level", "\tconf := args[0].(*config.Config)\n\tif conf.Unprivileged {\n\t\tg.applyCaps = false\n\t\tg.setUpRoot = false\n\t}\n\n\t// Set traceback level", false)
+      	sub("runsc/cmd/gofer.go", "conf.TestOnlyAllowRunAsCurrentUserWithoutChroot", "(conf.TestOnlyAllowRunAsCurrentUserWithoutChroot || conf.Unprivileged)", true)
+      	sub("runsc/cmd/gofer.go", "\tif err := unix.Chroot(root); err != nil {", "\tif conf.Unprivileged {\n\t\tlog.Warningf(\"Unprivileged: gofer serves %q without chroot\", root)\n\t} else if err := unix.Chroot(root); err != nil {", false)
+      	sub("runsc/container/container.go", "\tif !rootlessEUID {\n\t\tif userNS, ok := specutils.GetNS(specs.UserNamespace, c.Spec); ok {", "\tif conf.Unprivileged {\n\t\tnss = nil\n\t\tpinGoferNetNS = false\n\t} else if !rootlessEUID {\n\t\tif userNS, ok := specutils.GetNS(specs.UserNamespace, c.Spec); ok {", false)
+      	sub("runsc/sandbox/sandbox.go", "\tif conf.Network == config.NetworkHost || conf.DirectFS {\n\t\tif userns, ok := specutils.GetNS(specs.UserNamespace, args.Spec); ok {", "\tif conf.Unprivileged {\n\t\tlog.Warningf(\"Unprivileged: sandbox starts as the current user without new namespaces or chroot\")\n\t\tnss = nil\n\t} else if conf.Network == config.NetworkHost || conf.DirectFS {\n\t\tif userns, ok := specutils.GetNS(specs.UserNamespace, args.Spec); ok {", false)
+      	sub("runsc/sandbox/sandbox.go", "\tif conf.Rootless || conf.TestOnlyAllowRunAsCurrentUserWithoutChroot {\n\t\t// Cannot change ownership without CAP_CHOWN.", "\tif conf.Rootless || conf.Unprivileged || conf.TestOnlyAllowRunAsCurrentUserWithoutChroot {\n\t\t// Cannot change ownership without CAP_CHOWN.", false)
+      	fmt.Println("unprivileged port applied")
+      }
+      GO
+      go run /tmp/gvport.go
       bin="${{targets.destdir}}/usr/bin"
       install -d "$bin/gvisor-bin"
       go build -o "$bin/runsc" ./runsc
