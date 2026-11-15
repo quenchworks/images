@@ -522,6 +522,7 @@ var table = map[string]check{
 	"hasura":                    {src: ghRel("hasura/graphql-engine"), lines: 2, f: filter{keep: prefix("2.")}},
 	"influxdb":                  {src: ghRel("influxdata/influxdb"), f: filter{keep: prefix("2.")}},
 	"jaeger":                    {src: ghRel("jaegertracing/jaeger"), n: 1, f: filter{keep: prefix("2.")}},
+	"mercure":                   {src: ghRel("dunglas/mercure"), n: 1},
 	"metabase":                  {src: ghRel("metabase/metabase"), n: 1, f: filter{keep: prefix("0.")}},
 	"jmeter":                    {src: ghRel("apache/jmeter"), f: filter{clean: func(t string) string { return strings.ReplaceAll(t, "rel/v", "") }}},
 	"linkerd-cni":               {src: ghRel("linkerd/linkerd2-proxy-init"), n: 1, f: filter{keep: prefix("cni-plugin/v"), clean: trim("cni-plugin/v")}},

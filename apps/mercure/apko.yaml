@@ -1,0 +1,62 @@
+# Mercure runtime: the mercure binary (Caddy with the Mercure module) and upstream's Caddyfile at
+# /etc/caddy/Caddyfile, configured from the environment. Nonroot uid 1001, multi-arch. Listens on :8080
+# (SERVER_NAME); Caddy's data and config dirs are /data and /config. Set MERCURE_PUBLISHER_JWT_KEY and
+# MERCURE_SUBSCRIBER_JWT_KEY (the chart generates them).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-mercure@local
+
+accounts:
+  groups:
+    - groupname: mercure
+      gid: 1001
+  users:
+    - username: mercure
+      uid: 1001
+      gid: 1001
+      homedir: /data
+  run-as: 1001
+
+work-dir: /data
+
+environment:
+  SERVER_NAME: ":8080"
+  XDG_DATA_HOME: /data
+  XDG_CONFIG_HOME: /config
+  MERCURE_PUBLISHER_JWT_ALG: HS256
+  MERCURE_SUBSCRIBER_JWT_ALG: HS256
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+  - path: /config
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+entrypoint:
+  command: /usr/bin/mercure
+cmd: run --config /etc/caddy/Caddyfile --adapter caddyfile
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-mercure"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"
