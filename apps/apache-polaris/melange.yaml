@@ -22,7 +22,7 @@ environment:
       - busybox
       - ca-certificates-bundle
       - curl
-      - python-3
+      - go                     # build-only: the fast-jar index rewrite (qidx) and the guava name remap
       - zip
       - maven-3.9              # regenerate iceberg-bundled-guava (see the pipeline)
       - openjdk-25-default-jdk
@@ -39,95 +39,265 @@ pipeline:
   - runs: |
       set -eu
       D="$PWD/dist"
-      QIDX=/tmp/qidx.py
-      cat > "$QIDX" <<'PY'
-      import io, struct, sys, zipfile
-      # Re-indexes quarkus-application.dat (Quarkus 3.x fast-jar, format version 3) after jars
-      # were swapped in place: adds the package directories a new jar has and the index lacks,
-      # and fails if a jar gained a fully-indexed resource (top level, META-INF, META-INF/services).
-      root = sys.argv[1]
-      changed = set(sys.argv[2:])  # lib paths whose jar was swapped or stripped
-      dat = root + "/quarkus/quarkus-application.dat"
-      b = open(dat, "rb").read()
-      p = 0
-      def take(n):
-          global p
-          v = b[p:p + n]; p += n; return v
-      def u16(): return struct.unpack(">H", take(2))[0]
-      def i32(): return struct.unpack(">i", take(4))[0]
-      def utf(): return take(u16()).decode("utf-8")
-      def wutf(s):
-          e = s.encode("utf-8"); return struct.pack(">H", len(e)) + e
-      def dirs_of(names):
-          out = []
-          for n in names:
-              if n.endswith("/"): continue  # Quarkus visits file entries only
-              d = "" if "/" not in n else n[:n.rindex("/")]
-              out.append(d)
-              if n.startswith("META-INF/versions/"):
-                  part = n[len("META-INF/versions/"):]
-                  s = part.find("/")
-                  if s != -1 and part.rfind("/") != s:
-                      out.append(part[s + 1:part.rindex("/")])
-          return list(dict.fromkeys(out))
-      def fully(names):
-          r = set()
-          for n in names:
-              if n.endswith("/"): continue
-              r.add(n.split("/", 1)[0])
-              for pre in ("META-INF", "META-INF/services"):
-                  sp = pre + "/"
-                  if not n.startswith(sp): continue
-                  if n == sp: r.add(pre); continue
-                  j = n.find("/", len(sp)); r.add(n[:j] if j != -1 else n)
-          return r
-      assert i32() == 0xF0315432 - (1 << 32) and i32() == 3, "unexpected index format"
-      out = io.BytesIO(); out.write(b[:8]); out.write(wutf(utf()))
-      n = u16(); out.write(struct.pack(">H", n))
-      jars, added = [], 0
-      for _ in range(n):
-          path = utf(); jars.append(path); out.write(wutf(path))
-          s = p; has = take(1)[0]
-          if has:
-              for _ in range(6):
-                  if take(1)[0]: utf()
-          gen, tr = take(1)[0], take(1)[0]
-          out.write(b[s:p])
-          old = [utf() for _ in range(u16())]
-          new = old
-          if path in changed:
-              names = zipfile.ZipFile(root + "/" + path).namelist()
-              new = old + [d for d in dirs_of(names) if d not in set(old)]
-          added += len(new) - len(old)
-          out.write(struct.pack(">H", len(new)) + b"".join(wutf(d) for d in new))
-          if gen or tr:
-              s = p; cnt = i32()
-              for _ in range(cnt): utf()
-              out.write(b[s:p])
-      s = p
-      for _ in range(u16()): utf()
-      fi = {}
-      for _ in range(u16()):
-          r = utf()
-          for _ in range(u16()): fi.setdefault(u16(), set()).add(r)
-      assert p == len(b), "trailing bytes in the index"
-      for i, path in enumerate(jars):
-          if path not in changed: continue
-          extra = fully(zipfile.ZipFile(root + "/" + path).namelist()) - fi.get(i, set())
-          if extra:
-              # Quarkus never served these from this jar (its build-time index lacks them), so a
-              # swapped jar that carries them loses them; classes are untouched
-              src = root + "/" + path
-              with zipfile.ZipFile(src) as zi, zipfile.ZipFile(src + ".new", "w", zipfile.ZIP_DEFLATED) as zo:
-                  for e in zi.infolist():
-                      if e.filename not in extra: zo.writestr(e, zi.read(e.filename))
-              import os; os.replace(src + ".new", src)
-              print(f"dropped from {path}: {sorted(extra)}")
-      out.write(b[s:])
-      open(dat, "wb").write(out.getvalue())
-      assert changed <= set(jars), f"not in the index: {sorted(changed - set(jars))}"
-      print(f"quarkus-application.dat: {n} jars, {len(changed)} changed, {added} package dirs added")
-      PY
+      cat > /tmp/qidx.go <<'GO'
+      // qidx re-indexes quarkus-application.dat (Quarkus 3.x fast-jar, format version 3) after jars
+      // were swapped in place: it adds the package directories a new jar has and the index lacks,
+      // and drops from a swapped jar any fully-indexed resource (top level, META-INF,
+      // META-INF/services) the build-time index never served from it.
+      // Usage: qidx <app root> <changed lib path>...
+      package main
+
+      import (
+      	"archive/zip"
+      	"bytes"
+      	"encoding/binary"
+      	"fmt"
+      	"io"
+      	"os"
+      	"sort"
+      	"strings"
+      )
+
+      func fail(f string, a ...any) {
+      	fmt.Fprintf(os.Stderr, f+"\n", a...)
+      	os.Exit(1)
+      }
+
+      type rd struct {
+      	b []byte
+      	p int
+      }
+
+      func (r *rd) take(n int) []byte { v := r.b[r.p : r.p+n]; r.p += n; return v }
+      func (r *rd) u16() int          { return int(binary.BigEndian.Uint16(r.take(2))) }
+      func (r *rd) i32() int32        { return int32(binary.BigEndian.Uint32(r.take(4))) }
+      func (r *rd) utf() string       { return string(r.take(r.u16())) }
+
+      func wutf(s string) []byte { return append(binary.BigEndian.AppendUint16(nil, uint16(len(s))), s...) }
+
+      func names(path string) []string {
+      	z, err := zip.OpenReader(path)
+      	if err != nil {
+      		fail("%v", err)
+      	}
+      	defer z.Close()
+      	var n []string
+      	for _, f := range z.File {
+      		n = append(n, f.Name)
+      	}
+      	return n
+      }
+
+      // dirsOf: the package directories of the file entries, in first-seen order, plus the
+      // versioned directory a META-INF/versions/N/ entry stands for
+      func dirsOf(ns []string) []string {
+      	var out []string
+      	seen := map[string]bool{}
+      	add := func(d string) {
+      		if !seen[d] {
+      			seen[d] = true
+      			out = append(out, d)
+      		}
+      	}
+      	for _, n := range ns {
+      		if strings.HasSuffix(n, "/") {
+      			continue
+      		}
+      		d := ""
+      		if i := strings.LastIndex(n, "/"); i >= 0 {
+      			d = n[:i]
+      		}
+      		add(d)
+      		if strings.HasPrefix(n, "META-INF/versions/") {
+      			part := n[len("META-INF/versions/"):]
+      			s := strings.Index(part, "/")
+      			if s != -1 && strings.LastIndex(part, "/") != s {
+      				add(part[s+1 : strings.LastIndex(part, "/")])
+      			}
+      		}
+      	}
+      	return out
+      }
+
+      func fully(ns []string) map[string]bool {
+      	r := map[string]bool{}
+      	for _, n := range ns {
+      		if strings.HasSuffix(n, "/") {
+      			continue
+      		}
+      		r[strings.SplitN(n, "/", 2)[0]] = true
+      		for _, pre := range []string{"META-INF", "META-INF/services"} {
+      			sp := pre + "/"
+      			if !strings.HasPrefix(n, sp) {
+      				continue
+      			}
+      			if n == sp {
+      				r[pre] = true
+      				continue
+      			}
+      			if j := strings.Index(n[len(sp):], "/"); j != -1 {
+      				r[n[:len(sp)+j]] = true
+      			} else {
+      				r[n] = true
+      			}
+      		}
+      	}
+      	return r
+      }
+
+      func main() {
+      	root := os.Args[1]
+      	changed := map[string]bool{}
+      	for _, c := range os.Args[2:] {
+      		changed[c] = true
+      	}
+      	dat := root + "/quarkus/quarkus-application.dat"
+      	b, err := os.ReadFile(dat)
+      	if err != nil {
+      		fail("%v", err)
+      	}
+      	r := &rd{b: b}
+      	if r.i32() != int32(-0x0FCEABCE) || r.i32() != 3 {
+      		fail("unexpected index format")
+      	}
+      	var out bytes.Buffer
+      	out.Write(b[:8])
+      	out.Write(wutf(r.utf()))
+      	n := r.u16()
+      	out.Write(binary.BigEndian.AppendUint16(nil, uint16(n)))
+      	var jars []string
+      	added := 0
+      	for k := 0; k < n; k++ {
+      		path := r.utf()
+      		jars = append(jars, path)
+      		out.Write(wutf(path))
+      		s := r.p
+      		if r.take(1)[0] != 0 {
+      			for j := 0; j < 6; j++ {
+      				if r.take(1)[0] != 0 {
+      					r.utf()
+      				}
+      			}
+      		}
+      		gen, tr := r.take(1)[0], r.take(1)[0]
+      		out.Write(b[s:r.p])
+      		cnt := r.u16()
+      		old := make([]string, cnt)
+      		have := map[string]bool{}
+      		for j := range old {
+      			old[j] = r.utf()
+      			have[old[j]] = true
+      		}
+      		nw := old
+      		if changed[path] {
+      			nw = append([]string{}, old...)
+      			for _, d := range dirsOf(names(root + "/" + path)) {
+      				if !have[d] {
+      					nw = append(nw, d)
+      				}
+      			}
+      		}
+      		added += len(nw) - len(old)
+      		out.Write(binary.BigEndian.AppendUint16(nil, uint16(len(nw))))
+      		for _, d := range nw {
+      			out.Write(wutf(d))
+      		}
+      		if gen != 0 || tr != 0 {
+      			s := r.p
+      			c := int(r.i32())
+      			for j := 0; j < c; j++ {
+      				r.utf()
+      			}
+      			out.Write(b[s:r.p])
+      		}
+      	}
+      	s := r.p
+      	for j, c := 0, r.u16(); j < c; j++ {
+      		r.utf()
+      	}
+      	fi := map[int]map[string]bool{}
+      	for j, c := 0, r.u16(); j < c; j++ {
+      		res := r.utf()
+      		for k, cc := 0, r.u16(); k < cc; k++ {
+      			i := r.u16()
+      			if fi[i] == nil {
+      				fi[i] = map[string]bool{}
+      			}
+      			fi[i][res] = true
+      		}
+      	}
+      	if r.p != len(b) {
+      		fail("trailing bytes in the index")
+      	}
+      	for i, path := range jars {
+      		if !changed[path] {
+      			continue
+      		}
+      		var extra []string
+      		for res := range fully(names(root + "/" + path)) {
+      			if !fi[i][res] {
+      				extra = append(extra, res)
+      			}
+      		}
+      		if len(extra) == 0 {
+      			continue
+      		}
+      		sort.Strings(extra)
+      		drop := map[string]bool{}
+      		for _, e := range extra {
+      			drop[e] = true
+      		}
+      		src := root + "/" + path
+      		z, err := zip.OpenReader(src)
+      		if err != nil {
+      			fail("%v", err)
+      		}
+      		of, err := os.Create(src + ".new")
+      		if err != nil {
+      			fail("%v", err)
+      		}
+      		w := zip.NewWriter(of)
+      		for _, f := range z.File {
+      			if drop[f.Name] {
+      				continue
+      			}
+      			h := f.FileHeader
+      			h.Method = zip.Deflate
+      			dst, err := w.CreateHeader(&h)
+      			if err != nil {
+      				fail("%v", err)
+      			}
+      			rc, _ := f.Open()
+      			io.Copy(dst, rc)
+      			rc.Close()
+      		}
+      		w.Close()
+      		of.Close()
+      		z.Close()
+      		if err := os.Rename(src+".new", src); err != nil {
+      			fail("%v", err)
+      		}
+      		fmt.Printf("dropped from %s: %v\n", path, extra)
+      	}
+      	out.Write(b[s:])
+      	if err := os.WriteFile(dat, out.Bytes(), 0o644); err != nil {
+      		fail("%v", err)
+      	}
+      	for c := range changed {
+      		found := false
+      		for _, j := range jars {
+      			if j == c {
+      				found = true
+      			}
+      		}
+      		if !found {
+      			fail("not in the index: %s", c)
+      		}
+      	}
+      	fmt.Printf("quarkus-application.dat: %d jars, %d changed, %d package dirs added\n", n, len(changed), added)
+      }
+      GO
+      go build -o /tmp/qidx /tmp/qidx.go
       M=https://repo1.maven.org/maven2
       CH=""
       # jswap <lib name prefix> <maven path> <version> <sha256>: whole-jar swap under the SAME file
@@ -284,34 +454,88 @@ pipeline:
       # dies on ClassNotFoundException. Point those constants at a class already in the same set
       # (a duplicate add is a no-op). Rewriting a CONSTANT_Utf8 in place is safe: the class file
       # addresses the pool by index, never by byte offset. Exactly 2 hits or the build fails.
-      python3 -I - "$D/server/quarkus/generated-bytecode.jar" <<'PY'
-      import os, struct, sys, zipfile
-      jar = sys.argv[1]
-      to = b"com.google.common.base.Joiner$3"
-      dead = [b"com.google.common.collect.ImmutableSet$Indexed$1",
-              b"com.google.common.collect.ImmutableSortedMap$1EntrySet$1"]
-      u = lambda s: b"\x01" + struct.pack(">H", len(s)) + s
-      hits = 0
-      with zipfile.ZipFile(jar) as zi, zipfile.ZipFile(jar + ".new", "w", zipfile.ZIP_DEFLATED) as zo:
-          for e in zi.infolist():
-              d = zi.read(e.filename)
-              if e.filename.endswith(".class"):
-                  for n in dead:
-                      c = d.count(u(n))
-                      if c:
-                          assert u(to) in d, f"{e.filename}: {to} not already in the set"
-                          d = d.replace(u(n), u(to)); hits += c
-              zo.writestr(e, d)
-      assert hits == 2, f"expected 2 dead guava names in generated-bytecode.jar, found {hits}; re-audit"
-      os.replace(jar + ".new", jar)
-      print("generated-bytecode.jar: 2 dead guava names remapped")
-      PY
+      cat > /tmp/guava-remap.go <<'GO'
+      // guava-remap points the two guava anonymous-class names that guava 33.7.2 dropped, and that
+      // generated-bytecode.jar loads with Class.forName, at a class already in the same set
+      // (com.google.common.base.Joiner$3). It rewrites whole CONSTANT_Utf8 entries, so no offset
+      // moves, and needs exactly 2 hits.
+      package main
+
+      import (
+      	"archive/zip"
+      	"bytes"
+      	"encoding/binary"
+      	"fmt"
+      	"io"
+      	"os"
+      	"strings"
+      )
+
+      func fail(f string, a ...any) {
+      	fmt.Fprintf(os.Stderr, f+"\n", a...)
+      	os.Exit(1)
+      }
+
+      func u(s string) []byte {
+      	return append(binary.BigEndian.AppendUint16([]byte{1}, uint16(len(s))), s...)
+      }
+
+      func main() {
+      	jar := os.Args[1]
+      	to := u("com.google.common.base.Joiner$3")
+      	dead := [][]byte{u("com.google.common.collect.ImmutableSet$Indexed$1"), u("com.google.common.collect.ImmutableSortedMap$1EntrySet$1")}
+      	z, err := zip.OpenReader(jar)
+      	if err != nil {
+      		fail("%v", err)
+      	}
+      	of, err := os.Create(jar + ".new")
+      	if err != nil {
+      		fail("%v", err)
+      	}
+      	w := zip.NewWriter(of)
+      	hits := 0
+      	for _, f := range z.File {
+      		rc, _ := f.Open()
+      		d, _ := io.ReadAll(rc)
+      		rc.Close()
+      		if strings.HasSuffix(f.Name, ".class") {
+      			for _, n := range dead {
+      				if c := bytes.Count(d, n); c > 0 {
+      					if !bytes.Contains(d, to) {
+      						fail("%s: Joiner$3 not already in the set", f.Name)
+      					}
+      					d = bytes.ReplaceAll(d, n, to)
+      					hits += c
+      				}
+      			}
+      		}
+      		h := f.FileHeader
+      		h.Method = zip.Deflate
+      		dst, err := w.CreateHeader(&h)
+      		if err != nil {
+      			fail("%v", err)
+      		}
+      		dst.Write(d)
+      	}
+      	w.Close()
+      	of.Close()
+      	z.Close()
+      	if hits != 2 {
+      		fail("expected 2 dead guava names in generated-bytecode.jar, found %d; re-audit", hits)
+      	}
+      	if err := os.Rename(jar+".new", jar); err != nil {
+      		fail("%v", err)
+      	}
+      	fmt.Println("generated-bytecode.jar: 2 dead guava names remapped")
+      }
+      GO
+      go run /tmp/guava-remap.go "$D/server/quarkus/generated-bytecode.jar"
 
       for app in "$D"/*/quarkus/quarkus-application.dat; do
         a="${app%/quarkus/quarkus-application.dat}"
         rel=""
         for j in $CH; do case "$j" in "$a"/*) rel="$rel ${j#$a/}" ;; esac; done
-        python3 -I "$QIDX" "$a" $rel
+        /tmp/qidx "$a" $rel
       done
       mkdir -p "${{targets.destdir}}/usr/lib/polaris" "${{targets.destdir}}/usr/share/licenses/apache-polaris"
       cp -a dist/server dist/admin "${{targets.destdir}}/usr/lib/polaris/"
