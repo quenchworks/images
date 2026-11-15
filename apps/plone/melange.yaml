@@ -59,24 +59,14 @@ pipeline:
       # Floors over the release constraints, each closing a scan finding. Exact pins, and
       # asserted after the install so an inert pin fails the build.
       FLOORS="__FLOORS__"
-      python3.13 - constraints.txt $FLOORS <<'PY'
-      import re, sys
-      path, floors = sys.argv[1], dict(a.split("==") for a in sys.argv[2:])
-      norm = lambda n: re.sub(r"[-_.]+", "-", n).lower()
-      want = {norm(k): f"{k}=={v}\n" for k, v in floors.items()}
-      out, seen = [], set()
-      for line in open(path):
-          m = re.match(r"([A-Za-z0-9_.\-]+)==", line)
-          n = norm(m.group(1)) if m else None
-          if n in want:
-              if n in seen:
-                  continue
-              seen.add(n)
-              line = want[n]
-          out.append(line)
-      out += [want[n] for n in want if n not in seen]
-      open(path, "w").writelines(out)
-      PY
+      # each floor replaces its first pin (names compared normalized: case and -_. folded),
+      # later duplicates drop, and floors with no pin are appended
+      awk -v floors="$FLOORS" '
+      function norm(n) { n = tolower(n); gsub(/[-_.]+/, "-", n); return n }
+      BEGIN { k = split(floors, f, " "); for (i = 1; i <= k; i++) { split(f[i], kv, "=="); o[i] = norm(kv[1]); want[o[i]] = f[i] } }
+      { if (match($0, /^[A-Za-z0-9_.-]+==/)) { n = norm(substr($0, 1, RLENGTH - 2)); if (n in want) { if (n in seen) next; seen[n] = 1; print want[n]; next } } print }
+      END { for (i = 1; i <= k; i++) if (!(o[i] in seen)) { seen[o[i]] = 1; print want[o[i]] } }' constraints.txt > constraints.new
+      mv constraints.new constraints.txt
       python3.13 -m venv "$VENV"
       PIP="$VENV/bin/pip"
       "$PIP" install --no-cache-dir --upgrade pip
