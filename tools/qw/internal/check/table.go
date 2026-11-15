@@ -73,6 +73,7 @@ var table = map[string]check{
 	"cosmian-kms":                       {src: ghRel("Cosmian/kms")},
 	"crane":                             {src: wolfiPkg("crane"), n: 1},
 	"cratedb":                           {src: ghRel("crate/crate"), lines: 2},
+	"croc":                              {src: ghRel("schollz/croc"), n: 1},
 	"crossplane":                        {src: ghRel("crossplane/crossplane"), lines: 2},
 	"csi-attacher":                      {src: ghRel("kubernetes-csi/external-attacher"), lines: 3},
 	"csi-livenessprobe":                 {src: ghRel("kubernetes-csi/livenessprobe"), lines: 3},
