@@ -272,6 +272,7 @@ var table = map[string]check{
 	"opa-gatekeeper":                    {src: ghRel("open-policy-agent/gatekeeper"), lines: 2, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
 	"opa":                               {src: ghRel("open-policy-agent/opa")},
 	"openbao":                           {src: ghRel("openbao/openbao")},
+	"opengist":                          {src: ghRel("thomiceli/opengist"), n: 1},
 	"opencost":                          {src: ghRel("opencost/opencost"), lines: 2},
 	"openfga":                           {src: ghRel("openfga/openfga"), n: 1},
 	"openldap":                          {wolfiPrefix: "openldap-", lines: 2, lineOnly: false},

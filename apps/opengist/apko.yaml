@@ -1,0 +1,55 @@
+# Opengist runtime: opengist on :6157 (HTTP) and :2222 (git over SSH), data (SQLite, repositories,
+# SSH host key) in OG_OPENGIST_HOME=/opengist. git and busybox ship for the git it runs.
+# Nonroot 1001; mount a writable volume at /opengist.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-opengist@local
+
+accounts:
+  groups:
+    - groupname: opengist
+      gid: 1001
+  users:
+    - username: opengist
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  - path: /opengist
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+
+environment:
+  OG_OPENGIST_HOME: /opengist
+  HOME: /opengist
+
+work-dir: /opengist
+
+entrypoint:
+  command: /usr/bin/opengist
+
+
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-opengist"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"
+  org.opencontainers.image.version: "__VER__"
