@@ -37,6 +37,10 @@ func init() {
 		}
 		name := t.Name("")
 		start(name)
+		// gunicorn's control socket would try to write into the read-only app dir
+		if l := t.Logs(name); strings.Contains(l, "Control server error") {
+			t.Fatalf("gunicorn control socket is still on\n%s", l)
+		}
 		t.Docker("exec", name, "python", "manage.py", "createsuperuser", "--email", "smoke@example.com", "--password", pw)
 
 		jar, _ := cookiejar.New(nil)

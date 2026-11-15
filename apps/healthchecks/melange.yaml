@@ -65,6 +65,9 @@ pipeline:
       # manage.py's shebang is /usr/bin/env python and the image has no env: call the venv's python
       sed -i 's|\./manage\.py|python manage.py|g' run.sh
       if grep -q '\./manage' run.sh; then echo 'run.sh still calls ./manage.py'; exit 1; fi
+      # upstream disables gunicorn's control socket with control_socket = "", which gunicorn 25.1+
+      # takes as a path and fails on the read-only app dir; this is its real off switch
+      echo 'control_socket_disable = True' >> gunicorn.conf.py
       rm -rf .git .github stuff docker
       find . -name __pycache__ -prune -exec rm -rf {} +
 
