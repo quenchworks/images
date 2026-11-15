@@ -160,6 +160,7 @@ var table = map[string]check{
 	"gitleaks":                          {src: ghRel("gitleaks/gitleaks"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
 	"gitness":                           {src: ghRel("harness/gitness"), n: 1},
 	"glance":                            {src: ghRel("glanceapp/glance"), n: 1},
+	"gonic":                             {src: ghRel("sentriz/gonic"), n: 1},
 	"glauth":                            {src: ghRel("glauth/glauth"), n: 1, f: filter{keep: prefix("GLAuth-v"), clean: trim("GLAuth-v")}},
 	"go":                                {wolfiPrefix: "go-", lines: 2, lineOnly: false},
 	"goaccess":                          {src: ghTags("allinurl/goaccess"), n: 1},

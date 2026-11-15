@@ -1,0 +1,80 @@
+# gonic runtime: the gonic binary plus ffmpeg (transcoding), tzdata and the MIME database. Nonroot uid 1001,
+# multi-arch. Mount the music library read-only at /music; /data (database), /cache, /podcasts and
+# /playlists are volumes. HTTP on 4747. The first start creates the user admin with password admin:
+# change it (the chart does).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - tzdata
+    - shared-mime-info
+    - ffmpeg
+    - quench-gonic@local
+
+accounts:
+  groups:
+    - groupname: gonic
+      gid: 1001
+  users:
+    - username: gonic
+      uid: 1001
+      gid: 1001
+      homedir: /data
+  run-as: 1001
+
+work-dir: /data
+
+environment:
+  GONIC_DB_PATH: /data/gonic.db
+  GONIC_LISTEN_ADDR: ":4747"
+  GONIC_MUSIC_PATH: /music
+  GONIC_PODCAST_PATH: /podcasts
+  GONIC_CACHE_PATH: /cache
+  GONIC_PLAYLISTS_PATH: /playlists
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+  - path: /cache
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+  - path: /podcasts
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+  - path: /playlists
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+  - path: /music
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /usr/bin/gonic
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-gonic"
+  org.opencontainers.image.licenses: "GPL-3.0-only"
