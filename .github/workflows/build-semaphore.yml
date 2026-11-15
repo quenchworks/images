@@ -210,6 +210,16 @@ jobs:
           output-file: sbom.spdx.json
           upload-artifact: false
 
+      - name: Trim the SBOM under the attestation size cap
+        # The Ansible venv and its collections push the SPDX file past actions/attest's
+        # 16 MB predicate cap. Drop the per-file entries; the package list (the security-
+        # relevant part) stays intact.
+        run: |
+          before=$(wc -c < sbom.spdx.json)
+          jq 'del(.files) | del(.relationships)' sbom.spdx.json > sbom.trimmed.json
+          mv sbom.trimmed.json sbom.spdx.json
+          echo "SBOM trimmed: ${before} -> $(wc -c < sbom.spdx.json) bytes"
+
       - name: Attest the SBOM (keyless, pushed to GHCR)
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
