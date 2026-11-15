@@ -1,0 +1,52 @@
+# Pocket ID runtime: pocket-id on :1411, data (SQLite, uploads) in /app/data. Needs ENCRYPTION_KEY
+# (16+ bytes) and APP_URL (the external URL). PostgreSQL: DB_CONNECTION_STRING. Native TLS:
+# TLS_CERT_FILE / TLS_KEY_FILE. Nonroot 1001; mount a writable volume at /app/data.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-pocket-id@local
+
+accounts:
+  groups:
+    - groupname: pocket-id
+      gid: 1001
+  users:
+    - username: pocket-id
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  - path: /app/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  PORT: "1411"
+
+work-dir: /app
+
+entrypoint:
+  command: /usr/bin/pocket-id
+
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-pocket-id"
+  org.opencontainers.image.licenses: "BSD-2-Clause"
+  org.opencontainers.image.version: "__VER__"

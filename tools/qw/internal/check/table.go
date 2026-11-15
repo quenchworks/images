@@ -294,6 +294,7 @@ var table = map[string]check{
 	"pgpool":                            {src: scrapeSrc("https://pgpool.github.io/download/source/", `pgpool-II-(\d+\.\d+\.\d+)\.tar\.gz`), lines: 2},
 	"php":                               {wolfiPrefix: "php-", lines: 2, lineOnly: false},
 	"pinniped":                          {src: ghRel("vmware/pinniped"), n: 1},
+	"pocket-id":                         {src: ghRel("pocket-id/pocket-id"), n: 1},
 	"plone":                             {src: pypiPkg("Plone"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
 	"pocketbase":                        {src: ghRel("pocketbase/pocketbase"), n: 1},
 	"poetry":                            {src: wolfiPkg("py3.13-poetry-bin")},
