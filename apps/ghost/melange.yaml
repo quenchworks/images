@@ -130,7 +130,7 @@ pipeline:
         # match. Only ONE hono major exists in this tree (every declared spec is 4.x), so
         # a blanket override cannot drag anything across a major. The assertion below
         # proves every installed copy landed on it.
-        "  hono: 4.13.11",                       # CVE-2026-54290 HIGH + 18 more, see above; 4.13.11 (2026-10-22 scan)
+        "  hono: 4.13.16",                       # CVE-2026-54290 HIGH + more, see above; 4.13.16 (CVE-2026-126355..126359, 2026-11-16)
         "  'follow-redirects@<1.16.2': 1.16.2",  # CVE-2026-116689 (2026-11-01)
         "  'glob@>=10.0.0 <14.0.2': 14.0.2",     # CVE-2026-118773 (abort branches keep walking; fix only 14.0.2). The range
                                                  # intersects only the 10-13 specs (rimraf 5, js-beautify, npmcli,
@@ -284,7 +284,7 @@ pipeline:
       # (package, the ONLY version allowed to exist) for every UNSCOPED override, where the
       # pin has to reach EVERY installed copy -- not just "the flagged one is gone". A
       # second copy at a stale version is exactly how a pin reads correct and does nothing.
-      pinned = [("hono", "4.13.11")]
+      pinned = [("hono", "4.13.16")]
       drift = [(p, sorted(have.get(p, ()))) for p, v in pinned if have.get(p, set()) != {v}]
       if drift:
           for p, got in drift:
