@@ -1,0 +1,66 @@
+package:
+  name: quench-gitlab-shell
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened GitLab Shell (gitlab-sshd and the gitlab-shell commands), built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - go-1.26
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://gitlab.com/gitlab-org/gitlab-shell/-/archive/v${{package.version}}/gitlab-shell-v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Build the gitlab-shell binaries
+    runs: |
+      set -eu
+      export CGO_ENABLED=0 GOFLAGS=-mod=mod GOTOOLCHAIN=local
+      FLOOR="golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/net@v0.62.0 golang.org/x/text@v0.43.0 golang.org/x/mod@v0.41.0 google.golang.org/grpc@v1.83.2 github.com/klauspost/compress@v1.18.7 github.com/DataDog/dd-trace-go/v2@v2.8.1"
+      # CVE-2026-128085 (otel 1.47.0): floor every otel v1 module the build uses, as one family
+      for m in $(go list -mod=mod -m -e -f '{{.Path}} {{.Version}}' all | awk '($1 ~ /^go\.opentelemetry\.io\/otel(\/|$)/) && $1 !~ /\/exporters\/jaeger$/ && $2 ~ /^v1\./ { print $1"@v1.47.0" }'); do
+        FLOOR="$FLOOR $m"
+      done
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
+      # upstream Makefile: GO_TAGS and the main.Version / main.BuildTime ldflags
+      tags="tracer_static tracer_static_jaeger continuous_profiler_stackdriver"
+      out="${{targets.destdir}}/usr/bin"
+      mkdir -p "$out"
+      for c in gitlab-shell gitlab-sshd gitlab-shell-check gitlab-shell-authorized-keys-check gitlab-shell-authorized-principals-check; do
+        go build -trimpath -tags "$tags" -ldflags "-s -w -X main.Version=v${{package.version}} -X main.BuildTime=$(date -u +%Y%m%d.%H%M%S)" -o "$out/$c" ./cmd/$c
+        bad="$(go version -m "$out/$c" | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor $c)"
+        [ -z "$bad" ] || { echo "float did not reach $c:"; echo "$bad"; exit 1; }
+      done
+      "$out/gitlab-sshd" -version | grep -q "^gitlab-sshd v${{package.version}}-"
+
+test:
+  pipeline:
+    - runs: test -x /usr/bin/gitlab-sshd

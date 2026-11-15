@@ -1,0 +1,55 @@
+# GitLab Shell runtime: gitlab-sshd (SSH in Go) as the entrypoint, plus the gitlab-shell commands.
+# Nonroot uid 1001 (user git), multi-arch. gitlab-sshd reads <config-dir>/config.yml; the chart mounts
+# the config, the gitlab-shell secret and the SSH host keys under /etc/gitlab-shell. SSH listens on
+# 2222 and health on 9122 (/health, /start) when the config says so.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-gitlab-shell@local
+
+accounts:
+  groups:
+    - groupname: git
+      gid: 1001
+  users:
+    - username: git
+      uid: 1001
+      gid: 1001
+      homedir: /home/git
+  run-as: 1001
+
+work-dir: /home/git
+
+paths:
+  - path: /home/git
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /etc/gitlab-shell
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /usr/bin/gitlab-sshd
+cmd: -config-dir /etc/gitlab-shell
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-gitlab-shell"
+  org.opencontainers.image.licenses: "MIT"
