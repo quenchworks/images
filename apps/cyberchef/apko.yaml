@@ -1,0 +1,44 @@
+# CyberChef runtime: the static build plus Wolfi nginx serving it on 8080 from /etc/cyberchef/nginx.conf
+# (pid and temp files under /tmp: mount an emptyDir there on a read-only rootfs). Nonroot uid 1001,
+# multi-arch, shell-free.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - nginx
+    - quench-cyberchef@local
+
+accounts:
+  groups:
+    - groupname: cyberchef
+      gid: 1001
+  users:
+    - username: cyberchef
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+# Exec nginx directly (PID 1, foreground). No shell in the image and no entrypoint
+# script: nginx handles signals fine as PID 1. `daemon off;` lives in the config
+# (below), so the command needs no quotes or shell.
+entrypoint:
+  command: /usr/bin/nginx -c /etc/cyberchef/nginx.conf
+
+work-dir: /usr/share/nginx/html
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-cyberchef"
+  org.opencontainers.image.licenses: "Apache-2.0"

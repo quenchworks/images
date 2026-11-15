@@ -62,3 +62,26 @@ func init() {
 		t.Logf("smoke test passed (radicale %s: read-only boot, bcrypt htpasswd enforced, calendar created and an event kept across a restart; user %s)", t.Want, u)
 	})
 }
+
+func init() {
+	// On a read-only rootfs with /tmp writable: nginx serves the CyberChef page (with its version), the
+	// main bundle and an operation module, and answers 404 for a missing path.
+	register("cyberchef", func(t *T) {
+		const base = "http://127.0.0.1:18081"
+		u := t.User("1001")
+		name := t.Name("")
+		t.Start(name, []string{"--read-only", "--tmpfs", "/tmp:rw,mode=1777", "-p", "127.0.0.1:18081:8080"})
+		page := t.WaitHTTP(base+"/", 60, name)
+		t.Contains(page, "<title>CyberChef</title>", "the page")
+		t.Contains(page, t.Want, "the version in the page")
+		for _, p := range []string{"/assets/main.js", "/modules/Bletchley.js"} {
+			if code, _ := restDo("GET", base+p, "", "", ""); code != 200 {
+				t.Fatalf("%s answered %d\n%s", p, code, t.Logs(name))
+			}
+		}
+		if code, _ := restDo("GET", base+"/no-such-file", "", "", ""); code != 404 {
+			t.Fatalf("a missing path answered %d", code)
+		}
+		t.Logf("smoke test passed (cyberchef %s: read-only boot, page, main bundle and an operation module served by nginx; user %s)", t.Want, u)
+	})
+}

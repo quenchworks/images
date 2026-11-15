@@ -1,0 +1,84 @@
+# CyberChef static build from the release tag, served by nginx.
+package:
+  name: quench-cyberchef
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened CyberChef, built from source on Wolfi and served by nginx"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - nginx
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - nodejs-24
+      - npm
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/gchq/CyberChef/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - runs: |
+      set -eu
+      export HOME="$(mktemp -d)" npm_config_cache="$(mktemp -d)"
+      # postinstall runs upstream's two grunt fix-ups on the installed modules
+      npm ci --no-audit --no-fund
+      npx grunt prod
+      out="${{targets.destdir}}/usr/share/nginx/html"
+      install -d "$out"
+      cp -a build/prod/. "$out/"
+      rm -f "$out"/CyberChef_v*.zip "$out/BundleAnalyzerReport.html" "$out/sha256digest.txt"
+      grep -qF "${{package.version}}" "$out/index.html"
+      test -d "$out/modules"
+      install -d "${{targets.destdir}}/etc/cyberchef"
+      cat > "${{targets.destdir}}/etc/cyberchef/nginx.conf" <<'CONF'
+      daemon off;
+      worker_processes auto;
+      pid /tmp/nginx.pid;
+      error_log /dev/stderr notice;
+
+      events {
+          worker_connections 1024;
+      }
+
+      http {
+          include       /etc/nginx/mime.types;
+          default_type  application/octet-stream;
+
+          client_body_temp_path /tmp/client_body_temp;
+          proxy_temp_path       /tmp/proxy_temp;
+          fastcgi_temp_path     /tmp/fastcgi_temp;
+          uwsgi_temp_path       /tmp/uwsgi_temp;
+          scgi_temp_path        /tmp/scgi_temp;
+
+          access_log /dev/stdout;
+          sendfile      on;
+          gzip          on;
+          gzip_types    text/css application/javascript application/json image/svg+xml;
+          server_tokens off;
+
+          server {
+              listen      8080;
+              server_name _;
+              root        /usr/share/nginx/html;
+              index       index.html;
+              location / {
+                  try_files $uri $uri/ =404;
+              }
+          }
+      }
+      CONF
+
+test:
+  pipeline:
+    - runs: test -s /usr/share/nginx/html/index.html
