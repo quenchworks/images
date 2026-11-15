@@ -42,7 +42,6 @@ environment:
       - maven-3.9               # regenerate iceberg's relocated guava and parquet-jackson (see below)
       - unzip                   # unzip -Z1 (busybox unzip has no -Z)
       - openjdk-25-default-jdk
-      - python-3                # parquet-jackson merge (zipfile)
 
 pipeline:
   - uses: fetch
@@ -208,6 +207,79 @@ pipeline:
       # 3.6.2 rewrites multi-release classes but leaves their paths unrelocated, so the merge moves them
       # under shaded/parquet. Upstream's copy is the full jackson set (class lists diffed, 2026-11-02).
       find "$dest" -name '*parquet-jackson-*.jar' > /tmp/pj.list
+      # pjmerge <old.jar> <new.jar>: keeps everything in old except the relocated jackson
+      # (shaded/parquet/, its maven metadata and services) and adds that set from new,
+      # moving multi-release classes under META-INF/versions/N/ to the shaded path
+      cat > /tmp/pjmerge.go <<'GO'
+      package main
+
+      import (
+      	"archive/zip"
+      	"io"
+      	"os"
+      	"regexp"
+      	"strings"
+      )
+
+      var mrjar = regexp.MustCompile(`^(META-INF/versions/\d+/)com/fasterxml/`)
+
+      func mine(n string) bool {
+      	if strings.HasPrefix(n, "META-INF/versions/") {
+      		return !strings.Contains(n, "/module-info.class")
+      	}
+      	for _, p := range []string{"shaded/parquet/", "META-INF/maven/com.fasterxml.jackson.core/", "META-INF/services/shaded.parquet."} {
+      		if strings.HasPrefix(n, p) {
+      			return true
+      		}
+      	}
+      	return false
+      }
+
+      func must(err error) {
+      	if err != nil {
+      		panic(err)
+      	}
+      }
+
+      func main() {
+      	old, nw := os.Args[1], os.Args[2]
+      	zo, err := zip.OpenReader(old)
+      	must(err)
+      	zn, err := zip.OpenReader(nw)
+      	must(err)
+      	f, err := os.Create(old + ".new")
+      	must(err)
+      	w := zip.NewWriter(f)
+      	for _, e := range zo.File {
+      		if mine(e.Name) {
+      			continue
+      		}
+      		if strings.HasSuffix(e.Name, "/") { // zip.Writer.Copy refuses directory entries
+      			h := e.FileHeader
+      			_, err := w.CreateHeader(&h)
+      			must(err)
+      			continue
+      		}
+      		must(w.Copy(e))
+      	}
+      	for _, e := range zn.File {
+      		n := mrjar.ReplaceAllString(e.Name, "${1}shaded/parquet/com/fasterxml/")
+      		if !mine(n) || strings.HasSuffix(n, "/") {
+      			continue
+      		}
+      		dst, err := w.CreateHeader(&zip.FileHeader{Name: n, Method: zip.Deflate, Modified: e.Modified})
+      		must(err)
+      		src, err := e.Open()
+      		must(err)
+      		_, err = io.Copy(dst, src)
+      		must(err)
+      		src.Close()
+      	}
+      	must(w.Close())
+      	must(f.Close())
+      	must(os.Rename(old+".new", old))
+      }
+      GO
       while IFS= read -r pj; do
         v="$(unzip -p "$pj" META-INF/maven/com.fasterxml.jackson.core/jackson-databind/pom.properties | sed -n 's/^version=//p')"
         [ "$(printf '%s\n2.22.3\n' "$v" | sort -V | head -1)" = 2.22.3 ] && continue
@@ -234,20 +306,7 @@ pipeline:
           echo "556db5439e206114346043f68d200497dc96a0bca62a360a81784092ebd0e0a9  /tmp/m2/com/fasterxml/jackson/core/jackson-databind/2.22.3/jackson-databind-2.22.3.jar" | sha256sum -c -
           echo "8a501126a385b25841915d839508f8a66e2a0dbc8a6709d055ef3b3e852b094c  /tmp/m2/com/fasterxml/jackson/core/jackson-core/2.22.3/jackson-core-2.22.3.jar" | sha256sum -c -
         fi
-        python3 -I - "$pj" /tmp/pj/target/pj-1.jar <<'PY'
-      import os, re, sys, zipfile
-      old, new = sys.argv[1], sys.argv[2]
-      def mine(n):
-          if n.startswith("META-INF/versions/"): return "/module-info.class" not in n
-          return n.startswith(("shaded/parquet/", "META-INF/maven/com.fasterxml.jackson.core/", "META-INF/services/shaded.parquet."))
-      with zipfile.ZipFile(old) as zo, zipfile.ZipFile(new) as zn, zipfile.ZipFile(old + ".new", "w", zipfile.ZIP_DEFLATED) as w:
-          for e in zo.infolist():
-              if not mine(e.filename): w.writestr(e, zo.read(e.filename))
-          for e in zn.infolist():
-              n = re.sub(r"^(META-INF/versions/\d+/)com/fasterxml/", r"\1shaded/parquet/com/fasterxml/", e.filename)
-              if mine(n) and not n.endswith("/"): w.writestr(n, zn.read(e.filename))
-      os.replace(old + ".new", old)
-      PY
+        go run /tmp/pjmerge.go "$pj" /tmp/pj/target/pj-1.jar
         chmod 644 "$pj"
         [ "$(unzip -p "$pj" META-INF/maven/com.fasterxml.jackson.core/jackson-databind/pom.properties | sed -n 's/^version=//p')" = 2.22.3 ]
         ! unzip -Z1 "$pj" | grep -qE '^com/fasterxml/|^META-INF/versions/[0-9]+/com/' || { echo "unrelocated jackson in $pj"; exit 1; }
