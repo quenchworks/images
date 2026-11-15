@@ -1,0 +1,57 @@
+# Radicale runtime: Wolfi python-3.13 with the venv at /opt/radicale/.venv. Config /etc/radicale/config
+# (port 5232, htpasswd users from /etc/radicale/users: mount one), collections under /var/lib/radicale
+# (the volume). Nonroot uid 1001, multi-arch.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-radicale@local
+
+accounts:
+  groups:
+    - groupname: radicale
+      gid: 1001
+  users:
+    - username: radicale
+      uid: 1001
+      gid: 1001
+      homedir: /var/lib/radicale
+  run-as: 1001
+
+work-dir: /var/lib/radicale
+
+environment:
+  PYTHONDONTWRITEBYTECODE: "1"
+
+paths:
+  - path: /var/lib
+    type: directory
+    uid: 0
+    gid: 0
+    permissions: 0o755
+  - path: /var/lib/radicale
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+entrypoint:
+  command: /opt/radicale/.venv/bin/python -m radicale
+cmd: --config /etc/radicale/config
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-radicale"
+  org.opencontainers.image.licenses: "GPL-3.0-or-later"
