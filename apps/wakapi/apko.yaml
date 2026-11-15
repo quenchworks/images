@@ -1,0 +1,56 @@
+# Wakapi runtime: wakapi on :3000 with /etc/wakapi/config.yml, SQLite at /data/wakapi.db; every
+# setting can be overridden with WAKAPI_* env (database, salt, signup, mail). Nonroot 1001; mount a
+# writable volume at /data.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-wakapi@local
+
+accounts:
+  groups:
+    - groupname: wakapi
+      gid: 1001
+  users:
+    - username: wakapi
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  ENVIRONMENT: prod
+  WAKAPI_DB_TYPE: sqlite3
+  WAKAPI_DB_NAME: /data/wakapi.db
+  WAKAPI_LISTEN_IPV4: 0.0.0.0
+
+work-dir: /data
+
+entrypoint:
+  command: /usr/bin/wakapi
+
+cmd: -config /etc/wakapi/config.yml
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-wakapi"
+  org.opencontainers.image.licenses: "MIT"
+  org.opencontainers.image.version: "__VER__"

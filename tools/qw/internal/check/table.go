@@ -396,6 +396,7 @@ var table = map[string]check{
 	"vikunja":     {src: ghRel("go-vikunja/vikunja")},
 	"vitess":      {src: ghRel("vitessio/vitess"), lines: 1},
 	"vouch-proxy": {src: ghTags("vouch/vouch-proxy"), n: 1},
+	"wakapi":      {src: ghRel("muety/wakapi"), n: 1},
 	"weaviate":    {src: ghRel("weaviate/weaviate")},
 	"wiremock":    {src: scrapeSrc("https://repo1.maven.org/maven2/org/wiremock/wiremock-jetty12/maven-metadata.xml", `<version>(\d+\.\d+\.\d+)</version>`), n: 1},
 	"woodpecker":  {src: ghRel("woodpecker-ci/woodpecker"), n: 1},
