@@ -130,6 +130,7 @@ var table = map[string]check{
 	"envoy":                             {wolfiPrefix: "envoy-", lines: 2, lineOnly: false},
 	"erlang":                            {wolfiPrefix: "erlang-", lines: 1, lineOnly: false},
 	"ergo":                              {src: ghRel("ergochat/ergo"), n: 1},
+	"rest-server":                       {src: ghRel("restic/rest-server"), n: 1},
 	"etcd":                              {src: ghRel("etcd-io/etcd")},
 	"excalidraw":                        {src: ghRel("excalidraw/excalidraw")},
 	"external-dns":                      {src: ghRel("kubernetes-sigs/external-dns")},
