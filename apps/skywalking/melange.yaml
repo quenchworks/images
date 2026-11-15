@@ -29,7 +29,6 @@ environment:
       - busybox
       - ca-certificates-bundle
       - curl        # build-only: fetch same-major patched jars from Maven Central
-      - python-3    # build-only: the post-swap classpath audit below
       - maven-3.9   # build-only: re-shade nacos-client's relocated guava (see below)
       - openjdk-21-default-jdk
       - unzip
@@ -215,37 +214,20 @@ pipeline:
       # ---- (3) POST-SWAP CLASSPATH AUDIT: one version per swapped artifact ----------
       # A swap that left two versions of one artifact on the classpath would still load
       # the old, vulnerable bytecode while the scanner sees the new jar.
-      python3 - "$dest/oap-libs" "$NETTY_NEW" <<'PY'
-      import os, re, sys
-
-      libs, netty_new = sys.argv[1], sys.argv[2]
-      jars = sorted(f for f in os.listdir(libs) if f.endswith(".jar"))
-      swapped = """guava snappy-java jackson-databind jackson-core jackson-annotations
-                   log4j-api log4j-core log4j-slf4j-impl lz4-java postgresql
-                   micrometer-core micrometer-commons micrometer-observation
-                   freemarker""".split()
-      dup = {}
-      for a in swapped:
-          rx = re.compile(rf"^{re.escape(a)}-(\d[^/]*?)\.jar$")
-          vs = {m.group(1) for m in (rx.match(j) for j in jars) if m}
-          if not vs:
-              sys.exit(f"FATAL: no jar left for swapped artifact {a} -- swap removed it")
-          if len(vs) > 1:
-              dup[a] = vs
-      stale = [j for j in jars if j.startswith("netty-") and netty_new not in j
-               and "netty-tcnative" not in j]
-      if stale:
-          dup["io.netty (mixed module set)"] = stale
-      tcn = [j for j in jars if j.startswith("netty-tcnative") and "2.0.84.Final" not in j]
-      if tcn:
-          dup["netty-tcnative (old line left)"] = tcn
-      if dup:
-          for k, v in sorted(dup.items()):
-              print(f"  {k} -> {sorted(v)}")
-          sys.exit(f"FATAL: {len(dup)} swapped artifact(s) are on the classpath at more "
-                   "than one version.")
-      print(f"classpath audit OK: {len(jars)} jars, one version per swapped artifact")
-      PY
+      libs="$dest/oap-libs"
+      jars="$(ls "$libs" | grep '\.jar$' | sort)"
+      dup=0
+      for a in guava snappy-java jackson-databind jackson-core jackson-annotations log4j-api log4j-core log4j-slf4j-impl lz4-java postgresql micrometer-core micrometer-commons micrometer-observation freemarker; do
+        vs="$(printf '%s\n' "$jars" | sed -n -E "s/^${a}-([0-9][^/]*)\.jar\$/\1/p" | sort -u)"
+        [ -n "$vs" ] || { echo "FATAL: no jar left for swapped artifact $a, the swap removed it"; exit 1; }
+        if [ "$(printf '%s\n' "$vs" | wc -l)" -gt 1 ]; then echo "  $a -> $(echo $vs)"; dup=$((dup + 1)); fi
+      done
+      stale="$(printf '%s\n' "$jars" | grep '^netty-' | grep -v -F "$NETTY_NEW" | grep -v 'netty-tcnative' || true)"
+      [ -z "$stale" ] || { echo "  io.netty (mixed module set) -> $(echo $stale)"; dup=$((dup + 1)); }
+      tcn="$(printf '%s\n' "$jars" | grep '^netty-tcnative' | grep -v -F '2.0.84.Final' || true)"
+      [ -z "$tcn" ] || { echo "  netty-tcnative (old line left) -> $(echo $tcn)"; dup=$((dup + 1)); }
+      [ "$dup" = 0 ] || { echo "FATAL: $dup swapped artifact(s) are on the classpath at more than one version."; exit 1; }
+      echo "classpath audit OK: $(printf '%s\n' "$jars" | wc -l) jars, one version per swapped artifact"
       # ================= end 0-CVE remediation ========================================
       # Make OAP log to the container stdout so `kubectl logs` / `docker logs` show the
       # real boot/crash reasons. The upstream config/log4j2.xml routes the Root logger to
