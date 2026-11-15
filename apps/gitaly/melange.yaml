@@ -1,0 +1,84 @@
+package:
+  name: quench-gitaly
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Gitaly with its bundled Git, built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - libcurl-openssl4
+      - libpcre2-8-0
+      - zlib
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - bash
+      - ca-certificates-bundle
+      - curl-dev
+      - git
+      - go-1.26
+      - meson
+      - ninja-build
+      - openssl-dev
+      - pcre2-dev
+      - zlib-dev
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://gitlab.com/gitlab-org/gitaly/-/archive/v${{package.version}}/gitaly-v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Floor the Go modules
+    runs: |
+      set -eu
+      export GOFLAGS=-mod=mod GOTOOLCHAIN=local
+      FLOOR="golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/net@v0.62.0 github.com/go-jose/go-jose/v4@v4.1.6"
+      # CVE-2026-128085 (otel 1.47.0): floor every otel v1 module the build uses, as one family
+      for m in $(go list -mod=mod -m -e -f '{{.Path}} {{.Version}}' all | awk '($1 ~ /^go\.opentelemetry\.io\/otel(\/|$)/) && $1 !~ /\/exporters\/jaeger$/ && $2 ~ /^v1\./ { print $1"@v1.47.0" }'); do
+        FLOOR="$FLOOR $m"
+      done
+      echo "$FLOOR" > .floor
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      need="$(go list -m -e $MODS | awk -v floor="$FLOOR" '
+        BEGIN { n = split(floor, f, " "); for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+        NF >= 2 && ($1 in want) {
+          split(substr($NF, 2), g, "."); split(substr(want[$1], 2), w, ".")
+          for (i = 1; i <= 3; i++) { if ((g[i]+0) > (w[i]+0)) next; if ((g[i]+0) < (w[i]+0)) { print $1 "@" want[$1]; next } }
+        }')"
+      if [ -n "$need" ]; then go get $need; fi
+
+  - name: Build Gitaly and its bundled Git (upstream make)
+    runs: |
+      set -eu
+      export GOFLAGS=-mod=mod GOTOOLCHAIN=local
+      # VERSION file stamps the release (the tarball has no .git for git describe)
+      echo "${{package.version}}" > VERSION
+      make -j"$(nproc)" build WITH_BUNDLED_GIT=YesPlease
+      mkdir -p "${{targets.destdir}}/usr/bin"
+      # gitaly carries the packed helpers and bundled Git inside it; install the executables Gitaly installs
+      for f in _build/bin/gitaly _build/bin/gitaly-backup _build/bin/gitaly-blackbox _build/bin/praefect; do
+        install -m 0755 "$f" "${{targets.destdir}}/usr/bin/"
+      done
+      "${{targets.destdir}}/usr/bin/gitaly" -version | grep -q "version ${{package.version}}"
+      floor="$(cat .floor)"
+      bad="$(for b in gitaly gitaly-backup; do go version -m "${{targets.destdir}}/usr/bin/$b"; done | awk -v floor="$floor" '
+        BEGIN { n = split(floor, f, " "); for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+        ($1 == "dep" || $1 == "=>") && ($2 in want) {
+          split(substr($3, 2), g, "."); split(substr(want[$2], 2), w, ".")
+          for (i = 1; i <= 3; i++) { if ((g[i]+0) > (w[i]+0)) next; if ((g[i]+0) < (w[i]+0)) { print $2, $3; next } }
+        }')"
+      [ -z "$bad" ] || { echo "float did not reach the binary:"; echo "$bad"; exit 1; }
+
+test:
+  pipeline:
+    - runs: gitaly -version

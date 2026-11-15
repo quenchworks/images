@@ -474,6 +474,16 @@ var table = map[string]check{
 	"ghost":    {src: npmPkg("ghost"), f: filter{keep: noDash}},
 	"renovate": {src: npmPkg("renovate"), f: filter{keep: noDash}},
 	"pnpm":     {src: npmPkg("pnpm"), lines: 1, f: filter{keep: noDash}},
+	"gitaly": {src: jsonList("https://gitlab.com/api/v4/projects/gitlab-org%2Fgitaly/repository/tags?per_page=40",
+		func(d any) []string {
+			return common.Each(d, func(r any) string {
+				v := strings.TrimLeft(common.Str(common.Path(r, "name")), "v")
+				if strings.Contains(v, "-") {
+					return ""
+				}
+				return v
+			})
+		}), n: 1},
 	"gitlab-runner": {src: jsonList("https://gitlab.com/api/v4/projects/gitlab-org%2Fgitlab-runner/releases?per_page=40",
 		func(d any) []string {
 			return common.Each(d, func(r any) string {

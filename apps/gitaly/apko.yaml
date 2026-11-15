@@ -1,0 +1,59 @@
+# Gitaly runtime: the gitaly binary (with its helpers and bundled Git packed inside), gitaly-backup,
+# gitaly-blackbox and praefect. Nonroot uid 1001 (user git), multi-arch. The chart mounts config.toml at
+# /etc/gitaly and the repositories volume at /home/git/repositories; runtime_dir goes on a writable /tmp.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-gitaly@local
+
+accounts:
+  groups:
+    - groupname: git
+      gid: 1001
+  users:
+    - username: git
+      uid: 1001
+      gid: 1001
+      homedir: /home/git
+  run-as: 1001
+
+work-dir: /home/git
+
+paths:
+  - path: /home/git
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /home/git/repositories
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+  - path: /etc/gitaly
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /usr/bin/gitaly
+cmd: serve /etc/gitaly/config.toml
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-gitaly"
+  org.opencontainers.image.licenses: "MIT"
