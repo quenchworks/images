@@ -1,0 +1,58 @@
+# The Lounge runtime: node with thelounge in /app. THELOUNGE_HOME=/var/opt/thelounge holds config.js,
+# users, logs and uploads (mount a volume there); the first start writes a default config.js. Web UI on
+# 9000. Nonroot uid 1001, multi-arch. Add users with `thelounge add <name>` (the chart does it).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-thelounge@local
+
+accounts:
+  groups:
+    - groupname: thelounge
+      gid: 1001
+  users:
+    - username: thelounge
+      uid: 1001
+      gid: 1001
+      homedir: /var/opt/thelounge
+  run-as: 1001
+
+work-dir: /var/opt/thelounge
+
+environment:
+  NODE_ENV: production
+  THELOUNGE_HOME: /var/opt/thelounge
+
+paths:
+  - path: /var/opt
+    type: directory
+    uid: 0
+    gid: 0
+    permissions: 0o755
+  - path: /var/opt/thelounge
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+entrypoint:
+  command: /usr/bin/node /app/node_modules/thelounge/index.js
+cmd: start
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-thelounge"
+  org.opencontainers.image.licenses: "MIT"
