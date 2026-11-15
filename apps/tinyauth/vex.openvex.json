@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/tinyauth/2026-11-15",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-15T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-33997"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/docker/docker@v28.5.2%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "Measured 2026-11-15. CVE-2026-33997 is a privilege-validation bypass in the Moby daemon's plugin installation. Tinyauth links the Docker client only, to read container labels for its access rules (internal/service/docker_service.go imports github.com/docker/docker/client and api/types/container). Checked with `go list -deps ./cmd/tinyauth` at v5.2.0 with docker v28.5.2+incompatible: the linked docker/docker packages are api, api/types and its subpackages, and client; no daemon, plugin manager or API server package is in the build. The melange build fails if any other docker/docker package is linked (apps/tinyauth/melange.yaml). The fix (29.3.1) exists only under the github.com/moby/moby module path, so the +incompatible module cannot be floated to it."
+    }
+  ]
+}

@@ -369,6 +369,7 @@ var table = map[string]check{
 	"tidb-operator":                     {src: ghRel("pingcap/tidb-operator"), n: 1, f: filter{keep: full(`1\.\d+\.\d+`)}}, // v1 line; v2 is a rewrite with new CRDs
 	"tika":                              {src: scrapeSrc("https://archive.apache.org/dist/tika/", `href="(\d+\.\d+\.\d+)/"`), n: 1},
 	"timescaledb":                       {src: ghRel("timescale/timescaledb")},
+	"tinyauth":                          {src: ghRel("tinyauthapp/tinyauth"), n: 1},
 	"traefik":                           {src: ghRel("traefik/traefik")},
 	"trickster":                         {src: ghRel("trickstercache/trickster"), lines: 2},
 	"trino":                             {src: ghRel("trinodb/trino"), n: 1},

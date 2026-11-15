@@ -1,0 +1,74 @@
+# Tinyauth from the release tag as upstream's Dockerfile builds it: pnpm builds frontend/ into
+# internal/assets/dist (embedded), go builds ./cmd/tinyauth (CGO off) with the version ldflag.
+package:
+  name: quench-tinyauth
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Tinyauth forward-auth login server, built from source on Wolfi"
+  copyright:
+    - license: AGPL-3.0-only
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - go-1.27          # go.mod: go 1.26.4; Wolfi go-1.27 for the stdlib fixes
+      # build-only web toolchain: frontend/package.json pins pnpm@11.1.2
+      - nodejs-24
+      - pnpm-11.8
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/tinyauthapp/tinyauth/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Build the SPA (pnpm build)
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" CI=true
+      cd frontend
+      pnpm install --frozen-lockfile
+      pnpm run build
+      test -f dist/index.html
+      mkdir -p ../internal/assets
+      cp -a dist ../internal/assets/dist
+
+  - name: Build the binary (static, CGO off)
+    runs: |
+      set -eu
+      export CGO_ENABLED=0 GOTOOLCHAIN=local GOFLAGS=-mod=mod
+      # floors, raised only when below (a bare go get downgrades once upstream passes it)
+      FLOOR="golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/net@v0.62.0 golang.org/x/text@v0.43.0 golang.org/x/sys@v0.49.0 golang.org/x/image@v0.47.0 go.opentelemetry.io/otel@v1.47.0 go.opentelemetry.io/otel/metric@v1.47.0 go.opentelemetry.io/otel/trace@v1.47.0 github.com/go-jose/go-jose/v4@v4.1.9"
+      need=""
+      for f in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${f%@*}")"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        [ "$(printf '%s\n%s\n' "$have" "${f#*@}" | sort -V | head -1)" = "${f#*@}" ] || need="$need $f"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
+      go mod tidy
+      # VEX guard (CVE-2026-33997, the Moby daemon's plugin installation): only the Docker client and
+      # its API types may be linked; any other github.com/docker/docker package fails the build
+      if go list -deps ./cmd/tinyauth | grep '^github.com/docker/docker/' | grep -vE '^github.com/docker/docker/(api|api/types(/.*)?|client)$'; then
+        echo "a docker/docker package beyond the client is linked: re-check the VEX"; exit 1
+      fi
+      go build -trimpath \
+        -ldflags "-s -w -X github.com/tinyauthapp/tinyauth/internal/model.Version=v${{package.version}}" \
+        -o "${{targets.destdir}}/usr/bin/tinyauth" ./cmd/tinyauth
+      "${{targets.destdir}}/usr/bin/tinyauth" version 2>&1 | grep -F "${{package.version}}"
+
+test:
+  pipeline:
+    - runs: |
+        tinyauth version

@@ -1,0 +1,52 @@
+# Tinyauth runtime: tinyauth on :3000, SQLite and resources in /data. Configure with TINYAUTH_* env:
+# TINYAUTH_APPURL (where Tinyauth is reached), TINYAUTH_AUTH_USERS (user:bcrypt-hash, comma
+# separated), OAuth/LDAP/OIDC settings. Nonroot 1001; mount a writable volume at /data.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-tinyauth@local
+
+accounts:
+  groups:
+    - groupname: tinyauth
+      gid: 1001
+  users:
+    - username: tinyauth
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  TINYAUTH_DATABASE_PATH: /data/tinyauth.db
+
+work-dir: /data
+
+entrypoint:
+  command: /usr/bin/tinyauth
+
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-tinyauth"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"
+  org.opencontainers.image.version: "__VER__"
