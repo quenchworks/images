@@ -1,0 +1,58 @@
+# GoToSocial runtime: /gotosocial/gotosocial with its web templates and assets, upstream's layout. Storage and
+# the SQLite database under /gotosocial/storage (the volume); set GTS_HOST to the instance's domain. HTTP on
+# 8080. busybox for the chart's admin init container. Nonroot uid 1001, multi-arch.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - busybox               # the chart's init container creates the admin only when it is missing
+    - quench-gotosocial@local
+
+accounts:
+  groups:
+    - groupname: gotosocial
+      gid: 1001
+  users:
+    - username: gotosocial
+      uid: 1001
+      gid: 1001
+      homedir: /gotosocial
+  run-as: 1001
+
+work-dir: /gotosocial
+
+environment:
+  GTS_PORT: "8080"
+  GTS_DB_TYPE: sqlite
+  GTS_DB_ADDRESS: /gotosocial/storage/sqlite.db
+  GTS_STORAGE_LOCAL_BASE_PATH: /gotosocial/storage
+  GTS_WEB_TEMPLATE_BASE_DIR: /gotosocial/web/template/
+  GTS_WEB_ASSET_BASE_DIR: /gotosocial/web/assets/
+
+paths:
+  - path: /gotosocial/storage
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+entrypoint:
+  command: /gotosocial/gotosocial
+cmd: server start
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-gotosocial"
+  org.opencontainers.image.licenses: "AGPL-3.0-or-later"
