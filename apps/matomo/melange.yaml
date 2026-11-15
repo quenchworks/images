@@ -37,7 +37,7 @@ environment:
       - https://packages.wolfi.dev/os
     packages:
       - busybox
-      - python3   # only to render a composer.lock from vendor/composer/installed.php (scan input)
+      - go        # build-only: the vendor swaps and the scan composer.lock (matomo-vendor.go)
       - curl      # fetches the twig 3.28.0 source for the 0-CVE swap (sha256-pinned)
       - ca-certificates-bundle   # ...so that fetch can verify TLS
 
@@ -128,43 +128,133 @@ pipeline:
       # Twig classmap rows and let PSR-4 do it. Only rows whose TARGET is inside
       # twig/twig/src are removed; the PSR-4 prefix entries (which have no 'Twig\\'
       # key on the line) are left untouched.
-      python3 - "$app" "$TWIG_VER" "$TWIG_REF" <<'PY'
-      import re, sys
-      app, ver, ref = sys.argv[1], sys.argv[2], sys.argv[3]
-      removed = {}
-      for name in ("autoload_classmap.php", "autoload_static.php"):
-          p = f"{app}/vendor/composer/{name}"
-          keep, drop = [], 0
-          for line in open(p):
-              if "'Twig\\\\" in line and "twig/twig/src" in line:
-                  drop += 1
-                  continue
-              keep.append(line)
-          open(p, "w").write("".join(keep))
-          removed[name] = drop
-          if drop == 0:
-              sys.exit(f"{name}: expected Twig classmap rows, found none -- "
-                       "composer's autoload layout changed, re-check this step")
-      # PSR-4 must still map Twig, or nothing would autoload after the rows are gone.
-      psr4 = open(f"{app}/vendor/composer/autoload_psr4.php").read()
-      if "twig/twig/src" not in psr4:
-          sys.exit("autoload_psr4.php no longer maps twig/twig/src -- swap is unsafe")
+      cat > /tmp/matomo-vendor.go <<'GO'
+      // matomo-vendor swaps a vendored composer package in a Matomo release tree and writes the
+      // composer.lock scanners read:
+      //
+      //	matomo-vendor swap <app> <package> <version> <reference> <classmap-marker>
+      //	  drops the classmap rows that point at the package (they name the old file paths;
+      //	  PSR-4 resolves the new tree), checks PSR-4 still maps it, and rewrites its
+      //	  installed.php entry to the new version and reference
+      //	matomo-vendor lock <installed.php> <composer.lock>
+      //	  re-materialises installed.php's {name, pretty_version} inventory as composer.lock
+      package main
 
-      # installed.php is the ONLY dependency inventory in the tarball, and the
-      # composer.lock emitted in the next step is generated from it -- so this is what
-      # makes the scanners (and the 0-CVE gate) see the real shipped version.
-      f = f"{app}/vendor/composer/installed.php"
-      s = open(f).read()
-      new, n = re.subn(
-          r"(?s)('twig/twig' => array\(\s*'pretty_version' => ')v[0-9.]+"
-          r"(',\s*'version' => ')[0-9.]+(',\s*'reference' => ')[0-9a-f]+(')",
-          lambda m: f"{m.group(1)}v{ver}{m.group(2)}{ver}.0{m.group(3)}{ref}{m.group(4)}",
-          s, count=1)
-      if n != 1:
-          sys.exit("installed.php: could not rewrite the twig/twig entry")
-      open(f, "w").write(new)
-      print("twig swap: %s -> %s (classmap rows dropped: %s)" % ("3.11.3", ver, removed))
-      PY
+      import (
+      	"encoding/json"
+      	"fmt"
+      	"os"
+      	"regexp"
+      	"strings"
+      )
+
+      func fail(f string, a ...any) {
+      	fmt.Fprintf(os.Stderr, f+"\n", a...)
+      	os.Exit(1)
+      }
+
+      func read(p string) string {
+      	b, err := os.ReadFile(p)
+      	if err != nil {
+      		fail("%v", err)
+      	}
+      	return string(b)
+      }
+
+      func write(p, s string) {
+      	if err := os.WriteFile(p, []byte(s), 0o644); err != nil {
+      		fail("%v", err)
+      	}
+      }
+
+      // swap: marker selects the classmap rows to drop (every line containing all its parts)
+      func swap(app, pkg, ver, ref string, marker []string, psr4 string) {
+      	removed := map[string]int{}
+      	for _, name := range []string{"autoload_classmap.php", "autoload_static.php"} {
+      		p := app + "/vendor/composer/" + name
+      		lines := strings.SplitAfter(read(p), "\n")
+      		var keep []string
+      		drop := 0
+      		for _, l := range lines {
+      			all := true
+      			for _, m := range marker {
+      				if !strings.Contains(l, m) {
+      					all = false
+      				}
+      			}
+      			if all {
+      				drop++
+      				continue
+      			}
+      			keep = append(keep, l)
+      		}
+      		if drop == 0 {
+      			fail("%s: expected %s classmap rows, found none; composer's autoload layout changed", name, pkg)
+      		}
+      		write(p, strings.Join(keep, ""))
+      		removed[name] = drop
+      	}
+      	if !strings.Contains(read(app+"/vendor/composer/autoload_psr4.php"), psr4) {
+      		fail("autoload_psr4.php no longer maps %s; the swap is unsafe", psr4)
+      	}
+      	f := app + "/vendor/composer/installed.php"
+      	s := read(f)
+      	re := regexp.MustCompile(`(?s)('` + regexp.QuoteMeta(pkg) + `' => array\(\s*'pretty_version' => ')v[0-9.]+(',\s*'version' => ')[0-9.]+(',\s*'reference' => ')[0-9a-f]+(')`)
+      	m := re.FindStringSubmatchIndex(s)
+      	if m == nil {
+      		fail("installed.php: could not rewrite the %s entry", pkg)
+      	}
+      	g := func(i int) string { return s[m[2*i]:m[2*i+1]] }
+      	s = s[:m[0]] + g(1) + "v" + ver + g(2) + ver + ".0" + g(3) + ref + g(4) + s[m[1]:]
+      	write(f, s)
+      	fmt.Printf("%s swap -> %s (classmap rows dropped: %v)\n", pkg, ver, removed)
+      }
+
+      func lock(src, dst string) {
+      	s := read(src)
+      	type pkgT struct {
+      		Name    string `json:"name"`
+      		Version string `json:"version"`
+      	}
+      	pkgs := []pkgT{}
+      	seen := map[string]bool{}
+      	entry := regexp.MustCompile(`(?s)'([^']+/[^']+)'\s*=>\s*array\((.*?)\),\n`)
+      	pv := regexp.MustCompile(`'pretty_version'\s*=>\s*'([^']+)'`)
+      	for _, m := range entry.FindAllStringSubmatch(s, -1) {
+      		if v := pv.FindStringSubmatch(m[2]); v != nil && !seen[m[1]] {
+      			seen[m[1]] = true
+      			pkgs = append(pkgs, pkgT{m[1], v[1]})
+      		}
+      	}
+      	out := struct {
+      		Readme      []string `json:"_readme"`
+      		ContentHash string   `json:"content-hash"`
+      		Packages    []pkgT   `json:"packages"`
+      		PackagesDev []pkgT   `json:"packages-dev"`
+      	}{[]string{"Generated by QuenchWorks from vendor/composer/installed.php so security scanners can enumerate the vendored dependencies."},
+      		"quenchworks-generated", pkgs, []pkgT{}}
+      	b, _ := json.MarshalIndent(out, "", "  ")
+      	write(dst, string(b))
+      	fmt.Printf("composer.lock: %d packages\n", len(pkgs))
+      }
+
+      func main() {
+      	if len(os.Args) < 2 {
+      		fail("usage: matomo-vendor swap|lock ...")
+      	}
+      	switch os.Args[1] {
+      	case "twig":
+      		swap(os.Args[2], "twig/twig", os.Args[3], os.Args[4], []string{`'Twig\\`, "twig/twig/src"}, "twig/twig/src")
+      	case "hf":
+      		swap(os.Args[2], "symfony/http-foundation", os.Args[3], os.Args[4], []string{"/symfony/http-foundation/"}, "/symfony/http-foundation")
+      	case "lock":
+      		lock(os.Args[2], os.Args[3])
+      	default:
+      		fail("unknown command %s", os.Args[1])
+      	}
+      }
+      GO
+      go run /tmp/matomo-vendor.go twig "$app" "$TWIG_VER" "$TWIG_REF"
 
       # Belt and braces: the shipped tree must report the new version, and no file in
       # it may still claim 3.11.3.
@@ -205,29 +295,7 @@ pipeline:
 
       # Drop the classmap rows (5.4 file paths) and let PSR-4 resolve the new tree,
       # then rewrite installed.php, the inventory the scan composer.lock comes from.
-      python3 - "$app" "$HF_VER" "$HF_REF" <<'PY'
-      import re, sys
-      app, ver, ref = sys.argv[1], sys.argv[2], sys.argv[3]
-      for name in ("autoload_classmap.php", "autoload_static.php"):
-          p = f"{app}/vendor/composer/{name}"
-          lines = open(p).readlines()
-          keep = [l for l in lines if "/symfony/http-foundation/" not in l]
-          if len(keep) == len(lines):
-              sys.exit(f"{name}: expected http-foundation classmap rows, found none")
-          open(p, "w").write("".join(keep))
-      if "/symfony/http-foundation" not in open(f"{app}/vendor/composer/autoload_psr4.php").read():
-          sys.exit("autoload_psr4.php no longer maps symfony/http-foundation, swap is unsafe")
-      f = f"{app}/vendor/composer/installed.php"
-      s = open(f).read()
-      new, n = re.subn(
-          r"(?s)('symfony/http-foundation' => array\(\s*'pretty_version' => ')v[0-9.]+"
-          r"(',\s*'version' => ')[0-9.]+(',\s*'reference' => ')[0-9a-f]+(')",
-          lambda m: f"{m.group(1)}v{ver}{m.group(2)}{ver}.0{m.group(3)}{ref}{m.group(4)}",
-          s, count=1)
-      if n != 1:
-          sys.exit("installed.php: could not rewrite the symfony/http-foundation entry")
-      open(f, "w").write(new)
-      PY
+      go run /tmp/matomo-vendor.go hf "$app" "$HF_VER" "$HF_REF"
       grep -q "'pretty_version' => 'v${HF_VER}'" "$app/vendor/composer/installed.php"
 
   - name: Emit composer.lock from vendor/composer/installed.php (makes the vendored PHP deps scannable)
@@ -242,23 +310,7 @@ pipeline:
       # surface. We faithfully re-materialise the exact same {name, version} inventory into
       # a standard composer.lock so BOTH the local build gate and the CI Trivy step really
       # scan the vendored deps. This is scan input, not a runtime file (Matomo ignores it).
-      python3 - "$app/vendor/composer/installed.php" "$app/composer.lock" <<'PY'
-      import re, json, sys
-      src = open(sys.argv[1]).read()
-      pkgs, seen = [], set()
-      for m in re.finditer(r"'([^']+/[^']+)'\s*=>\s*array\((.*?)\),\n", src, re.S):
-          name, body = m.group(1), m.group(2)
-          pv = re.search(r"'pretty_version'\s*=>\s*'([^']+)'", body)
-          if pv and name not in seen:
-              seen.add(name)
-              pkgs.append({"name": name, "version": pv.group(1)})
-      json.dump({"_readme": ["Generated by QuenchWorks from vendor/composer/installed.php "
-                             "so security scanners can enumerate the vendored dependencies."],
-                 "content-hash": "quenchworks-generated",
-                 "packages": pkgs, "packages-dev": []},
-                open(sys.argv[2], "w"), indent=2)
-      print("composer.lock: %d packages" % len(pkgs))
-      PY
+      go run /tmp/matomo-vendor.go lock "$app/vendor/composer/installed.php" "$app/composer.lock"
       test -s "$app/composer.lock"
       grep -q '"name": "twig/twig"' "$app/composer.lock" || { echo "sanity: twig not found in inventory"; exit 1; }
 
