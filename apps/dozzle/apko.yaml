@@ -1,0 +1,51 @@
+# Dozzle runtime: dozzle on :8080 reading the Docker socket (mount /var/run/docker.sock and add its
+# group) or, with DOZZLE_MODE=k8s, pod logs through the Kubernetes API. User settings live in /data.
+# Nonroot 1001.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-dozzle@local
+
+accounts:
+  groups:
+    - groupname: dozzle
+      gid: 1001
+  users:
+    - username: dozzle
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+
+work-dir: /
+
+entrypoint:
+  command: /usr/bin/dozzle
+
+
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-dozzle"
+  org.opencontainers.image.licenses: "MIT"
+  org.opencontainers.image.version: "__VER__"

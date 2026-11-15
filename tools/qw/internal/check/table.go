@@ -93,6 +93,7 @@ var table = map[string]check{
 	"distribution":                      {src: ghRel("distribution/distribution")},
 	"dive":                              {src: ghRel("wagoodman/dive"), n: 1},
 	"dnscrypt-proxy":                    {src: ghRel("DNSCrypt/dnscrypt-proxy"), n: 1},
+	"dozzle":                            {src: ghRel("amir20/dozzle"), n: 1},
 	"dragonfly":                         {src: ghRel("dragonflydb/dragonfly")},
 	"dragonfly-operator":                {src: ghRel("dragonflydb/dragonfly-operator"), n: 1},
 	"opensearch-operator":               {src: ghRel("opensearch-project/opensearch-k8s-operator"), n: 1},

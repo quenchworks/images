@@ -1,0 +1,72 @@
+# Dozzle from the release tag as upstream's Dockerfile builds it: bun builds the UI into dist/
+# (embedded), go builds the server with the version ldflag (CGO off).
+package:
+  name: quench-dozzle
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Dozzle container log viewer, built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - openssl            # the embedded agent key pair, as upstream justfile generates it
+      - ca-certificates-bundle
+      - go-1.27          # go.mod: go 1.27.4
+      # build-only web toolchain (bun.lock)
+      - bun
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/amir20/dozzle/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Build the web UI (bun)
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" CI=true
+      bun install --frozen-lockfile --ignore-scripts
+      bun run build
+      test -f dist/index.html
+
+  - name: Build the binary (static, CGO off)
+    runs: |
+      set -eu
+      export CGO_ENABLED=0 GOTOOLCHAIN=local GOFLAGS=-mod=mod
+      # floors, raised only when below (a bare go get downgrades once upstream passes it)
+      FLOOR="golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/net@v0.62.0 golang.org/x/text@v0.43.0 golang.org/x/sys@v0.49.0 golang.org/x/image@v0.47.0 go.opentelemetry.io/otel@v1.47.0 go.opentelemetry.io/otel/metric@v1.47.0 go.opentelemetry.io/otel/trace@v1.47.0"
+      need=""
+      for f in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${f%@*}")"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        [ "$(printf '%s\n%s\n' "$have" "${f#*@}" | sort -V | head -1)" = "${f#*@}" ] || need="$need $f"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
+      go mod tidy
+      # main.go embeds shared_key.pem/shared_cert.pem, which remote agents use to trust the hub.
+      # Upstream's release injects its own pair from CI secrets; this build generates one the way
+      # upstream's justfile does, so agents built elsewhere need the same certs mounted.
+      openssl genpkey -algorithm Ed25519 -out shared_key.pem
+      openssl req -new -key shared_key.pem -out shared_request.csr -subj "/O=Quenchworks Dozzle"
+      openssl x509 -req -in shared_request.csr -signkey shared_key.pem -out shared_cert.pem -days 1825
+      rm shared_request.csr
+      go build -trimpath -ldflags "-s -w -X github.com/amir20/dozzle/internal/cli.Version=v${{package.version}}" \
+        -o "${{targets.destdir}}/usr/bin/dozzle" .
+      "${{targets.destdir}}/usr/bin/dozzle" --version 2>&1 | grep -F "${{package.version}}"
+
+test:
+  pipeline:
+    - runs: |
+        dozzle --version
