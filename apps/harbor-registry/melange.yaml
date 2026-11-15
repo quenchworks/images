@@ -54,7 +54,6 @@ environment:
       - ca-certificates-bundle
       - git
       - make
-      - python3   # used only to apply the source patch that drops letsencrypt
       # go.mod requires go >= 1.25.x. Wolfi go-1.25 tops out at 1.25.12, whose
       # stdlib carries fixable CVEs (fixed in 1.25.13/1.26.6); go-1.26 satisfies
       # the go directive and ships a fixed stdlib.
@@ -90,48 +89,64 @@ pipeline:
       # import. This is an OPTIONAL upstream-distribution feature, NOT a Harbor
       # patch -- the Harbor redis layer-cache + storage patches (in
       # registry/storage/cache/redis and the storage drivers) are untouched.
-      python3 - "registry/registry.go" <<'PY'
-      import sys
-      f = sys.argv[1]
-      lines = open(f).read().split("\n")
-      out, i, patched_import, patched_block = [], 0, False, False
-      while i < len(lines):
-          ln = lines[i]
-          # drop the rsc.io/letsencrypt import line
-          if ln.strip() == '"rsc.io/letsencrypt"':
-              patched_import = True
-              i += 1
-              continue
-          # find the LetsEncrypt-enabled branch and replace its body with a
-          # hard error, preserving the surrounding `if ... { ... } else {` shape.
-          if ln.strip() == 'if config.HTTP.TLS.LetsEncrypt.CacheFile != "" {' and not patched_block:
-              indent = ln[:len(ln) - len(ln.lstrip())]
-              out.append(ln)
-              out.append(indent + "\treturn fmt.Errorf(\"built-in Let's Encrypt support is disabled in this build; terminate TLS at a proxy or provide http.tls.certificate\")")
-              # skip original body up to and including the matching `} else {`
-              i += 1
-              while lines[i].strip() != "} else {":
-                  i += 1
-              out.append(lines[i])  # the `} else {`
-              patched_block = True
-              i += 1
-              continue
-          out.append(ln)
-          i += 1
-      assert patched_import, "rsc.io/letsencrypt import not found -- fork layout changed"
-      assert patched_block, "letsencrypt branch not found -- fork layout changed"
-      s = "\n".join(out)
-      # logrus-logstash-hook v1.0.0's LogstashFormatter has no TimestampFormat
-      # field (it embeds a logrus.Formatter). Reconstruct the v0-style literal
-      # `&logstash.LogstashFormatter{TimestampFormat: time.RFC3339Nano}` as the
-      # v1.0.0 form wrapping a JSON formatter that carries the timestamp format.
-      old_ls = '&logstash.LogstashFormatter{\n\t\t\tTimestampFormat: time.RFC3339Nano,\n\t\t}'
-      new_ls = '&logstash.LogstashFormatter{\n\t\t\tFormatter: &log.JSONFormatter{TimestampFormat: time.RFC3339Nano},\n\t\t}'
-      assert old_ls in s, "logstash formatter literal not found -- fork layout changed"
-      s = s.replace(old_ls, new_ls)
-      open(f, "w").write(s)
-      print("patched out letsencrypt feature + fixed logstash formatter")
-      PY
+      cat > /tmp/regpatch.go <<'GO'
+      // regpatch removes the registry's built-in Let's Encrypt feature (its import and the
+      // LetsEncrypt branch, replaced by a hard error) and moves the logstash formatter literal to
+      // the logrus-logstash-hook v1 form. It fails when the fork's layout no longer matches.
+      package main
+
+      import (
+      	"fmt"
+      	"os"
+      	"strings"
+      )
+
+      func main() {
+      	f := os.Args[1]
+      	b, err := os.ReadFile(f)
+      	if err != nil {
+      		panic(err)
+      	}
+      	lines := strings.Split(string(b), "\n")
+      	var out []string
+      	imp, blk := false, false
+      	for i := 0; i < len(lines); i++ {
+      		ln := lines[i]
+      		t := strings.TrimSpace(ln)
+      		if t == `"rsc.io/letsencrypt"` {
+      			imp = true
+      			continue
+      		}
+      		if t == `if config.HTTP.TLS.LetsEncrypt.CacheFile != "" {` && !blk {
+      			indent := ln[:len(ln)-len(strings.TrimLeft(ln, " \t"))]
+      			out = append(out, ln, indent+"\treturn fmt.Errorf(\"built-in Let's Encrypt support is disabled in this build; terminate TLS at a proxy or provide http.tls.certificate\")")
+      			for i++; strings.TrimSpace(lines[i]) != "} else {"; i++ {
+      			}
+      			out = append(out, lines[i])
+      			blk = true
+      			continue
+      		}
+      		out = append(out, ln)
+      	}
+      	if !imp || !blk {
+      		fmt.Fprintln(os.Stderr, "letsencrypt import or branch not found: the fork layout changed")
+      		os.Exit(1)
+      	}
+      	s := strings.Join(out, "\n")
+      	oldLS := "&logstash.LogstashFormatter{\n\t\t\tTimestampFormat: time.RFC3339Nano,\n\t\t}"
+      	newLS := "&logstash.LogstashFormatter{\n\t\t\tFormatter: &log.JSONFormatter{TimestampFormat: time.RFC3339Nano},\n\t\t}"
+      	if !strings.Contains(s, oldLS) {
+      		fmt.Fprintln(os.Stderr, "logstash formatter literal not found: the fork layout changed")
+      		os.Exit(1)
+      	}
+      	if err := os.WriteFile(f, []byte(strings.Replace(s, oldLS, newLS, -1)), 0o644); err != nil {
+      		panic(err)
+      	}
+      	fmt.Println("patched out letsencrypt feature + fixed logstash formatter")
+      }
+      GO
+      # built first: `go run x.go file.go` would read file.go as more source
+      go build -o /tmp/regpatch /tmp/regpatch.go && /tmp/regpatch registry/registry.go
 
       # ---- Controlled CVE bumps (fork is on the stale v2.8.3 line) ----
       # Bump only the deps that carry FIXABLE Trivy gobinary CVEs to a fixed
