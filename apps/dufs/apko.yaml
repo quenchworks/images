@@ -1,0 +1,54 @@
+# Assembles the dufs image: one binary, nonroot uid 1001. It serves /data (a volume) on
+# 0.0.0.0:5000, read-only until DUFS_ALLOW_* turn uploads, deletes or search on; DUFS_AUTH sets
+# accounts and per-path rules, DUFS_TLS_CERT/DUFS_TLS_KEY serve HTTPS.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-dufs@local
+
+accounts:
+  groups:
+    - groupname: dufs
+      gid: 1001
+  users:
+    - username: dufs
+      uid: 1001
+      gid: 1001
+      homedir: /data
+  run-as: 1001
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  DUFS_SERVE_PATH: /data
+  DUFS_BIND: 0.0.0.0
+  DUFS_PORT: "5000"
+
+work-dir: /data
+
+entrypoint:
+  command: /usr/bin/dufs
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-dufs"
+  org.opencontainers.image.licenses: "Apache-2.0 OR MIT"
+  org.opencontainers.image.version: "__VER__"

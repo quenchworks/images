@@ -114,6 +114,7 @@ var table = map[string]check{
 	"volcano":                           {src: ghRel("volcano-sh/volcano"), n: 1},
 	"vitess-operator":                   {src: ghRel("planetscale/vitess-operator"), n: 1},
 	"duckdb":                            {src: ghRel("duckdb/duckdb")},
+	"dufs":                              {src: ghRel("sigoden/dufs"), n: 1},
 	"easegress":                         {src: ghRel("easegress-io/easegress"), lines: 2},
 	"elasticsearch":                     {src: ghRel("elastic/elasticsearch")},
 	"emissary-apiext":                   {src: ghRel("emissary-ingress/emissary"), n: 1},
