@@ -138,6 +138,7 @@ var table = map[string]check{
 	"radicale":                          {src: ghRel("Kozea/Radicale"), n: 1},
 	"cyberchef":                         {src: ghRel("gchq/CyberChef"), n: 1},
 	"readeck":                           {src: codebergRel("readeck/readeck"), n: 1},
+	"atuin-server":                      {src: ghRel("atuinsh/atuin"), n: 1},
 	"etcd":                              {src: ghRel("etcd-io/etcd")},
 	"excalidraw":                        {src: ghRel("excalidraw/excalidraw")},
 	"external-dns":                      {src: ghRel("kubernetes-sigs/external-dns")},

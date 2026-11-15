@@ -1,9 +1,12 @@
 package smoke
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -59,5 +62,60 @@ func init() {
 			t.Fatalf("sign-in after a restart failed (%d); the user is gone?", code)
 		}
 		t.Logf("smoke test passed (readeck %s: read-only boot, admin created by readeck user, wrong password refused, sign-in and a session after a restart; user %s)", t.Want, u)
+	})
+}
+
+// atuinLogin posts /login and returns the status and the session token.
+func atuinLogin(base, user, pass string) (int, string) {
+	b, _ := json.Marshal(map[string]string{"username": user, "password": pass})
+	r, err := http.Post(base+"/login", "application/json", bytes.NewReader(b))
+	if err != nil {
+		return 0, ""
+	}
+	defer r.Body.Close()
+	var out struct {
+		Session string `json:"session"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&out)
+	return r.StatusCode, out.Session
+}
+
+func init() {
+	// On a read-only rootfs with /config on a volume: the admin CLI creates a user from a password on stdin,
+	// /login refuses a wrong password and returns a session that opens /api/v0/me, and the user survives a
+	// restart.
+	register("atuin-server", func(t *T) {
+		const base = "http://127.0.0.1:18888"
+		const pw = "Smoke-Pass-2026"
+		u := t.User("1001")
+		t.Contains(t.RunAny("--version"), t.Want, "atuin-server --version")
+		vol := t.Name("data")
+		t.Docker("volume", "create", vol)
+		t.Cleanup(func() { docker("volume", "rm", vol) })
+		flags := []string{"--read-only", "--tmpfs", "/tmp:rw,mode=1777", "-v", vol + ":/config"}
+		if out, rc := t.RunAnyFor(2*time.Minute, append(flags, "--entrypoint", "/bin/sh"), "-c", "echo "+pw+" | atuin-server admin user create smoke --email smoke@quench.test"); rc != 0 {
+			t.Fatalf("admin user create failed (%d):\n%s", rc, out)
+		}
+		start := func(name string) {
+			t.Start(name, append(flags, "-p", "127.0.0.1:18888:8888"))
+			t.WaitHTTP(base+"/", 60, name)
+		}
+		name := t.Name("")
+		start(name)
+		if code, _ := atuinLogin(base, "smoke", "wrong-password-1"); code != http.StatusUnauthorized {
+			t.Fatalf("a wrong password got %d, want 401", code)
+		}
+		docker("rm", "-f", name)
+		start(t.Name("again"))
+		code, tok := atuinLogin(base, "smoke", pw)
+		if code != http.StatusOK || tok == "" {
+			t.Fatalf("login after a restart: %d (the user is gone?)", code)
+		}
+		req, _ := http.NewRequest("GET", base+"/api/v0/me", nil)
+		req.Header.Set("Authorization", "Token "+tok)
+		if c, body := insecureDo(req); c != http.StatusOK || !strings.Contains(body, "smoke") {
+			t.Fatalf("/api/v0/me with the session: %d %q", c, body)
+		}
+		t.Logf("smoke test passed (atuin-server %s: read-only boot, user created by the admin CLI, wrong password refused, session opens /api/v0/me after a restart; user %s)", t.Want, u)
 	})
 }

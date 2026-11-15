@@ -1,0 +1,56 @@
+# Atuin server runtime: atuin-server on 8888 with ATUIN_CONFIG_DIR=/config (server.toml, written on first
+# start, and the SQLite database: the volume). busybox for the chart's admin init container. Nonroot uid
+# 1001, multi-arch.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - busybox               # the chart's init container pipes a password into atuin-server admin
+    - quench-atuin-server@local
+
+accounts:
+  groups:
+    - groupname: atuin
+      gid: 1001
+  users:
+    - username: atuin
+      uid: 1001
+      gid: 1001
+      homedir: /config
+  run-as: 1001
+
+work-dir: /config
+
+environment:
+  ATUIN_CONFIG_DIR: /config
+  ATUIN_HOST: 0.0.0.0
+  ATUIN_PORT: "8888"
+  ATUIN_DB_URI: sqlite:///config/atuin-server.db
+
+paths:
+  - path: /config
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+entrypoint:
+  command: /usr/bin/atuin-server
+cmd: start
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-atuin-server"
+  org.opencontainers.image.licenses: "MIT"
