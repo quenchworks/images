@@ -1,0 +1,42 @@
+# Assembles the GLAuth image: the static binary, nonroot uid 1001, plain LDAP on 3893 (LDAPS on
+# 3894 when the config enables it). It reads /etc/glauth/glauth.cfg; mount your own config there.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-glauth@local
+
+accounts:
+  groups:
+    - groupname: glauth
+      gid: 1001
+  users:
+    - username: glauth
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+work-dir: /etc/glauth
+
+entrypoint:
+  command: /usr/bin/glauth
+
+cmd: -c /etc/glauth/glauth.cfg
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-glauth"
+  org.opencontainers.image.licenses: "MIT"
+  org.opencontainers.image.version: "__VER__"
