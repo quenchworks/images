@@ -1,0 +1,46 @@
+# go-httpbin runtime: the static binary listening on 8080. Nonroot uid 1001, multi-arch. Shell-free.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-go-httpbin@local
+
+accounts:
+  groups:
+    - groupname: go-httpbin
+      gid: 1001
+  users:
+    - username: go-httpbin
+      uid: 1001
+      gid: 1001
+      homedir: /home/go-httpbin
+  run-as: 1001
+
+work-dir: /home/go-httpbin
+
+paths:
+  - path: /home/go-httpbin
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+entrypoint:
+  command: /usr/bin/go-httpbin
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-go-httpbin"
+  org.opencontainers.image.licenses: "MIT"

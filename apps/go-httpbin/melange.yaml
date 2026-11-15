@@ -1,0 +1,41 @@
+# go-httpbin from the release tag, CGO-free, with upstream's goreleaser flags.
+package:
+  name: quench-go-httpbin
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened go-httpbin HTTP test service, built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - go-1.26          # go.mod: go 1.26.0
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/mccutchen/go-httpbin/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - runs: |
+      set -eu
+      export CGO_ENABLED=0 GOTOOLCHAIN=local
+      # no module dependencies: the standard library is the whole supply chain
+      [ "$(go list -m all | wc -l)" = 1 ]
+      go build -trimpath -ldflags "-s -w -X main.version=${{package.version}}" \
+        -o "${{targets.destdir}}/usr/bin/go-httpbin" ./cmd/go-httpbin
+      "${{targets.destdir}}/usr/bin/go-httpbin" -version 2>&1 | grep -F "${{package.version}}"
+
+test:
+  pipeline:
+    - runs: go-httpbin -version

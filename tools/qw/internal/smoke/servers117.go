@@ -83,3 +83,28 @@ func init() {
 		t.Logf("smoke test passed (soju %s: read-only boot, admin created by sojudb from stdin, sign-in and BouncerServ, wrong password refused, user kept across a restart; user %s)", t.Want, u)
 	})
 }
+
+func init() {
+	// On a read-only rootfs: -version reports the stamped version (/version shows only the service name
+	// unless -use-full-version), /get echoes the request, /status
+	// returns the asked code, and /basic-auth accepts only the right credentials.
+	register("go-httpbin", func(t *T) {
+		const base = "http://127.0.0.1:18080"
+		u := t.User("1001")
+		t.Contains(t.RunAny("-version"), t.Want, "go-httpbin -version")
+		name := t.Name("")
+		t.Start(name, []string{"--read-only", "-p", "127.0.0.1:18080:8080"})
+		t.Contains(t.WaitHTTP(base+"/version", 60, name), "go-httpbin", "/version")
+		t.Contains(t.WaitHTTP(base+"/get?quench=smoke", 5, name), `"quench"`, "/get echo")
+		if code, _ := restDo("GET", base+"/status/418", "", "", ""); code != 418 {
+			t.Fatalf("/status/418 answered %d", code)
+		}
+		if code, _ := restDo("GET", base+"/basic-auth/smoke/pass", "smoke", "pass", ""); code != 200 {
+			t.Fatalf("/basic-auth with the right credentials answered %d", code)
+		}
+		if code, _ := restDo("GET", base+"/basic-auth/smoke/pass", "smoke", "wrong", ""); code != 401 {
+			t.Fatalf("/basic-auth with a wrong password answered %d", code)
+		}
+		t.Logf("smoke test passed (go-httpbin %s: read-only boot, version, echo, status codes and basic auth; user %s)", t.Want, u)
+	})
+}
