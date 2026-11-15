@@ -72,3 +72,33 @@ func init() {
 		t.Logf("smoke test passed (rest-server %s: read-only boot, htpasswd auth enforced, repository created and its config kept across a restart; user %s)", t.Want, u)
 	})
 }
+
+func init() {
+	// On a read-only rootfs: restic initialises an encrypted repository in a bind mount, backs up a file,
+	// restores it, and refuses the repository with a wrong password.
+	register("restic", func(t *T) {
+		u := t.User("1001")
+		t.Contains(t.RunAny("version"), t.Want, "restic version")
+		// the source is a file inside the image: a bind-mounted host file reads back EIO through Docker
+		// Desktop's file share when restic opens it
+		dir := t.TempDir()
+		run := func(pw string, args ...string) (string, int) {
+			flags := []string{"--read-only", "--tmpfs", "/home/restic:rw,uid=1001,gid=1001", "--tmpfs", "/tmp:rw,mode=1777", "-v", dir + ":/w", "-e", "RESTIC_PASSWORD=" + pw, "-e", "RESTIC_REPOSITORY=/w/repo"}
+			return t.RunAnyFor(2*time.Minute, flags, args...)
+		}
+		const pw = "Smoke-Pass-2026"
+		for _, step := range [][]string{{"init"}, {"backup", "/etc/os-release"}, {"restore", "latest", "--target", "/w/out"}} {
+			if out, rc := run(pw, step...); rc != 0 {
+				t.Fatalf("restic %s failed (%d):\n%s", step[0], rc, out)
+			}
+		}
+		got, err := os.ReadFile(filepath.Join(dir, "out", "etc", "os-release"))
+		if err != nil || !strings.Contains(string(got), "ID=") {
+			t.Fatalf("restored file: %q %v", got, err)
+		}
+		if out, rc := run("wrong-password-1", "snapshots"); rc == 0 {
+			t.Fatalf("a wrong password opened the repository:\n%s", out)
+		}
+		t.Logf("smoke test passed (restic %s: read-only rootfs, encrypted repository initialised, file backed up and restored, wrong password refused; user %s)", t.Want, u)
+	})
+}

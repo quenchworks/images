@@ -1,0 +1,50 @@
+# restic runtime: the restic CLI as the entrypoint, HOME (and the restic cache) at /home/restic.
+# Nonroot uid 1001, multi-arch. Image only.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-restic@local
+
+accounts:
+  groups:
+    - groupname: restic
+      gid: 1001
+  users:
+    - username: restic
+      uid: 1001
+      gid: 1001
+      homedir: /home/restic
+  run-as: 1001
+
+work-dir: /home/restic
+
+environment:
+  HOME: /home/restic
+
+paths:
+  - path: /home/restic
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+entrypoint:
+  command: /usr/bin/restic
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-restic"
+  org.opencontainers.image.licenses: "BSD-2-Clause"
