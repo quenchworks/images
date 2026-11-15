@@ -1,0 +1,61 @@
+# AdGuard Home runtime: the AdGuardHome binary with its web client embedded. Nonroot uid 1001,
+# multi-arch. Config in /opt/adguardhome/conf (writable: AdGuard saves settings back to it), state in
+# /opt/adguardhome/work; both are volumes. Without a config it serves the setup wizard on 3000. Set the
+# DNS port above 1024 in the config (the chart uses 5353). Updates come from new image tags, so the
+# built-in updater is off.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-adguardhome@local
+
+accounts:
+  groups:
+    - groupname: adguard
+      gid: 1001
+  users:
+    - username: adguard
+      uid: 1001
+      gid: 1001
+      homedir: /opt/adguardhome
+  run-as: 1001
+
+work-dir: /opt/adguardhome
+
+paths:
+  - path: /opt/adguardhome
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /opt/adguardhome/conf
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+  - path: /opt/adguardhome/work
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+entrypoint:
+  command: /usr/bin/AdGuardHome
+cmd: --config /opt/adguardhome/conf/AdGuardHome.yaml --work-dir /opt/adguardhome/work --no-check-update
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-adguardhome"
+  org.opencontainers.image.licenses: "GPL-3.0-only"

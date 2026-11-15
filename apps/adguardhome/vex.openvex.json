@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/adguardhome/2026-11-15",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-15T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2022-32175"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/AdguardTeam/AdGuardHome@v0.107.80"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "Measured 2026-11-15 on the v0.107.80 source. The advisory (GHSA-mwwc-3jv2-62j3) ranges from 0.95 to 0.108.0-b.16, a pre-release of the 0.108 beta line, so every 0.107.x release falls inside it by version order alone. The fix (commit 756b14a, 'imp cookie security; rm plain-text apis') shipped on the 0.107 line in v0.107.14 (2022-09-29): CHANGELOG.md:2532-2538 names CVE-2022-32175 under v0.107.14 Security. In v0.107.80 every POST, PUT and DELETE on the control API goes through ensureContentType (internal/home/control.go:275-277, defined at :293), which rejects form-style requests and bodiless requests that carry a Content-Type, so a cross-site form cannot change the filtering rules; the session cookie is SameSite=Lax (internal/home/authhttp.go:241, :281); the plain-text filtering API the CSRF used is removed. Revisit if the advisory range is corrected or a new CSRF advisory names the 0.107 line."
+    }
+  ]
+}
