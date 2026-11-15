@@ -1,0 +1,50 @@
+# Ergo runtime: the ergo binary, its languages and MOTD under /usr/share/ergo, and a container config at
+# /etc/ergo/ircd.yaml (upstream's default.yaml with a plain listener on :6667 and the datastore at
+# /ircd/ircd.db). Nonroot uid 1001, multi-arch. /ircd is the volume. The chart supplies its own config
+# with a generated oper password and TLS on 6697.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-ergo@local
+
+accounts:
+  groups:
+    - groupname: ergo
+      gid: 1001
+  users:
+    - username: ergo
+      uid: 1001
+      gid: 1001
+      homedir: /ircd
+  run-as: 1001
+
+work-dir: /ircd
+
+paths:
+  - path: /ircd
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+entrypoint:
+  command: /usr/bin/ergo
+cmd: run --conf /etc/ergo/ircd.yaml
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-ergo"
+  org.opencontainers.image.licenses: "MIT"

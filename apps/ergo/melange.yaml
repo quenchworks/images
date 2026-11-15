@@ -1,0 +1,82 @@
+package:
+  name: quench-ergo
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Ergo IRC server, built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - go-1.26
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/ergochat/ergo/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Build ergo
+    runs: |
+      set -eu
+      export CGO_ENABLED=0 GOFLAGS=-mod=mod GOTOOLCHAIN=local
+      FLOOR="golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/net@v0.62.0 golang.org/x/sys@v0.49.0 golang.org/x/text@v0.43.0"
+      MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
+      below_floor() {
+        awk -v floor="$FLOOR" -v tag="$1" '
+          BEGIN { n = split(floor, f, " ")
+                  for (i = 1; i <= n; i++) { split(f[i], kv, "@"); want[kv[1]] = kv[2] } }
+          ($1 in want) {
+            split(substr($2, 2), g, "."); split(substr(want[$1], 2), w, ".")
+            for (i = 1; i <= 3; i++) {
+              if ((g[i] + 0) > (w[i] + 0)) next
+              if ((g[i] + 0) < (w[i] + 0)) { print $1 "@" want[$1] " (" tag " has " $2 ")"; next }
+            }
+          }'
+      }
+      need="$(go list -m -e $MODS | awk 'NF >= 2 && $NF ~ /^v[0-9]/ { print $1, $NF }' | below_floor go.mod | awk '{ print $1 }')"
+      if [ -n "$need" ]; then go get $need; fi
+      # ergo vendors its dependencies; the float must reach vendor/ too
+      if [ -d vendor ]; then go mod vendor; fi
+      go build -trimpath -ldflags "-s -w -X main.version=v${{package.version}} -X main.commit=__COMMIT__" -o "${{targets.destdir}}/usr/bin/ergo" .
+      bad="$(go version -m "${{targets.destdir}}/usr/bin/ergo" | awk '$1 == "dep" || $1 == "=>" { print $2, $3 }' | below_floor ergo)"
+      [ -z "$bad" ] || { echo "float did not reach the binary:"; echo "$bad"; exit 1; }
+      "${{targets.destdir}}/usr/bin/ergo" --version | grep -F "${{package.version}}"
+
+  - name: Install the languages, MOTD and container config
+    runs: |
+      set -eu
+      d="${{targets.destdir}}/usr/share/ergo"
+      mkdir -p "$d" "${{targets.destdir}}/etc/ergo"
+      cp -r languages "$d/languages"
+      cp ergo.motd default.yaml "$d/"
+      sed -e 's|^        "127.0.0.1:6667": .*|        ":6667": {}|' \
+          -e '/^        "\[::1\]:6667":/d' \
+          -e '/^        ":6697":$/,/^            min-tls-version: 1.2$/d' \
+          -e 's|^    motd: ergo.motd$|    motd: /usr/share/ergo/ergo.motd|' \
+          -e 's|^    path: ircd.db$|    path: /ircd/ircd.db|' \
+          -e 's|^    path: languages$|    path: /usr/share/ergo/languages|' \
+          default.yaml > "${{targets.destdir}}/etc/ergo/ircd.yaml"
+      # ergo validates the oper hash at load, so replace the well-known sample with the hash of a random
+      # password nobody keeps (as upstream's run.sh does): the oper login is unusable until the chart sets one
+      hash=$(head -c 32 /dev/urandom | base64 | "${{targets.destdir}}/usr/bin/ergo" genpasswd | tail -1)
+      case "$hash" in '$2a$'*) ;; *) echo "genpasswd gave no bcrypt hash: $hash"; exit 1 ;; esac
+      sed -i "s|\\\$2a\\\$04\\\$0123456789abcdef0123456789abcdef0123456789abcdef01234|$hash|g" "${{targets.destdir}}/etc/ergo/ircd.yaml"
+      # every edit landed: no sample oper hash, no TLS listener, absolute paths
+      ! grep -q '\$2a\$04\$0123456789abcdef' "${{targets.destdir}}/etc/ergo/ircd.yaml"
+      ! grep -q '":6697":' "${{targets.destdir}}/etc/ergo/ircd.yaml"
+      grep -q '^    path: /ircd/ircd.db$' "${{targets.destdir}}/etc/ergo/ircd.yaml"
+
+test:
+  pipeline:
+    - runs: ergo --version
