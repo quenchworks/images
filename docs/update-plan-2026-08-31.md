@@ -1,4 +1,4 @@
-# Image update plan — 2026-08-31
+# Image update plan, 2026-08-31
 
 From `uv run scripts/check-updates.py`:
 

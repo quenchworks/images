@@ -1,9 +1,9 @@
 #!/bin/bash
 # ============================================================================
-# LICENSE: MongoDB Community Server is SSPL-1.0 — *** NOT OSI-APPROVED ***.
+# LICENSE: MongoDB Community Server is SSPL-1.0, *** NOT OSI-APPROVED ***.
 # The OSI explicitly declined the SSPL; it is NOT open source. Caution tier.
 # Clean, truly-open alternative: QuenchWorks' FerretDB + standalone documentdb
-# (MongoDB-wire compatible, Apache-2.0/PostgreSQL-licensed) — prefer them.
+# (MongoDB-wire compatible, Apache-2.0/PostgreSQL-licensed), prefer them.
 # ============================================================================
 #
 # MongoDB entrypoint for a read-only rootfs. Ensures a writable dbpath + log dir,
@@ -26,7 +26,7 @@ export HOME="${MONGO_LOG_DIR:-/data/log}"
 
 # read-only rootfs: every writable area must live on a mount. mongod also creates
 # a unix domain socket (default /tmp/mongodb-<port>.sock) which would hit the
-# read-only rootfs — relocate it under the writable log dir via
+# read-only rootfs, relocate it under the writable log dir via
 # --unixSocketPrefix.
 mkdir -p "$DBPATH" "$LOGDIR"
 SOCKDIR="$LOGDIR"
@@ -113,7 +113,7 @@ if [ -n "$ROOT_USER" ] && [ -n "$ROOT_PASS" ]; then
     --logpath "$LOGDIR/mongod.log" --logappend --auth "${TLS_ARGS[@]}" "$@"
 else
   # No root creds configured: run open (NetworkPolicy is the boundary). Noted.
-  echo "[entrypoint] NOTE: MONGO_INITDB_ROOT_USERNAME/PASSWORD unset — running WITHOUT auth."
+  echo "[entrypoint] NOTE: MONGO_INITDB_ROOT_USERNAME/PASSWORD unset, running WITHOUT auth."
   echo "[entrypoint] NetworkPolicy is the security boundary in this mode."
   exec mongod --dbpath "$DBPATH" --bind_ip_all --port "$PORT" \
     --unixSocketPrefix "$SOCKDIR" \

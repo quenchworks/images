@@ -1,6 +1,6 @@
 # Packages Apache Airflow (workflow orchestration) onto Wolfi. Airflow is a pure-
-# Python app distributed as the PyPI package `apache-airflow`, not a binary — there
-# is no Wolfi `airflow` package — so we install it from PyPI into a virtualenv on a
+# Python app distributed as the PyPI package `apache-airflow`, not a binary, there
+# is no Wolfi `airflow` package, so we install it from PyPI into a virtualenv on a
 # Wolfi python-3.12 base, then harden it on a minimal apko base and gate it 0-CVE
 # with Trivy (which scans the venv's Python packages too).
 #
@@ -60,7 +60,7 @@ environment:
 pipeline:
   # Create an isolated venv and install Airflow + the celery/postgres/redis providers
   # from PyPI, pinned to the build version and CONSTRAINED by Airflow's official
-  # constraints file for this version + python 3.12 (mandatory — the resolve fails
+  # constraints file for this version + python 3.12 (mandatory, the resolve fails
   # without it). --no-cache-dir keeps the layer small. All venv shebangs point at
   # /opt/airflow-venv/bin/python.
   - runs: |
@@ -205,7 +205,7 @@ pipeline:
       # mounts a writable volume here for the read-only rootfs.
       install -d -m0755 "${dest}/opt/airflow"
 
-      # Convenience symlink on PATH — the bare launcher the chart passes subcommands to.
+      # Convenience symlink on PATH, the bare launcher the chart passes subcommands to.
       install -d "${dest}/usr/bin"
       ln -sf /opt/airflow-venv/bin/airflow "${dest}/usr/bin/airflow"
 

@@ -1,8 +1,8 @@
 # Packages the vLLM CPU inference/serving engine onto Wolfi. vLLM is a PyTorch-based
-# Python app distributed as a wheel, not a binary — and the PyPI wheel is the CUDA build
+# Python app distributed as a wheel, not a binary, and the PyPI wheel is the CUDA build
 # (torch + flashinfer + nvidia-cutlass-dsl[cu13]: multi-GB, un-hardenable, GPU-only). vLLM
 # publishes pre-built CPU wheels at https://wheels.vllm.ai/<VER>/cpu that depend on the
-# CPU build of torch (torch==<x>+cpu, from https://download.pytorch.org/whl/cpu) — so we
+# CPU build of torch (torch==<x>+cpu, from https://download.pytorch.org/whl/cpu), so we
 # install that CPU wheel from PyPI-style indexes into a virtualenv on a Wolfi python-3.12
 # base (NO source compile), harden it on a minimal apko base, and gate it 0-CVE with Trivy
 # (comprehensive mode, which scans the venv's ~140 Python packages too).
@@ -23,10 +23,10 @@ package:
     - license: Apache-2.0
   # Disable melange's automatic SO-dependency scan (SCA). The venv's wheels bundle their
   # own native libs (torch/lib/*, opencv .libs, the Intel oneAPI SYCL/Level-Zero/OpenCL/
-  # TBB runtimes from intel-openmp) and load them via rpath — they are self-contained
+  # TBB runtimes from intel-openmp) and load them via rpath, they are self-contained
   # inside the package. The scanner otherwise emits unsatisfiable `so:` depends: e.g.
   # numba's omppool.so has DT_NEEDED=libgomp.so.1.0.0 (the fully-versioned soname), which
-  # NO Wolfi package provides as a `so:` string even though the file exists — so apko
+  # NO Wolfi package provides as a `so:` string even though the file exists, so apko
   # can't solve it. We instead pin the genuinely-external system libs explicitly below;
   # ld.so resolves them by filename at runtime (Wolfi ships /usr/lib/libgomp.so.1.0.0 and
   # /usr/lib/libnuma.so.1). Verified by the `import vllm` smoke in test.sh.
@@ -40,8 +40,8 @@ package:
       - libstdc++
       - glibc
       - tzdata
-      - libgomp                # GNU OpenMP — numba's omppool.so links libgomp.so.1.0.0
-      - numactl                # provides libnuma.so.1 — needed by torch(+cpu) NUMA support
+      - libgomp                # GNU OpenMP: numba's omppool.so links libgomp.so.1.0.0
+      - numactl                # provides libnuma.so.1: needed by torch(+cpu) NUMA support
 
 environment:
   contents:

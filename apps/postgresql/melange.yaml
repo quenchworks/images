@@ -135,7 +135,7 @@ pipeline:
   # --- Patroni HA add-on -----------------------------------------------------
   # Patroni is a pure-Python supervisor that wraps postgres, elects a leader via a
   # DCS, and drives streaming replication + pg_rewind rejoin. There is no Wolfi apk
-  # for it, so — mirroring the mlflow/ansible venv-on-Wolfi pattern — we install it
+  # for it, so, mirroring the mlflow/ansible venv-on-Wolfi pattern, we install it
   # from PyPI into an isolated venv on the build's python-3.13. `[kubernetes]` pulls
   # the k8s client so Patroni can use the Kubernetes API as its DCS (no external
   # etcd; leader election + cluster state live in k8s endpoints/configmaps, and it
@@ -158,7 +158,7 @@ pipeline:
       # urllib3 / requests / certifi / setuptools, which routinely lag a fixable CVE.
       # Bump the affected packages to their patched releases so the 0-CVE gate passes,
       # then `pip check` to confirm the dependency graph still resolves. Keep this list
-      # minimal — only what Trivy actually flags for the pinned build.
+      # minimal, only what Trivy actually flags for the pinned build.
       /opt/patroni/venv/bin/pip install --no-cache-dir --upgrade \
         "urllib3>=2.5.0" \
         "requests>=2.32.4" \

@@ -36,7 +36,7 @@ environment:
       - unzip       # graphql-java guava reshade (see the build step)
       - zip
       - git                 # quarkus git-info build step reads the checkout metadata
-      - python-3.13         # build-env only (not in the apko runtime) — runs the jackson CVE pin patch below
+      - python-3.13         # build-env only (not in the apko runtime): runs the jackson CVE pin patch below
 
 pipeline:
   - uses: fetch
@@ -52,14 +52,14 @@ pipeline:
       export MAVEN_OPTS="-Dmaven.repo.local=$(pwd)/.m2repo -Duser.home=$(pwd)"
       # --- QuenchWorks CVE pin: jackson-databind -> 2.21.7 -------------------
       # The Quarkus fast-jar bundles com.fasterxml.jackson.core:jackson-databind,
-      # flagged CVE-2026-54515 (MEDIUM, fixed in 2.21.6) and CVE-2026-91776/-91777 (HIGH, fixed in 2.21.7 — a same-major, in-policy
+      # flagged CVE-2026-54515 (MEDIUM, fixed in 2.21.6) and CVE-2026-91776/-91777 (HIGH, fixed in 2.21.7, a same-major, in-policy
       # patch). floci's root pom declares a <jackson.version> property that feeds
       # a jackson-bom import declared BEFORE the quarkus-bom import, so bumping
       # that property makes jackson-bom win and manages every jackson artifact
       # (incl. jackson-databind) to 2.21.7. For any version whose pom lacks the
       # property we also inject a first-declared jackson-databind pin (first
       # declaration wins over BOM-imported management). If neither lands 2.21.7
-      # the 0-CVE gate below still blocks — the gate is never weakened.
+      # the 0-CVE gate below still blocks, the gate is never weakened.
       PY="$(command -v python3 || command -v python3.13)"
       "$PY" - pom.xml <<'PYEOF'
       import re, sys

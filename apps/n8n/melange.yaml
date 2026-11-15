@@ -17,7 +17,7 @@
 # (napi-v3/v6) prebuilds, which are ABI-stable across Node majors, so the bump carries no
 # native-recompile risk for the one compiled module in this tree.
 #
-# LICENSE — CAUTION: fair-code, NOT OSI. Sustainable Use License v1.0 for the bulk of the
+# LICENSE, CAUTION: fair-code, NOT OSI. Sustainable Use License v1.0 for the bulk of the
 # code; ".ee." files need a commercial n8n Enterprise License (LICENSE_EE.md).
 package:
   name: quench-n8n
@@ -90,7 +90,7 @@ pipeline:
       #  * xlsx -> @e965/xlsx registry mirror: n8n-nodes-base pins xlsx to a SheetJS CDN tarball
       #    (cdn.sheetjs.com/...); npm >=12 hard-refuses "remote" URL deps (EALLOWREMOTE) and the
       #    registry `xlsx` maxes at the CVE-laden 0.18.5. @e965/xlsx is the registry mirror of the
-      #    current SheetJS (aliased back to the xlsx folder so require('xlsx') works) — unblocks
+      #    current SheetJS (aliased back to the xlsx folder so require('xlsx') works), unblocks
       #    the install AND ships patched 0.20.3.
       #  * every other entry pins a Trivy-flagged transitive npm dep to its "Fixed version".
       #    Scoped keys keep the blast radius minimal: `semver@<5.7.2` bumps only the vulnerable
@@ -287,7 +287,7 @@ pipeline:
       # --- brace-expansion CVE-2026-14257: 5.0.8 + the CJS interop it broke ---------------
       # Why the blunt `"brace-expansion":"5.0.8"` override above is the ONLY option: the
       # advisory (GHSA-mh99-v99m-4gvg) declares a SINGLE affected range, `<= 5.0.7`, which
-      # spans every line — so the maintenance heads (1.1.16 = maintenance-v1, 2.1.2 =
+      # spans every line, so the maintenance heads (1.1.16 = maintenance-v1, 2.1.2 =
       # maintenance-v2) are themselves affected, and no future 1.x/2.x release can ever sort
       # above 5.0.7 either. 5.0.8 is the only escape. Parent-bumping instead of overriding the
       # leaf does NOT work here: this tree's brace-expansion comes only from minimatch, and the
@@ -297,12 +297,12 @@ pipeline:
       #
       # 5.0.8 rewrote the CJS entry to a NAMED-only export (`exports.expand`, `__esModule: true`,
       # no callable default), but minimatch 3.1.5 does `require("brace-expansion")(pattern)` and
-      # 9.0.9 does `__importDefault(...).default(pattern)` — both throw "expand is not a
+      # 9.0.9 does `__importDefault(...).default(pattern)`, both throw "expand is not a
       # function" at load. So re-export the function AS module.exports with the named props kept:
       # the patched implementation (the EXPANSION_MAX_LENGTH accumulator bound that fixes the CVE)
       # is what runs, and all three consumer shapes work. Verified against the published tarballs:
       # minimatch 3.1.5 / 9.0.9 / 10.2.5 all braceExpand() correctly afterwards and stay bounded.
-      # NOT a gate bypass — no .trivyignore, no --skip, no VEX; the installed version genuinely
+      # NOT a gate bypass, no .trivyignore, no --skip, no VEX; the installed version genuinely
       # IS the fixed one. The assert fails the build if any copy escaped the override, so a stale
       # brace-expansion can never ship silently.
       python3.13 - <<'PYEOF'
@@ -549,7 +549,7 @@ pipeline:
       # single packages (@sentry/node-cpu-profiler, @sentry/node-native-stacktrace,
       # isolated-vm, oracledb, ...). npm keeps them all regardless of host. Any non-host-arch
       # ELF makes melange's SCA emit a bogus `so:ld-linux-<foreign>.so.1` dependency, and any
-      # musl-linked ELF a `so:libc.musl-*` dependency — neither of which Wolfi (one glibc
+      # musl-linked ELF a `so:libc.musl-*` dependency, neither of which Wolfi (one glibc
       # arch per image) provides, so apko can't solve the package. We build ONE arch per image
       # on glibc, so keep only host-arch glibc objects and delete the rest. This also trims
       # image size and the scanned CVE surface.
@@ -559,7 +559,7 @@ pipeline:
         *)       keep="" ;;
       esac
       # Candidate binaries: shared objects (.node/.so) AND bare prebuilt executables that
-      # ship with NO extension — these live in bin/ dirs or have arch-suffixed names
+      # ship with NO extension, these live in bin/ dirs or have arch-suffixed names
       # (e.g. agent-browser/bin/agent-browser-linux-arm64). We check each candidate's real
       # ELF e_machine and drop any that isn't the host arch, plus any musl-linked one
       # (Wolfi is glibc). Restricting to this candidate set keeps the scan fast.

@@ -5,7 +5,7 @@
 # go:embed dir), then the Go server is built with go-1.26 so the stdlib is current and
 # every module resolves to its up-to-date, advisory-clean version. This replaces the old
 # prebuilt-tarball recipe, whose binary baked a stale Go stdlib + deps and could not pass
-# the 0-CVE gate. Output is a signed APK in Quenchworks' own repo — no upstream binaries.
+# the 0-CVE gate. Output is a signed APK in Quenchworks' own repo, no upstream binaries.
 #
 # CGO is ENABLED: Authelia's sqlite storage backend uses github.com/mattn/go-sqlite3
 # (cgo). This is exactly why upstream ships separate glibc/musl binaries; we build the
@@ -58,7 +58,7 @@ pipeline:
     runs: |
       set -eu
       # A source tarball is not a git repo, so the `prepare` npm script (`lefthook install`,
-      # which installs git hooks) would fail `pnpm install`; drop it — it is dev-only.
+      # which installs git hooks) would fail `pnpm install`; drop it, it is dev-only.
       sed -i '/"prepare": "lefthook install",/d' web/package.json
       # Give pnpm a writable HOME (store + config) inside the build workspace.
       export HOME="$(pwd)"
@@ -81,7 +81,7 @@ pipeline:
       # which is the directory embedded by internal/server/asset.go via //go:embed.
       # It EMPTIES the outDir first, destroying the tarball's public_html/api/ placeholder
       # files (index.html, openapi.yml) that the server requires at startup ("error occurred
-      # loading template 'assets/public_html/api/index.html'") — save and restore them.
+      # loading template 'assets/public_html/api/index.html'"), save and restore them.
       cp -a ../internal/server/public_html/api /tmp/authelia-api-assets
       pnpm build
       [ -e ../internal/server/public_html/api/index.html ] || cp -a /tmp/authelia-api-assets ../internal/server/public_html/api

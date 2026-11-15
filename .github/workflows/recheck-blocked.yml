@@ -3,7 +3,7 @@ name: recheck-blocked
 # (a new release or a Wolfi package rebuild clears them), so this rebuilds each on the
 # freshest sources + Trivy DB and records whether it now passes the 0-CVE gate. Any app
 # that flips to 0-CVE is surfaced (job summary + a tracking issue) so it can be unblocked
-# and published. Runs x86_64 only — that's where the CVE gate runs; a pass here means it's
+# and published. Runs x86_64 only, that's where the CVE gate runs; a pass here means it's
 # worth a full multi-arch publish.
 on:
   schedule:
@@ -159,7 +159,7 @@ jobs:
             echo "::endgroup::"
             ver="$(cd "apps/$app" && source build.conf 2>/dev/null && echo "${VERSIONS[$(( ${#VERSIONS[@]} - 1 ))]}" 2>/dev/null || echo '?')"
             case "$result" in
-              PASS) mark="✅ NOW 0-CVE — unblock + publish"; NEWLY_PASSING="$NEWLY_PASSING $app";;
+              PASS) mark="✅ NOW 0-CVE, unblock + publish"; NEWLY_PASSING="$NEWLY_PASSING $app";;
               *)    mark="⛔ $result";;
             esac
             echo "| $app | $ver | $mark |" >> "$GITHUB_STEP_SUMMARY"

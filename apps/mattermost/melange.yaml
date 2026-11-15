@@ -10,7 +10,7 @@
 #                x/net/x/crypto/x/image + an older Go stdlib that Trivy flags.
 #   * WEBAPP  -> we REUSE upstream's OWN official prebuilt client bundle (and the
 #                config/, templates/, i18n/, fonts/, prepackaged_plugins/ assets) from
-#                the released mattermost-team tarball — NOT rebuilt. The compiled React
+#                the released mattermost-team tarball, NOT rebuilt. The compiled React
 #                webapp has no gobinary/language module graph Trivy scans, so reusing it
 #                is safe for the gate and avoids a multi-GB Node build.
 #
@@ -74,8 +74,8 @@ pipeline:
       tar -xzf /tmp/mm-release.tar.gz -C /tmp/mmrel   # -> /tmp/mmrel/mattermost/...
 
   # 3) Build BOTH binaries in bin/ FROM SOURCE with the flagged Go modules bumped to fixed
-  #    versions. The release tarball ships two prebuilt Go binaries — bin/mattermost (the
-  #    server) AND bin/mmctl (the admin CLI) — both baking the same stale deps that Trivy
+  #    versions. The release tarball ships two prebuilt Go binaries, bin/mattermost (the
+  #    server) AND bin/mmctl (the admin CLI), both baking the same stale deps that Trivy
   #    flags against the prebuilt 11.8.2 binaries (all fixable):
   #      golang.org/x/crypto v0.51.0 -> 0.52.0+ (9x ssh CVEs, HIGH)
   #      golang.org/x/net    v0.54.0 -> 0.55.0+ (html/idna CVEs, HIGH+MEDIUM)

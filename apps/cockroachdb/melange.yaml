@@ -1,6 +1,6 @@
 # Packages CockroachDB onto Wolfi. CockroachDB is NOT built from source here: an
 # upstream from-source build is a heavy Go + TypeScript UI + CGO C-deps (geos) build
-# with a huge module/submodule tree — infeasible on a 2-core/7GB GitHub runner. Instead
+# with a huge module/submodule tree, infeasible on a 2-core/7GB GitHub runner. Instead
 # we ship CockroachDB's OWN official precompiled per-arch binary (the same upstream-
 # artifact pattern clickhouse/scylladb use), then harden it on a minimal apko base and
 # gate it 0-CVE with Trivy. This is clean-room-consistent: it is upstream's published
@@ -10,7 +10,7 @@
 # for spatial (PostGIS-style) operations, which we install and point cockroach at.
 #
 # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-# !!  LICENSE: CockroachDB is BSL-1.1 (Business Source License 1.1) — this is NOT an  !!
+# !!  LICENSE: CockroachDB is BSL-1.1 (Business Source License 1.1), this is NOT an  !!
 # !!  OSI-approved open-source license. Each BSL version automatically converts to    !!
 # !!  Apache-2.0 three years after its release date. Do NOT represent CockroachDB as  !!
 # !!  open source. SPDX identifier: BUSL-1.1. This image is CAUTION-TIER for the       !!
@@ -22,7 +22,7 @@ package:
   epoch: 0
   description: "Quenchworks hardened CockroachDB (BSL-1.1, not OSI open source), packaged on Wolfi"
   copyright:
-    - license: BUSL-1.1   # Business Source License 1.1 — NOT OSI; converts to Apache-2.0 after 3y
+    - license: BUSL-1.1   # Business Source License 1.1: NOT OSI; converts to Apache-2.0 after 3y
   dependencies:
     runtime:
       - bash               # the entrypoint is bash
@@ -75,7 +75,7 @@ pipeline:
       # 2) the spatial (geos) libraries, if present. libgeos_c.so depends on libgeos.so;
       #    neither carries an rpath, so set an rpath on libgeos_c.so to its own dir and
       #    point cockroach at this dir via --spatial-libs (set in the entrypoint). Core
-      #    SQL does NOT need these — only spatial/GEOGRAPHY/GEOMETRY ops — but we ship them
+      #    SQL does NOT need these, only spatial/GEOGRAPHY/GEOMETRY ops, but we ship them
       #    to be complete. patchelf is in the build env via the `build-base`/wolfi tooling;
       #    use it if available, otherwise rely on LD_LIBRARY_PATH from the entrypoint.
       libdir="${{targets.destdir}}/usr/lib/cockroach"
@@ -146,7 +146,7 @@ pipeline:
           ${COCKROACH_EXTRA_ARGS:-}
       fi
 
-      # Default: single-node, insecure (no TLS/auth — the NetworkPolicy is the boundary;
+      # Default: single-node, insecure (no TLS/auth, the NetworkPolicy is the boundary;
       # secure mode with certs is a follow-up). This is CockroachDB's documented dev/
       # single-node default. SQL on 26257 (Postgres wire), HTTP admin UI/health on 8080.
       exec cockroach start-single-node \

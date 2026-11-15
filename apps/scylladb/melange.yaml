@@ -1,5 +1,5 @@
 # Packages ScyllaDB Open Source onto Wolfi. ScyllaDB is a massive Seastar/C++ codebase
-# whose from-source build needs clang + tens of GB RAM + hours (worse than ClickHouse) —
+# whose from-source build needs clang + tens of GB RAM + hours (worse than ClickHouse):
 # infeasible on a 2-core/7GB GitHub runner. Instead we ship ScyllaDB's OWN official
 # per-arch RELOCATABLE package (the same upstream-artifact pattern clickhouse/kafka/
 # opensearch use), then harden it on a minimal apko base and gate it 0-CVE with Trivy.
@@ -35,7 +35,7 @@ package:
     # melange's ELF scanner sees the bundled libreloc/ld.so set as the `scylla`
     # interpreter and emits an unsatisfiable `so:ld.so` runtime dep (Wolfi provides
     # `so:ld-linux-x86-64.so.2`, not `so:ld.so`). The binary uses its OWN bundled
-    # loader at /opt/scylladb/libreloc/ld.so — it never needs a system ld.so — so we
+    # loader at /opt/scylladb/libreloc/ld.so, it never needs a system ld.so, so we
     # self-provide the soname to satisfy the solver without pulling anything in.
     provides:
       - so:ld.so
@@ -86,11 +86,11 @@ pipeline:
       #
       # 0-CVE GATE: also drop the two OPTIONAL bundled extras that Trivy attributes CVEs
       # to (they are the only non-libreloc components it can fingerprint):
-      #   * node_exporter/  — upstream's Prometheus node_exporter (a standalone Go binary,
+      #   * node_exporter/ , upstream's Prometheus node_exporter (a standalone Go binary,
       #     stale Go stdlib + x/net + x/crypto + selinux). The image never runs it (the
       #     entrypoint execs only bin/scylla; bin thunks are generated only for libexec/*
       #     ELF binaries) and Scylla exports its own metrics on :9180, so it is dead weight.
-      #   * swagger-ui/     — the static Swagger browser UI (swagger-ui 2.2.10, CVE-2019-17495
+      #   * swagger-ui/    , the static Swagger browser UI (swagger-ui 2.2.10, CVE-2019-17495
       #     et al.). Purely front-end assets for /ui; the REST API on :10000 and health
       #     probes serve JSON without them (a missing api-ui-dir only 404s the browser view).
       # Removing both keeps the ScyllaDB server 100% intact and clears every flagged CVE.
@@ -220,7 +220,7 @@ pipeline:
       # Container/kind relaxed mode. --developer-mode (arg) relaxes AIO/fs/clocksource
       # checks; --smp/--memory (args) keep Scylla inside the cgroup; --reactor-backend
       # (arg) epoll avoids io_uring/AIO when the kernel/seccomp blocks it. NOTE:
-      # --overprovisioned is a BARE BOOLEAN switch (no value) — passing it a value makes
+      # --overprovisioned is a BARE BOOLEAN switch (no value), passing it a value makes
       # the value parse as a stray positional, so add it conditionally with no argument.
       set -- \
         --options-file "$CY" \

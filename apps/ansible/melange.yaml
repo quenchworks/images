@@ -1,15 +1,15 @@
 # Packages an Ansible control node onto Wolfi. Ansible is a pure-Python project
 # distributed as the PyPI meta-package `ansible` (the "community" package), which pulls
-# `ansible-core` plus a large curated set of bundled collections — not a binary, and
+# `ansible-core` plus a large curated set of bundled collections, not a binary, and
 # there is no single Wolfi apk for the whole control node. So we install
 # `ansible==<VER>` from PyPI into a virtualenv on a Wolfi python-3.13 base, then harden
 # it on a minimal apko base with the control-node CLI tooling (openssh-client, git,
-# sshpass, rsync — see apko.yaml) and gate it 0-CVE with Trivy (comprehensive mode,
+# sshpass, rsync, see apko.yaml) and gate it 0-CVE with Trivy (comprehensive mode,
 # which scans the venv's Python packages too).
 #
 # The venv lives at /opt/ansible/venv; `ansible` is pinned to the build version so the
 # install matches the catalog version exactly. The community package version (e.g.
-# 14.1.0) is NOT what `ansible --version` prints — that reports the ansible-CORE version
+# 14.1.0) is NOT what `ansible --version` prints, that reports the ansible-CORE version
 # it pulls (e.g. 2.21.1). We assert the community version via `pip show ansible` and
 # also run `ansible --version` at build time.
 package:
@@ -65,7 +65,7 @@ pipeline:
       # affected package to its patched release WITHOUT weakening the gate, then
       # `pip check` to confirm the dependency graph is still satisfied. As of the pinned
       # versions ansible-core's dep tree (jinja2, PyYAML, cryptography, packaging,
-      # resolvelib) scans clean, so there are no bumps here yet — add them like the
+      # resolvelib) scans clean, so there are no bumps here yet, add them like the
       # airflow/vllm recipes if a future dep pulls a fixable CVE.
       /opt/ansible/venv/bin/pip check
       # pip is a build tool here and vendors its own urllib3 (2.7.0 in pip 26.2.1, the newest
@@ -78,7 +78,7 @@ pipeline:
       # metadata), then confirm ansible-core + the bundled collections import cleanly and
       # the CLIs report their real (core) version. (The functional `ansible -m ping`
       # check runs in test.sh against the assembled image.) NOTE: capture pip's output
-      # into a var rather than piping into `grep -q` — grep -q exits on first match and
+      # into a var rather than piping into `grep -q`, grep -q exits on first match and
       # SIGPIPEs pip, which fails the build under pipefail.
       COMM_VER="$(/opt/ansible/venv/bin/python -c "import importlib.metadata as m; print(m.version('ansible'))")"
       [ "$COMM_VER" = "$VER" ] || { echo "community version mismatch: $COMM_VER != $VER"; exit 1; }

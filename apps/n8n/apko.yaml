@@ -1,12 +1,12 @@
 # Assembles the n8n runtime image: n8n's npm distribution (app + production node_modules,
 # installed at build time by quench-n8n) running on the Wolfi nodejs-24 package. Minimal,
 # nonroot, multi-arch, SBOM by apko. n8n is configured ENTIRELY by environment variables
-# (N8N_*, DB_*), so the entrypoint is a bare `node bin/n8n start` from the app dir — no
+# (N8N_*, DB_*), so the entrypoint is a bare `node bin/n8n start` from the app dir, no
 # shell, no wrapper.
 #
 # Default standalone DB is sqlite under ~/.n8n; the chart wires an external Postgres via
-# DB_TYPE=postgresdb + DB_POSTGRESDB_*. n8n writes to ~/.n8n (HOME=/home/node) — its sqlite
-# db, config, and generated encryption key — mounted as a PVC and made writable for uid
+# DB_TYPE=postgresdb + DB_POSTGRESDB_*. n8n writes to ~/.n8n (HOME=/home/node), its sqlite
+# db, config, and generated encryption key, mounted as a PVC and made writable for uid
 # 1001 below. /tmp must be a writable tmpfs for a read-only rootfs.
 contents:
   keyring:

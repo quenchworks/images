@@ -11,7 +11,7 @@ go get golang.org/x/net@v0.56.0 golang.org/x/text@v0.39.0 …
 fix.** It can fail in two opposite directions, both silent, both leaving a green
 build that ships the vulnerable module.
 
-## 1. It can be a NO-OP — a `replace` directive outranks `go get`
+## 1. It can be a NO-OP, a `replace` directive outranks `go get`
 
 If upstream's `go.mod` pins the module down with a `replace`, MVS honours the
 replace and discards the float. `go get` still prints `upgraded`, so the build
@@ -36,7 +36,7 @@ $ go version -m /usr/bin/authelia
 
 The require said v0.56.0. The linked code was v0.55.0, i.e. still
 CVE-2026-46600. Fix: drop the replace before floating, and only the ones that
-hold a module *down* —
+hold a module *down*:
 
 ```sh
 go mod edit -dropreplace=golang.org/x/net
@@ -50,7 +50,7 @@ curl -sL https://github.com/<org>/<repo>/archive/refs/tags/v<VER>.tar.gz \
   | tar xz --wildcards -O '*/go.mod' | grep -n -A20 '^replace'
 ```
 
-## 2. It can be a DOWNGRADE — the pin inverts once upstream moves past it
+## 2. It can be a DOWNGRADE, the pin inverts once upstream moves past it
 
 `go get mod@vX` rewrites the require to **exactly** vX. The moment upstream's own
 `go.mod` requires more than vX, that line stops being a fix and becomes a
@@ -66,7 +66,7 @@ Treat the version as a *floor* and only float what is actually below it.
 
 ## 3. When you bump an app's version, re-check its float floors
 
-A version bump plus a stale float pin is a silent CVE regression — see (2). Read
+A version bump plus a stale float pin is a silent CVE regression, see (2). Read
 the new tarball's `go.mod`, compare each floor against what upstream now
 requires, and drop or raise floors that upstream has overtaken.
 
@@ -118,7 +118,7 @@ done
 ## The snippet
 
 Copy this verbatim into the `runs:` block that builds the app. Start the block
-with `set -eu` — without it a failed `go get` or `go mod vendor` does not stop
+with `set -eu`, without it a failed `go get` or `go mod vendor` does not stop
 the script, and `go build` happily ships the un-floated tree.
 
 ```sh
@@ -164,12 +164,12 @@ bad="$(go version -m "${{targets.destdir}}/usr/bin/<app>" \
 Notes:
 
 - `go list -m` is printed unfiltered first, so the build log always shows what
-  MVS actually selected — including any `=> …` redirect.
+  MVS actually selected, including any `=> …` redirect.
 - The comparison is `>=`, deliberately. A legitimately newer upstream version
   passes; only a version *below* the floor fails. Never assert equality.
 - The comparator handles `vMAJOR.MINOR.PATCH`. Pseudo-versions and prerelease
   suffixes compare on their numeric parts only, which is fine for release
-  floors — don't put a pseudo-version in `FLOOR`.
+  floors, don't put a pseudo-version in `FLOOR`.
 - Every module named in `FLOOR` must be in the module graph, or `go list -m`
   fails the build. That is intentional: a floor for a module the app no longer
   uses is dead weight, delete it.
@@ -384,7 +384,7 @@ The check that would have caught it, run before dispatch rather than after:
 Take the HIGHER of the two as the toolchain to pin. The `go` line alone is a
 floor on the language, not on what the dependency tree can compile.
 
-## 8. It can TIE — two pseudo-versions sharing a numeric triple
+## 8. It can TIE, two pseudo-versions sharing a numeric triple
 
 `below_floor` compares the first three numeric components and stops. That is
 enough for release versions, and blind for pseudo-versions:

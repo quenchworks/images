@@ -69,7 +69,7 @@ docs/                        build conventions
 ```
 
 Go recipes that raise a dependency past a CVE must follow
-[docs/go-module-float.md](docs/go-module-float.md) — a bare `go get mod@version`
+[docs/go-module-float.md](docs/go-module-float.md), a bare `go get mod@version`
 is silently defeated by an upstream `replace`, and silently inverts into a
 downgrade once upstream moves past the pin.
 

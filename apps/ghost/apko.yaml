@@ -2,11 +2,11 @@
 # node_modules, installed at build time by quench-ghost) running on the Wolfi nodejs-24
 # package. Minimal, nonroot, multi-arch, SBOM by apko. Ghost is configured ENTIRELY by
 # environment variables (url, NODE_ENV, database__*, server__*), so the entrypoint is a
-# bare `node index.js` from the app dir — no shell, no wrapper.
+# bare `node index.js` from the app dir, no shell, no wrapper.
 #
 # Default standalone DB is sqlite3; the chart wires an external MySQL/MariaDB via
 # database__client=mysql + database__connection__*. Ghost writes to its content dir
-# (themes, images, data, logs, settings) — mounted as a PVC and made writable for uid
+# (themes, images, data, logs, settings), mounted as a PVC and made writable for uid
 # 1001 below. /tmp must be a writable tmpfs for a read-only rootfs.
 contents:
   keyring:
@@ -39,7 +39,7 @@ entrypoint:
 
 environment:
   NODE_ENV: production
-  # Bind all interfaces, not Ghost's default 127.0.0.1 — otherwise the server only answers
+  # Bind all interfaces, not Ghost's default 127.0.0.1, otherwise the server only answers
   # on container loopback and a Kubernetes Service (or docker port-forward) can't reach it.
   # The official Ghost image forces this too.
   server__host: "0.0.0.0"
@@ -55,7 +55,7 @@ paths:
   # The whole app tree must be owned by the runtime user (uid/gid 1001). The package's
   # files are copied with cp -a (build-user ownership) and the melange sandbox cannot
   # chown to 1001, so apko does it here at assembly time as root. recursive: true also
-  # fixes the content/ SUBDIRS (data, themes, logs, ...) — leaving content/data root-owned
+  # fixes the content/ SUBDIRS (data, themes, logs...), leaving content/data root-owned
   # breaks Ghost (SQLITE_CANTOPEN on dev sqlite, and write failures for logs/images).
   # Ghost writes caches/lock files onto its app tree at runtime, so the chart runs with
   # readOnlyRootFilesystem disabled and the runtime user needs ownership of the tree.

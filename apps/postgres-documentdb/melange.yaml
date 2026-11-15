@@ -21,7 +21,7 @@ package:
       - tzdata                 # postgres is built --with-system-tzdata and reads it at runtime
       - pcre2
       # PostGIS is built from source here (without raster), so its runtime libs are
-      # GEOS/PROJ/libxml2/json-c only — no GDAL, which is what carries the CVEs in
+      # GEOS/PROJ/libxml2/json-c only, no GDAL, which is what carries the CVEs in
       # Wolfi's raster-enabled postgis package.
       - geos-3.14
       - proj
@@ -63,7 +63,7 @@ environment:
       - perl            # required by the build for some generated headers
       - bison
       - flex
-      - geos-3.14-dev # PostGIS build deps (no gdal — built without raster)
+      - geos-3.14-dev # PostGIS build deps (no gdal: built without raster)
       - proj-dev
       - libxml2-dev
       - json-c-dev
@@ -138,7 +138,7 @@ pipeline:
       test -f "$lib/pg_cron.so"
       test -f "$lib/vector.so"
 
-  # 1. Intel Decimal Floating-Point Math Library (libbid) — documentdb links it statically.
+  # 1. Intel Decimal Floating-Point Math Library (libbid), documentdb links it statically.
   #    Cloned from launchpad (no GitHub mirror carries this exact Ubuntu-patched
   #    commit); the host flakes intermittently, so retry harder than the default 3.
   - uses: git-checkout
@@ -165,7 +165,7 @@ pipeline:
       Libs: -L${libdir} -lbid
       PC
 
-  # 2. libbson (static) from mongo-c-driver — documentdb links libbson-static-1.0.
+  # 2. libbson (static) from mongo-c-driver, documentdb links libbson-static-1.0.
   - uses: git-checkout
     with:
       repository: https://github.com/mongodb/mongo-c-driver
@@ -192,7 +192,7 @@ pipeline:
       make -C rum USE_PGXS=1 with_llvm=no -j"$(nproc)"
       make -C rum USE_PGXS=1 with_llvm=no install DESTDIR="${{targets.destdir}}"
 
-  # 3b. PostGIS (PG17) from source, WITHOUT raster/protobuf/topology — matches FerretDB's
+  # 3b. PostGIS (PG17) from source, WITHOUT raster/protobuf/topology, matches FerretDB's
   #     documentdb packaging and, crucially, drops the GDAL dependency (and its CVEs).
   - runs: |
       curl -fsSL -o postgis.tar.gz https://download.osgeo.org/postgis/source/postgis-3.5.2.tar.gz
@@ -259,7 +259,7 @@ pipeline:
         printf '%s' "$POSTGRES_PASSWORD" > "$pwfile"
         # local socket: trust (only in-container processes reach it, and DocumentDB's
         # pg_cron background index builder connects over it without a password).
-        # TCP stays scram — the cluster network is the trust boundary.
+        # TCP stays scram, the cluster network is the trust boundary.
         initdb -D "$PGDATA" -U "$POSTGRES_USER" \
           --auth-local=trust --auth-host=scram-sha-256 \
           --pwfile="$pwfile" --encoding=UTF8 --locale=C

@@ -10,7 +10,7 @@ name: build-vllm
 # both NATIVE arches (amd64 + arm64, no QEMU; CPU wheels exist for both). Recipes render
 # via build.conf render() (__VER__ -> the version + the wheels.vllm.ai/<VER>/cpu index).
 # The per-version merge job assembles the multi-arch index, signs + attests it (SBOM
-# TRIMMED to packages-only first — vLLM's ~140-pkg + native-file SBOM blows past the 16 MB
+# TRIMMED to packages-only first, vLLM's ~140-pkg + native-file SBOM blows past the 16 MB
 # actions/attest limit), notifies charts on newest.
 on:
   workflow_dispatch:
@@ -124,7 +124,7 @@ jobs:
         # detection-priority=comprehensive is REQUIRED here: vLLM ships as a pip venv under
         # /opt/vllm/venv. In Trivy's default `precise` mode, the presence of the Wolfi
         # python-3.12 apk in the image's apk DB suppresses ALL python-pkg (.dist-info)
-        # detections — so the venv's ~140 pip deps (torch+cpu, transformers, opencv, ...)
+        # detections, so the venv's ~140 pip deps (torch+cpu, transformers, opencv...)
         # would silently evade the gate. `comprehensive` makes Trivy scan the venv's
         # installed Python packages too. Do NOT drop this, and do NOT relax the gate.
         env:

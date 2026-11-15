@@ -17,7 +17,7 @@
 # NO user packages baked in (unlike the reference runner.Dockerfile). Operators add their
 # own extra Python/JS packages at deploy time via the chart hook; those are their concern.
 #
-# LICENSE — CAUTION: fair-code, NOT OSI. Runners are under the n8n Sustainable Use License
+# LICENSE, CAUTION: fair-code, NOT OSI. Runners are under the n8n Sustainable Use License
 # v1.0; the launcher is Apache-2.0.
 package:
   name: quench-n8n-runners
@@ -184,7 +184,7 @@ pipeline:
       # 5.0.8 rewrote the CJS entry to a NAMED-only export (`exports.expand`, `__esModule: true`,
       # no callable default). minimatch 10.x consumes that shape natively, but minimatch 3.x/5.x
       # do `require("brace-expansion")(pattern)` and 9.0.9 (the newest 9.x, which REVERTED to
-      # brace-expansion ^2.0.2) does `__importDefault(...).default(pattern)` — both throw
+      # brace-expansion ^2.0.2) does `__importDefault(...).default(pattern)`, both throw
       # "expand is not a function" at LOAD time. The override above pins every copy to the fixed
       # 5.0.8, and this step re-exports the function as module.exports (named props kept) so any
       # consumer shape the tree happens to resolve keeps working on the patched code. The
@@ -394,7 +394,7 @@ pipeline:
   # 4. Config + assemble into destdir. The launcher reads /etc/n8n-task-runners.json.
   #    We ship a config with the health-check host bound to 0.0.0.0 (so k8s probes
   #    reach 5681/5682) and the code-execution allowlists OPEN (stdlib/external "*",
-  #    builtin/external "*") — this is a self-hosted automation runner where the
+  #    builtin/external "*"), this is a self-hosted automation runner where the
   #    operator owns the workflows; the allowlist is the mechanism the chart can
   #    tighten. Mirrors the reference n8n-task-runners.json.
   # ---------------------------------------------------------------------------

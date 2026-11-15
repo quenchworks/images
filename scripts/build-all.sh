@@ -30,7 +30,7 @@ for d in "${DIRS[@]}"; do
     if PUSH="${PUSH:-1}" ARCHES="${ARCHES:-x86_64,aarch64}" scripts/build-image.sh "$a" "$v"; then
       ok=$((ok+1)); echo "✅ $label"
     elif [ $? -eq 2 ]; then
-      skip=$((skip+1)); echo "⏭  $label (needs render config — skipped)"
+      skip=$((skip+1)); echo "⏭  $label (needs render config, skipped)"
     else
       fail=$((fail+1)); failed="$failed $label"; echo "❌ $label"
     fi

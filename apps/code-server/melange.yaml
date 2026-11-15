@@ -1,6 +1,6 @@
 # Packages code-server (VS Code in the browser) onto Wolfi. code-server is NOT built
 # from source here: an upstream build needs a full Node/yarn toolchain and a VS Code
-# compile — infeasible on a 2-core GitHub runner. Instead we ship coder's OWN official
+# compile, infeasible on a 2-core GitHub runner. Instead we ship coder's OWN official
 # per-arch prebuilt release tarball, which bundles a self-contained Node 24 + the
 # compiled VS Code, then harden it on a minimal apko base and gate it 0-CVE with Trivy.
 # Clean-room-consistent: it is upstream's published artifact, not a Bitnami chart.
@@ -37,7 +37,7 @@ environment:
 pipeline:
   # coder publishes separate amd64/arm64 prebuilt tarballs, so fetch the one matching
   # the build arch by uname -m (x86_64->amd64, aarch64->arm64) with the arch-matching
-  # sha256 — the wrong arch yields a non-executable bundled node. The tarball extracts
+  # sha256, the wrong arch yields a non-executable bundled node. The tarball extracts
   # to code-server-<ver>-linux-<charch>/ containing bin/, lib/node (bundled Node), lib/
   # vscode, out/ (server assets + entry.js) and node_modules; we install the whole tree
   # read-only under /usr/lib/code-server and exec the bundled node directly (no wrapper).
@@ -63,7 +63,7 @@ pipeline:
 
       # Drop the built-in microsoft-authentication extension: its native MSAL runtime
       # (libmsalruntime.so / msal-node-runtime.node) links the whole desktop GNOME/GTK
-      # stack — libsoup-3.0, libwebkit2gtk, libgtk-3, libsecret, libX11, libdbus — none
+      # stack, libsoup-3.0, libwebkit2gtk, libgtk-3, libsecret, libX11, libdbus, none
       # of which exist on Wolfi, so melange's SCA would emit unsatisfiable so: depends
       # and apko can't assemble the image. The extension needs the desktop MSAL broker
       # and does nothing on code-server (no MS-account settings-sync here); GitHub auth
@@ -73,7 +73,7 @@ pipeline:
 
       # Remove the built-in "npm" extension (npm-scripts explorer view). Its package.json
       # is named "npm" at version "1.0.1", so Trivy's node-pkg analyzer collides it with
-      # the npm CLI and reports a swarm of historical npm-CLI CVEs — pure false positives
+      # the npm CLI and reports a swarm of historical npm-CLI CVEs, pure false positives
       # (this is the VS Code extension, not the npm CLI, which isn't even shipped). npm
       # still runs fine from the integrated terminal; only the scripts side-panel is gone.
       rm -rf "$dest/lib/vscode/extensions/npm"
@@ -109,7 +109,7 @@ pipeline:
       done
 
       # Bump the vendored pure-JS deps that carry FIXABLE CVEs to their upstream fixed
-      # versions. This is a security update, not a gate weaken — same major line, same
+      # versions. This is a security update, not a gate weaken, same major line, same
       # (already-hoisted) transitive deps, so each is a drop-in: tar 7.5.21 (CVE-2026-59873
       # gzip-bomb DoS + CVE-2026-59874/59871 + GHSA-r292-9mhp-454m mapHas/filesFilter
       # uncontrolled-recursion DoS), js-yaml 4.3.0 (CVE-2026-59869), shell-quote

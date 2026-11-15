@@ -63,7 +63,7 @@ fi
 APKO=apko.yaml
 MEL=melange.yaml
 # Single awk process on purpose: the old `grep -v … | grep -q …` form raced with
-# `set -o pipefail` — grep -q exits on first match, the upstream grep takes
+# `set -o pipefail`, grep -q exits on first match, the upstream grep takes
 # SIGPIPE (141), pipefail propagates it, and needs_render reports "no
 # placeholders". Under load that silently fed melange the UNRENDERED
 # melange.yaml ("invalid version __VER__"). No pipe, no SIGPIPE, no race.
@@ -74,7 +74,7 @@ if needs_render apko.yaml || { [ -f melange.yaml ] && needs_render melange.yaml;
     sed -e "$SED_PROG" apko.yaml > apko.rendered.yaml; APKO=apko.rendered.yaml
     [ -f melange.yaml ] && { sed -e "$SED_PROG" melange.yaml > melange.rendered.yaml; MEL=melange.rendered.yaml; }
   else
-    echo "❌ apps/$APP has placeholders (e.g. __VER__) but no build.conf render() — add apps/$APP/build.conf."
+    echo "❌ apps/$APP has placeholders (e.g. __VER__) but no build.conf render(), add apps/$APP/build.conf."
     exit 2
   fi
 fi
@@ -267,7 +267,7 @@ fi
 done
 
 if [ "$PUSH" != "1" ]; then
-  echo "⏭  PUSH=0 — built + scanned only, not publishing."
+  echo "⏭  PUSH=0, built + scanned only, not publishing."
   exit 0
 fi
 

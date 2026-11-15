@@ -2,7 +2,7 @@
 # ============================================================================
 # Build the whole catalog NATIVELY on this machine, JOBS apps at a time.
 # ----------------------------------------------------------------------------
-# Strategy (the one we settled on): fan over apps with a fixed-size job pool —
+# Strategy (the one we settled on): fan over apps with a fixed-size job pool:
 # JOBS apps build concurrently; each app's worker runs build-all.sh <app>,
 # which builds EVERY version of that app in order (multi-arch, 0-CVE gate,
 # publish + cosign sign + SBOM/SLSA attest). When one app finishes, the next
@@ -39,7 +39,7 @@ LOGDIR="logs/$(date +%Y-%m-%d)/catalog-$STAMP"
 mkdir -p "$LOGDIR"
 export LOGDIR
 
-echo "🏗  catalog build — ${#APPS[@]} apps, JOBS=$JOBS, arches=$ARCHES, push=$PUSH"
+echo "🏗  catalog build, ${#APPS[@]} apps, JOBS=$JOBS, arches=$ARCHES, push=$PUSH"
 echo "📂 per-app logs in $LOGDIR/"
 echo ""
 

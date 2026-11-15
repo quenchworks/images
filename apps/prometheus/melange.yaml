@@ -73,7 +73,7 @@ pipeline:
         # Route the content-addressable store to a writable temp dir. pnpm v10 blocks
         # dependency build scripts by default (upstream's pnpm-workspace.yaml allowlists
         # esbuild + unrs-resolver, but that key is not honored by every pnpm release), so
-        # explicitly rebuild esbuild — mantine-ui's `vite build` shells out to esbuild's
+        # explicitly rebuild esbuild, mantine-ui's `vite build` shells out to esbuild's
         # native binary, which a blocked postinstall would leave unbuilt.
         ( cd web/ui
           pnpm install --frozen-lockfile --store-dir "$(mktemp -d)"
@@ -105,7 +105,7 @@ pipeline:
       # a pnpm/npm build that emitted nothing) leaves web/ui/static empty. That still
       # compiles under -tags builtinassets but ships a BLANK UI, so fail loudly here.
       [ -n "$(find web/ui/static -type f -print -quit)" ] \
-        || { echo "web/ui/static is empty after the UI build — refusing to embed a blank UI"; exit 1; }
+        || { echo "web/ui/static is empty after the UI build: refusing to embed a blank UI"; exit 1; }
       echo "UI assets built: $(find web/ui/static -type f | wc -l) files, $(du -sh web/ui/static | cut -f1) under web/ui/static"
 
   - name: Compress the assets and generate the go:embed manifest (web/ui/embed.go)

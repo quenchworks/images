@@ -2,7 +2,7 @@
 
 `apps/<app>/vex.openvex.json` is picked up automatically by `scripts/build-image.sh`
 and passed to Trivy as `--vex`. **A statement in that file removes a finding from the
-0-CVE gate.** That gate is the product guarantee, so this file is not documentation —
+0-CVE gate.** That gate is the product guarantee, so this file is not documentation:
 it is production suppression logic, and it is the one place where a careless entry can
 hide a real vulnerability from the check designed to catch it.
 
@@ -33,7 +33,7 @@ that means one of:
 ## Never acceptable
 
 - **A CVE that is real but inconvenient.** If the vulnerable code ships, the answer is
-  a fix, a version bump, a jar swap, or an honest `BLOCKED=1` — never VEX.
+  a fix, a version bump, a jar swap, or an honest `BLOCKED=1`, never VEX.
 - **Metadata surgery that quiets the scanner while the code stays vulnerable.** This
   was prototyped for opensearch's relocated httpcore5 classes and rejected for exactly
   this reason: Trivy went quiet while the running bytecode was untouched. Making a
@@ -68,7 +68,7 @@ subpackages needs the claim to hold for all four.
 ## Maintenance
 
 VEX entries go stale. When an upstream fix lands, or a recipe stops shipping the
-component, the statement stops being needed — and a stale statement is a liability,
+component, the statement stops being needed, and a stale statement is a liability,
 because it may suppress a future finding that IS real. Bump the document `version`
 and the date in `@id` on every edit, and prune entries whose CVE no longer appears in
 a scan of the current image.

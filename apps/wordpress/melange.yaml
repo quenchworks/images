@@ -1,5 +1,5 @@
 # Packages WordPress core (wordpress.org) for Wolfi. WordPress ships as a finished
-# release tarball of PHP files (plus some bundled JS/PHP libs) — there is nothing to
+# release tarball of PHP files (plus some bundled JS/PHP libs), there is nothing to
 # compile. We `fetch` the official wordpress-<VER>.tar.gz, verify its sha256, and
 # install the extracted tree as the docroot at /var/www/html. The PHP-FPM runtime +
 # extensions and the nginx web server come from Wolfi (declared in apko.yaml), not
@@ -59,7 +59,7 @@ pipeline:
       install -d "$destdir/etc/wordpress"
       install -d "$destdir/etc/wordpress/conf.d"
       # A self-contained nginx.conf run via `nginx -c /etc/wordpress/nginx.conf`. We do
-      # NOT overwrite /etc/nginx/nginx.conf — that file is owned by the Wolfi nginx
+      # NOT overwrite /etc/nginx/nginx.conf, that file is owned by the Wolfi nginx
       # package and writing it here would collide in apko's solve. This config is
       # nonroot- + read-only-rootfs-friendly: no `user` directive (we already run as
       # uid 1001), pid + every *_temp_path under /tmp (writable tmpfs), logs to

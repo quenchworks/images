@@ -2,7 +2,7 @@
 # Wolfi `deno` apk. Wolfi lags at 2.8.2 (CVE-2026-50185, vulnerable rustls-webpki
 # baked into the binary; fixed only in Deno 2.9.1), so we fetch Deno's own
 # per-arch release zip (byte-identical to what `denoland/deno` ships), sha256-verify
-# it, and harden it on a minimal apko base — the same upstream-artifact pattern
+# it, and harden it on a minimal apko base, the same upstream-artifact pattern
 # clickhouse/kafka/mattermost use. Clean-room-consistent: it is upstream's published
 # artifact. The binary embeds NO Cargo module graph (no cargo-auditable .dep-v0
 # section), so Trivy cannot see its crates from the binary alone. The tag's own
@@ -40,7 +40,7 @@ environment:
 pipeline:
   # Deno publishes separate x86_64/aarch64 release zips (each with its own sha256),
   # so fetch the one matching the build arch by `uname -m` with the arch-matching
-  # checksum — using the wrong arch would yield a non-executable / wrong-arch binary.
+  # checksum, using the wrong arch would yield a non-executable / wrong-arch binary.
   # Each zip contains a single self-contained `deno` binary.
   - runs: |
       VER="${{package.version}}"

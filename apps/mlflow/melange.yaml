@@ -1,6 +1,6 @@
 # Packages the MLflow Tracking Server onto Wolfi. MLflow is a pure-Python
 # (FastAPI/Flask + Gunicorn/Uvicorn) web app distributed as a pip package, not a
-# binary — there is no Wolfi `mlflow` package — so we install it from PyPI into a
+# binary, there is no Wolfi `mlflow` package, so we install it from PyPI into a
 # virtualenv on a Wolfi python-3.12 base, then harden it on a minimal apko base and
 # gate it 0-CVE with Trivy (which scans the venv's Python packages too). This is the
 # first pure-Python app in the catalog and establishes the venv-on-Wolfi pattern.
@@ -15,7 +15,7 @@
 # graphene (GraphQL endpoint), markdown, numpy, pandas (mlflow 3.x's genai scorer job
 # runner imports pandas at startup), huey (3.x background-job runner) and aiohttp. Plus
 # psycopg2-binary (Postgres backend-store driver) and boto3 (S3 artifact store). We do
-# NOT install full `mlflow` (it drags in scipy/scikit-learn/matplotlib — huge image +
+# NOT install full `mlflow` (it drags in scipy/scikit-learn/matplotlib, huge image +
 # CVE surface). The venv lives at /opt/mlflow/venv; mlflow-skinny is pinned to the build
 # version so the install matches the catalog version exactly.
 package:

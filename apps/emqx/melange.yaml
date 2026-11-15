@@ -1,16 +1,16 @@
 # Packages EMQX onto Wolfi from its OWN official el9 release tarball (NOT built from
 # source: EMQX is a large Erlang/OTP + dashboard build that is infeasible on the
-# 2-core CI matrix — same rationale as clickhouse/ollama). The tarball bundles its
+# 2-core CI matrix, same rationale as clickhouse/ollama). The tarball bundles its
 # own ERTS (Erlang runtime) plus a `dynlibs/` set of portable libs (libcrypto,
 # libtinfo, libatomic) that its bootscript prepends to LD_LIBRARY_PATH. We still
 # supply the system libs the BEAM and the bundled NIFs (quicer = MQTT-over-QUIC,
-# crypto) link against — glibc, libstdc++, libgcc, zlib, openssl, ncurses, brotli,
-# zstd, libatomic — and bash + busybox for the bash bootscript (which also shells out
+# crypto) link against, glibc, libstdc++, libgcc, zlib, openssl, ncurses, brotli,
+# zstd, libatomic, and bash + busybox for the bash bootscript (which also shells out
 # to awk/sed/grep/openssl). Hardened on a minimal apko base and 0-CVE gated with Trivy.
 #
 # License: BSL-1.1 (single node free; cluster needs a commercial license; reverts to
 # Apache-2.0 four years post-release). Clean-room-consistent: this is upstream's own
-# published artifact, hardened and scanned — not a Bitnami chart.
+# published artifact, hardened and scanned, not a Bitnami chart.
 package:
   name: quench-emqx
   version: __VER__

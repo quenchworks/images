@@ -12,7 +12,7 @@
 # build-base (make/g++) on top of nodejs-24 + pnpm. We prune dev/test cruft after install.
 #
 # The tarball already ships a default content tree (content/themes/source +
-# content/themes/casper, adapters, data, images, logs, settings) — without an active theme
+# content/themes/casper, adapters, data, images, logs, settings), without an active theme
 # Ghost 500s. We keep that tree at /var/lib/ghost/content so a standalone container boots;
 # the chart mounts a PVC over it and is responsible for seeding the default theme on a fresh
 # volume.
@@ -298,11 +298,11 @@ pipeline:
       # Up to 6.53.0 this recipe carried surgery on the installed @tryghost/members-csv copies:
       # the GHSA (GHSA-xgwh-cgv9-783v) keys its "Fixed version" to the Ghost MONOREPO number
       # 5.82.0 with affected range [0, 5.82.0), a version never published to npm, while the
-      # standalone package topped out at 2.0.7 — so no `pnpm override` could satisfy Trivy and
+      # standalone package topped out at 2.0.7, so no `pnpm override` could satisfy Trivy and
       # we re-asserted the `escapeFormulae` fix and realigned the version by hand.
       # Ghost 6.54.0 DELETED that dependency (gone from both package.json and pnpm-lock.yaml)
       # and inlined the module into core/server/services/members/csv/. So there is no longer a
-      # versioned package for Trivy to match, and the surgery has nothing to operate on — the
+      # versioned package for Trivy to match, and the surgery has nothing to operate on, the
       # old `assert copies` is what broke the first 6.54.0 build.
       # The fix itself did NOT disappear: the inlined serializer forces escapeFormulae on, which
       # is the actual CSV-injection defense (papaparse prefixes a leading =,+,-,@ or tab with an
@@ -317,21 +317,21 @@ pipeline:
       # --- brace-expansion CVE-2026-14257: 5.0.8 + the CJS interop it broke ---------------
       # Why the `brace-expansion@<5.0.8` override above has to reach every line: the advisory
       # (GHSA-mh99-v99m-4gvg) declares a SINGLE affected range, `<= 5.0.7`, spanning every
-      # line — so the maintenance heads (1.1.16 = maintenance-v1, 2.1.2 = maintenance-v2) are
+      # line, so the maintenance heads (1.1.16 = maintenance-v1, 2.1.2 = maintenance-v2) are
       # affected too and no future 1.x/2.x release can ever sort above 5.0.7. 5.0.8 is the only
       # escape. Parent-bumping does not help: Ghost's tree gets brace-expansion only through
-      # minimatch, and it already pins minimatch 3.1.5 / 9.0.9 / 10.2.5 — of which 9.0.9 (the
+      # minimatch, and it already pins minimatch 3.1.5 / 9.0.9 / 10.2.5, of which 9.0.9 (the
       # newest 9.x) deliberately REVERTED from brace-expansion ^5.0.2 back to ^2.0.2.
       #
       # 5.0.8 rewrote the CJS entry to a NAMED-only export (`exports.expand`, `__esModule: true`,
       # no callable default), but minimatch 3.1.5 does `require("brace-expansion")(pattern)` and
-      # 9.0.9 does `__importDefault(...).default(pattern)` — both throw "expand is not a
+      # 9.0.9 does `__importDefault(...).default(pattern)`, both throw "expand is not a
       # function" at LOAD time, which is why a blunt bump alone would break Ghost. So re-export
       # the function AS module.exports with the named props kept: the patched implementation (the
       # EXPANSION_MAX_LENGTH accumulator bound that fixes the CVE) is what runs, and all three
       # consumer shapes work. Verified against the published tarballs: minimatch 3.1.5 / 9.0.9 /
       # 10.2.5 all braceExpand() correctly afterwards and stay bounded.
-      # NOT a gate bypass — no .trivyignore, no --skip, no VEX; the installed version genuinely
+      # NOT a gate bypass, no .trivyignore, no --skip, no VEX; the installed version genuinely
       # IS the fixed one. The assert fails the build if any copy escaped the override.
       python3.13 - <<'PYEOF'
       import json, os
@@ -489,8 +489,8 @@ pipeline:
       rm -rf node_modules/.cache .pnpm-store 2>/dev/null || true
       find . -type d -name '.cache' -prune -exec rm -rf {} + 2>/dev/null || true
       # pnpm's HOME store must go too. `.local/share/pnpm/store/...` ships pnpm's OWN
-      # vendored node_modules (its bundled tar 7.5.20 was the last gate finding —
-      # GHSA-r292-9mhp-454m — and it is pure build cache, not part of Ghost). The app's
+      # vendored node_modules (its bundled tar 7.5.20 was the last gate finding:
+      # GHSA-r292-9mhp-454m, and it is pure build cache, not part of Ghost). The app's
       # own tar is correctly 7.5.22 via the override; this copy was never reachable by it.
       rm -rf .local/share/pnpm .local/state/pnpm .cache/pnpm .npm 2>/dev/null || true
       # Fail the build if any pnpm store survives into the image, so this cannot regress.
@@ -522,7 +522,7 @@ pipeline:
         cp -a "$item" "$app/"
       done
       # The bootable default content tree (themes/source is the active default theme) ships
-      # inside the tarball at content/ — keep it so a standalone container serves a 200.
+      # inside the tarball at content/, keep it so a standalone container serves a 200.
       # World-readable so a read-only deployment can still serve; ownership (uid 1001) is
       # set recursively in apko (the melange sandbox cannot chown to a uid it doesn't map).
       chmod -R a+rX "$app"

@@ -4,9 +4,9 @@ name: build-airflow
 # There is no Wolfi `airflow` package, so the melange pipeline installs
 # `apache-airflow[celery,postgres,redis]` from PyPI into a virtualenv on a Wolfi
 # python-3.12 base, CONSTRAINED by Airflow's official constraints file for the exact
-# version + python minor (mandatory — the resolve explodes without it). build.conf is
+# version + python minor (mandatory, the resolve explodes without it). build.conf is
 # the SINGLE SOURCE OF TRUTH: prep emits the newest patch of the last 3 stable MINOR
-# lines (full X.Y.Z, as-is — PyPI versions, no `v` prefix). The build matrix fans them
+# lines (full X.Y.Z, as-is, PyPI versions, no `v` prefix). The build matrix fans them
 # x both NATIVE arches (amd64 + arm64, no QEMU). Recipes render via build.conf render()
 # (__VER__). Per-version merge job assembles the multi-arch index, signs + attests it,
 # notifies charts on newest.
@@ -133,7 +133,7 @@ jobs:
         # detection-priority=comprehensive is REQUIRED here: airflow ships as a pip venv
         # under /opt/airflow-venv. In Trivy's default `precise` mode, the presence of the
         # Wolfi python-3.12 apk in the image's apk DB suppresses ALL python-pkg
-        # (.dist-info) detections — so the venv's large pip dep tree would silently evade
+        # (.dist-info) detections, so the venv's large pip dep tree would silently evade
         # the gate. `comprehensive` makes Trivy scan the venv's installed Python packages
         # too (verified locally: OS pkgs + all venv python pkgs, 0-CVE). Do NOT drop this.
         env:

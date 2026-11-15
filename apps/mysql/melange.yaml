@@ -94,7 +94,7 @@ pipeline:
       # guard it so a future build that drops it fails loudly instead of shipping
       # an image that cannot form a GR cluster. (Mirrors mariadb's wsrep guards.)
       GR="$(find "${{targets.destdir}}" -name 'group_replication.so' -print -quit)"
-      test -n "$GR" || { echo "group_replication.so missing — Group Replication HA would be impossible"; exit 1; }
+      test -n "$GR" || { echo "group_replication.so missing: Group Replication HA would be impossible"; exit 1; }
   - runs: |
       install -d "${{targets.destdir}}/usr/local/bin"
       cat > "${{targets.destdir}}/usr/local/bin/docker-entrypoint.sh" <<'SCRIPT'

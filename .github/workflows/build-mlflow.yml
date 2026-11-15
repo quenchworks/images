@@ -4,7 +4,7 @@ name: build-mlflow
 # There is no Wolfi `mlflow` package, so the melange pipeline installs `mlflow-skinny`
 # (plus gunicorn, psycopg2-binary, boto3) from PyPI into a virtualenv on a Wolfi
 # python-3.12 base. build.conf is the SINGLE SOURCE OF TRUTH: prep emits the latest 3
-# stable versions (full X.Y.Z, as-is — PyPI versions, no `v` prefix). The build matrix
+# stable versions (full X.Y.Z, as-is, PyPI versions, no `v` prefix). The build matrix
 # fans them x both NATIVE arches (amd64 + arm64, no QEMU). Recipes render via build.conf
 # render() (__VER__ -> mlflow-skinny==<VER>). Per-version merge job assembles the
 # multi-arch index, signs + attests it, notifies charts on newest.
@@ -120,7 +120,7 @@ jobs:
         # detection-priority=comprehensive is REQUIRED here: mlflow ships as a pip venv
         # under /opt/mlflow/venv. In Trivy's default `precise` mode, the presence of the
         # Wolfi python-3.12 apk in the image's apk DB suppresses ALL python-pkg
-        # (.dist-info) detections — so the venv's ~51 pip deps would silently evade the
+        # (.dist-info) detections, so the venv's ~51 pip deps would silently evade the
         # gate. `comprehensive` makes Trivy scan the venv's installed Python packages too
         # (verified locally: 28 OS pkgs + 51 python pkgs, all 0-CVE). Do NOT drop this.
         env:

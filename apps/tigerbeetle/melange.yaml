@@ -1,9 +1,9 @@
 # Packages TigerBeetle onto Wolfi. TigerBeetle is NOT built from source here: it
 # ships its OWN official precompiled static binary (a self-contained Zig executable
-# that links nothing — see `file`: "statically linked"), so we fetch that upstream
+# that links nothing, see `file`: "statically linked"), so we fetch that upstream
 # artifact and harden it on a minimal apko base, gated 0-CVE by Trivy. Clean-room
 # consistent: it is upstream's published binary, not a Bitnami chart, and the scan
-# still fully applies. busybox is the only runtime dep — the binary itself is
+# still fully applies. busybox is the only runtime dep, the binary itself is
 # self-contained; busybox provides the /bin/sh the chart's format-once initContainer
 # guard uses.
 package:
@@ -32,7 +32,7 @@ environment:
 pipeline:
   # TigerBeetle publishes separate x86_64/aarch64 zips of the self-contained binary,
   # so fetch the one matching the build arch by uname -m with its arch-matching
-  # sha256 — the wrong arch would yield a non-executable binary. Each zip holds a
+  # sha256, the wrong arch would yield a non-executable binary. Each zip holds a
   # single `tigerbeetle` binary at its root.
   - runs: |
       VER="${{package.version}}"

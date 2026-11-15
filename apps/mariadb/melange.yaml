@@ -80,7 +80,7 @@ pipeline:
       ln -s ../scripts/mariadb-install-db "${{targets.destdir}}/usr/bin/mariadb-install-db"
       # Galera HA needs the wsrep SST donor tools; fail loudly if a MariaDB build
       # ever drops them. (galera_new_cluster is only a convenience wrapper and isn't
-      # shipped on every line — e.g. 11.4 — and the chart bootstraps via
+      # shipped on every line, e.g. 11.4, and the chart bootstraps via
       # `mariadbd --wsrep-new-cluster` directly, so it is not required.)
       test -x "${{targets.destdir}}/usr/bin/wsrep_sst_mariabackup" || { echo "wsrep_sst_mariabackup missing"; exit 1; }
       test -x "${{targets.destdir}}/usr/bin/mariadb-backup"        || { echo "mariadb-backup (mariabackup) missing"; exit 1; }
@@ -100,7 +100,7 @@ pipeline:
         -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
         -DCMAKE_BUILD_TYPE=Release \
         -DGALERA_WITH_SSL=ON
-      # build only the provider DSO — skips the garbd binary + check-based tests
+      # build only the provider DSO, skips the garbd binary + check-based tests
       cmake --build galera-src/build --target galera_smm -j"$(nproc)"
       SO="$(find galera-src/build -name 'libgalera_smm.so' -print -quit)"
       test -n "$SO" || { echo "libgalera_smm.so not produced"; exit 1; }

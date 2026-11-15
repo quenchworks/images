@@ -6,7 +6,7 @@
 # published artifact, not a Bitnami chart, and the scan still fully applies.
 #
 # The amd64 asset (linux-static-x86-64) is fully static (no libc); the arm64 asset
-# (ubuntu-aarch64) is dynamically linked against glibc — so glibc is a runtime dep
+# (ubuntu-aarch64) is dynamically linked against glibc, so glibc is a runtime dep
 # (a no-op on the static amd64 build, required on arm64).
 package:
   name: quench-postgrest
@@ -34,7 +34,7 @@ environment:
 
 pipeline:
   # PostgREST publishes separate amd64/arm64 builds, so fetch the tarball matching the
-  # build arch by uname -m with the arch-matching sha256 — the wrong arch yields a
+  # build arch by uname -m with the arch-matching sha256, the wrong arch yields a
   # wrong-arch binary.
   #
   # The arm64 ASSET NAME CHANGED AT v16: 14.x ships `ubuntu-aarch64` (dynamically linked

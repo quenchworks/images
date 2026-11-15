@@ -1,7 +1,7 @@
 # Builds BusyBox from the official upstream source onto Wolfi. Output is a signed
 # APK in Quenchworks' own repo. No upstream distro binaries. BusyBox is a single
 # multi-call binary that implements a broad set of POSIX userland applets (sh, ls,
-# cat, sed, grep, awk, wget, ...) — the from-source provenance is the point here.
+# cat, sed, grep, awk, wget...), the from-source provenance is the point here.
 package:
   name: quench-busybox
   version: __VER__
@@ -49,7 +49,7 @@ pipeline:
       disable() { sed -i "s/^CONFIG_$1=y/# CONFIG_$1 is not set/" .config; }
       # tc has had GCC-version build breakage upstream; not useful in a container.
       disable TC
-      # Kernel module tooling — meaningless in a container.
+      # Kernel module tooling, meaningless in a container.
       disable MODPROBE_SMALL
       disable INSMOD
       disable RMMOD

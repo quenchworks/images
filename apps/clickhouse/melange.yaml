@@ -1,13 +1,13 @@
 # Packages ClickHouse onto Wolfi. ClickHouse is NOT built from source here: an
 # upstream from-source build needs clang, ~30-60GB RAM and hundreds of CPU-minutes
-# with a huge submodule tree — infeasible on a 2-core/7GB GitHub runner (OOM/timeout).
+# with a huge submodule tree, infeasible on a 2-core/7GB GitHub runner (OOM/timeout).
 # Instead we ship ClickHouse's OWN official precompiled static binary (the same
 # upstream-artifact pattern kafka/opensearch/cassandra use), then harden it on a
 # minimal apko base and gate it 0-CVE with Trivy. This is clean-room-consistent:
 # it is upstream's published artifact, not a Bitnami chart, and the scan still fully
 # applies. The `clickhouse` binary is multi-call (server/client/keeper/local) and is
-# essentially self-contained — it only links glibc (libc/libm/libdl/librt/libpthread),
-# no external libstdc++/libgcc — so the runtime surface is tiny.
+# essentially self-contained, it only links glibc (libc/libm/libdl/librt/libpthread),
+# no external libstdc++/libgcc, so the runtime surface is tiny.
 package:
   name: quench-clickhouse
   version: __VER__
@@ -36,7 +36,7 @@ environment:
 pipeline:
   # ClickHouse publishes separate amd64/arm64 builds of the self-contained binary, so
   # fetch the tarball matching the build arch by uname -m (x86_64->amd64,
-  # aarch64->arm64) with the arch-matching checksum — using the wrong arch yields a
+  # aarch64->arm64) with the arch-matching checksum, using the wrong arch yields a
   # non-executable / wrong-arch binary. The clickhouse-common-static tgz holds the
   # multi-call `clickhouse` binary; the clickhouse-server tgz (arch-independent config)
   # ships the default config.xml/users.xml we seed the writable config dir from.
@@ -49,7 +49,7 @@ pipeline:
       esac
 
       # 1) the per-arch static binary. Fetch from the GitHub release assets, NOT
-      #    packages.clickhouse.com — that CDN returns 403 to GitHub Actions runner IPs
+      #    packages.clickhouse.com, that CDN returns 403 to GitHub Actions runner IPs
       #    (works from residential IPs, which is why a local build passes but CI fails).
       #    The GitHub release tarballs are byte-identical (same published artifacts).
       binurl="https://github.com/ClickHouse/ClickHouse/releases/download/v${VER}-__CHANNEL__/clickhouse-common-static-${VER}-${charch}.tgz"
@@ -66,7 +66,7 @@ pipeline:
         ln -sf clickhouse "${{targets.destdir}}/usr/bin/${n}"
       done
 
-      # 2) the default server config (arch-independent — amd64 tgz is fine for both),
+      # 2) the default server config (arch-independent, amd64 tgz is fine for both),
       #    shipped read-only under /opt; the entrypoint seeds a writable copy from it.
       SRVSHA=__SHA_SRV__
       curl -fsSL -o ch-server.tgz "https://github.com/ClickHouse/ClickHouse/releases/download/v${VER}-__CHANNEL__/clickhouse-server-${VER}-amd64.tgz"

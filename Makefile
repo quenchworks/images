@@ -1,9 +1,9 @@
 # ============================================================================
-# QuenchWorks images — local build pipeline
+# QuenchWorks images, local build pipeline
 # ----------------------------------------------------------------------------
 # Builds hardened, 0-CVE, multi-arch images locally and publishes them to GHCR,
 # signed + attested with a local cosign key. This replaces GitHub Actions for
-# the (private) images repo — the 2,000 free private-repo minutes can't cover a
+# the (private) images repo, the 2,000 free private-repo minutes can't cover a
 # daily multi-arch rebuild of the whole catalog. Charts/common stay on Actions.
 # ============================================================================
 
@@ -55,7 +55,7 @@ check-tools:
 
 .PHONY: check-key
 check-key:
-	@[ -f "$(COSIGN_KEY)" ] || { echo "❌ no signing key at $(COSIGN_KEY) — run 'make keygen'"; exit 1; }
+	@[ -f "$(COSIGN_KEY)" ] || { echo "❌ no signing key at $(COSIGN_KEY): run 'make keygen'"; exit 1; }
 	@echo "✅ signing key present"
 
 .PHONY: require-app
@@ -109,7 +109,7 @@ JOBS ?= 2
 .PHONY: catalog
 catalog: check-tools check-key
 	$(eval CMD=catalog)
-	@echo "🏗  catalog — $(JOBS) apps in parallel, every version, multi-arch (arches=$(ARCHES), push=$(PUSH))…"
+	@echo "🏗  catalog, $(JOBS) apps in parallel, every version, multi-arch (arches=$(ARCHES), push=$(PUSH))…"
 	$(call run_with_log,PUSH=$(PUSH) ARCHES=$(ARCHES) GHCR_OWNER=$(OWNER) COSIGN_KEY=$(COSIGN_KEY) JOBS=$(JOBS) scripts/build-catalog.sh $(APPS))
 
 # ------------------------------------------
@@ -159,7 +159,7 @@ qw-%:
 help:
 	@echo ""
 	@echo "============================================================"
-	@echo "  QuenchWorks images — local build pipeline"
+	@echo "  QuenchWorks images, local build pipeline"
 	@echo "============================================================"
 	@echo ""
 	@echo "ONE-TIME SETUP"
@@ -173,7 +173,7 @@ help:
 	@echo "  make build-all                    - build every app, one at a time"
 	@echo "  ARCHES=x86_64 make build APP=redis - amd64-only (skip arm64/qemu)"
 	@echo ""
-	@echo "VERIFY (what users run — key-based)"
+	@echo "VERIFY (what users run, key-based)"
 	@echo "  make verify APP=redis [VERSION=…] - cosign verify signature + SBOM + provenance"
 	@echo "  make pubkey                       - print the public key (cosign.pub)"
 	@echo ""
