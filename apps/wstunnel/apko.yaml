@@ -1,0 +1,41 @@
+# wstunnel runtime: the wstunnel binary; the default command runs the server on 8080 (ws://), the same
+# image runs `wstunnel client ...`. Nonroot uid 1001, multi-arch, shell-free.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-wstunnel@local
+
+accounts:
+  groups:
+    - groupname: wstunnel
+      gid: 1001
+  users:
+    - username: wstunnel
+      uid: 1001
+      gid: 1001
+      homedir: /tmp
+  run-as: 1001
+
+work-dir: /
+
+entrypoint:
+  command: /usr/bin/wstunnel
+cmd: server ws://0.0.0.0:8080
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-wstunnel"
+  org.opencontainers.image.licenses: "BSD-3-Clause"

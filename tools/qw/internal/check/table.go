@@ -142,6 +142,7 @@ var table = map[string]check{
 	"grocy":                             {src: ghRel("grocy/grocy"), n: 1},
 	"kener":                             {src: ghRel("rajnandan1/kener"), n: 1},
 	"gotosocial":                        {src: codebergRel("superseriousbusiness/gotosocial"), n: 1},
+	"wstunnel":                          {src: ghRel("erebe/wstunnel"), n: 1},
 	"etcd":                              {src: ghRel("etcd-io/etcd")},
 	"excalidraw":                        {src: ghRel("excalidraw/excalidraw")},
 	"external-dns":                      {src: ghRel("kubernetes-sigs/external-dns")},

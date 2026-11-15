@@ -2,6 +2,7 @@ package smoke
 
 import (
 	"strings"
+	"time"
 )
 
 func init() {
@@ -38,5 +39,39 @@ func init() {
 			t.Fatalf("webfinger after a restart: %q", wf)
 		}
 		t.Logf("smoke test passed (gotosocial %s: read-only boot, admin created by the CLI, instance API, the account found by WebFinger after a restart; user %s)", t.Want, u)
+	})
+}
+
+func init() {
+	// A wstunnel server restricted to a secret path prefix, our go-httpbin behind it, and a client container
+	// forwarding a local port through the tunnel: HTTP through the tunnel reaches go-httpbin, and a client with
+	// the wrong prefix gets nothing. All containers on a read-only rootfs.
+	register("wstunnel", func(t *T) {
+		const via = "http://127.0.0.1:19090"
+		u := t.User("1001")
+		t.Contains(t.RunAny("--version"), t.Want, "wstunnel --version")
+		net := t.Name("net")
+		t.Docker("network", "create", net)
+		t.Cleanup(func() { docker("network", "rm", net) })
+		target := t.Name("httpbin")
+		t.Cleanup(func() { docker("rm", "-f", target) })
+		t.Docker("run", "-d", "--name", target, "--network", net, "ghcr.io/quenchworks/images/go-httpbin:2.26.0")
+		server := t.Name("server")
+		t.Start(server, []string{"--read-only", "--network", net}, "server", "ws://0.0.0.0:8080", "--restrict-http-upgrade-path-prefix", "quench-secret")
+		client := func(name, prefix string) {
+			t.Start(name, []string{"--read-only", "--network", net, "-p", "127.0.0.1:19090:9000"},
+				"client", "-L", "tcp://0.0.0.0:9000:"+target+":8080", "--http-upgrade-path-prefix", prefix, "ws://"+server+":8080")
+		}
+		c := t.Name("client")
+		client(c, "quench-secret")
+		t.Contains(t.WaitHTTP(via+"/get?quench=tunnel", 60, c), `"quench"`, "go-httpbin through the tunnel")
+		docker("rm", "-f", c)
+		bad := t.Name("badclient")
+		client(bad, "wrong-prefix")
+		time.Sleep(3 * time.Second)
+		if code, _ := Get(via + "/get"); code == 200 {
+			t.Fatalf("a client with the wrong path prefix got through")
+		}
+		t.Logf("smoke test passed (wstunnel %s: server and client on a read-only rootfs, HTTP tunneled to go-httpbin, a wrong path prefix refused; user %s)", t.Want, u)
 	})
 }
