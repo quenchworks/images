@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/cloudreve/2026-11-15",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-15T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2023-45292"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/mojocn/base64Captcha@v0.0.0-20190801020520-752b1cd608b2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "Measured 2026-11-15 on Cloudreve 4.19.1. The advisory (GO-2023-2386) is a verification bypass in memoryStore.Verify of the newer API: a non-existent id with an empty answer and clear=true is accepted. Cloudreve pins base64Captcha at the 2019 commit 752b1cd608b2, which has no memoryStore.Verify; Cloudreve verifies with VerifyCaptcha (middleware/captcha.go:75), which calls VerifyCaptchaAndIsClear, and that returns false for an empty answer before it reads the store (captcha.go:111-113 of the pinned module) and otherwise compares the stored value case-insensitively. A non-existent id yields an empty stored value, which never equals a non-empty answer. v1.3.6 (the fix) removed ConfigCharacter, GenerateCaptcha and CaptchaWriteToBase64Encoding, which Cloudreve calls (service/basic/site.go:230-247), so the module cannot move without changing Cloudreve. Revisit when Cloudreve moves to the v1.3 API."
+    }
+  ]
+}

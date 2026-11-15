@@ -1,0 +1,54 @@
+# Cloudreve runtime: the cloudreve binary (frontend embedded) at /cloudreve/cloudreve; it keeps conf.ini,
+# the SQLite database and uploaded files under data/ next to the binary, so /cloudreve/data is the
+# volume. Nonroot uid 1001, multi-arch. Web UI and API on 5212. The first account registered becomes the
+# administrator.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-cloudreve@local
+
+accounts:
+  groups:
+    - groupname: cloudreve
+      gid: 1001
+  users:
+    - username: cloudreve
+      uid: 1001
+      gid: 1001
+      homedir: /cloudreve
+  run-as: 1001
+
+work-dir: /cloudreve
+
+paths:
+  - path: /cloudreve
+    type: directory
+    uid: 0
+    gid: 0
+    permissions: 0o755
+  - path: /cloudreve/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+entrypoint:
+  command: /cloudreve/cloudreve
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-cloudreve"
+  org.opencontainers.image.licenses: "GPL-3.0-only"
