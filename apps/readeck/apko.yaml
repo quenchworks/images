@@ -1,0 +1,54 @@
+# Readeck runtime: the readeck binary (linked to Wolfi sqlite-libs) serving on 8000. config.toml (written
+# on first start, with a generated secret key) and data live under /readeck, the volume. Nonroot uid 1001,
+# multi-arch, shell-free.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-readeck@local
+
+accounts:
+  groups:
+    - groupname: readeck
+      gid: 1001
+  users:
+    - username: readeck
+      uid: 1001
+      gid: 1001
+      homedir: /readeck
+  run-as: 1001
+
+work-dir: /readeck
+
+environment:
+  READECK_SERVER_HOST: 0.0.0.0
+  READECK_SERVER_PORT: "8000"
+  READECK_DATA_DIRECTORY: /readeck/data
+
+paths:
+  - path: /readeck
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+entrypoint:
+  command: /usr/bin/readeck
+cmd: serve -config /readeck/config.toml
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-readeck"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"
