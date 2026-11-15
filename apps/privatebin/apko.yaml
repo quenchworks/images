@@ -1,0 +1,69 @@
+# Assembles the PrivateBin image: supervisord runs php-fpm (127.0.0.1:9000) and QuenchWorks' nginx
+# (:8080), nonroot uid 1001, read-only-rootfs friendly (everything writable is /tmp and /srv/data).
+# CONFIG_PATH points PrivateBin at /srv/cfg; mount your own conf.php there to change settings.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - busybox
+    - supervisor
+    - quench-nginx@local          # QuenchWorks' hardened nginx (from source), 8080/nonroot
+    - quench-privatebin@local
+    - php-8.3
+    - php-8.3-fpm
+    - php-8.3-fpm-config
+    - php-8.3-config
+    - php-8.3-opcache
+    - php-8.3-opcache-config
+    - php-8.3-gd
+    - php-8.3-gd-config
+    - php-8.3-ctype
+    - php-8.3-ctype-config
+
+accounts:
+  groups:
+    - groupname: privatebin
+      gid: 1001
+  users:
+    - username: privatebin
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  CONFIG_PATH: /srv/cfg
+
+entrypoint:
+  command: /usr/bin/supervisord -c /etc/privatebin/supervisord.conf
+
+work-dir: /var/www
+
+paths:
+  - path: /tmp
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o1777
+  - path: /srv/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-privatebin"
+  org.opencontainers.image.licenses: "Zlib"
+  org.opencontainers.image.version: "__VER__"

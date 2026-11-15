@@ -1,0 +1,162 @@
+# PrivateBin from the release tag on Wolfi php-fpm + nginx (nginx comes from the sibling
+# quench-nginx package, installed by apko).
+package:
+  name: quench-privatebin
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened PrivateBin (zero-knowledge pastebin) on Wolfi php-fpm + nginx"
+  copyright:
+    - license: Zlib
+  dependencies:
+    runtime:
+      - php-8.3
+      - php-8.3-fpm
+      - php-8.3-fpm-config
+      - php-8.3-config
+      - php-8.3-opcache
+      - php-8.3-opcache-config
+      - php-8.3-gd          # the "vizhash" icon option
+      - php-8.3-gd-config
+      - php-8.3-ctype
+      - php-8.3-ctype-config
+      - supervisor
+      - busybox
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/PrivateBin/PrivateBin/archive/refs/tags/${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Lay out /srv (code, config, data) and /var/www (docroot) as upstream's image does
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/srv" "$d/var/www" "$d/srv/data"
+      cp -a lib tpl vendor i18n "$d/srv/"
+      # the public files; index.php points PATH at /srv/
+      cp -a css img js browserconfig.xml manifest.json robots.txt "$d/var/www/"
+      rm -f "$d/var/www/js/package.json" "$d/var/www/js/package-lock.json"
+      sed "s|define('PATH', '');|define('PATH', '/srv/');|" index.php > "$d/var/www/index.php"
+      grep -q "define('PATH', '/srv/');" "$d/var/www/index.php"
+      # the default config: upstream's sample with the paste store on the data volume; the chart
+      # mounts its own conf.php over it (CONFIG_PATH points at the directory)
+      install -d "$d/srv/cfg"
+      sed 's|^dir = PATH "data"|dir = "/srv/data"|' cfg/conf.sample.php > "$d/srv/cfg/conf.php"
+      grep -q '^dir = "/srv/data"' "$d/srv/cfg/conf.php"
+      grep -F "${{package.version}}" "$d/srv/lib/Controller.php"
+
+  - name: nginx server block (FastCGI to php-fpm on :8080)
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/etc/nginx/conf.d"
+      cat > "$d/etc/nginx/conf.d/privatebin.conf" <<'NGINX'
+      server {
+          listen 8080 default_server;
+          listen [::]:8080 default_server;
+          server_name _;
+          root /var/www;
+          index index.php;
+          charset utf-8;
+          # pastes are sent as encrypted JSON; PrivateBin's own sizelimit (10 MiB) applies first
+          client_max_body_size 20M;
+          access_log off;
+
+          location ~ /\. { return 403; }
+          location / { try_files $uri $uri/ /index.php$is_args$args; }
+          location ~ \.php$ {
+              try_files $uri =404;
+              include        /etc/nginx/fastcgi_params;
+              fastcgi_param  SCRIPT_FILENAME $document_root$fastcgi_script_name;
+              fastcgi_pass   127.0.0.1:9000;
+          }
+          location ~* \.(js|css|png|jpg|svg|ico|woff2?|wasm)$ { expires 30d; access_log off; }
+      }
+      NGINX
+
+  - name: php-fpm pool + php.ini (nonroot, read-only rootfs)
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/etc/php/php-fpm.d" "$d/etc/php/conf.d"
+      cat > "$d/etc/php/php-fpm.d/zzz-privatebin.conf" <<'FPM'
+      [global]
+      daemonize = no
+      error_log = /proc/self/fd/2
+
+      [www]
+      listen = 127.0.0.1:9000
+      catch_workers_output = yes
+      decorate_workers_output = no
+      ; CONFIG_PATH and friends come from the container environment
+      clear_env = no
+      pm = dynamic
+      pm.max_children = 16
+      pm.start_servers = 2
+      pm.min_spare_servers = 1
+      pm.max_spare_servers = 4
+      FPM
+      cat > "$d/etc/php/conf.d/zzz-privatebin.ini" <<'INI'
+      expose_php = Off
+      memory_limit = 128M
+      upload_max_filesize = 15M
+      post_max_size = 15M
+      sys_temp_dir = /tmp
+      upload_tmp_dir = /tmp
+      session.save_path = /tmp
+      display_errors = Off
+      log_errors = On
+      error_log = /proc/self/fd/2
+      date.timezone = UTC
+      opcache.enable = 1
+      opcache.revalidate_freq = 60
+      INI
+
+  - name: supervisord (php-fpm + nginx)
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/etc/privatebin" "$d/etc/supervisor.d"
+      cat > "$d/etc/privatebin/supervisord.conf" <<'SUP'
+      [supervisord]
+      nodaemon=true
+      logfile=/dev/stdout
+      logfile_maxbytes=0
+      pidfile=/tmp/supervisord.pid
+
+      [unix_http_server]
+      file=/tmp/supervisor.sock
+
+      [supervisorctl]
+      serverurl=unix:///tmp/supervisor.sock
+
+      [rpcinterface:supervisor]
+      supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+
+      [include]
+      files = /etc/supervisor.d/*.conf
+      SUP
+      printf '%s\n' '[program:php-fpm]' 'command=/usr/bin/php-fpm --nodaemonize --fpm-config /etc/php/php-fpm.conf' \
+        'autostart=true' 'autorestart=true' 'priority=10' 'stdout_logfile=/dev/stdout' 'stdout_logfile_maxbytes=0' \
+        'stderr_logfile=/dev/stderr' 'stderr_logfile_maxbytes=0' > "$d/etc/supervisor.d/php-fpm.conf"
+      printf '%s\n' '[program:nginx]' 'command=/usr/bin/nginx -g "daemon off;"' \
+        'autostart=true' 'autorestart=true' 'priority=20' 'stdout_logfile=/dev/stdout' 'stdout_logfile_maxbytes=0' \
+        'stderr_logfile=/dev/stderr' 'stderr_logfile_maxbytes=0' > "$d/etc/supervisor.d/nginx.conf"
+
+test:
+  pipeline:
+    - runs: |
+        set -eu
+        test -f /var/www/index.php
+        test -f /srv/cfg/conf.php

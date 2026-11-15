@@ -310,6 +310,7 @@ var table = map[string]check{
 	"postgresql":                        {src: scrapeSrc("https://ftp.postgresql.org/pub/source/", `href="v(\d+\.\d+(?:\.\d+)?)/"`), lines: 1},
 	"postgrest":                         {src: ghRel("PostgREST/postgrest")},
 	"prefect":                           {src: pypiPkg("prefect"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
+	"privatebin":                        {src: ghRel("PrivateBin/PrivateBin"), n: 1},
 	"prometheus-config-reloader":        {src: ghRel("prometheus-operator/prometheus-operator"), n: 1},
 	"prometheus-nats-exporter":          {src: ghRel("nats-io/prometheus-nats-exporter"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
 	"prometheus-operator":               {src: ghRel("prometheus-operator/prometheus-operator"), n: 1},
