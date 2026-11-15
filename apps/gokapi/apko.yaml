@@ -1,0 +1,59 @@
+# Assembles the Gokapi image: the static binary, nonroot uid 1001, upstream's layout under /app.
+# /app/config holds config.json (written by the setup wizard on the first start) and /app/data the
+# database and uploads; both should be volumes. It listens on 53842.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-gokapi@local
+
+accounts:
+  groups:
+    - groupname: gokapi
+      gid: 1001
+  users:
+    - username: gokapi
+      uid: 1001
+      gid: 1001
+      homedir: /app
+  run-as: 1001
+
+paths:
+  - path: /app/config
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /app/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  GOKAPI_CONFIG_DIR: /app/config
+  GOKAPI_DATA_DIR: /app/data
+  GOKAPI_LOG_STDOUT: "true"
+
+work-dir: /app
+
+entrypoint:
+  command: /usr/bin/gokapi
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-gokapi"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"
+  org.opencontainers.image.version: "__VER__"

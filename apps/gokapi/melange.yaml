@@ -1,0 +1,57 @@
+# Gokapi from the release tag: generated web assets, then a static binary at /usr/bin/gokapi.
+package:
+  name: quench-gokapi
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Gokapi file sharing server, built from source on Wolfi"
+  copyright:
+    - license: AGPL-3.0-only
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - coreutils          # sort -V for the floor check
+      - go-1.26
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/Forceu/Gokapi/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Build
+    runs: |
+      set -eu
+      export CGO_ENABLED=0 GOTOOLCHAIN=local GOFLAGS=-mod=mod
+      # upstream's Dockerfile: go generate builds the WASM modules and minifies the static files
+      go generate ./...
+      # house floor (go get is exact, so raise a module only when it is below its floor)
+      for m in golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/net@v0.62.0 \
+               golang.org/x/text@v0.43.0 golang.org/x/sys@v0.49.0 golang.org/x/image@v0.47.0 \
+               github.com/go-jose/go-jose/v4@v4.1.9; do
+        have="$(go list -m -f '{{.Version}}' "${m%@*}" 2>/dev/null || true)"
+        [ -n "$have" ] || continue
+        [ "$(printf '%s\n%s\n' "${m#*@}" "$have" | sort -V | head -1)" = "${m#*@}" ] || go get "$m"
+      done
+      go mod tidy
+      E=github.com/forceu/gokapi/internal/environment
+      # IsDocker=true as upstream's image: setup defaults for a container, TMPDIR in the data dir
+      go build -trimpath -ldflags "-s -w -X $E.IsDocker=true -X '$E.Builder=QuenchWorks' -X '$E.BuildTime=v${{package.version}}'" \
+        -o "${{targets.destdir}}/usr/bin/gokapi" ./cmd/gokapi
+      go version -m "${{targets.destdir}}/usr/bin/gokapi" | grep -E 'golang.org/x/(crypto|image|net)|go-jose'
+      "${{targets.destdir}}/usr/bin/gokapi" --version | grep -F "${{package.version}}"
+
+test:
+  pipeline:
+    - runs: |
+        gokapi --version
