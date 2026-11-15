@@ -1,0 +1,52 @@
+# Beszel runtime: the hub (`beszel serve --http=0.0.0.0:8090`) by default, data (PocketBase SQLite)
+# in /beszel_data. The agent is /usr/bin/beszel-agent in the same image (entrypoint override).
+# Nonroot 1001; mount a writable volume at /beszel_data.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-beszel@local
+
+accounts:
+  groups:
+    - groupname: beszel
+      gid: 1001
+  users:
+    - username: beszel
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  - path: /beszel_data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+
+work-dir: /
+
+entrypoint:
+  command: /usr/bin/beszel
+
+cmd: serve --http=0.0.0.0:8090
+
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-beszel"
+  org.opencontainers.image.licenses: "MIT"
+  org.opencontainers.image.version: "__VER__"

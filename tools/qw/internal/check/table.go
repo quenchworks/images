@@ -553,6 +553,7 @@ var table = map[string]check{
 		fmt.Fprintf(w, "  upstream (github.com/sysown/proxysql): %s\n", strings.Join(up[:min(3, len(up))], ", "))
 		return nil
 	}},
+	"beszel": {src: ghRel("henrygd/beszel"), n: 1},
 	"bifrost": {src: ghTags("maximhq/bifrost"), lines: 2, f: filter{
 		keep:  func(t string) bool { return strings.HasPrefix(t, "transports/v") && !strings.Contains(t, "-") },
 		clean: func(t string) string { return strings.TrimLeft(strings.SplitN(t, "/", 2)[1], "v") }}},

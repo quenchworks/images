@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/beszel/2026-11-15",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-15T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2023-36308"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/disintegration/imaging@v1.6.2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "inline_mitigations_already_exist",
+      "impact_statement": "Measured 2026-11-15. imaging 1.6.2 has no fixed release (upstream inactive since 2020); its scanner indexes the palette table with raw pixel values (scanner.go:242), so an image.Paletted whose pixel indexes exceed its palette panics it. Beszel reaches it only through PocketBase file thumbnails: imaging.Decode at ganigeorgiev.com/pocketbase/pocketbase@v0.42.2 tools/filesystem/filesystem.go:673, then Resize/Fit/Fill (:682-693). The decoders this binary registers cannot produce such an image: golang.org/x/image is at v0.48.0 (Beszel 0.21.2 requires it; the recipe floor is v0.47.0), whose bmp reader rejects out-of-range palette indexes (fixed in v0.41.0, 'bmp: reject input with invalid palette index') and whose tiff reader rejects them ('invalid color index'); Go's gif decoder rejects bad pixels and its png decoder grows the palette to fit. The recipe also patches imaging's scanner.go at build time to size the palette table for every uint8 index (apps/beszel/melange.yaml, go mod vendor + sed, asserted by grep). Proven by the smoke test (tools/qw/internal/smoke/servers88.go): a 62-byte BMP with a 2-entry palette and pixel index 70, uploaded as evil.png into a collection with a thumbnailed file field and then requested with ?thumb=8x8, leaves the hub serving. Revisit if PocketBase lowers x/image below v0.41.0 or adds a decoder."
+    }
+  ]
+}

@@ -1,0 +1,76 @@
+# Beszel from the release tag as upstream builds it: npm builds the UI into internal/site/dist
+# (embedded), go builds internal/cmd/hub and internal/cmd/agent (CGO off).
+package:
+  name: quench-beszel
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Beszel monitoring hub and agent, built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - go-1.27          # go.mod: go 1.27.3
+      # build-only web toolchain (internal/site package-lock.json)
+      - nodejs-24
+      - npm
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/henrygd/beszel/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Build the web UI (npm)
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)"
+      npm ci --prefix internal/site --no-audit --no-fund
+      npm run --prefix internal/site build
+      test -f internal/site/dist/index.html
+
+  - name: Build the binary (static, CGO off)
+    runs: |
+      set -eu
+      export CGO_ENABLED=0 GOTOOLCHAIN=local GOFLAGS=-mod=mod
+      # floors, raised only when below (a bare go get downgrades once upstream passes it)
+      FLOOR="golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/net@v0.62.0 golang.org/x/text@v0.43.0 golang.org/x/sys@v0.49.0 golang.org/x/image@v0.47.0"
+      need=""
+      for f in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${f%@*}")"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        [ "$(printf '%s\n%s\n' "$have" "${f#*@}" | sort -V | head -1)" = "${f#*@}" ] || need="$need $f"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
+      go mod tidy
+      # CVE-2023-36308: imaging 1.6.2 (no fixed release, upstream inactive since 2020) indexes its
+      # palette table with raw pixel values. Before x/image v0.41.0, x/image/bmp (registered by
+      # imaging) returned Paletted images with indexes past the palette, and a crafted upload
+      # panicked a goroutine and killed the server. The x/image floor above rejects those at decode;
+      # this also sizes imaging's table for every uint8 index in case another decoder ever does.
+      go mod vendor
+      sc=vendor/github.com/disintegration/imaging/scanner.go
+      sed -i 's/s\.palette = make(\[\]color\.NRGBA, len(img\.Palette))/s.palette = make([]color.NRGBA, 256+len(img.Palette))/' "$sc"
+      grep -q '256+len(img.Palette)' "$sc"
+      # the version is a constant in the source (internal beszel.Version)
+      grep -q "Version = \"${{package.version}}\"" beszel.go
+      go build -mod=vendor -trimpath -ldflags "-s -w" -o "${{targets.destdir}}/usr/bin/beszel" ./internal/cmd/hub
+      go build -mod=vendor -trimpath -ldflags "-s -w" -o "${{targets.destdir}}/usr/bin/beszel-agent" ./internal/cmd/agent
+      "${{targets.destdir}}/usr/bin/beszel" --version 2>&1 | grep -F "${{package.version}}"
+
+test:
+  pipeline:
+    - runs: |
+        beszel --version
