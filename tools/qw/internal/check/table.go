@@ -211,6 +211,7 @@ var table = map[string]check{
 	"kfp-scheduled-workflow-controller": {src: ghRel("kubeflow/pipelines"), n: 1},
 	"ko":                                {src: ghRel("ko-build/ko"), lines: 2},
 	"kong":                              {src: ghTags("Kong/kong"), n: 1},
+	"kopia":                             {src: ghRel("kopia/kopia"), n: 1},
 	"krakend":                           {src: ghRel("krakend/krakend-ce"), n: 1},
 	"kratos":                            {src: ghRel("ory/kratos")},
 	"kroxylicious":                      {src: ghRel("kroxylicious/kroxylicious"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},

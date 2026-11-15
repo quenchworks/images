@@ -1,0 +1,61 @@
+# Assembles the Kopia image: the static binary (CLI, repository server, web UI), nonroot uid 1001.
+# Config, cache and logs live under /app (KOPIA_CONFIG_PATH, KOPIA_CACHE_DIRECTORY, KOPIA_LOG_DIR);
+# a filesystem repository goes on /repository. The entrypoint is kopia: pass `server start ...` or
+# any other subcommand.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-kopia@local
+
+accounts:
+  groups:
+    - groupname: kopia
+      gid: 1001
+  users:
+    - username: kopia
+      uid: 1001
+      gid: 1001
+      homedir: /app
+  run-as: 1001
+
+paths:
+  - path: /app
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /repository
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+environment:
+  KOPIA_CONFIG_PATH: /app/config/repository.config
+  KOPIA_CACHE_DIRECTORY: /app/cache
+  KOPIA_LOG_DIR: /app/logs
+  KOPIA_CHECK_FOR_UPDATES: "false"
+
+work-dir: /app
+
+entrypoint:
+  command: /usr/bin/kopia
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-kopia"
+  org.opencontainers.image.licenses: "Apache-2.0"
+  org.opencontainers.image.version: "__VER__"
