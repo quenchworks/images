@@ -1,0 +1,69 @@
+# Semaphore UI runtime: the semaphore binary (UI embedded) plus Ansible from the catalog's own package
+# (venv at /opt/ansible/venv, on PATH), git and an SSH client for playbook repositories. Nonroot uid
+# 1001, multi-arch. Runs `semaphore server --no-config` from SEMAPHORE_* variables: SQLite on the
+# /var/lib/semaphore volume, task checkouts under /tmp/semaphore, HTTP on 3000. Create the first admin
+# with `semaphore user add --admin --no-config ...` against the same volume (the chart does this).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - git
+    - openssh-client
+    - quench-ansible@local
+    - quench-semaphore@local
+
+accounts:
+  groups:
+    - groupname: semaphore
+      gid: 1001
+  users:
+    - username: semaphore
+      uid: 1001
+      gid: 1001
+      homedir: /home/semaphore
+  run-as: 1001
+
+work-dir: /home/semaphore
+
+environment:
+  PATH: /opt/ansible/venv/bin:/usr/sbin:/sbin:/usr/bin:/bin
+  SEMAPHORE_DB_DIALECT: sqlite
+  SEMAPHORE_DB_HOST: /var/lib/semaphore/database.sqlite
+  SEMAPHORE_TMP_PATH: /tmp/semaphore
+  SEMAPHORE_PORT: ":3000"
+  HOME: /home/semaphore
+  # Ansible writes ~/.ansible (tmp, collections cache); the rootfs is read-only, /tmp is writable
+  ANSIBLE_HOME: /tmp/ansible
+
+paths:
+  - path: /home/semaphore
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/lib/semaphore
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+entrypoint:
+  command: /usr/bin/semaphore
+cmd: server --no-config
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-semaphore"
+  org.opencontainers.image.licenses: "MIT"
