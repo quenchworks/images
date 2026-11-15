@@ -41,6 +41,25 @@ func ghAssets(r string) func() ([]string, error) {
 	return func() ([]string, error) { return core.GithubAssetReleases(r) }
 }
 
+// codebergRel lists a Codeberg repo's stable release tags (drafts and prereleases skipped).
+func codebergRel(r string) func() ([]string, error) {
+	return func() ([]string, error) {
+		var rels []map[string]any
+		if err := core.JsonGet("https://codeberg.org/api/v1/repos/"+r+"/releases?limit=50", &rels); err != nil {
+			return nil, err
+		}
+		var tags []string
+		for _, x := range rels {
+			p, _ := x["prerelease"].(bool)
+			d, _ := x["draft"].(bool)
+			if !p && !d {
+				tags = append(tags, strings.TrimLeft(common.Str(x["tag_name"]), "v"))
+			}
+		}
+		return tags, nil
+	}
+}
+
 func npmPkg(p string) func() ([]string, error) {
 	return func() ([]string, error) { return core.Npm(p) }
 }

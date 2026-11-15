@@ -1,0 +1,54 @@
+# soju runtime: soju, sojuctl and sojudb with the config at /etc/soju/config (plain IRC on 6667, admin
+# socket at /tmp/soju-admin, SQLite database and message store under /var/lib/soju, the volume). Nonroot uid 1001, multi-arch.
+# busybox lets the chart pipe a password into `sojudb create-user`.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - busybox               # the chart's init container pipes a password into sojudb
+    - quench-soju@local
+
+accounts:
+  groups:
+    - groupname: soju
+      gid: 1001
+  users:
+    - username: soju
+      uid: 1001
+      gid: 1001
+      homedir: /var/lib/soju
+  run-as: 1001
+
+work-dir: /var/lib/soju
+
+paths:
+  - path: /var/lib
+    type: directory
+    uid: 0
+    gid: 0
+    permissions: 0o755
+  - path: /var/lib/soju
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+entrypoint:
+  command: /usr/bin/soju
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-soju"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"

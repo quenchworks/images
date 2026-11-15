@@ -133,6 +133,7 @@ var table = map[string]check{
 	"rest-server":                       {src: ghRel("restic/rest-server"), n: 1},
 	"restic":                            {src: ghRel("restic/restic"), n: 1},
 	"thelounge":                         {src: npmPkg("thelounge"), n: 1, f: filter{keep: noDash}},
+	"soju":                              {src: codebergRel("emersion/soju"), n: 1},
 	"etcd":                              {src: ghRel("etcd-io/etcd")},
 	"excalidraw":                        {src: ghRel("excalidraw/excalidraw")},
 	"external-dns":                      {src: ghRel("kubernetes-sigs/external-dns")},
