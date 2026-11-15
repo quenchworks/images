@@ -1,0 +1,52 @@
+# WriteFreely runtime: /usr/libexec/writefreely-start initialises the SQLite database and keys under /data
+# (the volume) and serves on 8080 with WF_CONFIG (default /etc/writefreely/config.ini; the chart mounts its own).
+# busybox runs the start script and the chart's admin step. Nonroot uid 1001, multi-arch.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - busybox               # the start script and the chart's admin step
+    - quench-writefreely@local
+
+accounts:
+  groups:
+    - groupname: writefreely
+      gid: 1001
+  users:
+    - username: writefreely
+      uid: 1001
+      gid: 1001
+      homedir: /data
+  run-as: 1001
+
+work-dir: /data
+
+environment:
+  HOME: /data
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+entrypoint:
+  command: /usr/libexec/writefreely-start
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-writefreely"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"
