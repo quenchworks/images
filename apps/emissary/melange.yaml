@@ -28,6 +28,7 @@ environment:
       - build-base
       - busybox
       - ca-certificates-bundle
+      - coreutils              # sort -V for the constraint floors
       - go
       - python-3.13
       - py3.13-pip
@@ -74,16 +75,13 @@ pipeline:
       # each raised to its 0-CVE floor when it pins lower (orjson CVE-2025-67221, requests
       # CVE-2026-25645 at 4.1.0's pins; certifi GHSA-6q48-6c7w-9gw2 CRITICAL at 2026.7.22,
       # 2026-10-22). A pin already at or above its floor is kept.
-      python3.13 - <<'PY' > /tmp/constraints.txt
-      import tomllib
-      floors = {"orjson": "3.11.6", "requests": "2.33.0", "certifi": "2026.10.19"}
-      key = lambda v: tuple(int(x) for x in v.split("."))
-      for pin in tomllib.load(open("pyproject.toml", "rb"))["dependency-groups"]["runtime"]:
-          name, ver = pin.split("==")
-          if name in floors and key(ver) < key(floors[name]):
-              ver = floors[name]
-          print(f"{name}=={ver}")
-      PY
+      awk '/^\[dependency-groups\]/{g=1; next} /^\[/{g=0} g && /^runtime = \[/{r=1; next} r && /^\]/{r=0} r' pyproject.toml \
+        | grep -o '"[^"]*"' | tr -d '"' | while read -r pin; do
+          name="${pin%%==*}"; ver="${pin#*==}"
+          case "$name" in orjson) f=3.11.6;; requests) f=2.33.0;; certifi) f=2026.10.19;; *) f=;; esac
+          if [ -n "$f" ] && [ "$(printf '%s\n%s\n' "$ver" "$f" | sort -V | head -1)" != "$f" ]; then ver="$f"; fi
+          echo "$name==$ver"
+        done > /tmp/constraints.txt
       cat /tmp/constraints.txt
       # hatchling refuses a readme outside the package dir (readme = "../README.md")
       for p in ambassador ambassador-diag; do
