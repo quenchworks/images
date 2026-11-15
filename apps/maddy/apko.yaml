@@ -1,0 +1,49 @@
+# Maddy runtime: the maddy binary (built with the "docker" tag: config /data/maddy.conf, state /data,
+# runtime /tmp). Nonroot uid 1001, multi-arch, so listeners go on ports above 1024 (the chart maps 25,
+# 587 and 993 on the Service). /data is the volume: config, credentials, mailboxes, DKIM keys.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-maddy@local
+
+accounts:
+  groups:
+    - groupname: maddy
+      gid: 1001
+  users:
+    - username: maddy
+      uid: 1001
+      gid: 1001
+      homedir: /data
+  run-as: 1001
+
+work-dir: /data
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+entrypoint:
+  command: /usr/bin/maddy
+cmd: -config /data/maddy.conf run
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-maddy"
+  org.opencontainers.image.licenses: "GPL-3.0-only"

@@ -252,6 +252,7 @@ var table = map[string]check{
 	"longhorn-manager":                  {src: ghRel("longhorn/longhorn"), lines: 3},
 	"longhorn-share-manager":            {src: ghRel("longhorn/longhorn"), lines: 3},
 	"longhorn-ui":                       {src: ghRel("longhorn/longhorn"), lines: 3},
+	"maddy":                             {src: ghRel("foxcpp/maddy"), n: 1},
 	"mailpit":                           {src: ghRel("axllent/mailpit")},
 	"mariadb":                           {src: scrapeSrc("https://archive.mariadb.org/", `mariadb-(\d+\.\d+\.\d+)/`), lines: 2},
 	"mastodon-streaming":                {src: ghRel("mastodon/mastodon"), n: 1},
