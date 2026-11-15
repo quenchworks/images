@@ -1,0 +1,56 @@
+# Assembles the Inbucket image: the static binary, nonroot uid 1001. SMTP on 2500, the web UI and
+# REST API on 9000, POP3 on 1100; mail is kept as files in /storage (a volume), 72 h by default.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-inbucket@local
+
+accounts:
+  groups:
+    - groupname: inbucket
+      gid: 1001
+  users:
+    - username: inbucket
+      uid: 1001
+      gid: 1001
+      homedir: /opt/inbucket
+  run-as: 1001
+
+paths:
+  - path: /storage
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  INBUCKET_WEB_UIDIR: /opt/inbucket/ui
+  INBUCKET_WEB_GREETINGFILE: /opt/inbucket/greeting.html
+  INBUCKET_STORAGE_TYPE: file
+  INBUCKET_STORAGE_PARAMS: path:/storage
+  INBUCKET_STORAGE_RETENTIONPERIOD: 72h
+  INBUCKET_STORAGE_MAILBOXMSGCAP: "300"
+
+work-dir: /opt/inbucket
+
+entrypoint:
+  command: /usr/bin/inbucket
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-inbucket"
+  org.opencontainers.image.licenses: "MIT"
+  org.opencontainers.image.version: "__VER__"

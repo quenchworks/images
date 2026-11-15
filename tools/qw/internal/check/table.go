@@ -183,6 +183,7 @@ var table = map[string]check{
 	"hubble-ui-backend":                 {src: ghRel("cilium/hubble-ui"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
 	"hubble-ui":                         {src: ghRel("cilium/hubble-ui"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
 	"hydra":                             {src: ghRel("ory/hydra")},
+	"inbucket":                          {src: ghRel("inbucket/inbucket"), n: 1},
 	"ingress-nginx":                     {wolfiPrefix: "ingress-nginx-controller-", lines: 2, lineOnly: false},
 	"istio-cni":                         {src: ghRel("istio/istio"), lines: 2},
 	"istio-proxyv2":                     {src: ghRel("istio/istio"), lines: 1},
