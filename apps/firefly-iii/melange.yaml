@@ -1,0 +1,269 @@
+# Firefly III from the release tarball on Wolfi php-8.5-fpm + nginx (nginx comes from the sibling
+# quench-nginx package, installed by apko).
+package:
+  name: quench-firefly-iii
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Firefly III (personal finance manager) on Wolfi php-fpm + nginx"
+  copyright:
+    - license: AGPL-3.0-or-later
+  dependencies:
+    runtime:
+      - php-8.5
+      - php-8.5-config
+      - php-8.5-fpm
+      - php-8.5-fpm-config
+      - php-8.5-ctype
+      - php-8.5-ctype-config
+      - php-8.5-curl
+      - php-8.5-curl-config
+      - php-8.5-fileinfo
+      - php-8.5-fileinfo-config
+      - php-8.5-iconv
+      - php-8.5-iconv-config
+      - php-8.5-intl
+      - php-8.5-intl-config
+      - php-8.5-mbstring
+      - php-8.5-mbstring-config
+      - php-8.5-bcmath
+      - php-8.5-bcmath-config
+      - php-8.5-openssl
+      - php-8.5-openssl-config
+      - php-8.5-pdo
+      - php-8.5-pdo-config
+      - php-8.5-pdo_sqlite
+      - php-8.5-pdo_sqlite-config
+      - php-8.5-pdo_pgsql
+      - php-8.5-pdo_pgsql-config
+      - php-8.5-mysqlnd
+      - php-8.5-mysqlnd-config
+      - php-8.5-pdo_mysql
+      - php-8.5-pdo_mysql-config
+      - php-8.5-simplexml
+      - php-8.5-simplexml-config
+      - php-8.5-xml
+      - php-8.5-xml-config
+      - php-8.5-xmlwriter
+      - php-8.5-xmlwriter-config
+      - php-8.5-dom
+      - php-8.5-dom-config
+      - php-8.5-sodium
+      - php-8.5-sodium-config
+      - supervisor
+      - busybox
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - composer
+      - jq
+      - php-8.5
+      - php-8.5-config
+      - php-8.5-ctype
+      - php-8.5-ctype-config
+      - php-8.5-curl
+      - php-8.5-curl-config
+      - php-8.5-fileinfo
+      - php-8.5-fileinfo-config
+      - php-8.5-iconv
+      - php-8.5-iconv-config
+      - php-8.5-intl
+      - php-8.5-intl-config
+      - php-8.5-mbstring
+      - php-8.5-mbstring-config
+      - php-8.5-bcmath
+      - php-8.5-bcmath-config
+      - php-8.5-openssl
+      - php-8.5-openssl-config
+      - php-8.5-pdo
+      - php-8.5-pdo-config
+      - php-8.5-pdo_sqlite
+      - php-8.5-pdo_sqlite-config
+      - php-8.5-pdo_pgsql
+      - php-8.5-pdo_pgsql-config
+      - php-8.5-mysqlnd
+      - php-8.5-mysqlnd-config
+      - php-8.5-pdo_mysql
+      - php-8.5-pdo_mysql-config
+      - php-8.5-simplexml
+      - php-8.5-simplexml-config
+      - php-8.5-xml
+      - php-8.5-xml-config
+      - php-8.5-xmlwriter
+      - php-8.5-xmlwriter-config
+      - php-8.5-dom
+      - php-8.5-dom-config
+      - php-8.5-sodium
+      - php-8.5-sodium-config
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/firefly-iii/firefly-iii/releases/download/v${{package.version}}/FireflyIII-v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+      strip-components: 0
+
+  - name: Raise laravel/framework and the symfony http stack to their fixed patch releases
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" COMPOSER_HOME="$(mktemp -d)"
+      php -m | grep -qix session && php -m | grep -qix tokenizer
+      # the root ranges (laravel/framework ^13, symfony/* ^8.0) already allow these; only the lock moves
+      composer update --no-dev --no-interaction --no-progress --no-scripts --with-all-dependencies \
+        laravel/framework symfony/expression-language symfony/http-client symfony/http-foundation \
+        symfony/http-kernel symfony/mime symfony/routing
+      composer dump-autoload --no-dev --optimize --no-scripts
+      for want in laravel/framework=13.40.0 symfony/expression-language=8.1.9 symfony/http-client=8.1.11 \
+                  symfony/http-foundation=8.1.11 symfony/http-kernel=8.1.11 symfony/mime=8.1.10 symfony/routing=8.1.11; do
+        p=${want%=*} min=${want#*=}
+        have=$(jq -r --arg p "$p" '.packages[] | select(.name == $p) | .version' composer.lock | sed 's/^v//')
+        [ "$(printf '%s\n%s\n' "$min" "$have" | sort -V | head -1)" = "$min" ] || { echo "FATAL: $p $have below $min"; exit 1; }
+      done
+      # the package manifest in bootstrap/cache must match the updated vendor tree (artisan boots the app,
+      # which wants a key: a throwaway one, used for this command only and not shipped)
+      APP_KEY=quench-build-key-not-shipped-032 php artisan package:discover --ansi
+
+  - name: Lay out /var/www/firefly-iii and the init script
+    runs: |
+      set -eu
+      d="${{targets.destdir}}/var/www/firefly-iii"
+      install -d "$d"
+      cp -a app artisan bootstrap composer.json composer.lock config database index.php public resources routes vendor "$d/"
+      grep -qF "'version'" "$d/config/firefly.php"
+      grep -qF "${{package.version}}" "$d/config/firefly.php"
+      # storage lives on the volume
+      ln -s /var/lib/firefly-iii/storage "$d/storage"
+      install -d "${{targets.destdir}}/usr/libexec"
+      cat > "${{targets.destdir}}/usr/libexec/firefly-iii-init" <<'SH'
+      #!/bin/sh
+      # prepares the storage tree on the volume, migrates the database, makes the Passport keys, then
+      # runs supervisord (php-fpm + nginx)
+      set -eu
+      [ -n "${APP_KEY:-}" ] || { echo "APP_KEY is not set: set it to exactly 32 random characters" >&2; exit 1; }
+      S=/var/lib/firefly-iii/storage
+      for p in app/public build database debugbar export framework/cache/data framework/sessions framework/testing \
+               framework/views/twig framework/views/v1 framework/views/v2 logs upload; do
+        mkdir -p "$S/$p"
+      done
+      if [ "${DB_CONNECTION:-sqlite}" = sqlite ]; then
+        f="${DB_DATABASE:-$S/database/database.sqlite}"
+        [ -f "$f" ] || : > "$f"
+      fi
+      cd /var/www/firefly-iii
+      php artisan firefly-iii:upgrade-database
+      php artisan firefly-iii:laravel-passport-keys
+      php artisan view:clear >/dev/null
+      exec /usr/bin/supervisord -c /etc/firefly-iii/supervisord.conf
+      SH
+      chmod 0755 "${{targets.destdir}}/usr/libexec/firefly-iii-init"
+
+  - name: nginx server block (FastCGI to php-fpm on :8080)
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/etc/nginx/conf.d"
+      cat > "$d/etc/nginx/conf.d/firefly-iii.conf" <<'NGINX'
+      server {
+          listen 8080 default_server;
+          listen [::]:8080 default_server;
+          server_name _;
+          root /var/www/firefly-iii/public;
+          index index.php;
+          charset utf-8;
+          client_max_body_size 50M;
+          access_log off;
+
+          location ~ /\. { return 403; }
+          location / { try_files $uri /index.php$is_args$args; }
+          location ~ \.php$ {
+              try_files $uri =404;
+              include        /etc/nginx/fastcgi_params;
+              fastcgi_param  SCRIPT_FILENAME $document_root$fastcgi_script_name;
+              fastcgi_pass   127.0.0.1:9000;
+          }
+          location ~* \.(js|css|png|jpg|svg|ico|woff2?|ttf|eot|map)$ { expires 30d; access_log off; }
+      }
+      NGINX
+  - name: php-fpm pool + php.ini (nonroot, read-only rootfs)
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/etc/php/php-fpm.d" "$d/etc/php/conf.d"
+      cat > "$d/etc/php/php-fpm.d/zzz-firefly-iii.conf" <<'FPM'
+      [global]
+      daemonize = no
+      error_log = /proc/self/fd/2
+
+      [www]
+      listen = 127.0.0.1:9000
+      catch_workers_output = yes
+      decorate_workers_output = no
+      ; APP_KEY, DB_* and the other settings come from the container environment
+      clear_env = no
+      pm = dynamic
+      pm.max_children = 16
+      pm.start_servers = 2
+      pm.min_spare_servers = 1
+      pm.max_spare_servers = 4
+      FPM
+      cat > "$d/etc/php/conf.d/zzz-firefly-iii.ini" <<'INI'
+      expose_php = Off
+      memory_limit = 256M
+      upload_max_filesize = 50M
+      post_max_size = 50M
+      sys_temp_dir = /tmp
+      upload_tmp_dir = /tmp
+      session.save_path = /tmp
+      display_errors = Off
+      log_errors = On
+      error_log = /proc/self/fd/2
+      date.timezone = UTC
+      opcache.enable = 1
+      opcache.revalidate_freq = 60
+      INI
+
+  - name: supervisord (php-fpm + nginx)
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/etc/firefly-iii" "$d/etc/supervisor.d"
+      cat > "$d/etc/firefly-iii/supervisord.conf" <<'SUP'
+      [supervisord]
+      nodaemon=true
+      logfile=/dev/stdout
+      logfile_maxbytes=0
+      pidfile=/tmp/supervisord.pid
+
+      [unix_http_server]
+      file=/tmp/supervisor.sock
+
+      [supervisorctl]
+      serverurl=unix:///tmp/supervisor.sock
+
+      [rpcinterface:supervisor]
+      supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+
+      [include]
+      files = /etc/supervisor.d/*.conf
+      SUP
+      printf '%s\n' '[program:php-fpm]' 'command=/usr/bin/php-fpm --nodaemonize --fpm-config /etc/php/php-fpm.conf' \
+        'autostart=true' 'autorestart=true' 'priority=10' 'stdout_logfile=/dev/stdout' 'stdout_logfile_maxbytes=0' \
+        'stderr_logfile=/dev/stderr' 'stderr_logfile_maxbytes=0' > "$d/etc/supervisor.d/php-fpm.conf"
+      printf '%s\n' '[program:nginx]' 'command=/usr/bin/nginx -g "daemon off;"' \
+        'autostart=true' 'autorestart=true' 'priority=20' 'stdout_logfile=/dev/stdout' 'stdout_logfile_maxbytes=0' \
+        'stderr_logfile=/dev/stderr' 'stderr_logfile_maxbytes=0' > "$d/etc/supervisor.d/nginx.conf"
+
+test:
+  pipeline:
+    - runs: |
+        set -eu
+        test -f /var/www/firefly-iii/public/index.php
+        test -L /var/www/firefly-iii/storage
+        php -m | grep -qi pdo_sqlite
+        php -m | grep -qi bcmath
