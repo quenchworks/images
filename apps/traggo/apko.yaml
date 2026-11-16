@@ -1,0 +1,59 @@
+# traggo runtime: HTTP on 3030 (TRAGGO_PORT), web UI and GraphQL API (/graphql), SQLite at
+# /var/lib/traggo/traggo.db (TRAGGO_DATABASE_CONNECTION) or PostgreSQL (TRAGGO_DATABASE_DIALECT=postgres).
+# TRAGGO_DEFAULT_USER_NAME/_PASS create the first admin (upstream defaults to admin/admin: always set them). No TLS
+# listener. Nonroot uid 1001.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - tzdata
+    - quench-traggo@local
+
+accounts:
+  groups:
+    - groupname: traggo
+      gid: 1001
+  users:
+    - username: traggo
+      uid: 1001
+      gid: 1001
+      homedir: /var/lib/traggo
+  run-as: 1001
+
+environment:
+  TRAGGO_DATABASE_CONNECTION: /var/lib/traggo/traggo.db
+
+paths:
+  - path: /var/lib
+    type: directory
+    uid: 0
+    gid: 0
+    permissions: 0o755
+  - path: /var/lib/traggo
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+work-dir: /var/lib/traggo
+
+entrypoint:
+  command: /usr/bin/traggo
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-traggo"
+  org.opencontainers.image.licenses: "GPL-3.0-only"
+  org.opencontainers.image.version: "__VER__"
