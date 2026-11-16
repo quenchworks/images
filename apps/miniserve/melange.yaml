@@ -1,0 +1,47 @@
+# miniserve from the release tag, built with cargo auditable (rustls with ring).
+package:
+  name: quench-miniserve
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened miniserve file server, built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      # cargo auditable embeds the crate list in a .dep-v0 section; without it Trivy sees no crates
+      - cargo-auditable
+      - rust-1.96
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/svenstaro/miniserve/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - runs: |
+      set -eu
+      export CARGO_HOME="$(mktemp -d)"
+      # zip 8 has no fixed release; upstream master moved to 9 with the same archive.rs
+      sed -i 's/^zip = { version = "8", default-features = false }$/zip = { version = "9", default-features = false }/' Cargo.toml
+      grep -q '^zip = { version = "9"' Cargo.toml || { echo "FATAL: zip requirement not raised"; exit 1; }
+      cargo update
+      cargo auditable build --release --locked
+      install -Dm755 target/release/miniserve "${{targets.destdir}}/usr/bin/miniserve"
+      readelf -S "${{targets.destdir}}/usr/bin/miniserve" | grep -q '\.dep-v0'
+      "${{targets.destdir}}/usr/bin/miniserve" --version | grep -F "${{package.version}}"
+
+test:
+  pipeline:
+    - runs: miniserve --version
