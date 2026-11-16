@@ -1,0 +1,43 @@
+# yopass runtime: yopass-server on 1337 (metrics off by default), web UI from /usr/share/yopass/public, secrets in
+# Memcached (MEMCACHED=host:11211, the default backend) or Redis (DATABASE=redis, REDIS=redis://host:6379/0). Every
+# flag also reads an environment variable (ASSET_PATH, PORT, MAX_LENGTH, ...). The yopass CLI is in /usr/bin.
+# Nonroot uid 1001, multi-arch, shell-free; nothing is written to disk.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-yopass@local
+
+accounts:
+  groups:
+    - groupname: yopass
+      gid: 1001
+  users:
+    - username: yopass
+      uid: 1001
+      gid: 1001
+      homedir: /home/yopass
+  run-as: 1001
+
+environment:
+  ASSET_PATH: /usr/share/yopass/public
+
+entrypoint:
+  command: /usr/bin/yopass-server
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-yopass"
+  org.opencontainers.image.licenses: "Apache-2.0"
