@@ -1,0 +1,86 @@
+# Linkwarden from the release tag on Wolfi nodejs-24 (yarn 4 through corepack): the Next.js web app, the worker, the
+# shared packages and a production node_modules, plus monolith from crates.io built with cargo auditable.
+package:
+  name: quench-linkwarden
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Linkwarden bookmark archiver, built from source on Wolfi"
+  copyright:
+    - license: AGPL-3.0-only
+  dependencies:
+    runtime:
+      - nodejs-24
+      - chromium
+      - openssl
+      - ca-certificates-bundle
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - cargo-auditable
+      - corepack
+      - nodejs-24
+      - openssl-dev
+      - pkgconf
+      - python-3.13
+      - rust-1.96
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/linkwarden/linkwarden/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - runs: mkdir -p monolith-src
+
+  - uses: fetch
+    with:
+      uri: https://static.crates.io/crates/monolith/monolith-__MONOLITH__.crate
+      expected-sha256: __MONOLITH_SHA256__
+      directory: monolith-src
+
+  - name: monolith (cargo auditable, the crate's own Cargo.lock)
+    runs: |
+      set -eu
+      export CARGO_HOME="$(mktemp -d)"
+      cd monolith-src
+      cargo auditable build --release --locked --bin monolith
+      install -Dm755 target/release/monolith "${{targets.destdir}}/usr/bin/monolith"
+      readelf -S "${{targets.destdir}}/usr/bin/monolith" | grep -q '\.dep-v0'
+      "${{targets.destdir}}/usr/bin/monolith" --version | grep -F "__MONOLITH__"
+
+  - name: yarn workspaces focus, prisma generate, Next.js build, production focus
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" COREPACK_ENABLE_DOWNLOAD_PROMPT=0 COREPACK_HOME="$(mktemp -d)"
+      export YARN_ENABLE_TELEMETRY=0 YARN_HTTP_TIMEOUT=600000 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 PRISMA_HIDE_UPDATE_MESSAGE=1
+      export NEXT_TELEMETRY_DISABLED=1
+      grep -q '"version": "v${{package.version}}"' apps/web/package.json
+      # the web postinstall runs `playwright install --with-deps chromium` (apt-get); the image uses Wolfi chromium.
+      # The root postinstall still applies patches/ with patch-package.
+      sed -i 's|"postinstall": "playwright install --with-deps chromium"|"postinstall": "true"|' apps/web/package.json
+      grep -q '"postinstall": "true"' apps/web/package.json
+      mkdir -p "$HOME/bin" && corepack enable --install-directory "$HOME/bin" && export PATH="$HOME/bin:$PATH"
+      yarn --version
+      yarn workspaces focus linkwarden @linkwarden/web @linkwarden/worker
+      yarn prisma:generate
+      NODE_OPTIONS=--max-old-space-size=6144 yarn web:build
+      yarn workspaces focus --production linkwarden @linkwarden/web @linkwarden/worker
+      rm -rf apps/web/.next/cache
+      d="${{targets.destdir}}/data"
+      install -d "$d"
+      cp -a node_modules package.json yarn.lock .yarnrc.yml apps packages "$d/"
+      rm -rf "$d/apps/extension"
+      # drop musl and other-platform native builds (melange would add so:libc.musl)
+      find "$d" -depth -type d -name '*linuxmusl*' -exec rm -rf {} +
+      arch="$(node -p process.arch)"
+      find "$d" -path '*/prebuilds/*' -type f -name '*.node' ! -name "linux-$arch*.node" -delete
+      test -f "$d/apps/web/.next/BUILD_ID"

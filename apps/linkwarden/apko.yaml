@@ -1,0 +1,64 @@
+# Linkwarden runtime: one image, three commands. The default runs the Next.js web app on 3000; the worker runs
+# `node /data/node_modules/tsx/dist/cli.mjs worker.ts` in /data/apps/worker; migrations run
+# `node /data/node_modules/prisma/build/index.js migrate deploy --schema /data/packages/prisma/schema.prisma`.
+# PostgreSQL via DATABASE_URL, NEXTAUTH_SECRET and NEXTAUTH_URL required; archives in /data/data (a volume). The
+# worker drives Wolfi chromium. No TLS listener. Nonroot uid 1001.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - tzdata
+    - quench-linkwarden@local
+
+accounts:
+  groups:
+    - groupname: linkwarden
+      gid: 1001
+  users:
+    - username: linkwarden
+      uid: 1001
+      gid: 1001
+      homedir: /tmp
+  run-as: 1001
+
+environment:
+  NODE_ENV: production
+  NEXT_TELEMETRY_DISABLED: "1"
+  PRISMA_HIDE_UPDATE_MESSAGE: "1"
+  HOME: /tmp
+  HOSTNAME: 0.0.0.0
+  PORT: "3000"
+  # resolved as <cwd>/../../<STORAGE_FOLDER> from apps/web and apps/worker: /data/data (a volume)
+  STORAGE_FOLDER: data
+  PLAYWRIGHT_LAUNCH_OPTIONS_EXECUTABLE_PATH: /usr/bin/chromium
+  PATH: /data/node_modules/.bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+paths:
+  - path: /data/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+work-dir: /data/apps/web
+
+entrypoint:
+  command: /usr/bin/node /data/node_modules/next/dist/bin/next start
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-linkwarden"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"
+  org.opencontainers.image.version: "__VER__"
