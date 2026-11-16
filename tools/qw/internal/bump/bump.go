@@ -346,8 +346,7 @@ func Run(args []string) int {
 				if len(uris) == 0 {
 					return fail("no resolvable uri for %s", v)
 				}
-				a, toks := "amd", amdToks[:0:0]
-				toks = []string{"amd64", "x86_64", "x86-64", "x64"}
+				a, toks := "amd", []string{"amd64", "x86_64", "x86-64", "x64"}
 				if m == "SHA_ARM" {
 					a, toks = "arm", []string{"arm64", "aarch64", "arm_64"}
 				}

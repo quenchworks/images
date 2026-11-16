@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"html"
 	"image"
 	"image/png"
 	"net/http"
@@ -59,8 +60,9 @@ func init() {
 			}
 			// /page/<name> links /<name>.png
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.Write([]byte(`<!doctype html><html><head><title>Quench smoke ` + path.Base(r.URL.Path) + `</title>
-<meta property="og:image" content="` + stub + `/` + path.Base(r.URL.Path) + `.png"></head><body><article><h1>Quench smoke page</h1>
+			page := html.EscapeString(path.Base(r.URL.Path))
+			w.Write([]byte(`<!doctype html><html><head><title>Quench smoke ` + page + `</title>
+<meta property="og:image" content="` + stub + `/` + page + `.png"></head><body><article><h1>Quench smoke page</h1>
 <p>` + strings.Repeat("A paragraph long enough for the readability extractor to keep it. ", 20) + `</p></article></body></html>`))
 		}))
 		name := t.Name("")

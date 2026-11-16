@@ -34,21 +34,46 @@ func untarGz(src, dir string) error {
 		if err != nil {
 			return err
 		}
-		p := filepath.Join(dir, filepath.Clean("/"+h.Name))
+		// keep every entry inside dir: a name may not climb out, and a symlink target (absolute targets
+		// mean the image root) is rewritten relative to the link and skipped if it leaves dir
+		name := filepath.Clean(strings.TrimPrefix(h.Name, "/"))
+		if !filepath.IsLocal(name) {
+			continue
+		}
+		p := filepath.Join(dir, name)
 		switch h.Typeflag {
 		case tar.TypeDir:
 			os.MkdirAll(p, 0o755)
 		case tar.TypeSymlink:
+			target := filepath.Join(filepath.Dir(p), h.Linkname)
+			if filepath.IsAbs(h.Linkname) {
+				target = filepath.Join(dir, h.Linkname)
+			}
+			rel, err := filepath.Rel(dir, target)
+			if err != nil || !filepath.IsLocal(rel) {
+				continue
+			}
+			link, err := filepath.Rel(filepath.Dir(p), target)
+			if err != nil {
+				return err
+			}
 			os.MkdirAll(filepath.Dir(p), 0o755)
-			os.Symlink(h.Linkname, p)
+			if err := os.Symlink(link, p); err != nil {
+				return err
+			}
 		case tar.TypeReg:
 			os.MkdirAll(filepath.Dir(p), 0o755)
 			w, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(h.Mode)&0o777|0o200)
 			if err != nil {
 				return err
 			}
-			io.Copy(w, tr)
-			w.Close()
+			if _, err := io.Copy(w, tr); err != nil {
+				w.Close()
+				return err
+			}
+			if err := w.Close(); err != nil {
+				return err
+			}
 		}
 	}
 }

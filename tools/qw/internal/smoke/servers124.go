@@ -5,7 +5,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/binary"
@@ -71,9 +70,13 @@ func stunBinding(addr string) bool {
 	return err == nil && n >= 20 && resp[0] == 0x01 && resp[1] == 0x01 && bytes.Equal(resp[8:20], txid)
 }
 
-// sniGet fetches url over TLS with SNI set to host (derper refuses a handshake whose SNI is not its hostname).
-func sniGet(url, host string) (int, string) {
-	c := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{ServerName: host, InsecureSkipVerify: true}}}
+// sniGet fetches url over TLS with SNI set to host (derper refuses a handshake whose SNI is not its hostname),
+// trusting only the certificate the test wrote for host into certs.
+func sniGet(url, certs, host string) (int, string) {
+	c, err := pinnedClient(filepath.Join(certs, host+".crt"), host)
+	if err != nil {
+		return 0, err.Error()
+	}
 	r, err := c.Get(url)
 	if err != nil {
 		return 0, err.Error()
@@ -101,12 +104,12 @@ func init() {
 			"-a", ":443", "-http-port", "-1", "-stun-port", "3478", "-certmode", "manual", "-certdir", "/certs", "-hostname", host, "-c", "/var/lib/derper/derper.json")
 		var home string
 		t.waitFor(60, time.Second, name, "derper never served HTTPS", func() bool {
-			code, body := sniGet("https://127.0.0.1:18443/", host)
+			code, body := sniGet("https://127.0.0.1:18443/", certs, host)
 			home = body
 			return code == http.StatusOK
 		})
 		t.Contains(home, "DERP", "the DERP home page")
-		if code, _ := sniGet("https://127.0.0.1:18443/derp/probe", host); code != http.StatusOK {
+		if code, _ := sniGet("https://127.0.0.1:18443/derp/probe", certs, host); code != http.StatusOK {
 			t.Fatalf("/derp/probe answered %d\n%s", code, t.Logs(name))
 		}
 		if !stunBinding("127.0.0.1:13478") {

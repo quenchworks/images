@@ -78,7 +78,7 @@ func init() {
 		if t.Want != "" {
 			t.Contains(start, `"opentelemetry-operator":"`+t.Want+`"`, "stamped version")
 		}
-		t.Match(start, `"collector-image":"ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector:0\.[1-9]`, "default component versions")
+		t.Match(start, `"collector-image":"ghcr\.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector:0\.[1-9]`, "default component versions")
 		t.Contains(out, "127.0.0.1:1", "dialed the configured API server")
 		noCrash(t, out)
 		t.Logf("smoke test passed")

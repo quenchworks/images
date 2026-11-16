@@ -1,9 +1,7 @@
 package smoke
 
 import (
-	"crypto/tls"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,7 +40,10 @@ origin = "https://localhost:18443"
 		vol := t.Name("data")
 		t.Docker("volume", "create", vol)
 		t.Cleanup(func() { docker("volume", "rm", vol) })
-		cl := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
+		cl, err := pinnedClient(filepath.Join(dir, "caCert.pem"), "localhost")
+		if err != nil {
+			t.Fatalf("CA: %v", err)
+		}
 		status := func() (int, string) {
 			r, err := cl.Get("https://127.0.0.1:18443/status")
 			if err != nil {

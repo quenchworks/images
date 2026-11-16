@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/binary"
+	"encoding/pem"
 	"io"
 	"net"
 	"net/http"
@@ -18,12 +19,13 @@ import (
 
 // sshRemoteForward asks an ssh server to forward bindHost:port back to local, the way
 // `ssh -R bindHost:port:local` does. x/crypto's Listen cannot take a hostname bind
-// address (sish routes on it), so the tcpip-forward request is sent by hand.
-func sshRemoteForward(addr, bindHost string, port uint32, local string) (*ssh.Client, error) {
+// address (sish routes on it), so the tcpip-forward request is sent by hand. hostKey is the server key
+// the test mounted; any other key fails the handshake.
+func sshRemoteForward(addr string, hostKey ssh.PublicKey, bindHost string, port uint32, local string) (*ssh.Client, error) {
 	_, key, _ := ed25519.GenerateKey(rand.Reader)
 	signer, _ := ssh.NewSignerFromKey(key)
 	c, err := ssh.Dial("tcp", addr, &ssh.ClientConfig{User: "smoke", Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), Timeout: 10 * time.Second})
+		HostKeyCallback: ssh.FixedHostKey(hostKey), Timeout: 10 * time.Second})
 	if err != nil {
 		return nil, err
 	}
@@ -232,8 +234,20 @@ exec longhorn controller smoke --frontend "" --size 64m --current-size 64m --rep
 		if v := t.RunAny("--version"); t.Want != "" {
 			t.Contains(v, "v"+t.Want, "version")
 		}
+		// sish loads its host key from the private keys directory: give it one the client can pin
+		keys := t.TempDir()
+		hostPub, hostPriv, _ := ed25519.GenerateKey(rand.Reader)
+		kb, err := ssh.MarshalPrivateKey(hostPriv, "")
+		if err != nil {
+			t.Fatalf("host key: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(keys, "ssh_key"), pem.EncodeToMemory(kb), 0o644); err != nil {
+			t.Fatalf("host key: %v", err)
+		}
+		_ = os.Chmod(keys, 0o755)
+		hostKey, _ := ssh.NewPublicKey(hostPub)
 		name := t.Name("")
-		t.Start(name, []string{"--read-only", "--tmpfs", "/tmp:uid=1001,gid=1001", "--tmpfs", "/private:uid=1001,gid=1001", "--tmpfs", "/pubkeys:uid=1001,gid=1001",
+		t.Start(name, []string{"--read-only", "--tmpfs", "/tmp:uid=1001,gid=1001", "-v", keys + ":/private:ro", "--tmpfs", "/pubkeys:uid=1001,gid=1001",
 			"-p", "127.0.0.1:12222:2222", "-p", "127.0.0.1:18080:8080"},
 			"--ssh-address=:2222", "--http-address=:8080", "--domain=sish.test", "--authentication=false",
 			"--bind-random-subdomains=false", "--private-keys-directory=/private", "--authentication-keys-directory=/pubkeys")
@@ -246,7 +260,7 @@ exec longhorn controller smoke --frontend "" --size 64m --current-size 64m --rep
 		t.WaitLog(name, "starting SSH service", 30)
 		var c *ssh.Client
 		t.waitFor(10, time.Second, name, "ssh -R forward refused", func() bool {
-			c, err = sshRemoteForward("127.0.0.1:12222", "app", 80, ln.Addr().String())
+			c, err = sshRemoteForward("127.0.0.1:12222", hostKey, "app", 80, ln.Addr().String())
 			return err == nil
 		})
 		t.Cleanup(func() { c.Close() })

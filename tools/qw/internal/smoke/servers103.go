@@ -1,11 +1,9 @@
 package smoke
 
 import (
-	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/pem"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,11 +61,11 @@ sshd:
 		want, _ := ssh.NewPublicKey(hostPub)
 		_, clientPriv, _ := ed25519.GenerateKey(rand.Reader)
 		signer, _ := ssh.NewSignerFromKey(clientPriv)
-		var seen ssh.PublicKey
+		// FixedHostKey fails the handshake before authentication if the server shows any other host key
 		conf := &ssh.ClientConfig{User: "git", Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)}, Timeout: 10 * time.Second,
-			HostKeyCallback: func(_ string, _ net.Addr, k ssh.PublicKey) error { seen = k; return nil }}
+			HostKeyCallback: ssh.FixedHostKey(want)}
 		_, err = ssh.Dial("tcp", "127.0.0.1:12222", conf)
-		if seen == nil || !bytes.Equal(seen.Marshal(), want.Marshal()) {
+		if err != nil && strings.Contains(err.Error(), "host key mismatch") {
 			t.Fatalf("the SSH host key is not the one we mounted (err %v)\n%s", err, t.Logs(name))
 		}
 		if err == nil || !strings.Contains(err.Error(), "unable to authenticate") {
