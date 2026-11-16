@@ -1,0 +1,75 @@
+# ConvertX from the release tag, compiled with Wolfi bun into one binary; the package holds the binary and public/.
+package:
+  name: quench-convertx
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened ConvertX file converter, built from source on Wolfi"
+  copyright:
+    - license: AGPL-3.0-only
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - tzdata
+      - ffmpeg
+      - imagemagick-7
+      - graphicsmagick
+      - ghostscript
+      - libreoffice-26.8
+      - libheif
+      - libjxl-tools
+      - poppler-utils
+      - potrace
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - bun
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/C4illin/ConvertX/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: drop converters this image does not ship, then bun build --compile
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" BUN_INSTALL_CACHE_DIR="$(mktemp -d)"
+      grep -q '"version": "${{package.version}}"' package.json
+      # the registry lists every converter whether or not its tool exists; keep only what Wolfi packages
+      cat >> src/converters/main.ts <<'TS'
+
+      // QuenchWorks: tools this image does not ship, so the UI never offers them
+      for (const k of ["inkscape", "resvg", "vips", "xelatex", "djvu", "calibre", "dasel", "pandoc", "msgconvert",
+        "dvisvgm", "assimp", "vtracer", "markitDown"]) {
+        if (!(k in properties)) throw new Error(`quench: no converter ${k}`);
+        delete properties[k];
+      }
+      TS
+      # libheif 1.17 renamed heif-convert to heif-dec (same arguments); Wolfi ships only heif-dec
+      sed -i 's/execFile("heif-convert"/execFile("heif-dec"/' src/converters/libheif.ts
+      grep -q 'execFile("heif-dec"' src/converters/libheif.ts
+      # ConvertX runs `soffice`, which Wolfi does not put on PATH; program/soffice is a /bin/sh wrapper (this image has no
+      # shell) that only execs oosplash, the native launcher that also retries LibreOffice's exit 81 (restart after the
+      # first-run profile). oosplash finds soffice.bin next to the path it was started by, so call it by its real path.
+      sed -i 's|execFile("soffice"|execFile("/usr/lib/libreoffice/program/oosplash"|' src/converters/libreoffice.ts
+      grep -q 'execFile("/usr/lib/libreoffice/program/oosplash"' src/converters/libreoffice.ts
+      bun install --frozen-lockfile
+      bun run build:bin
+      d="${{targets.destdir}}/app"
+      install -d "$d"
+      install -m755 dist/convertx "$d/convertx"
+      cp -a public "$d/public"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /app/convertx
+        command -v ffmpeg magick gm heif-dec cjxl pdftops potrace
+        test -x /usr/lib/libreoffice/program/oosplash

@@ -1,0 +1,57 @@
+# ConvertX runtime: HTTP on 3000, SQLite and the upload/output files in /app/data (a volume), JWT_SECRET for sessions.
+# The first visitor creates the first account; ACCOUNT_REGISTRATION (default false) controls more. Session cookies are
+# Secure unless HTTP_ALLOWED=true: serve it over HTTPS. LibreOffice writes its profile under HOME (/tmp).
+# No TLS listener. Nonroot uid 1001.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - tzdata
+    - quench-convertx@local
+
+accounts:
+  groups:
+    - groupname: convertx
+      gid: 1001
+  users:
+    - username: convertx
+      uid: 1001
+      gid: 1001
+      homedir: /tmp
+  run-as: 1001
+
+environment:
+  NODE_ENV: production
+  PORT: "3000"
+  HOME: /tmp
+  TMPDIR: /tmp
+
+paths:
+  - path: /app/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+work-dir: /app
+
+entrypoint:
+  command: /app/convertx
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-convertx"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"
+  org.opencontainers.image.version: "__VER__"
