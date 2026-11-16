@@ -142,6 +142,7 @@ var table = map[string]check{
 	"copyparty":                         {src: ghRel("9001/copyparty"), n: 1},
 	"drawio":                            {src: ghRel("jgraph/drawio"), n: 1},
 	"firefly-iii":                       {src: ghRel("firefly-iii/firefly-iii"), n: 1},
+	"kimai":                             {src: ghRel("kimai/kimai"), n: 1},
 	"thelounge":                         {src: npmPkg("thelounge"), n: 1, f: filter{keep: noDash}},
 	"soju":                              {src: codebergRel("emersion/soju"), n: 1},
 	"go-httpbin":                        {src: ghRel("mccutchen/go-httpbin"), n: 1},

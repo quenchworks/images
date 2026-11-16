@@ -1,0 +1,107 @@
+# Kimai runtime: supervisord runs php-fpm (127.0.0.1:9000) and QuenchWorks' nginx (:8080) after
+# /usr/libexec/kimai-init waits for the database, runs kimai:install, creates ADMIN_USER when set and warms
+# the cache. APP_SECRET and DATABASE_URL (MySQL or MariaDB) are required. var/ is on /var/lib/kimai (the
+# volume). Nonroot uid 1001, writable paths /tmp and /var/lib/kimai.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - busybox
+    - supervisor
+    - quench-nginx@local          # QuenchWorks' hardened nginx (from source), 8080/nonroot
+    - quench-kimai@local
+    - php-8.5
+    - php-8.5-fpm
+    - php-8.5-fpm-config
+    - php-8.5-config
+    - php-8.5-ctype
+    - php-8.5-ctype-config
+    - php-8.5-curl
+    - php-8.5-curl-config
+    - php-8.5-dom
+    - php-8.5-dom-config
+    - php-8.5-fileinfo
+    - php-8.5-fileinfo-config
+    - php-8.5-gd
+    - php-8.5-gd-config
+    - php-8.5-iconv
+    - php-8.5-iconv-config
+    - php-8.5-intl
+    - php-8.5-intl-config
+    - php-8.5-mbstring
+    - php-8.5-mbstring-config
+    - php-8.5-mysqlnd
+    - php-8.5-mysqlnd-config
+    - php-8.5-pdo
+    - php-8.5-pdo-config
+    - php-8.5-pdo_mysql
+    - php-8.5-pdo_mysql-config
+    - php-8.5-simplexml
+    - php-8.5-simplexml-config
+    - php-8.5-xml
+    - php-8.5-xml-config
+    - php-8.5-xmlwriter
+    - php-8.5-xmlwriter-config
+    - php-8.5-xsl
+    - php-8.5-xsl-config
+    - php-8.5-xmlreader
+    - php-8.5-xmlreader-config
+    - php-8.5-openssl
+    - php-8.5-openssl-config
+    - php-8.5-zip
+    - php-8.5-zip-config
+    - php-8.5-sodium
+    - php-8.5-sodium-config
+
+accounts:
+  groups:
+    - groupname: kimai
+      gid: 1001
+  users:
+    - username: kimai
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  APP_ENV: prod
+
+entrypoint:
+  command: /usr/libexec/kimai-init
+
+work-dir: /opt/kimai
+
+paths:
+  - path: /tmp
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o1777
+  - path: /var/lib
+    type: directory
+    uid: 0
+    gid: 0
+    permissions: 0o755
+  - path: /var/lib/kimai
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-kimai"
+  org.opencontainers.image.licenses: "AGPL-3.0-or-later"
+  org.opencontainers.image.version: "__VER__"

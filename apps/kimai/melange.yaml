@@ -1,0 +1,263 @@
+# Kimai from the release tag on Wolfi php-8.5-fpm + nginx (nginx comes from the sibling
+# quench-nginx package, installed by apko).
+package:
+  name: quench-kimai
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Kimai (time tracking) on Wolfi php-fpm + nginx"
+  copyright:
+    - license: AGPL-3.0-or-later
+  dependencies:
+    runtime:
+      - php-8.5
+      - php-8.5-config
+      - php-8.5-fpm
+      - php-8.5-fpm-config
+      - php-8.5-ctype
+      - php-8.5-ctype-config
+      - php-8.5-curl
+      - php-8.5-curl-config
+      - php-8.5-dom
+      - php-8.5-dom-config
+      - php-8.5-fileinfo
+      - php-8.5-fileinfo-config
+      - php-8.5-gd
+      - php-8.5-gd-config
+      - php-8.5-iconv
+      - php-8.5-iconv-config
+      - php-8.5-intl
+      - php-8.5-intl-config
+      - php-8.5-mbstring
+      - php-8.5-mbstring-config
+      - php-8.5-mysqlnd
+      - php-8.5-mysqlnd-config
+      - php-8.5-pdo
+      - php-8.5-pdo-config
+      - php-8.5-pdo_mysql
+      - php-8.5-pdo_mysql-config
+      - php-8.5-simplexml
+      - php-8.5-simplexml-config
+      - php-8.5-xml
+      - php-8.5-xml-config
+      - php-8.5-xmlwriter
+      - php-8.5-xmlwriter-config
+      - php-8.5-xsl
+      - php-8.5-xsl-config
+      - php-8.5-xmlreader
+      - php-8.5-xmlreader-config
+      - php-8.5-openssl
+      - php-8.5-openssl-config
+      - php-8.5-zip
+      - php-8.5-zip-config
+      - php-8.5-sodium
+      - php-8.5-sodium-config
+      - supervisor
+      - busybox
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - composer
+      - jq
+      - php-8.5
+      - php-8.5-config
+      - php-8.5-ctype
+      - php-8.5-ctype-config
+      - php-8.5-curl
+      - php-8.5-curl-config
+      - php-8.5-dom
+      - php-8.5-dom-config
+      - php-8.5-fileinfo
+      - php-8.5-fileinfo-config
+      - php-8.5-gd
+      - php-8.5-gd-config
+      - php-8.5-iconv
+      - php-8.5-iconv-config
+      - php-8.5-intl
+      - php-8.5-intl-config
+      - php-8.5-mbstring
+      - php-8.5-mbstring-config
+      - php-8.5-mysqlnd
+      - php-8.5-mysqlnd-config
+      - php-8.5-pdo
+      - php-8.5-pdo-config
+      - php-8.5-pdo_mysql
+      - php-8.5-pdo_mysql-config
+      - php-8.5-simplexml
+      - php-8.5-simplexml-config
+      - php-8.5-xml
+      - php-8.5-xml-config
+      - php-8.5-xmlwriter
+      - php-8.5-xmlwriter-config
+      - php-8.5-xsl
+      - php-8.5-xsl-config
+      - php-8.5-xmlreader
+      - php-8.5-xmlreader-config
+      - php-8.5-openssl
+      - php-8.5-openssl-config
+      - php-8.5-zip
+      - php-8.5-zip-config
+      - php-8.5-sodium
+      - php-8.5-sodium-config
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/kimai/kimai/archive/refs/tags/${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Dependencies (composer, production)
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" COMPOSER_HOME="$(mktemp -d)"
+      php -m | grep -qix tokenizer
+      composer install --no-dev --no-interaction --no-progress --optimize-autoloader --no-scripts
+      composer dump-autoload --no-dev --optimize --classmap-authoritative --no-scripts
+
+  - name: Lay out /opt/kimai and the init script
+    runs: |
+      set -eu
+      d="${{targets.destdir}}/opt/kimai"
+      install -d "$d"
+      cp -a bin composer.json composer.lock config migrations public src templates translations vendor symfony.lock "$d/"
+      # Symfony Runtime refuses to boot without a .env file; real environment variables override it
+      printf '%s\n' 'APP_ENV=prod' 'MAILER_FROM=kimai@example.com' 'MAILER_URL=null://null' 'CORS_ALLOW_ORIGIN=^https?://localhost(:[0-9]+)?$' > "$d/.env"
+      # var/ (cache, logs, sessions, data, plugins) lives on the volume
+      ln -s /var/lib/kimai/var "$d/var"
+      grep -qF "'${{package.version}}'" src/Constants.php
+      install -d "${{targets.destdir}}/usr/libexec"
+      cat > "${{targets.destdir}}/usr/libexec/kimai-init" <<'SH'
+      #!/bin/sh
+      # prepares var/ on the volume, installs or updates the database, makes the admin, warms the cache,
+      # then runs supervisord (php-fpm + nginx)
+      set -eu
+      [ -n "${APP_SECRET:-}" ] || { echo "APP_SECRET is not set" >&2; exit 1; }
+      [ -n "${DATABASE_URL:-}" ] || { echo "DATABASE_URL is not set (mysql://user:password@host:3306/kimai?charset=utf8mb4&serverVersion=11.8.0-MariaDB)" >&2; exit 1; }
+      mkdir -p /var/lib/kimai/var/cache /var/lib/kimai/var/log /var/lib/kimai/var/data /var/lib/kimai/var/plugins
+      cd /opt/kimai
+      # wait for the database (up to 2 minutes): kimai:install fails hard when it cannot connect
+      i=0
+      until php bin/console doctrine:query:sql 'SELECT 1' >/dev/null 2>&1; do
+        i=$((i + 1)); [ "$i" -lt 60 ] || { echo "the database at DATABASE_URL did not answer" >&2; exit 1; }
+        sleep 2
+      done
+      rm -rf /var/lib/kimai/var/cache/prod
+      php bin/console kimai:install --no-cache -n
+      if [ -n "${ADMIN_USER:-}" ] && [ -n "${ADMIN_PASSWORD:-}" ]; then
+        php bin/console kimai:user:create "$ADMIN_USER" "${ADMIN_EMAIL:-$ADMIN_USER@example.com}" ROLE_SUPER_ADMIN "$ADMIN_PASSWORD" --ignore-existing
+      fi
+      php bin/console cache:warmup
+      exec /usr/bin/supervisord -c /etc/kimai/supervisord.conf
+      SH
+      chmod 0755 "${{targets.destdir}}/usr/libexec/kimai-init"
+
+  - name: nginx server block (FastCGI to php-fpm on :8080)
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/etc/nginx/conf.d"
+      cat > "$d/etc/nginx/conf.d/kimai.conf" <<'NGINX'
+      server {
+          listen 8080 default_server;
+          listen [::]:8080 default_server;
+          server_name _;
+          root /opt/kimai/public;
+          index index.php;
+          charset utf-8;
+          client_max_body_size 50M;
+          access_log off;
+
+          location ~ /\. { return 403; }
+          location / { try_files $uri /index.php$is_args$args; }
+          location ~ \.php$ {
+              try_files $uri =404;
+              include        /etc/nginx/fastcgi_params;
+              fastcgi_param  SCRIPT_FILENAME $document_root$fastcgi_script_name;
+              fastcgi_pass   127.0.0.1:9000;
+          }
+          location ~* \.(js|css|png|jpg|svg|ico|woff2?|ttf|eot|map)$ { expires 30d; access_log off; }
+      }
+      NGINX
+  - name: php-fpm pool + php.ini (nonroot, read-only rootfs)
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/etc/php/php-fpm.d" "$d/etc/php/conf.d"
+      cat > "$d/etc/php/php-fpm.d/zzz-kimai.conf" <<'FPM'
+      [global]
+      daemonize = no
+      error_log = /proc/self/fd/2
+
+      [www]
+      listen = 127.0.0.1:9000
+      catch_workers_output = yes
+      decorate_workers_output = no
+      ; APP_SECRET, DATABASE_URL and the other settings come from the container environment
+      clear_env = no
+      pm = dynamic
+      pm.max_children = 16
+      pm.start_servers = 2
+      pm.min_spare_servers = 1
+      pm.max_spare_servers = 4
+      FPM
+      cat > "$d/etc/php/conf.d/zzz-kimai.ini" <<'INI'
+      expose_php = Off
+      memory_limit = 256M
+      upload_max_filesize = 50M
+      post_max_size = 50M
+      sys_temp_dir = /tmp
+      upload_tmp_dir = /tmp
+      session.save_path = /tmp
+      display_errors = Off
+      log_errors = On
+      error_log = /proc/self/fd/2
+      date.timezone = UTC
+      opcache.enable = 1
+      opcache.revalidate_freq = 60
+      INI
+
+  - name: supervisord (php-fpm + nginx)
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/etc/kimai" "$d/etc/supervisor.d"
+      cat > "$d/etc/kimai/supervisord.conf" <<'SUP'
+      [supervisord]
+      nodaemon=true
+      logfile=/dev/stdout
+      logfile_maxbytes=0
+      pidfile=/tmp/supervisord.pid
+
+      [unix_http_server]
+      file=/tmp/supervisor.sock
+
+      [supervisorctl]
+      serverurl=unix:///tmp/supervisor.sock
+
+      [rpcinterface:supervisor]
+      supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+
+      [include]
+      files = /etc/supervisor.d/*.conf
+      SUP
+      printf '%s\n' '[program:php-fpm]' 'command=/usr/bin/php-fpm --nodaemonize --fpm-config /etc/php/php-fpm.conf' \
+        'autostart=true' 'autorestart=true' 'priority=10' 'stdout_logfile=/dev/stdout' 'stdout_logfile_maxbytes=0' \
+        'stderr_logfile=/dev/stderr' 'stderr_logfile_maxbytes=0' > "$d/etc/supervisor.d/php-fpm.conf"
+      printf '%s\n' '[program:nginx]' 'command=/usr/bin/nginx -g "daemon off;"' \
+        'autostart=true' 'autorestart=true' 'priority=20' 'stdout_logfile=/dev/stdout' 'stdout_logfile_maxbytes=0' \
+        'stderr_logfile=/dev/stderr' 'stderr_logfile_maxbytes=0' > "$d/etc/supervisor.d/nginx.conf"
+
+test:
+  pipeline:
+    - runs: |
+        set -eu
+        test -f /opt/kimai/public/index.php
+        test -L /opt/kimai/var
+        php -m | grep -qi pdo_mysql
+        php -m | grep -qi xsl
