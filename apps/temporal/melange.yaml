@@ -81,10 +81,20 @@ pipeline:
       # breaking the build on "undefined: wciiface.ValidationResult". Same trap
       # docs/go-module-float.md describes: a pin is a downgrade the moment upstream
       # needs more. Expressed as a FLOOR, so a module already above it is left alone.
-      # otel stays on 1.45: 1.47 moves log.KeyValue/String/Int into attribute and makes otel itself require
-      # otel/log 1.47, which temporal 1.32.2's common/wideevents does not build against (held 2026-11-14,
-      # CVE-2026-128085 in unfixed-cves.md until a temporal release moves to otel 1.47).
-      FLOOR="github.com/aws/aws-sdk-go-v2/service/lambda@v1.88.5 google.golang.org/grpc@v1.83.2 golang.org/x/oauth2@v0.36.0 go.opentelemetry.io/otel@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.45.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.45.0 go.opentelemetry.io/otel/sdk@v1.45.0 go.opentelemetry.io/otel/trace@v1.45.0 go.opentelemetry.io/otel/metric@v1.45.0 golang.org/x/net@v0.62.0 golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/text@v0.43.0 github.com/apache/thrift@v0.24.0 github.com/go-jose/go-jose/v4@v4.1.6"
+      # otel 1.47 (CVE-2026-128085): otel 1.47 requires otel/log 1.47, which moved KeyValue/String/Int64
+      # into the attribute package. temporal's only caller of that API is common/wideevents (the rest of
+      # the server uses log.Logger/LoggerProvider, unchanged), so port those four files to attribute.*
+      # (Record.AddAttributes takes attribute.KeyValue in 1.47). _test.go files are not built.
+      for f in common/wideevents/attrs.go common/wideevents/events.go common/wideevents/namespace_events.go common/wideevents/replication_events.go; do
+        sed -i -E 's/\blog\.KeyValue\b/attribute.KeyValue/g; s/\blog\.(String|Int64|Int|Bool|Float64)\(/attribute.\1(/g' "$f"
+        if ! grep -q -E '\blog\.' "$f"; then
+          sed -i 's#"go.opentelemetry.io/otel/log"#"go.opentelemetry.io/otel/attribute"#' "$f"
+        elif ! grep -q '"go.opentelemetry.io/otel/attribute"' "$f"; then
+          sed -i 's#"go.opentelemetry.io/otel/log"#"go.opentelemetry.io/otel/attribute"\n\t"go.opentelemetry.io/otel/log"#' "$f"
+        fi
+      done
+      ! grep -n -E '\blog\.(KeyValue|String|Int64|Int|Bool)\b' common/wideevents/attrs.go common/wideevents/events.go common/wideevents/namespace_events.go common/wideevents/replication_events.go || { echo "FATAL: wideevents still on the old otel/log API"; exit 1; }
+      FLOOR="github.com/aws/aws-sdk-go-v2/service/lambda@v1.88.5 google.golang.org/grpc@v1.83.2 golang.org/x/oauth2@v0.36.0 go.opentelemetry.io/otel@v1.47.0 go.opentelemetry.io/otel/log@v1.47.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.47.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.47.0 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.47.0 go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc@v1.47.0 go.opentelemetry.io/otel/exporters/prometheus@v0.69.0 go.opentelemetry.io/otel/sdk@v1.47.0 go.opentelemetry.io/otel/sdk/metric@v1.47.0 go.opentelemetry.io/otel/trace@v1.47.0 go.opentelemetry.io/otel/metric@v1.47.0 golang.org/x/net@v0.62.0 golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/text@v0.43.0 github.com/apache/thrift@v0.24.0 github.com/go-jose/go-jose/v4@v4.1.6"
       MODS="$(echo "$FLOOR" | tr ' ' '\n' | cut -d@ -f1)"
       below_floor() {
         awk -v floor="$FLOOR" -v tag="$1" '
