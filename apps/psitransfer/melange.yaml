@@ -1,0 +1,56 @@
+# PsiTransfer from the release tag: client bundle (npm, app/) plus the server with production dependencies.
+package:
+  name: quench-psitransfer
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened PsiTransfer file sharing server, built from source on Wolfi"
+  copyright:
+    - license: BSD-2-Clause
+  dependencies:
+    runtime:
+      - nodejs-24
+      - ca-certificates-bundle
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - nodejs-24
+      - npm
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/psi-4ward/psitransfer/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - runs: |
+      set -eu
+      export HOME="$(mktemp -d)" npm_config_cache="$(mktemp -d)" npm_config_fetch_retries=5
+      # upstream's package.json says 0.0.0, which scanners match against PsiTransfer's own advisories (fixed in 2.4.3):
+      # stamp the release version
+      sed -i 's/^  "version": "0.0.0",$/  "version": "${{package.version}}",/' package.json
+      grep -q '^  "version": "${{package.version}}",$' package.json || { echo "FATAL: version stamp did not apply"; exit 1; }
+      # client: built into public/app
+      (cd app && npm ci --include=dev && npm run build)
+      test -d public/app
+      # server: production dependencies, minimatch 10.2.6 (CVE-2026-118764, fixed 11.0.1) overridden
+      node -e 'const f="package.json",p=JSON.parse(require("fs").readFileSync(f));p.overrides={...(p.overrides||{}),minimatch:"^11.0.1"};require("fs").writeFileSync(f,JSON.stringify(p,null,2))'
+      npm install --omit=dev --no-audit --no-fund
+      node -e 'const v=require("./node_modules/minimatch/package.json").version; if(!/^1[1-9]\./.test(v)){console.error("FATAL: minimatch "+v);process.exit(1)} console.log("minimatch",v)'
+      a="${{targets.destdir}}/app"
+      install -d "$a"
+      cp -a app.js config.js package.json lib lang plugins public node_modules "$a/"
+
+test:
+  pipeline:
+    - runs: |
+        test -f /app/app.js
+        test -d /app/public/app

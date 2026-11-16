@@ -1,0 +1,54 @@
+# PsiTransfer runtime: HTTP on 3000, uploads in /data (PSITRANSFER_UPLOAD_DIR). PSITRANSFER_ADMIN_PASS enables the
+# admin page, PSITRANSFER_UPLOAD_PASS protects uploading; PSITRANSFER_SSL_PORT + _SSL_KEY_FILE + _SSL_CERT_FILE add
+# HTTPS. Nonroot uid 1001.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - tzdata
+    - quench-psitransfer@local
+
+accounts:
+  groups:
+    - groupname: psitransfer
+      gid: 1001
+  users:
+    - username: psitransfer
+      uid: 1001
+      gid: 1001
+      homedir: /data
+  run-as: 1001
+
+environment:
+  NODE_ENV: production
+  PSITRANSFER_UPLOAD_DIR: /data
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+work-dir: /app
+
+entrypoint:
+  command: /usr/bin/node app.js
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-psitransfer"
+  org.opencontainers.image.licenses: "BSD-2-Clause"
+  org.opencontainers.image.version: "__VER__"
