@@ -1,0 +1,53 @@
+# hugo runtime: the hugo CLI as the entrypoint, git for enableGitInfo, HOME at /home/hugo and the
+# module cache under /tmp (mount a tmpfs there on a read-only rootfs).
+# Nonroot uid 1001, multi-arch. Image only.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - git
+    - quench-hugo@local
+
+accounts:
+  groups:
+    - groupname: hugo
+      gid: 1001
+  users:
+    - username: hugo
+      uid: 1001
+      gid: 1001
+      homedir: /home/hugo
+  run-as: 1001
+
+work-dir: /home/hugo
+
+environment:
+  HOME: /home/hugo
+  HUGO_CACHEDIR: /tmp/hugo_cache
+
+paths:
+  - path: /home/hugo
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+entrypoint:
+  command: /usr/bin/hugo
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-hugo"
+  org.opencontainers.image.licenses: "Apache-2.0"

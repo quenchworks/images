@@ -132,6 +132,7 @@ var table = map[string]check{
 	"ergo":                              {src: ghRel("ergochat/ergo"), n: 1},
 	"rest-server":                       {src: ghRel("restic/rest-server"), n: 1},
 	"restic":                            {src: ghRel("restic/restic"), n: 1},
+	"hugo":                              {src: ghRel("gohugoio/hugo"), n: 3},
 	"thelounge":                         {src: npmPkg("thelounge"), n: 1, f: filter{keep: noDash}},
 	"soju":                              {src: codebergRel("emersion/soju"), n: 1},
 	"go-httpbin":                        {src: ghRel("mccutchen/go-httpbin"), n: 1},
