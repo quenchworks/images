@@ -1,0 +1,50 @@
+# Rallly runtime: HTTP on 3000, PostgreSQL via DATABASE_URL, SECRET_PASSWORD (32+ characters), NEXT_PUBLIC_BASE_URL and
+# SUPPORT_EMAIL required; SMTP_* for login codes. The launcher runs prisma migrate deploy, then the Next.js server.
+# No TLS listener and no state on disk. Nonroot uid 1001.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - tzdata
+    - quench-rallly@local
+
+accounts:
+  groups:
+    - groupname: rallly
+      gid: 1001
+  users:
+    - username: rallly
+      uid: 1001
+      gid: 1001
+      homedir: /tmp
+  run-as: 1001
+
+environment:
+  NODE_ENV: production
+  NEXT_TELEMETRY_DISABLED: "1"
+  HOSTNAME: 0.0.0.0
+  PORT: "3000"
+  HOME: /tmp
+
+work-dir: /rallly
+
+entrypoint:
+  command: /usr/bin/node /rallly/start.cjs
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-rallly"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"
+  org.opencontainers.image.version: "__VER__"

@@ -1,0 +1,94 @@
+# Rallly from the release tag, built with pnpm 12 on Wolfi nodejs-24: the Next.js standalone server of @rallly/web,
+# its static assets, the Prisma migrations and an exact prisma CLI (with its schema engine) for migrate deploy.
+package:
+  name: quench-rallly
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Rallly meeting polls, built from source on Wolfi"
+  copyright:
+    - license: AGPL-3.0-only
+  dependencies:
+    runtime:
+      - nodejs-24
+      - openssl
+      - ca-certificates-bundle
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - nodejs-24
+      - openssl
+      - pnpm-12
+      - python-3.13
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/lukevella/rallly/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: pnpm install, prisma generate, Next.js standalone build
+    runs: |
+      set -eu
+      export CI=true HOME="$(mktemp -d)" npm_config_store_dir="$(mktemp -d)"
+      export npm_config_fetch_retries=5 npm_config_fetch_retry_maxtimeout=120000 NEXT_TELEMETRY_DISABLED=1
+      pnpm install --frozen-lockfile
+      pnpm db:generate
+      SKIP_ENV_VALIDATION=1 NEXT_PUBLIC_SELF_HOSTED=true NEXT_PUBLIC_APP_VERSION=v${{package.version}} \
+        NODE_OPTIONS=--max-old-space-size=6144 pnpm exec turbo run build --filter=@rallly/web
+      test -f apps/web/.next/standalone/apps/web/server.js
+      d="${{targets.destdir}}/rallly"
+      install -d "$d"
+      cp -a apps/web/.next/standalone/. "$d/"
+      cp -a apps/web/.next/static "$d/apps/web/.next/static"
+      cp -a apps/web/public "$d/apps/web/public"
+      # the prisma CLI at the exact version the lockfile builds with, its schema engine fetched now (upstream turns
+      # @prisma/engines builds off; a read-only rootfs cannot fetch it at start)
+      c="$d/prisma-cli"
+      install -d "$c"
+      cp -a packages/database/prisma packages/database/prisma.config.ts "$c/"
+      printf '{"private":true,"dependencies":{"prisma":"__PRISMA__"}}\n' > "$c/package.json"
+      # prisma pins these exactly. @hono/node-server (CVE-2026-118663, fixed on 2.x only), mysql2 and valibot belong to
+      # the `prisma dev` server and drivers, never started by migrate deploy; @prisma/config calls only deepmerge(),
+      # unchanged in deepmerge-ts 8 (CVE-2026-40345), which still ships a require build
+      printf '%s\n' 'allowBuilds:' "  '@prisma/engines': true" "  prisma: true" 'overrides:' \
+        "  '@hono/node-server': 2.1.6" "  deepmerge-ts: 8.0.0" "  mysql2: ^3.23.1" "  valibot: ^1.4.2" > "$c/pnpm-workspace.yaml"
+      (cd "$c" && pnpm install --prod && rm -f pnpm-workspace.yaml)
+      for p in '@hono+node-server@2.1.6*' 'deepmerge-ts@8.0.0*' 'mysql2@3.2[3-9].*' 'valibot@1.[4-9].*'; do
+        ls -d "$c"/node_modules/.pnpm/$p >/dev/null || { echo "FATAL: override $p did not apply"; ls "$c"/node_modules/.pnpm; exit 1; }
+      done
+      ls "$c"/node_modules/.pnpm/@prisma+engines@*/node_modules/@prisma/engines/schema-engine-* >/dev/null
+      # the launcher: migrate, then the Next.js server (upstream's docker-start.sh, without a shell)
+      cat > "$d/start.cjs" <<'JS'
+      const { execFileSync } = require("node:child_process");
+      process.env.AUTH_URL ??= process.env.NEXT_PUBLIC_BASE_URL;
+      if (process.env.MAINTENANCE_MODE === "true") {
+        console.log("MAINTENANCE_MODE is enabled - skipping database migration");
+      } else {
+        execFileSync(process.execPath, [__dirname + "/prisma-cli/node_modules/prisma/build/index.js", "migrate", "deploy",
+          "--config=" + __dirname + "/prisma-cli/prisma.config.ts"], { stdio: "inherit" });
+      }
+      require("./apps/web/server.js");
+      JS
+      # drop musl builds (melange would add so:libc.musl) and prebuilds for other OSes and arches
+      find "$d" -depth -type d -name '*linuxmusl*' -exec rm -rf {} +
+      arch="$(node -p process.arch)"
+      find "$d" -type d -name prebuilds | while read -r pb; do
+        for x in "$pb"/*; do [ "$(basename "$x")" = "linux-$arch" ] || rm -rf "$x"; done
+      done
+      node "$c/node_modules/prisma/build/index.js" --version | grep -q "__PRISMA__"
+
+test:
+  pipeline:
+    - runs: |
+        test -f /rallly/apps/web/server.js
+        test -f /rallly/start.cjs
+        node /rallly/prisma-cli/node_modules/prisma/build/index.js --version

@@ -186,6 +186,7 @@ var table = map[string]check{
 	"chartdb":                           {src: ghRel("chartdb/chartdb"), n: 1},
 	"psitransfer":                       {src: ghRel("psi-4ward/psitransfer"), n: 1},
 	"traggo":                            {src: ghRel("traggo/server"), n: 1},
+	"rallly":                            {src: ghRel("lukevella/rallly"), n: 1},
 	"external-dns":                      {src: ghRel("kubernetes-sigs/external-dns")},
 	"external-secrets":                  {src: ghRel("external-secrets/external-secrets")},
 	"fabric-orderer":                    {src: ghRel("hyperledger/fabric"), lines: 2, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
