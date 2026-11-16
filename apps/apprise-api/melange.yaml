@@ -1,0 +1,97 @@
+# Apprise API from the release tag: a venv over Wolfi's native Python packages, upstream's webapp and runtime files.
+# nginx comes from the sibling quench-nginx package, installed by apko.
+package:
+  name: quench-apprise-api
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Apprise API notification gateway on Wolfi python + nginx"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - python-3.13
+      - py3.13-aiodns
+      - py3.13-cffi
+      - py3.13-cryptography
+      - py3.13-gevent
+      - py3.13-greenlet
+      - py3.13-pycares
+      - py3.13-pyyaml
+      - supervisor
+      - bash
+      - busybox
+      - ca-certificates-bundle
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - python-3.13
+      - py3.13-pip
+      - py3.13-aiodns
+      - py3.13-cffi
+      - py3.13-cryptography
+      - py3.13-gevent
+      - py3.13-greenlet
+      - py3.13-pycares
+      - py3.13-pyyaml
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/caronc/apprise-api/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: venv with the requirements (native packages from Wolfi)
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" PIP_NO_CACHE_DIR=1
+      V="${{targets.destdir}}/opt/apprise/venv"
+      python3.13 -m venv --system-site-packages "$V"
+      "$V/bin/pip" install -q -r requirements.txt gunicorn
+      "$V/bin/pip" check
+      SITE="$V/lib/python3.13/site-packages"
+      for m in cryptography gevent greenlet cffi pycares yaml; do
+        test ! -e "$SITE/$m" || { echo "FATAL: $m installed into the venv instead of from Wolfi"; exit 1; }
+      done
+      "$V/bin/python" -c "import apprise, django, gunicorn, cryptography; print('apprise', apprise.__version__)"
+      # compile the translations upstream's Dockerfile compiles (polib only for this step)
+      "$V/bin/pip" install -q polib
+      (cd apprise_api && "$V/bin/python" apprise_translations.py)
+      "$V/bin/pip" uninstall -y -q polib
+      # pip vendors its own urllib3 and is not needed at run time
+      "$V/bin/python" -m pip uninstall -y -q pip
+      # the venv was built at the destdir path: point its scripts and config at the installed path
+      sed -i "s|${{targets.destdir}}||g" "$V/pyvenv.cfg" "$V"/bin/*
+      ! grep -rq "${{targets.destdir}}" "$V/bin" "$V/pyvenv.cfg"
+
+  - name: Upstream webapp, runtime files and paths
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/opt/apprise" "$d/usr/share/nginx/html" "$d/etc/nginx" "$d/usr/local/bin"
+      cp -a apprise_api "$d/opt/apprise/webapp"
+      cp -a apprise_api/static "$d/usr/share/nginx/html/s"
+      chmod 0755 "$d/opt/apprise/webapp/supervisord-startup" "$d/opt/apprise/webapp/etc/pruner-loop.sh"
+      # upstream's startup script execs /usr/local/bin/supervisord; /usr/sbin/nginx resolves through Wolfi's usrmerge
+      ln -s /usr/bin/supervisord "$d/usr/local/bin/supervisord"
+      : > "$d/etc/nginx/server-override.conf"
+      : > "$d/etc/nginx/location-override.conf"
+      # gunicorn from the venv (upstream calls it by name)
+      sed -i 's|^command=gunicorn |command=/opt/apprise/venv/bin/gunicorn |' "$d/opt/apprise/webapp/etc/supervisord.conf"
+      grep -q '^command=/opt/apprise/venv/bin/gunicorn ' "$d/opt/apprise/webapp/etc/supervisord.conf"
+      rm -f "$d/opt/apprise/webapp/conftest.py"
+      rm -rf "$d/opt/apprise/webapp/api/tests"
+
+test:
+  pipeline:
+    - runs: |
+        set -eu
+        /opt/apprise/venv/bin/python -c "import apprise, django, gunicorn"
+        test -x /opt/apprise/webapp/supervisord-startup

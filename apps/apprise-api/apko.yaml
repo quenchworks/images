@@ -1,0 +1,84 @@
+# Apprise API runtime: upstream's supervisord-startup runs nginx (:8000, upstream's nginx.conf, or nginx-strict.conf
+# with STRICT_MODE=yes), gunicorn (gevent) on a unix socket in /tmp/apprise and the pruner loop, all as uid 1001.
+# Stored configs in /config (APPRISE_CONFIG_DIR, persistent storage in /config/store), attachments in /attach,
+# custom plugins in /plugin. Settings: upstream's environment variables (APPRISE_STATEFUL_MODE, APPRISE_ADMIN,
+# APPRISE_BASE_URL, ...).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-nginx@local          # QuenchWorks' hardened nginx (from source)
+    - quench-apprise-api@local
+    # supervisor needs a supervisor-config provider; docker-selenium-supervisor-config (4.44) also provides it and
+    # wins on version, so pin the real 4.3 line
+    - supervisor-config~4.3
+
+accounts:
+  groups:
+    - groupname: apprise
+      gid: 1001
+  users:
+    - username: apprise
+      uid: 1001
+      gid: 1001
+      homedir: /opt/apprise
+  run-as: 1001
+
+environment:
+  PATH: /opt/apprise/venv/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  APPRISE_CONFIG_DIR: /config
+  APPRISE_ATTACH_DIR: /attach
+  APPRISE_PLUGIN_PATHS: /plugin
+  TZ: Etc/UTC
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+
+paths:
+  - path: /tmp
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o1777
+  - path: /config
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+  - path: /config/store
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+  - path: /attach
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+  - path: /plugin
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+work-dir: /opt/apprise
+
+entrypoint:
+  command: /opt/apprise/webapp/supervisord-startup
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-apprise-api"
+  org.opencontainers.image.licenses: "MIT"
+  org.opencontainers.image.version: "__VER__"
