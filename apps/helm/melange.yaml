@@ -1,0 +1,61 @@
+# Builds helm (Kubernetes package manager) from the release tag onto Wolfi: static Go, CGO off, house floors. Image only (CLI, no chart).
+package:
+  name: quench-helm
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened helm, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/helm/helm/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GO111MODULE=on
+      export GOTOOLCHAIN=local   # use the installed go, don't fetch go.mod's toolchain
+      # Bump vulnerable Go modules to their Trivy-listed fixed versions (0-CVE gate).
+      # 0-CVE FLOORS, not pins (docs/go-module-float.md): raise a module only where go.mod has it
+      # below the floor; a module absent from the graph is skipped. Bare `go get` pins downgraded
+      # newer upstream releases (found 2026-10-05).
+      FLOOR="github.com/moby/sys/user@v0.4.1 golang.org/x/net@v0.62.0 golang.org/x/sys@v0.49.0 google.golang.org/grpc@v1.83.2 golang.org/x/text@v0.43.0 golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/mod@v0.41.0 github.com/klauspost/compress@v1.19.1 github.com/go-chi/chi/v5@v5.4.0"
+      # CVE-2026-128085 (otel 1.47.0): floor every otel v1 module the build uses, as one family
+      for m in $(go list -mod=mod -m -e -f '{{.Path}} {{.Version}}' all | awk '($1 ~ /^go\.opentelemetry\.io\/otel(\/|$)/ || $1 ~ /^go\.opentelemetry\.io\/contrib\/bridges\/otel(zap|logrus|slog)$/) && $1 !~ /\/exporters\/jaeger$/ { if ($1 ~ /\/contrib\/bridges\//) print $1"@v0.21.0"; else if ($1 ~ /\/exporters\/(otlp\/otlplog\/|stdout\/stdoutlog$)/) print $1"@v0.23.0"; else if ($1 ~ /\/exporters\/prometheus$/) print $1"@v0.69.0"; else if ($2 ~ /^v1\./ || $1 ~ /\/(sdk\/)?log$/) print $1"@v1.47.0" }'); do
+        FLOOR="$FLOOR $m"
+      done
+      # Go semver order (a release outranks its prereleases); busybox sort -V does not.
+      vlt() { awk -v a="${1#v}" -v b="${2#v}" 'function pp(s,  p){sub(/\+.*/,"",s);p=index(s,"-");if(p){C=substr(s,1,p-1);P=substr(s,p+1)}else{C=s;P=""}} function cmp(x,y,  i,n,m,X,Y){n=split(x,X,".");m=split(y,Y,".");for(i=1;i<=n&&i<=m;i++){if(X[i]==Y[i])continue;if(X[i]~/^[0-9]+$/&&Y[i]~/^[0-9]+$/)return (X[i]+0<Y[i]+0)?-1:1;if(X[i]~/^[0-9]+$/)return -1;if(Y[i]~/^[0-9]+$/)return 1;return (X[i]<Y[i])?-1:1}return (n<m)?-1:(n>m)?1:0} BEGIN{pp(a);ca=C;pa=P;pp(b);cb=C;pb=P;c=cmp(ca,cb);if(c==0){if(pa==pb)c=0;else if(pa=="")c=1;else if(pb=="")c=-1;else c=cmp(pa,pb)}exit !(c<0)}'; }
+      need=""
+      for mv in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${mv%@*}" 2>/dev/null)"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        vlt "$have" "${mv#*@}" && need="$need $mv"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
+      go mod tidy || true
+      M=$(echo ${{package.version}} | cut -d. -f1)
+      go build -trimpath -ldflags "-s -w -X helm.sh/helm/v$M/internal/version.version=v${{package.version}}" -o "${{targets.destdir}}/usr/bin/helm" ./cmd/helm
+      "${{targets.destdir}}/usr/bin/helm" version --short | grep -F "v${{package.version}}"
+
+test:
+  pipeline:
+    - runs: helm version --short

@@ -151,6 +151,8 @@ var table = map[string]check{
 	"stern":                             {src: ghRel("stern/stern"), n: 1},
 	"kube-linter":                       {src: ghRel("stackrox/kube-linter"), n: 1},
 	"k9s":                               {src: ghRel("derailed/k9s"), n: 1},
+	"helm":                              {src: ghRel("helm/helm"), lines: 1},
+	"popeye":                            {src: ghRel("derailed/popeye"), n: 1},
 	"etcd":                              {src: ghRel("etcd-io/etcd")},
 	"excalidraw":                        {src: ghRel("excalidraw/excalidraw")},
 	"external-dns":                      {src: ghRel("kubernetes-sigs/external-dns")},

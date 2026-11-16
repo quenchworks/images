@@ -79,3 +79,43 @@ func init() {
 		t.Logf("smoke test passed (k9s %s: version and info on a read-only rootfs; user %s)", t.Want, u)
 	})
 }
+
+func init() {
+	// helm on a read-only rootfs, offline: lints and renders a small local chart with a --set value.
+	register("helm", func(t *T) {
+		u := t.User("1001")
+		t.Contains(t.RunAny("version", "--short"), t.Want, "helm version")
+		dir := t.TempDir()
+		_ = os.MkdirAll(filepath.Join(dir, "quench", "templates"), 0o777)
+		files := map[string]string{
+			"quench/Chart.yaml":            "apiVersion: v2\nname: quench\nversion: 0.1.0\n",
+			"quench/values.yaml":           "greeting: hello\n",
+			"quench/templates/config.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-quench\ndata:\n  greeting: {{ .Values.greeting | quote }}\n",
+		}
+		for n, c := range files {
+			if err := os.WriteFile(filepath.Join(dir, n), []byte(c), 0o644); err != nil {
+				t.Fatalf("write %s: %v", n, err)
+			}
+		}
+		flags := []string{"--read-only", "--tmpfs", "/tmp:rw,mode=1777", "-e", "HELM_CACHE_HOME=/tmp/c", "-e", "HELM_CONFIG_HOME=/tmp/g", "-e", "HELM_DATA_HOME=/tmp/d", "-v", dir + ":/w:ro"}
+		if out, err := t.RunInputFlags(flags, "", "lint", "/w/quench"); err != nil {
+			t.Fatalf("helm lint: %v\n%s", err, out)
+		}
+		out, err := t.RunInputFlags(flags, "", "template", "smoke", "/w/quench", "--set", "greeting=quench-helm")
+		if err != nil || !strings.Contains(out, `greeting: "quench-helm"`) || !strings.Contains(out, "name: smoke-quench") {
+			t.Fatalf("helm template: %v\n%s", err, out)
+		}
+		t.Logf("smoke test passed (helm %s: lint and template of a local chart with --set, offline, read-only; user %s)", t.Want, u)
+	})
+
+	// popeye scans a live cluster: version, and without a kubeconfig it exits with an error instead of a panic.
+	register("popeye", func(t *T) {
+		u := t.User("1001")
+		t.Contains(t.RunAny("version"), t.Want, "popeye version")
+		out, err := t.RunInputFlags([]string{"--read-only", "--tmpfs", "/tmp:rw,mode=1777", "-e", "HOME=/tmp"}, "", "--kubeconfig", "/nonexistent")
+		if err == nil || strings.Contains(out, "panic") {
+			t.Fatalf("popeye without a cluster: %v\n%s", err, out)
+		}
+		t.Logf("smoke test passed (popeye %s: version; without a cluster it exits with an error, no panic; user %s)", t.Want, u)
+	})
+}
