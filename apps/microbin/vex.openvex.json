@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/microbin/2026-11-16",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-16T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "GHSA-2326-pfpj-vx3h"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/lexical-core@0.7.6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Measured 2026-11-16 on MicroBin 2.1.0. lexical-core 0.7.6 comes in through nom 6, a dependency of askama_shared 0.11.2 (askama 0.10). askama_shared uses nom only in its template parser (src/parser.rs is the only file that imports nom). The parser is called by askama_derive at compile time (askama_derive 0.10.5 src/lib.rs:5, 47 and 80); the askama runtime re-exports only filters, helpers, read_config_file, Error, MarkupDisplay and Result (askama 0.10.5 src/lib.rs:96-98). MicroBin uses askama only through #[derive(Template)] and never calls askama_shared::parser, so no lexical-core parse function runs in the server. Revisit when MicroBin moves to askama 0.11 or later (nom 7, no lexical-core)."
+    }
+  ]
+}
