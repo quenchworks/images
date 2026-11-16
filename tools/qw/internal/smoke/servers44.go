@@ -14,28 +14,28 @@ import (
 	"time"
 )
 
-// untarGz extracts a .tar.gz into dir (regular files, dirs and symlinks).
-func untarGz(src, dir string) error {
+// untarGz extracts the regular files and dirs of a .tar.gz into dir and returns its symlinks as
+// name -> target without creating them (a link from an image layer can point anywhere on the host).
+func untarGz(src, dir string) (map[string]string, error) {
 	f, err := os.Open(src)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer f.Close()
 	zr, err := gzip.NewReader(f)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	links := map[string]string{}
 	tr := tar.NewReader(zr)
 	for {
 		h, err := tr.Next()
 		if err == io.EOF {
-			return nil
+			return links, nil
 		}
 		if err != nil {
-			return err
+			return nil, err
 		}
-		// keep every entry inside dir: a name may not climb out, and a symlink target (absolute targets
-		// mean the image root) is rewritten relative to the link and skipped if it leaves dir
 		name := filepath.Clean(strings.TrimPrefix(h.Name, "/"))
 		if !filepath.IsLocal(name) {
 			continue
@@ -45,34 +45,19 @@ func untarGz(src, dir string) error {
 		case tar.TypeDir:
 			os.MkdirAll(p, 0o755)
 		case tar.TypeSymlink:
-			target := filepath.Join(filepath.Dir(p), h.Linkname)
-			if filepath.IsAbs(h.Linkname) {
-				target = filepath.Join(dir, h.Linkname)
-			}
-			rel, err := filepath.Rel(dir, target)
-			if err != nil || !filepath.IsLocal(rel) {
-				continue
-			}
-			link, err := filepath.Rel(filepath.Dir(p), target)
-			if err != nil {
-				return err
-			}
-			os.MkdirAll(filepath.Dir(p), 0o755)
-			if err := os.Symlink(link, p); err != nil {
-				return err
-			}
+			links[name] = h.Linkname
 		case tar.TypeReg:
 			os.MkdirAll(filepath.Dir(p), 0o755)
 			w, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(h.Mode)&0o777|0o200)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			if _, err := io.Copy(w, tr); err != nil {
-				w.Close()
-				return err
+			_, err = io.Copy(w, tr)
+			if cerr := w.Close(); err == nil {
+				err = cerr
 			}
-			if err := w.Close(); err != nil {
-				return err
+			if err != nil {
+				return nil, err
 			}
 		}
 	}
@@ -129,13 +114,14 @@ func init() {
 			t.Fatalf("Go SDK manifest unreadable")
 		}
 		sdk := filepath.Join(w, "sdk")
-		if err := untarGz(filepath.Join(w, "content/blobs/sha256", strings.TrimPrefix(man.Layers[0].Digest, "sha256:")), sdk); err != nil {
+		links, err := untarGz(filepath.Join(w, "content/blobs/sha256", strings.TrimPrefix(man.Layers[0].Digest, "sha256:")), sdk)
+		if err != nil {
 			t.Fatalf("Go SDK layer: %v", err)
 		}
 		if st, err := os.Stat(filepath.Join(sdk, "usr/local/bin/codegen")); err != nil || st.Mode()&0o111 == 0 {
 			t.Fatalf("Go SDK runtime has no codegen")
 		}
-		if _, err := os.Lstat(filepath.Join(sdk, "usr/bin/go")); err != nil {
+		if _, err := os.Lstat(filepath.Join(sdk, "usr/bin/go")); err != nil && links["usr/bin/go"] == "" {
 			t.Fatalf("Go SDK runtime has no go")
 		}
 		if _, err := exec.LookPath("trivy"); err == nil {
