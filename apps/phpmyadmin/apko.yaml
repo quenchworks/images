@@ -30,6 +30,9 @@ contents:
     - supervisor                  # process supervisor (php-fpm + nginx)
     - quench-nginx@local          # QuenchWorks' hardened nginx (from source), 8080/nonroot
     - quench-phpmyadmin@local     # the phpMyAdmin tree + nginx/php-fpm/supervisor wiring
+    # supervisor needs a supervisor-config provider; docker-selenium-supervisor-config (4.44) also provides it and
+    # wins on version, so pin the real 4.3 line
+    - supervisor-config~4.3
     # PHP runtime + FPM. Each extension needs its -config sibling, otherwise the .so
     # ships unregistered in php.ini.
     - php-8.3
