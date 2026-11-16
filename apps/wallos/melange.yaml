@@ -1,0 +1,238 @@
+# Wallos from the release tarball on Wolfi php-8.5-fpm + nginx (nginx comes from the sibling quench-nginx
+# package, installed by apko).
+package:
+  name: quench-wallos
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Wallos subscription tracker on Wolfi php-fpm + nginx"
+  copyright:
+    - license: GPL-3.0-or-later
+  dependencies:
+    runtime:
+      - php-8.5
+      - php-8.5-config
+      - php-8.5-fpm
+      - php-8.5-fpm-config
+      - php-8.5-ctype
+      - php-8.5-ctype-config
+      - php-8.5-curl
+      - php-8.5-curl-config
+      - php-8.5-dom
+      - php-8.5-dom-config
+      - php-8.5-fileinfo
+      - php-8.5-fileinfo-config
+      - php-8.5-gd
+      - php-8.5-gd-config
+      - php-8.5-iconv
+      - php-8.5-iconv-config
+      - php-8.5-intl
+      - php-8.5-intl-config
+      - php-8.5-mbstring
+      - php-8.5-mbstring-config
+      - php-8.5-openssl
+      - php-8.5-openssl-config
+      - php-8.5-zip
+      - php-8.5-zip-config
+      - supervisor
+      - supercronic
+      - busybox
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - php-8.5
+      - php-8.5-config
+      - php-8.5-fpm
+      - php-8.5-fpm-config
+      - php-8.5-ctype
+      - php-8.5-ctype-config
+      - php-8.5-curl
+      - php-8.5-curl-config
+      - php-8.5-dom
+      - php-8.5-dom-config
+      - php-8.5-fileinfo
+      - php-8.5-fileinfo-config
+      - php-8.5-gd
+      - php-8.5-gd-config
+      - php-8.5-iconv
+      - php-8.5-iconv-config
+      - php-8.5-intl
+      - php-8.5-intl-config
+      - php-8.5-mbstring
+      - php-8.5-mbstring-config
+      - php-8.5-openssl
+      - php-8.5-openssl-config
+      - php-8.5-zip
+      - php-8.5-zip-config
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/ellite/Wallos/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Backport the OTPHP 11.4.3 digits bound (GHSA-g7m4-839x-ch6v) and lay out /var/www/wallos
+    runs: |
+      set -eu
+      grep -qF '$version = "v${{package.version}}";' includes/version.php
+      # 11.4.3 bounds digits to 1..10 (OTPInterface::MAX_DIGITS); the vendored 11.x copy only checks > 0
+      t=libs/OTPHP/ParameterTrait.php
+      sed -i 's/(is_int($value) && $value > 0) ||/(is_int($value) \&\& $value >= 1 \&\& $value <= 10) ||/' "$t"
+      sed -i 's/ > 0 || throw new InvalidArgumentException(/ >= 1 \&\& $value <= 10 || throw new InvalidArgumentException(/; s/Digits must be at least 1/Digits must be between 1 and 10/' "$t"
+      [ "$(grep -c '$value <= 10' "$t")" = 2 ] || { echo "FATAL: OTPHP digits backport did not apply"; exit 1; }
+      php -l "$t"
+      d="${{targets.destdir}}/var/www/wallos"
+      install -d "$d"
+      cp -a api endpoints images includes libs migrations scripts styles webfonts *.php robots.txt service-worker.js "$d/"
+      # writable state on the volume: the database, uploaded logos and the restore staging dir
+      rm -rf "$d/db" "$d/images/uploads/logos" "$d/.tmp"
+      ln -s /var/lib/wallos/db "$d/db"
+      ln -s /var/lib/wallos/logos "$d/images/uploads/logos"
+      ln -s /var/lib/wallos/.tmp "$d/.tmp"
+      install -d "${{targets.destdir}}/usr/libexec"
+      cat > "${{targets.destdir}}/usr/libexec/wallos-init" <<'SH'
+      #!/bin/sh
+      # creates or migrates the database on the volume, then runs php-fpm, nginx and the schedule under supervisord
+      set -eu
+      V=/var/lib/wallos
+      mkdir -p "$V/db" "$V/logos/avatars" "$V/.tmp"
+      cd /var/www/wallos
+      php endpoints/cronjobs/createdatabase.php
+      php endpoints/db/migrate.php
+      php endpoints/cronjobs/updatenextpayment.php
+      exec /usr/bin/supervisord -c /etc/wallos/supervisord.conf
+      SH
+      chmod 0755 "${{targets.destdir}}/usr/libexec/wallos-init"
+      install -d "${{targets.destdir}}/etc/wallos"
+      # upstream's schedule (cronjobs), logging to the container instead of /var/log/cron
+      cat > "${{targets.destdir}}/etc/wallos/crontab" <<'CRON'
+      0 1 * * * /usr/bin/php /var/www/wallos/endpoints/cronjobs/updatenextpayment.php
+      0 2 * * * /usr/bin/php /var/www/wallos/endpoints/cronjobs/updateexchange.php
+      0 8 * * * /usr/bin/php /var/www/wallos/endpoints/cronjobs/sendcancellationnotifications.php
+      0 9 * * * /usr/bin/php /var/www/wallos/endpoints/cronjobs/sendnotifications.php
+      */2 * * * * /usr/bin/php /var/www/wallos/endpoints/cronjobs/sendverificationemails.php
+      */2 * * * * /usr/bin/php /var/www/wallos/endpoints/cronjobs/sendresetpasswordemails.php
+      0 */6 * * * /usr/bin/php /var/www/wallos/endpoints/cronjobs/checkforupdates.php
+      30 1 * * 1 /usr/bin/php /var/www/wallos/endpoints/cronjobs/storetotalyearlycost.php
+      0 3 * * * /usr/bin/php /var/www/wallos/endpoints/cronjobs/cleanupresettokens.php
+      30 3 * * 1 /usr/bin/php /var/www/wallos/endpoints/cronjobs/generaterecommendations.php weekly
+      0 4 1 * * /usr/bin/php /var/www/wallos/endpoints/cronjobs/generaterecommendations.php monthly
+      CRON
+
+  - name: nginx server block (upstream's deny rules, FastCGI to php-fpm on :8080)
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/etc/nginx/conf.d"
+      cat > "$d/etc/nginx/conf.d/wallos.conf" <<'NGINX'
+      server {
+          listen 8080 default_server;
+          listen [::]:8080 default_server;
+          server_name _;
+          root /var/www/wallos;
+          index index.php;
+          charset utf-8;
+          # database backups (with logos) can be tens of MB
+          client_max_body_size 256M;
+          access_log off;
+
+          location / { try_files $uri $uri/ /index.php?$args; }
+          location ~ (^|/)\.(?!well-known(?:/|$)) { return 403; }
+          location ~ \.db$ { return 403; }
+          location ^~ /db/ { return 403; }
+          location ~* images/uploads/logos/.*\.php$ { return 403; }
+          location ~* ^/(includes|libs|migrations|scripts)/.*\.php$ { return 403; }
+          location ~* ^/endpoints/(cronjobs|db/migrate)\b { return 403; }
+          location = /health.php { access_log off; include /etc/nginx/fastcgi_params; fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name; fastcgi_pass 127.0.0.1:9000; }
+          location ~ \.php$ {
+              include       /etc/nginx/fastcgi_params;
+              fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+              fastcgi_pass  127.0.0.1:9000;
+          }
+      }
+      NGINX
+
+  - name: php-fpm pool + php.ini (nonroot, read-only rootfs)
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/etc/php/php-fpm.d" "$d/etc/php/conf.d"
+      cat > "$d/etc/php/php-fpm.d/zzz-wallos.conf" <<'FPM'
+      [global]
+      daemonize = no
+      error_log = /proc/self/fd/2
+
+      [www]
+      listen = 127.0.0.1:9000
+      catch_workers_output = yes
+      decorate_workers_output = no
+      ; OIDC_*, SSRF_ALLOWLIST and other settings come from the container environment
+      clear_env = no
+      pm = dynamic
+      pm.max_children = 15
+      pm.max_requests = 500
+      pm.start_servers = 2
+      pm.min_spare_servers = 1
+      pm.max_spare_servers = 4
+      FPM
+      cat > "$d/etc/php/conf.d/zzz-wallos.ini" <<'INI'
+      expose_php = Off
+      memory_limit = 256M
+      upload_max_filesize = 256M
+      post_max_size = 256M
+      sys_temp_dir = /tmp
+      upload_tmp_dir = /tmp
+      session.save_path = /tmp
+      display_errors = Off
+      log_errors = On
+      error_log = /proc/self/fd/2
+      opcache.enable = 1
+      opcache.revalidate_freq = 60
+      INI
+
+  - name: supervisord (php-fpm + nginx + supercronic)
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/etc/supervisor.d"
+      cat > "$d/etc/wallos/supervisord.conf" <<'SUP'
+      [supervisord]
+      nodaemon=true
+      logfile=/dev/stdout
+      logfile_maxbytes=0
+      pidfile=/tmp/supervisord.pid
+
+      [unix_http_server]
+      file=/tmp/supervisor.sock
+
+      [supervisorctl]
+      serverurl=unix:///tmp/supervisor.sock
+
+      [rpcinterface:supervisor]
+      supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+
+      [include]
+      files = /etc/supervisor.d/*.conf
+      SUP
+      for p in "php-fpm:/usr/bin/php-fpm --nodaemonize --fpm-config /etc/php/php-fpm.conf:10" \
+               "nginx:/usr/bin/nginx -g \"daemon off;\":20" "schedule:/usr/bin/supercronic -passthrough-logs /etc/wallos/crontab:30"; do
+        name=${p%%:*} rest=${p#*:} cmd=${rest%:*} prio=${rest##*:}
+        printf '%s\n' "[program:$name]" "command=$cmd" 'autostart=true' 'autorestart=true' "priority=$prio" \
+          'stdout_logfile=/dev/stdout' 'stdout_logfile_maxbytes=0' 'stderr_logfile=/dev/stderr' 'stderr_logfile_maxbytes=0' \
+          > "$d/etc/supervisor.d/$name.conf"
+      done
+
+test:
+  pipeline:
+    - runs: |
+        set -eu
+        test -f /var/www/wallos/index.php
+        test -L /var/www/wallos/db
+        grep -q 'value <= 10' /var/www/wallos/libs/OTPHP/ParameterTrait.php
+        php -m | grep -qi sqlite3
