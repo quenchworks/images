@@ -163,11 +163,11 @@ pipeline:
       [ -n "${APP_KEY:-}" ] || { echo "APP_KEY is not set: base64:<32 random bytes>, e.g. from openssl rand -base64 32" >&2; exit 1; }
       V=/var/lib/snipeit
       mkdir -p "$V/storage" "$V/uploads"
-      cp -rn /usr/share/snipe-it/storage-skel/. "$V/storage/"
+      [ -n "$(ls -A "$V/storage")" ] || cp -r /usr/share/snipe-it/storage-skel/. "$V/storage/"
       # config/view.php resolves framework/views with realpath(): it must exist before artisan boots
       mkdir -p "$V/storage/framework/views" "$V/storage/framework/cache/data" "$V/storage/framework/sessions" \
         "$V/storage/framework/testing" "$V/storage/logs" "$V/storage/app/public" "$V/storage/app/backups" "$V/storage/private_uploads"
-      cp -rn /usr/share/snipe-it/uploads-skel/. "$V/uploads/"
+      [ -n "$(ls -A "$V/uploads")" ] || cp -r /usr/share/snipe-it/uploads-skel/. "$V/uploads/"
       cd /var/www/snipe-it
       i=0
       until php -r 'new PDO(sprintf("mysql:host=%s;port=%s;dbname=%s", getenv("DB_HOST"), getenv("DB_PORT") ?: "3306", getenv("DB_DATABASE")), getenv("DB_USERNAME"), getenv("DB_PASSWORD"));' 2>/dev/null; do

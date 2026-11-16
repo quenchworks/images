@@ -179,8 +179,8 @@ pipeline:
       [ -n "${APP_KEY:-}" ] || { echo "APP_KEY is not set: base64:<32 random bytes>, e.g. from openssl rand -base64 32" >&2; exit 1; }
       V=/var/lib/lychee
       mkdir -p "$V/storage" "$V/uploads" "$V/sym"
-      cp -rn /usr/share/lychee/storage-skel/. "$V/storage/"
-      cp -rn /usr/share/lychee/uploads-skel/. "$V/uploads/"
+      [ -n "$(ls -A "$V/storage")" ] || cp -r /usr/share/lychee/storage-skel/. "$V/storage/"
+      [ -n "$(ls -A "$V/uploads")" ] || cp -r /usr/share/lychee/uploads-skel/. "$V/uploads/"
       mkdir -p "$V/storage/framework/views" "$V/storage/framework/cache/data" "$V/storage/framework/sessions" "$V/storage/logs" "$V/storage/tmp"
       if [ "${DB_CONNECTION:-sqlite}" = sqlite ]; then
         f="${DB_DATABASE:-$V/storage/database.sqlite}"

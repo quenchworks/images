@@ -174,7 +174,7 @@ pipeline:
       [ -n "${APP_KEY:-}" ] || { echo "APP_KEY is not set: base64:<32 random bytes>, e.g. from openssl rand -base64 32" >&2; exit 1; }
       S=/var/lib/koel/storage
       mkdir -p "$S"
-      cp -rn /usr/share/koel/storage-skel/. "$S/"
+      [ -n "$(ls -A "$S")" ] || cp -r /usr/share/koel/storage-skel/. "$S/"
       mkdir -p "$S/framework/views" "$S/framework/cache/data" "$S/framework/sessions" "$S/logs" "$S/app/public" "$S/search-indexes"
       if [ "${DB_CONNECTION:-sqlite}" = sqlite ]; then
         f="${DB_DATABASE:-$S/database.sqlite}"
