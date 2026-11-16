@@ -1,0 +1,51 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/komga/2026-11-16",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-16T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-47884"
+      },
+      "products": [
+        {
+          "@id": "pkg:maven/org.springframework/spring-webmvc@6.2.19"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Measured 2026-11-16 on the Komga 1.30.1 source (tag 1.30.1). The flaw needs XsltView rendering a view whose name is not explicitly specified under a \"/**\" mapping. Komga renders views with Thymeleaf only (komga/build.gradle.kts:71 spring-boot-starter-thymeleaf); no XsltView or XsltViewResolver is configured anywhere in the source, and its only wildcard view mappings return explicit view names (komga/src/main/kotlin/org/gotson/komga/interfaces/mvc/IndexController.kt:25-28 returns \"index\", :31-34 returns \"index-next\"). No 6.2.x open-source fix exists (7.0.9 only). Revisit when Komga moves to Spring Boot 4 or adds XSLT views."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-47890"
+      },
+      "products": [
+        {
+          "@id": "pkg:maven/org.springframework/spring-webmvc@6.2.19"
+        },
+        {
+          "@id": "pkg:maven/org.springframework/spring-webflux@6.2.19"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Measured 2026-11-16 on the Komga 1.30.1 source. The flaw is stream corruption when Server-Sent Events carry rendered view fragments. Komga's only SSE endpoint (komga/src/main/kotlin/org/gotson/komga/interfaces/sse/SseController.kt:45 GET sse/v1/events) sends named events whose data is JSON (SseController.kt:136-141, .data(data, MediaType.APPLICATION_JSON)) plus heartbeat comments (:64); it never returns ModelAndView or FragmentsRendering over SSE, and webflux serves no endpoints (see CVE-2026-47892). No 6.2.x open-source fix exists (7.0.9 only). Revisit when Komga moves to Spring Boot 4."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-47892"
+      },
+      "products": [
+        {
+          "@id": "pkg:maven/org.springframework/spring-webflux@6.2.19"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Measured 2026-11-16 on the Komga 1.30.1 source. The flaw is a header predicate bypass in WebFlux functional endpoints (RouterFunction). Komga runs on Spring MVC (komga/build.gradle.kts:65 spring-boot-starter-web); spring-boot-starter-webflux (:66) is only used for the reactive WebClient (komga/src/main/kotlin/org/gotson/komga/interfaces/api/rest/ReleaseController.kt:15 and AnnouncementController.kt:20 import web.reactive.function.client.WebClient), and the source defines no RouterFunction, coRouter or RequestPredicates. No 6.2.x open-source fix exists (7.0.9 only). Revisit when Komga moves to Spring Boot 4."
+    }
+  ]
+}

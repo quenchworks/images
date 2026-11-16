@@ -468,6 +468,7 @@ var table = map[string]check{
 	"yarr":        {src: ghRel("nkanaev/yarr"), n: 1},
 	"yourls":      {src: ghRel("YOURLS/YOURLS"), n: 1},
 	"zipkin":      {src: ghRel("openzipkin/zipkin"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
+	"komga":       {src: ghRel("gotson/komga"), n: 1},
 	"zitadel":     {src: ghRel("zitadel/zitadel")},
 	"zoraxy":      {src: ghRel("tobychui/zoraxy"), n: 1},
 	"zot":         {src: ghRel("project-zot/zot"), n: 1},

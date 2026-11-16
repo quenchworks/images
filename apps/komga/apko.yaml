@@ -1,0 +1,63 @@
+# Komga runtime: the exploded release jar on openjdk-21-jre, HTTP on 25600, config, SQLite databases, Lucene index and
+# thumbnails in /var/lib/komga (KOMGA_CONFIGDIR). Mount the comics and books read-only anywhere and add them as
+# libraries. sqlite-jdbc and the image codecs unpack natives into /tmp: it must allow exec. The first account is
+# claimed with POST /api/v1/claim. Nonroot uid 1001.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-komga@local
+
+accounts:
+  groups:
+    - groupname: komga
+      gid: 1001
+  users:
+    - username: komga
+      uid: 1001
+      gid: 1001
+      homedir: /var/lib/komga
+  run-as: 1001
+
+environment:
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  HOME: /var/lib/komga
+  LANG: C.UTF-8
+  KOMGA_CONFIGDIR: /var/lib/komga
+  JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=75
+
+paths:
+  - path: /var/lib
+    type: directory
+    uid: 0
+    gid: 0
+    permissions: 0o755
+  - path: /var/lib/komga
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+work-dir: /var/lib/komga
+
+# openjdk-21-jre has no /usr/bin/java symlink, so the path is the JDK's own.
+entrypoint:
+  command: /usr/lib/jvm/java-21-openjdk/bin/java -cp /usr/lib/komga org.springframework.boot.loader.launch.JarLauncher
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-komga"
+  org.opencontainers.image.licenses: "MIT"
+  org.opencontainers.image.version: "__VER__"
