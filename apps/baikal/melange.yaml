@@ -1,0 +1,289 @@
+# Baïkal from the release zip on Wolfi php-8.5-fpm + nginx (nginx comes from the sibling
+# quench-nginx package, installed by apko).
+package:
+  name: quench-baikal
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Baikal (CalDAV and CardDAV server) on Wolfi php-fpm + nginx"
+  copyright:
+    - license: GPL-3.0-only
+  dependencies:
+    runtime:
+      - php-8.5
+      - php-8.5-config
+      - php-8.5-fpm
+      - php-8.5-fpm-config
+      - php-8.5-ctype
+      - php-8.5-ctype-config
+      - php-8.5-curl
+      - php-8.5-curl-config
+      - php-8.5-dom
+      - php-8.5-dom-config
+      - php-8.5-iconv
+      - php-8.5-iconv-config
+      - php-8.5-mbstring
+      - php-8.5-mbstring-config
+      - php-8.5-openssl
+      - php-8.5-openssl-config
+      - php-8.5-pdo
+      - php-8.5-pdo-config
+      - php-8.5-pdo_sqlite
+      - php-8.5-pdo_sqlite-config
+      - php-8.5-pdo_mysql
+      - php-8.5-pdo_mysql-config
+      - php-8.5-mysqlnd
+      - php-8.5-mysqlnd-config
+      - php-8.5-pdo_pgsql
+      - php-8.5-pdo_pgsql-config
+      - php-8.5-simplexml
+      - php-8.5-simplexml-config
+      - php-8.5-xml
+      - php-8.5-xml-config
+      - php-8.5-xmlreader
+      - php-8.5-xmlreader-config
+      - php-8.5-xmlwriter
+      - php-8.5-xmlwriter-config
+      - supervisor
+      - busybox
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - php-8.5
+      - php-8.5-config
+      - php-8.5-ctype
+      - php-8.5-ctype-config
+      - php-8.5-curl
+      - php-8.5-curl-config
+      - php-8.5-dom
+      - php-8.5-dom-config
+      - php-8.5-iconv
+      - php-8.5-iconv-config
+      - php-8.5-mbstring
+      - php-8.5-mbstring-config
+      - php-8.5-openssl
+      - php-8.5-openssl-config
+      - php-8.5-pdo
+      - php-8.5-pdo-config
+      - php-8.5-pdo_sqlite
+      - php-8.5-pdo_sqlite-config
+      - php-8.5-pdo_mysql
+      - php-8.5-pdo_mysql-config
+      - php-8.5-mysqlnd
+      - php-8.5-mysqlnd-config
+      - php-8.5-pdo_pgsql
+      - php-8.5-pdo_pgsql-config
+      - php-8.5-simplexml
+      - php-8.5-simplexml-config
+      - php-8.5-xml
+      - php-8.5-xml-config
+      - php-8.5-xmlreader
+      - php-8.5-xmlreader-config
+      - php-8.5-xmlwriter
+      - php-8.5-xmlwriter-config
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/sabre-io/Baikal/releases/download/${{package.version}}/baikal-${{package.version}}.zip
+      expected-sha256: __SHA256__
+      extract: false
+
+  - name: Lay out /var/www/baikal and the setup step
+    runs: |
+      set -eu
+      unzip -q baikal-${{package.version}}.zip && rm baikal-${{package.version}}.zip
+      cd baikal
+      grep -qF 'define("BAIKAL_VERSION", "${{package.version}}")' Core/Distrib.php
+      d="${{targets.destdir}}/var/www/baikal"
+      install -d "$d"
+      # config/ and Specific/ (the SQLite database) live on the volume through BAIKAL_PATH_CONFIG/_SPECIFIC
+      cp -a Core html vendor LICENSE "$d/"
+      install -d "${{targets.destdir}}/usr/libexec"
+      cat > "${{targets.destdir}}/usr/libexec/baikal-init" <<'SH'
+      #!/bin/sh
+      # prepares /var/lib/baikal, replaces the install wizard on the first start, then runs supervisord
+      set -eu
+      mkdir -p "$BAIKAL_PATH_CONFIG" "$BAIKAL_PATH_SPECIFIC/db"
+      php /usr/libexec/baikal-setup.php
+      exec /usr/bin/supervisord -c /etc/baikal/supervisord.conf
+      SH
+      chmod 0755 "${{targets.destdir}}/usr/libexec/baikal-init"
+      # the install wizard's work, from the environment: baikal.yaml (admin hash as Auth::hashAdminPassword),
+      # the SQLite schema, and an optional DAV user through Baikal's own User model (principal, default
+      # calendar and address book)
+      cat > "${{targets.destdir}}/usr/libexec/baikal-setup.php" <<'PHP'
+      <?php
+      use Symfony\Component\Yaml\Yaml;
+      chdir('/var/www/baikal/html');
+      define('BAIKAL_CONTEXT', true);
+      define('PROJECT_CONTEXT_BASEURI', '/');
+      define('PROJECT_PATH_ROOT', '/var/www/baikal/');
+      require PROJECT_PATH_ROOT . 'vendor/autoload.php';
+      $cfgDir = rtrim(getenv('BAIKAL_PATH_CONFIG'), '/') . '/';
+      $specDir = rtrim(getenv('BAIKAL_PATH_SPECIFIC'), '/') . '/';
+      $sqlite = $specDir . 'db/db.sqlite';
+      $realm = 'BaikalDAV';
+      if (!is_file($cfgDir . 'baikal.yaml')) {
+          $admin = getenv('BAIKAL_ADMIN_PASSWORD');
+          if (!$admin) {
+              fwrite(STDERR, "no baikal.yaml yet: set BAIKAL_ADMIN_PASSWORD (or open /admin/install)\n");
+              exit(0);
+          }
+          require PROJECT_PATH_ROOT . 'Core/Distrib.php';
+          $config = [
+              'system' => [
+                  'configured_version' => BAIKAL_VERSION,
+                  'timezone' => getenv('BAIKAL_TIMEZONE') ?: 'UTC',
+                  'card_enabled' => true,
+                  'cal_enabled' => true,
+                  'dav_auth_type' => getenv('BAIKAL_DAV_AUTH_TYPE') ?: 'Digest',
+                  'admin_passwordhash' => hash('sha256', 'admin:' . $realm . ':' . $admin),
+                  'failed_access_message' => 'user %u authentication failure for Baikal',
+                  'auth_realm' => $realm,
+                  'base_uri' => '',
+              ],
+              'database' => [
+                  'sqlite_file' => $sqlite,
+                  'backend' => 'sqlite',
+                  'mysql_host' => '', 'mysql_dbname' => '', 'mysql_username' => '', 'mysql_password' => '', 'mysql_ca_cert' => '',
+                  'encryption_key' => bin2hex(random_bytes(16)),
+                  'pgsql_host' => '', 'pgsql_dbname' => '', 'pgsql_username' => '', 'pgsql_password' => '',
+              ],
+          ];
+          file_put_contents($cfgDir . 'baikal.yaml', Yaml::dump($config, 3));
+          echo "baikal.yaml written\n";
+      }
+      if (!is_file($sqlite) || filesize($sqlite) === 0) {
+          $pdo = new PDO('sqlite:' . $sqlite);
+          $pdo->exec(file_get_contents(PROJECT_PATH_ROOT . 'Core/Resources/Db/SQLite/db.sql'));
+          echo "database created\n";
+      }
+      $user = getenv('BAIKAL_DAV_USER');
+      $pass = getenv('BAIKAL_DAV_PASSWORD');
+      if ($user && $pass) {
+          \Flake\Framework::bootstrap();
+          \Baikal\Framework::bootstrap();
+          $pdo = $GLOBALS['DB']->getPDO();
+          $q = $pdo->prepare('SELECT COUNT(*) FROM users WHERE username = ?');
+          $q->execute([$user]);
+          if ((int) $q->fetchColumn() === 0) {
+              $u = new \Baikal\Model\User();
+              $u->set('username', $user)->set('displayname', $user)->set('email', getenv('BAIKAL_DAV_EMAIL') ?: $user . '@example.com')->set('password', $pass);
+              $u->persist();
+              echo "DAV user $user created\n";
+          }
+      }
+      PHP
+
+  - name: nginx server block (FastCGI to php-fpm on :8080)
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/etc/nginx/conf.d"
+      cat > "$d/etc/nginx/conf.d/baikal.conf" <<'NGINX'
+      server {
+          listen 8080 default_server;
+          listen [::]:8080 default_server;
+          server_name _;
+          root /var/www/baikal/html;
+          index index.php;
+          charset utf-8;
+          client_max_body_size 20M;
+          access_log off;
+
+          location ~ /\. { return 403; }
+          rewrite ^/.well-known/caldav /dav.php redirect;
+          rewrite ^/.well-known/carddav /dav.php redirect;
+          location ~ ^(.+\.php)(.*)$ {
+              try_files $fastcgi_script_name =404;
+              include        /etc/nginx/fastcgi_params;
+              fastcgi_split_path_info ^(.+\.php)(.*)$;
+              fastcgi_param  SCRIPT_FILENAME $document_root$fastcgi_script_name;
+              fastcgi_param  PATH_INFO $fastcgi_path_info;
+              fastcgi_pass   127.0.0.1:9000;
+          }
+      }
+      NGINX
+  - name: php-fpm pool + php.ini (nonroot, read-only rootfs)
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/etc/php/php-fpm.d" "$d/etc/php/conf.d"
+      cat > "$d/etc/php/php-fpm.d/zzz-baikal.conf" <<'FPM'
+      [global]
+      daemonize = no
+      error_log = /proc/self/fd/2
+
+      [www]
+      listen = 127.0.0.1:9000
+      catch_workers_output = yes
+      decorate_workers_output = no
+      ; BAIKAL_* paths and settings come from the container environment
+      clear_env = no
+      pm = dynamic
+      pm.max_children = 16
+      pm.start_servers = 2
+      pm.min_spare_servers = 1
+      pm.max_spare_servers = 4
+      FPM
+      cat > "$d/etc/php/conf.d/zzz-baikal.ini" <<'INI'
+      expose_php = Off
+      memory_limit = 256M
+      upload_max_filesize = 20M
+      post_max_size = 20M
+      sys_temp_dir = /tmp
+      upload_tmp_dir = /tmp
+      session.save_path = /tmp
+      display_errors = Off
+      log_errors = On
+      error_log = /proc/self/fd/2
+      date.timezone = UTC
+      opcache.enable = 1
+      opcache.revalidate_freq = 60
+      INI
+
+  - name: supervisord (php-fpm + nginx)
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/etc/baikal" "$d/etc/supervisor.d"
+      cat > "$d/etc/baikal/supervisord.conf" <<'SUP'
+      [supervisord]
+      nodaemon=true
+      logfile=/dev/stdout
+      logfile_maxbytes=0
+      pidfile=/tmp/supervisord.pid
+
+      [unix_http_server]
+      file=/tmp/supervisor.sock
+
+      [supervisorctl]
+      serverurl=unix:///tmp/supervisor.sock
+
+      [rpcinterface:supervisor]
+      supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+
+      [include]
+      files = /etc/supervisor.d/*.conf
+      SUP
+      printf '%s\n' '[program:php-fpm]' 'command=/usr/bin/php-fpm --nodaemonize --fpm-config /etc/php/php-fpm.conf' \
+        'autostart=true' 'autorestart=true' 'priority=10' 'stdout_logfile=/dev/stdout' 'stdout_logfile_maxbytes=0' \
+        'stderr_logfile=/dev/stderr' 'stderr_logfile_maxbytes=0' > "$d/etc/supervisor.d/php-fpm.conf"
+      printf '%s\n' '[program:nginx]' 'command=/usr/bin/nginx -g "daemon off;"' \
+        'autostart=true' 'autorestart=true' 'priority=20' 'stdout_logfile=/dev/stdout' 'stdout_logfile_maxbytes=0' \
+        'stderr_logfile=/dev/stderr' 'stderr_logfile_maxbytes=0' > "$d/etc/supervisor.d/nginx.conf"
+
+test:
+  pipeline:
+    - runs: |
+        set -eu
+        test -f /var/www/baikal/html/dav.php
+        test -f /usr/libexec/baikal-setup.php
+        php -m | grep -qi pdo_sqlite
