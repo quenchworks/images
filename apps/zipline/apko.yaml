@@ -1,0 +1,68 @@
+# Zipline runtime: HTTP on 3000 (CORE_PORT), PostgreSQL via DATABASE_URL, CORE_SECRET (32+ characters) required,
+# uploads in /var/lib/zipline/uploads (DATASOURCE_LOCAL_DIRECTORY). The first visitor creates the super-admin at /setup.
+# No TLS listener. Nonroot uid 1001.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - tzdata
+    - quench-zipline@local
+
+accounts:
+  groups:
+    - groupname: zipline
+      gid: 1001
+  users:
+    - username: zipline
+      uid: 1001
+      gid: 1001
+      homedir: /var/lib/zipline
+  run-as: 1001
+
+environment:
+  NODE_ENV: production
+  ZIPLINE_ROOT: /zipline
+  DATASOURCE_TYPE: local
+  DATASOURCE_LOCAL_DIRECTORY: /var/lib/zipline/uploads
+  # upload staging (default ./uploads/.tmp under the read-only app dir)
+  CORE_TEMP_DIRECTORY: /tmp/zipline
+
+paths:
+  - path: /var/lib
+    type: directory
+    uid: 0
+    gid: 0
+    permissions: 0o755
+  - path: /var/lib/zipline
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+  - path: /var/lib/zipline/uploads
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+work-dir: /zipline
+
+entrypoint:
+  command: /usr/bin/node --enable-source-maps build/server/index.js
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-zipline"
+  org.opencontainers.image.licenses: "MIT"
+  org.opencontainers.image.version: "__VER__"
