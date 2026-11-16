@@ -14,6 +14,12 @@ permissions:
   id-token: write
   attestations: write
 
+# one build per app at a time; a newer dispatch replaces an older one still pending (a stuck
+# queued run once ran 40 minutes late and republished a digest the chart had already pinned)
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 env:
   APP: metallb-speaker
   GHCR_IMAGE: ghcr.io/quenchworks/images/metallb-speaker

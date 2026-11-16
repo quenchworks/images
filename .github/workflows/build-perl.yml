@@ -22,6 +22,12 @@ permissions:
   id-token: write        # cosign keyless + attestation signing
   attestations: write    # SLSA build provenance + SBOM attestation
 
+# one build per app at a time; a newer dispatch replaces an older one still pending (a stuck
+# queued run once ran 40 minutes late and republished a digest the chart had already pinned)
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 env:
   APP: perl
   GHCR_IMAGE: ghcr.io/quenchworks/images/perl
