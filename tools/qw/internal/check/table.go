@@ -154,6 +154,7 @@ var table = map[string]check{
 	"helm":                              {src: ghRel("helm/helm"), lines: 1},
 	"popeye":                            {src: ghRel("derailed/popeye"), n: 1},
 	"helmfile":                          {src: ghRel("helmfile/helmfile"), n: 1},
+	"derper":                            {src: ghRel("tailscale/tailscale"), n: 1},
 	"etcd":                              {src: ghRel("etcd-io/etcd")},
 	"excalidraw":                        {src: ghRel("excalidraw/excalidraw")},
 	"external-dns":                      {src: ghRel("kubernetes-sigs/external-dns")},

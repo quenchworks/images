@@ -1,0 +1,54 @@
+# derper runtime: TLS on 443 (allow it with the sysctl net.ipv4.ip_unprivileged_port_start=0; derper serves TLS
+# only on 443), STUN on 3478/udp, certificates from /certs (<hostname>.crt and .key), its key file in
+# /var/lib/derper. Set -hostname to the relay's name. Nonroot uid 1001, multi-arch, shell-free.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-derper@local
+
+accounts:
+  groups:
+    - groupname: derper
+      gid: 1001
+  users:
+    - username: derper
+      uid: 1001
+      gid: 1001
+      homedir: /var/lib/derper
+  run-as: 1001
+
+work-dir: /var/lib/derper
+
+paths:
+  - path: /var/lib
+    type: directory
+    uid: 0
+    gid: 0
+    permissions: 0o755
+  - path: /var/lib/derper
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+entrypoint:
+  command: /usr/bin/derper
+cmd: -a :443 -http-port -1 -stun-port 3478 -certmode manual -certdir /certs -hostname derp.example.com -c /var/lib/derper/derper.json
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-derper"
+  org.opencontainers.image.licenses: "BSD-3-Clause"
