@@ -1,0 +1,63 @@
+# copyparty runtime: copyparty on 3923 serving /srv (files) with its state (salts, sessions, certificates)
+# in XDG_CONFIG_HOME=/var/lib/copyparty. The default command shares /srv read-only with everyone; the
+# chart passes accounts and volumes. Nonroot uid 1001, multi-arch.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-copyparty@local
+
+accounts:
+  groups:
+    - groupname: copyparty
+      gid: 1001
+  users:
+    - username: copyparty
+      uid: 1001
+      gid: 1001
+      homedir: /var/lib/copyparty
+  run-as: 1001
+
+work-dir: /srv
+
+environment:
+  PYTHONDONTWRITEBYTECODE: "1"
+  XDG_CONFIG_HOME: /var/lib/copyparty
+
+paths:
+  - path: /var/lib
+    type: directory
+    uid: 0
+    gid: 0
+    permissions: 0o755
+  - path: /var/lib/copyparty
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+  - path: /srv
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+entrypoint:
+  command: /opt/copyparty/.venv/bin/copyparty
+cmd: -p 3923 -v /srv::r
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-copyparty"
+  org.opencontainers.image.licenses: "MIT"
