@@ -1,0 +1,79 @@
+# draw.io from the official draw.war release artifact, served as static files by Wolfi nginx.
+package:
+  name: quench-drawio
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened draw.io diagram editor, served by nginx on Wolfi"
+  copyright:
+    - license: Apache-2.0
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/jgraph/drawio/releases/download/v${{package.version}}/draw.war
+      expected-sha256: __SHA256__
+      extract: false
+
+  - runs: |
+      set -eu
+      out="${{targets.destdir}}/usr/share/nginx/html"
+      install -d "$out"
+      unzip -q draw.war -d "$out"
+      # the servlets (proxy, server-side export) and their jars are not served statically
+      rm -rf "$out/WEB-INF" "$out/META-INF"
+      find "$out" -name '*.jar' | grep -q . && { echo "FATAL: a jar is left in the web root"; exit 1; }
+      grep -qF 'EditorUi.VERSION="${{package.version}}"' "$out/js/app.min.js"
+      test -f "$out/index.html"
+      install -d "${{targets.destdir}}/etc/drawio"
+      cat > "${{targets.destdir}}/etc/drawio/nginx.conf" <<'CONF'
+      daemon off;
+      worker_processes auto;
+      pid /tmp/nginx.pid;
+      error_log /dev/stderr notice;
+
+      events {
+          worker_connections 1024;
+      }
+
+      http {
+          include       /etc/nginx/mime.types;
+          default_type  application/octet-stream;
+
+          client_body_temp_path /tmp/client_body_temp;
+          proxy_temp_path       /tmp/proxy_temp;
+          fastcgi_temp_path     /tmp/fastcgi_temp;
+          uwsgi_temp_path       /tmp/uwsgi_temp;
+          scgi_temp_path        /tmp/scgi_temp;
+
+          access_log /dev/stdout;
+          sendfile      on;
+          gzip          on;
+          gzip_types    text/css application/javascript application/json image/svg+xml;
+          server_tokens off;
+
+          server {
+              listen      8080;
+              server_name _;
+              root        /usr/share/nginx/html;
+              index       index.html;
+              location / {
+                  try_files $uri $uri/ =404;
+              }
+          }
+      }
+      CONF
+
+
+test:
+  pipeline:
+    - runs: test -f /usr/share/nginx/html/js/app.min.js

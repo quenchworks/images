@@ -140,6 +140,7 @@ var table = map[string]check{
 	"miniserve":                         {src: ghRel("svenstaro/miniserve"), n: 1},
 	"lego":                              {src: ghRel("go-acme/lego"), n: 1},
 	"copyparty":                         {src: ghRel("9001/copyparty"), n: 1},
+	"drawio":                            {src: ghRel("jgraph/drawio"), n: 1},
 	"thelounge":                         {src: npmPkg("thelounge"), n: 1, f: filter{keep: noDash}},
 	"soju":                              {src: codebergRel("emersion/soju"), n: 1},
 	"go-httpbin":                        {src: ghRel("mccutchen/go-httpbin"), n: 1},
