@@ -1,0 +1,42 @@
+# helmfile runtime: helmfile as the entrypoint with the bundled helm 4 on PATH; HELM_* homes under /tmp (mount a
+# writable /tmp on a read-only rootfs). Minimal, nonroot uid 1001, multi-arch, shell-free.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-helmfile@local
+
+accounts:
+  groups:
+    - groupname: helmfile
+      gid: 1001
+  users:
+    - username: helmfile
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  HELM_CACHE_HOME: /tmp/helm/cache
+  HELM_CONFIG_HOME: /tmp/helm/config
+  HELM_DATA_HOME: /tmp/helm/data
+
+entrypoint:
+  command: /usr/bin/helmfile
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-helmfile"
+  org.opencontainers.image.licenses: "MIT AND Apache-2.0"

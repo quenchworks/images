@@ -119,3 +119,30 @@ func init() {
 		t.Logf("smoke test passed (popeye %s: version; without a cluster it exits with an error, no panic; user %s)", t.Want, u)
 	})
 }
+
+func init() {
+	// helmfile on a read-only rootfs with /tmp writable, offline: renders a release of a local chart through the
+	// bundled helm, with values from the helmfile.
+	register("helmfile", func(t *T) {
+		u := t.User("1001")
+		t.Contains(t.RunAny("--version"), t.Want, "helmfile --version")
+		dir := t.TempDir()
+		_ = os.MkdirAll(filepath.Join(dir, "quench", "templates"), 0o777)
+		files := map[string]string{
+			"quench/Chart.yaml":            "apiVersion: v2\nname: quench\nversion: 0.1.0\n",
+			"quench/values.yaml":           "greeting: hello\n",
+			"quench/templates/config.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}\ndata:\n  greeting: {{ .Values.greeting | quote }}\n",
+			"helmfile.yaml":                "releases:\n  - name: smoke-release\n    namespace: default\n    chart: ./quench\n    values:\n      - greeting: quench-helmfile\n",
+		}
+		for n, c := range files {
+			if err := os.WriteFile(filepath.Join(dir, n), []byte(c), 0o644); err != nil {
+				t.Fatalf("write %s: %v", n, err)
+			}
+		}
+		out, err := t.RunInputFlags([]string{"--read-only", "--tmpfs", "/tmp:rw,mode=1777", "-v", dir + ":/w:ro", "-w", "/w"}, "", "-f", "/w/helmfile.yaml", "template")
+		if err != nil || !strings.Contains(out, `greeting: "quench-helmfile"`) || !strings.Contains(out, "name: smoke-release") {
+			t.Fatalf("helmfile template: %v\n%s", err, out)
+		}
+		t.Logf("smoke test passed (helmfile %s: renders a local chart release through the bundled helm, offline, read-only; user %s)", t.Want, u)
+	})
+}
