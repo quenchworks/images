@@ -1,0 +1,285 @@
+# Grav (grav-admin) from the release zip on Wolfi php-8.5-fpm + nginx (nginx comes from the sibling
+# quench-nginx package, installed by apko).
+package:
+  name: quench-grav
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Grav flat-file CMS on Wolfi php-fpm + nginx"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - php-8.5
+      - php-8.5-config
+      - php-8.5-fpm
+      - php-8.5-fpm-config
+      - php-8.5-ctype
+      - php-8.5-ctype-config
+      - php-8.5-curl
+      - php-8.5-curl-config
+      - php-8.5-dom
+      - php-8.5-dom-config
+      - php-8.5-fileinfo
+      - php-8.5-fileinfo-config
+      - php-8.5-gd
+      - php-8.5-gd-config
+      - php-8.5-iconv
+      - php-8.5-iconv-config
+      - php-8.5-intl
+      - php-8.5-intl-config
+      - php-8.5-mbstring
+      - php-8.5-mbstring-config
+      - php-8.5-openssl
+      - php-8.5-openssl-config
+      - php-8.5-simplexml
+      - php-8.5-simplexml-config
+      - php-8.5-xml
+      - php-8.5-xml-config
+      - php-8.5-xmlreader
+      - php-8.5-xmlreader-config
+      - php-8.5-xmlwriter
+      - php-8.5-xmlwriter-config
+      - php-8.5-zip
+      - php-8.5-zip-config
+      - supervisor
+      - busybox
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - php-8.5
+      - php-8.5-config
+      - php-8.5-ctype
+      - php-8.5-ctype-config
+      - php-8.5-curl
+      - php-8.5-curl-config
+      - php-8.5-dom
+      - php-8.5-dom-config
+      - php-8.5-fileinfo
+      - php-8.5-fileinfo-config
+      - php-8.5-gd
+      - php-8.5-gd-config
+      - php-8.5-iconv
+      - php-8.5-iconv-config
+      - php-8.5-intl
+      - php-8.5-intl-config
+      - php-8.5-mbstring
+      - php-8.5-mbstring-config
+      - php-8.5-openssl
+      - php-8.5-openssl-config
+      - php-8.5-simplexml
+      - php-8.5-simplexml-config
+      - php-8.5-xml
+      - php-8.5-xml-config
+      - php-8.5-xmlreader
+      - php-8.5-xmlreader-config
+      - php-8.5-xmlwriter
+      - php-8.5-xmlwriter-config
+      - php-8.5-zip
+      - php-8.5-zip-config
+      - composer
+      - git
+      - jq
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/getgrav/grav/releases/download/${{package.version}}/grav-admin-v${{package.version}}.zip
+      expected-sha256: __SHA256__
+      extract: false
+
+  - name: Unpack and raise the symfony patch releases (root and email plugin)
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" COMPOSER_HOME="$(mktemp -d)"
+      unzip -q grav-admin-v${{package.version}}.zip && rm grav-admin-v${{package.version}}.zip
+      cd grav-admin
+      grep -qF 'define("GRAV_VERSION", "${{package.version}}")' system/defines.php
+      composer config --global github-protocols https
+      for dir in . user/plugins/email; do
+        (
+          cd "$dir"
+          # vcs repositories (Grav's forks): clone over https with git, not the GitHub API or ssh
+          jq 'if .repositories then .repositories |= map(if .type == "vcs" then . + {"no-api": true} else . end) else . end' composer.json > composer.json.new && mv composer.json.new composer.json
+        )
+      done
+      composer update --no-dev --no-interaction --no-progress --no-scripts --with-all-dependencies symfony/http-client symfony/yaml
+      composer dump-autoload --no-dev --optimize --no-scripts
+      (cd user/plugins/email && composer update --no-dev --no-interaction --no-progress --no-scripts --with-all-dependencies symfony/mime \
+        && composer dump-autoload --no-dev --optimize --no-scripts)
+      for want in .:symfony/http-client=7.4.23 .:symfony/yaml=7.4.23 user/plugins/email:symfony/mime=5.4.55; do
+        dir=${want%%:*} pm=${want#*:}; p=${pm%=*} min=${pm#*=}
+        have=$(jq -r --arg p "$p" '.packages[] | select(.name == $p) | .version' "$dir/composer.lock" | sed 's/^v//')
+        [ -n "$have" ] || continue
+        [ "$(printf '%s\n%s\n' "$min" "$have" | sort -V | head -1)" = "$min" ] || { echo "FATAL: $dir $p $have below $min"; exit 1; }
+      done
+      # the email plugin's tests ship their own lock and vendor: not part of the site
+      rm -rf user/plugins/email/tests
+
+  - name: Lay out /var/www/grav and the init script
+    runs: |
+      set -eu
+      cd grav-admin
+      d="${{targets.destdir}}/var/www/grav"
+      install -d "$d"
+      cp -a assets backup bin cache images index.php logs system tmp user vendor composer.json composer.lock "$d/"
+      # writable state on the volume: the site's pages, config, accounts and data, plus caches and backups;
+      # plugins and themes stay in the image so updates reach them
+      install -d "${{targets.destdir}}/usr/share/grav"
+      for x in accounts config data pages; do
+        cp -a "$d/user/$x" "${{targets.destdir}}/usr/share/grav/user-$x"
+        rm -rf "$d/user/$x"; ln -s "/var/lib/grav/user/$x" "$d/user/$x"
+      done
+      for x in assets backup cache images logs tmp; do
+        rm -rf "$d/$x"; ln -s "/var/lib/grav/$x" "$d/$x"
+      done
+      install -d "${{targets.destdir}}/usr/libexec"
+      cat > "${{targets.destdir}}/usr/libexec/grav-init" <<'SH'
+      #!/bin/sh
+      # seeds the site on the volume, creates the first admin from the environment, then runs supervisord
+      set -eu
+      V=/var/lib/grav
+      mkdir -p "$V/assets" "$V/backup" "$V/cache" "$V/images" "$V/logs" "$V/tmp"
+      for x in accounts config data pages; do
+        mkdir -p "$V/user/$x"
+        # seed on the first start only (busybox cp -n with SRC/. copies nothing)
+        [ -n "$(ls -A "$V/user/$x")" ] || cp -r "/usr/share/grav/user-$x/." "$V/user/$x/"
+      done
+      cd /var/www/grav
+      if [ -n "${GRAV_ADMIN_USER:-}" ] && [ -n "${GRAV_ADMIN_PASSWORD:-}" ] && [ ! -f "$V/user/accounts/$GRAV_ADMIN_USER.yaml" ]; then
+        php bin/plugin login new-user --user="$GRAV_ADMIN_USER" --password="$GRAV_ADMIN_PASSWORD" \
+          --email="${GRAV_ADMIN_EMAIL:-$GRAV_ADMIN_USER@example.com}" --language=en --permissions=b --fullname="${GRAV_ADMIN_FULLNAME:-Admin}" \
+          --title=Administrator --state=enabled
+      fi
+      exec /usr/bin/supervisord -c /etc/grav/supervisord.conf
+      SH
+      chmod 0755 "${{targets.destdir}}/usr/libexec/grav-init"
+
+  - name: nginx server block (upstream's rules, FastCGI to php-fpm on :8080)
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/etc/nginx/conf.d"
+      cat > "$d/etc/nginx/conf.d/grav.conf" <<'NGINX'
+      server {
+          listen 8080 default_server;
+          listen [::]:8080 default_server;
+          server_name _;
+          root /var/www/grav;
+          index index.html index.php;
+          charset utf-8;
+          client_max_body_size 50M;
+          access_log off;
+
+          location / { try_files $uri $uri/ /index.php?$query_string; }
+          location ~ (^|/)\.(?!well-known(?:/|$)) { return 403; }
+          location ~* ^/(\.git|cache|bin|logs|backup|tmp|webserver-configs|tests)/.*$ { return 403; }
+          location ~* ^/user/(env/[^/]+/)?config/.*$ { return 403; }
+          location ~* ^/user/(env/[^/]+/)?accounts/[^/]+/[^/]+\.(jpe?g|png|gif|webp|avif|bmp|ico)$ { try_files $uri =404; }
+          location ~* ^/user/(env/[^/]+/)?accounts/.*$ { return 403; }
+          location ~* ^/user/(env/[^/]+/)?data/.*\.(jpe?g|png|gif|webp|avif|bmp|ico|mp4|webm|ogg|ogv|mov|mp3|wav|m4a|flac|pdf)$ { try_files $uri =404; }
+          location ~* ^/user/(env/[^/]+/)?data/.*$ { return 403; }
+          location ~* ^/(images|assets)/.*\.(php|php2|php3|php4|php5|php7|php8|phar|phtml|pht|phtm|phps|pl|py|cgi|sh|bat)$ { return 403; }
+          location ~* ^/(system|vendor)/.*\.(txt|xml|md|html|htm|shtml|shtm|json|yaml|yml|php|php2|php3|php4|php5|phar|phtml|pl|py|cgi|twig|sh|bat)$ { return 403; }
+          location ~* ^/user/.*\.(txt|md|json|yaml|yml|php|php2|php3|php4|php5|phar|phtml|pl|py|cgi|twig|sh|bat)$ { return 403; }
+          location ~* ^/(LICENSE\.txt|composer\.lock|composer\.json|nginx\.conf|web\.config|htaccess\.txt|\.htaccess) { return 403; }
+          location ~* \.md$ {
+              if (-f $request_filename) { return 403; }
+              try_files $uri /index.php?$query_string;
+          }
+          location ~* \.(jpe?g|png|gif|webp|avif|bmp|ico|svg|mp4|webm|ogg|ogv|mov|mp3|wav|m4a|flac|css|js|woff2?|ttf|otf|eot)$ {
+              try_files $uri $uri/ /index.php?$query_string;
+              expires 30d;
+              access_log off;
+          }
+          location ~ \.php$ {
+              fastcgi_split_path_info ^(.+\.php)(/.+)$;
+              fastcgi_index index.php;
+              include       /etc/nginx/fastcgi_params;
+              fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+              fastcgi_pass  127.0.0.1:9000;
+          }
+      }
+      NGINX
+  - name: php-fpm pool + php.ini (nonroot, read-only rootfs)
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/etc/php/php-fpm.d" "$d/etc/php/conf.d"
+      cat > "$d/etc/php/php-fpm.d/zzz-grav.conf" <<'FPM'
+      [global]
+      daemonize = no
+      error_log = /proc/self/fd/2
+
+      [www]
+      listen = 127.0.0.1:9000
+      catch_workers_output = yes
+      decorate_workers_output = no
+      ; GRAV_* settings come from the container environment
+      clear_env = no
+      pm = dynamic
+      pm.max_children = 16
+      pm.start_servers = 2
+      pm.min_spare_servers = 1
+      pm.max_spare_servers = 4
+      FPM
+      cat > "$d/etc/php/conf.d/zzz-grav.ini" <<'INI'
+      expose_php = Off
+      memory_limit = 256M
+      upload_max_filesize = 20M
+      post_max_size = 20M
+      sys_temp_dir = /tmp
+      upload_tmp_dir = /tmp
+      session.save_path = /tmp
+      display_errors = Off
+      log_errors = On
+      error_log = /proc/self/fd/2
+      date.timezone = UTC
+      opcache.enable = 1
+      opcache.revalidate_freq = 60
+      INI
+
+  - name: supervisord (php-fpm + nginx)
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/etc/grav" "$d/etc/supervisor.d"
+      cat > "$d/etc/grav/supervisord.conf" <<'SUP'
+      [supervisord]
+      nodaemon=true
+      logfile=/dev/stdout
+      logfile_maxbytes=0
+      pidfile=/tmp/supervisord.pid
+
+      [unix_http_server]
+      file=/tmp/supervisor.sock
+
+      [supervisorctl]
+      serverurl=unix:///tmp/supervisor.sock
+
+      [rpcinterface:supervisor]
+      supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+
+      [include]
+      files = /etc/supervisor.d/*.conf
+      SUP
+      printf '%s\n' '[program:php-fpm]' 'command=/usr/bin/php-fpm --nodaemonize --fpm-config /etc/php/php-fpm.conf' \
+        'autostart=true' 'autorestart=true' 'priority=10' 'stdout_logfile=/dev/stdout' 'stdout_logfile_maxbytes=0' \
+        'stderr_logfile=/dev/stderr' 'stderr_logfile_maxbytes=0' > "$d/etc/supervisor.d/php-fpm.conf"
+      printf '%s\n' '[program:nginx]' 'command=/usr/bin/nginx -g "daemon off;"' \
+        'autostart=true' 'autorestart=true' 'priority=20' 'stdout_logfile=/dev/stdout' 'stdout_logfile_maxbytes=0' \
+        'stderr_logfile=/dev/stderr' 'stderr_logfile_maxbytes=0' > "$d/etc/supervisor.d/nginx.conf"
+
+test:
+  pipeline:
+    - runs: |
+        set -eu
+        test -f /var/www/grav/index.php
+        test -L /var/www/grav/user/pages
+        php -m | grep -qi gd

@@ -1,0 +1,97 @@
+# Grav runtime: supervisord runs php-fpm (127.0.0.1:9000) and QuenchWorks' nginx (:8080, upstream's deny
+# rules) after /usr/libexec/grav-init seeds /var/lib/grav (the volume: user/accounts, config, data and pages,
+# plus assets, backup, cache, images, logs, tmp) and creates GRAV_ADMIN_USER once. Plugins and themes stay in
+# the image. Nonroot uid 1001.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - busybox
+    - supervisor
+    - quench-nginx@local          # QuenchWorks' hardened nginx (from source), 8080/nonroot
+    - quench-grav@local
+    - php-8.5
+    - php-8.5-fpm
+    - php-8.5-fpm-config
+    - php-8.5-config
+    - php-8.5-ctype
+    - php-8.5-ctype-config
+    - php-8.5-curl
+    - php-8.5-curl-config
+    - php-8.5-dom
+    - php-8.5-dom-config
+    - php-8.5-fileinfo
+    - php-8.5-fileinfo-config
+    - php-8.5-gd
+    - php-8.5-gd-config
+    - php-8.5-iconv
+    - php-8.5-iconv-config
+    - php-8.5-intl
+    - php-8.5-intl-config
+    - php-8.5-mbstring
+    - php-8.5-mbstring-config
+    - php-8.5-openssl
+    - php-8.5-openssl-config
+    - php-8.5-simplexml
+    - php-8.5-simplexml-config
+    - php-8.5-xml
+    - php-8.5-xml-config
+    - php-8.5-xmlreader
+    - php-8.5-xmlreader-config
+    - php-8.5-xmlwriter
+    - php-8.5-xmlwriter-config
+    - php-8.5-zip
+    - php-8.5-zip-config
+
+accounts:
+  groups:
+    - groupname: grav
+      gid: 1001
+  users:
+    - username: grav
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  GRAV_ROOT: /var/www/grav
+
+entrypoint:
+  command: /usr/libexec/grav-init
+
+work-dir: /var/www/grav
+
+paths:
+  - path: /tmp
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o1777
+  - path: /var/lib
+    type: directory
+    uid: 0
+    gid: 0
+    permissions: 0o755
+  - path: /var/lib/grav
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-grav"
+  org.opencontainers.image.licenses: "MIT"
+  org.opencontainers.image.version: "__VER__"

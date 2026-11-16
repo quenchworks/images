@@ -148,6 +148,7 @@ var table = map[string]check{
 	"lychee":                            {src: ghRel("LycheeOrg/Lychee"), n: 1},
 	"shaarli":                           {src: ghRel("shaarli/Shaarli"), n: 1},
 	"baikal":                            {src: ghRel("sabre-io/Baikal"), n: 1},
+	"grav":                              {src: ghRel("getgrav/grav"), n: 1},
 	"thelounge":                         {src: npmPkg("thelounge"), n: 1, f: filter{keep: noDash}},
 	"soju":                              {src: codebergRel("emersion/soju"), n: 1},
 	"go-httpbin":                        {src: ghRel("mccutchen/go-httpbin"), n: 1},
