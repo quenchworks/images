@@ -1,10 +1,10 @@
 package smoke
 
 import (
-	"crypto/tls"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -187,8 +187,24 @@ func init() {
 		os.WriteFile(filepath.Join(w, "mappings/hello.json"), []byte(`{"request":{"method":"GET","urlPath":"/hello"},
  "response":{"status":200,"transformers":["response-template"],
    "body":"hi {{request.query.name}} {{numberFormat 1234.5 '#,##0.00'}} {{math 2 '+' 3}}"}}`), 0o644)
+		// HTTPS with a keystore made from the test's own CA, so the client can verify the server
+		certs := filepath.Join(w, "certs")
+		os.Mkdir(certs, 0o755)
+		caAndServer(certs, "localhost")
+		if out, err := exec.Command("openssl", "pkcs12", "-export", "-in", filepath.Join(certs, "serverCert.pem"), "-inkey", filepath.Join(certs, "serverKey.pem"),
+			"-name", "wiremock", "-out", filepath.Join(certs, "keystore.p12"), "-passout", "pass:quench-smoke").CombinedOutput(); err != nil {
+			t.Fatalf("keystore: %v %s", err, out)
+		}
+		os.Chmod(filepath.Join(certs, "keystore.p12"), 0o644)
+		tlsc, err := pinnedClient(filepath.Join(certs, "caCert.pem"), "localhost")
+		if err != nil {
+			t.Fatalf("CA: %v", err)
+		}
 		name := t.Name("")
-		t.Start(name, []string{"--read-only", "--tmpfs", "/tmp", "-v", w + "/mappings:/home/wiremock/mappings:ro", "-p", "127.0.0.1:18080:8080", "-p", "127.0.0.1:18443:8443"}, "--https-port", "8443")
+		t.Start(name, []string{"--read-only", "--tmpfs", "/tmp", "-v", w + "/mappings:/home/wiremock/mappings:ro", "-v", certs + ":/certs:ro",
+			"-p", "127.0.0.1:18080:8080", "-p", "127.0.0.1:18443:8443"},
+			"--https-port", "8443", "--https-keystore", "/certs/keystore.p12", "--keystore-type", "PKCS12",
+			"--keystore-password", "quench-smoke", "--key-manager-password", "quench-smoke")
 		b := "http://127.0.0.1:18080"
 		for i := 0; ; i++ {
 			if _, h := Get(b + "/__admin/health"); regexp.MustCompile(`"status" *: *"healthy"`).MatchString(h) {
@@ -209,8 +225,7 @@ func init() {
 		if _, got := Get(b + "/via/hello?name=proxied"); got != "hi proxied 1,234.50 5" {
 			t.Fatalf("proxy: %s", got)
 		}
-		h2 := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{ForceAttemptHTTP2: true, TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
-		r, err := h2.Get("https://127.0.0.1:18443/__admin/health")
+		r, err := tlsc.Get("https://127.0.0.1:18443/__admin/health")
 		if err != nil || r.StatusCode != 200 || r.ProtoMajor != 2 {
 			t.Fatalf("HTTPS/2 health: %v %v", err, r)
 		}
