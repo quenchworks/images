@@ -1,0 +1,243 @@
+# Shaarli from the release zip on Wolfi php-8.5-fpm + nginx (nginx comes from the sibling
+# quench-nginx package, installed by apko).
+package:
+  name: quench-shaarli
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Shaarli (bookmarks) on Wolfi php-fpm + nginx"
+  copyright:
+    - license: Zlib
+  dependencies:
+    runtime:
+      - php-8.5
+      - php-8.5-config
+      - php-8.5-fpm
+      - php-8.5-fpm-config
+      - php-8.5-ctype
+      - php-8.5-ctype-config
+      - php-8.5-curl
+      - php-8.5-curl-config
+      - php-8.5-dom
+      - php-8.5-dom-config
+      - php-8.5-fileinfo
+      - php-8.5-fileinfo-config
+      - php-8.5-gd
+      - php-8.5-gd-config
+      - php-8.5-iconv
+      - php-8.5-iconv-config
+      - php-8.5-intl
+      - php-8.5-intl-config
+      - php-8.5-mbstring
+      - php-8.5-mbstring-config
+      - php-8.5-openssl
+      - php-8.5-openssl-config
+      - php-8.5-simplexml
+      - php-8.5-simplexml-config
+      - php-8.5-xml
+      - php-8.5-xml-config
+      - supervisor
+      - busybox
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - php-8.5
+      - php-8.5-config
+      - php-8.5-ctype
+      - php-8.5-ctype-config
+      - php-8.5-curl
+      - php-8.5-curl-config
+      - php-8.5-dom
+      - php-8.5-dom-config
+      - php-8.5-fileinfo
+      - php-8.5-fileinfo-config
+      - php-8.5-gd
+      - php-8.5-gd-config
+      - php-8.5-iconv
+      - php-8.5-iconv-config
+      - php-8.5-intl
+      - php-8.5-intl-config
+      - php-8.5-mbstring
+      - php-8.5-mbstring-config
+      - php-8.5-openssl
+      - php-8.5-openssl-config
+      - php-8.5-simplexml
+      - php-8.5-simplexml-config
+      - php-8.5-xml
+      - php-8.5-xml-config
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/shaarli/Shaarli/releases/download/v${{package.version}}/shaarli-v${{package.version}}-full.zip
+      expected-sha256: __SHA256__
+      extract: false
+
+  - name: Lay out /var/www/shaarli and the init script
+    runs: |
+      set -eu
+      unzip -q shaarli-v${{package.version}}-full.zip && rm shaarli-v${{package.version}}-full.zip
+      cd Shaarli
+      grep -qF '/* ${{package.version}} */' shaarli_version.php
+      d="${{targets.destdir}}/var/www/shaarli"
+      install -d "$d"
+      cp -a application assets inc index.php init.php plugins shaarli_version.php tpl vendor composer.json composer.lock "$d/"
+      # data/ (config, datastore), cache/, pagecache/ and tmp/ live on the volume
+      for x in data cache pagecache tmp; do rm -rf "$d/$x"; ln -s "/var/lib/shaarli/$x" "$d/$x"; done
+      install -d "${{targets.destdir}}/usr/libexec"
+      cat > "${{targets.destdir}}/usr/libexec/shaarli-init" <<'SH'
+      #!/bin/sh
+      # prepares /var/lib/shaarli, writes data/config.json.php from SHAARLI_USER/SHAARLI_PASSWORD on the first
+      # start (in place of the install form), then runs supervisord (php-fpm + nginx)
+      set -eu
+      V=/var/lib/shaarli
+      mkdir -p "$V/data" "$V/cache" "$V/pagecache" "$V/tmp"
+      cd /var/www/shaarli
+      php /usr/libexec/shaarli-config.php
+      exec /usr/bin/supervisord -c /etc/shaarli/supervisord.conf
+      SH
+      chmod 0755 "${{targets.destdir}}/usr/libexec/shaarli-init"
+      # the install form's save(), from the environment: same salted hash, required fields and API secret
+      cat > "${{targets.destdir}}/usr/libexec/shaarli-config.php" <<'PHP'
+      <?php
+      require '/var/www/shaarli/vendor/autoload.php';
+      chdir('/var/www/shaarli');
+      if (is_file('data/config.json.php')) {
+          exit(0);
+      }
+      $login = getenv('SHAARLI_USER');
+      $password = getenv('SHAARLI_PASSWORD');
+      if (!$login || !$password) {
+          fwrite(STDERR, "no config yet: set SHAARLI_USER and SHAARLI_PASSWORD (or open /install)\n");
+          exit(0);
+      }
+      $conf = new Shaarli\Config\ConfigManager('data/config');
+      $salt = sha1(uniqid('', true) . '_' . mt_rand());
+      $conf->set('general.timezone', getenv('SHAARLI_TIMEZONE') ?: 'UTC');
+      $conf->set('credentials.login', $login);
+      $conf->set('credentials.salt', $salt);
+      $conf->set('credentials.hash', sha1($password . $login . $salt));
+      $conf->set('general.title', getenv('SHAARLI_TITLE') ?: 'Shared Bookmarks');
+      $conf->set('translation.language', 'auto');
+      $conf->set('updates.check_updates', false);
+      $conf->set('api.enabled', true);
+      $conf->set('api.secret', getenv('SHAARLI_API_SECRET') ?: bin2hex(random_bytes(16)));
+      $conf->set('general.header_link', '/');
+      $conf->set('security.session_protection_disabled', false);
+      $conf->set('privacy.default_private_links', false);
+      $conf->write(true);
+      echo "config written for $login\n";
+      PHP
+
+  - name: nginx server block (FastCGI to php-fpm on :8080)
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/etc/nginx/conf.d"
+      cat > "$d/etc/nginx/conf.d/shaarli.conf" <<'NGINX'
+      server {
+          listen 8080 default_server;
+          listen [::]:8080 default_server;
+          server_name _;
+          root /var/www/shaarli;
+          index index.php;
+          charset utf-8;
+          client_max_body_size 20M;
+          access_log off;
+
+          location ~ /\. { return 403; }
+          # code, config and data are never served
+          location ~ ^/(application|cache|data|doc|inc/languages|pagecache|tmp|vendor)(/|$) { return 403; }
+          location ~ ^/(composer\.(json|lock)|init\.php|shaarli_version\.php)$ { return 403; }
+          location / { try_files $uri /index.php$is_args$args; }
+          location = /index.php {
+              include        /etc/nginx/fastcgi_params;
+              fastcgi_param  SCRIPT_FILENAME $document_root/index.php;
+              fastcgi_pass   127.0.0.1:9000;
+          }
+          location ~ \.php$ { return 403; }
+          location ~* \.(js|css|png|jpg|gif|svg|ico|woff2?|ttf|eot|map)$ { expires 30d; access_log off; }
+      }
+      NGINX
+  - name: php-fpm pool + php.ini (nonroot, read-only rootfs)
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/etc/php/php-fpm.d" "$d/etc/php/conf.d"
+      cat > "$d/etc/php/php-fpm.d/zzz-shaarli.conf" <<'FPM'
+      [global]
+      daemonize = no
+      error_log = /proc/self/fd/2
+
+      [www]
+      listen = 127.0.0.1:9000
+      catch_workers_output = yes
+      decorate_workers_output = no
+      ; SHAARLI_* settings come from the container environment
+      clear_env = no
+      pm = dynamic
+      pm.max_children = 16
+      pm.start_servers = 2
+      pm.min_spare_servers = 1
+      pm.max_spare_servers = 4
+      FPM
+      cat > "$d/etc/php/conf.d/zzz-shaarli.ini" <<'INI'
+      expose_php = Off
+      memory_limit = 256M
+      upload_max_filesize = 20M
+      post_max_size = 20M
+      sys_temp_dir = /tmp
+      upload_tmp_dir = /tmp
+      session.save_path = /tmp
+      display_errors = Off
+      log_errors = On
+      error_log = /proc/self/fd/2
+      date.timezone = UTC
+      opcache.enable = 1
+      opcache.revalidate_freq = 60
+      INI
+
+  - name: supervisord (php-fpm + nginx)
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/etc/shaarli" "$d/etc/supervisor.d"
+      cat > "$d/etc/shaarli/supervisord.conf" <<'SUP'
+      [supervisord]
+      nodaemon=true
+      logfile=/dev/stdout
+      logfile_maxbytes=0
+      pidfile=/tmp/supervisord.pid
+
+      [unix_http_server]
+      file=/tmp/supervisor.sock
+
+      [supervisorctl]
+      serverurl=unix:///tmp/supervisor.sock
+
+      [rpcinterface:supervisor]
+      supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+
+      [include]
+      files = /etc/supervisor.d/*.conf
+      SUP
+      printf '%s\n' '[program:php-fpm]' 'command=/usr/bin/php-fpm --nodaemonize --fpm-config /etc/php/php-fpm.conf' \
+        'autostart=true' 'autorestart=true' 'priority=10' 'stdout_logfile=/dev/stdout' 'stdout_logfile_maxbytes=0' \
+        'stderr_logfile=/dev/stderr' 'stderr_logfile_maxbytes=0' > "$d/etc/supervisor.d/php-fpm.conf"
+      printf '%s\n' '[program:nginx]' 'command=/usr/bin/nginx -g "daemon off;"' \
+        'autostart=true' 'autorestart=true' 'priority=20' 'stdout_logfile=/dev/stdout' 'stdout_logfile_maxbytes=0' \
+        'stderr_logfile=/dev/stderr' 'stderr_logfile_maxbytes=0' > "$d/etc/supervisor.d/nginx.conf"
+
+test:
+  pipeline:
+    - runs: |
+        set -eu
+        test -f /var/www/shaarli/index.php
+        test -L /var/www/shaarli/data
+        php -m | grep -qi mbstring

@@ -1,0 +1,91 @@
+# Shaarli runtime: supervisord runs php-fpm (127.0.0.1:9000) and QuenchWorks' nginx (:8080) after
+# /usr/libexec/shaarli-init prepares /var/lib/shaarli (the volume: data/ with the config and datastore,
+# cache/, pagecache/, tmp/) and, on the first start, writes the config from SHAARLI_USER/SHAARLI_PASSWORD.
+# Nonroot uid 1001.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - busybox
+    - supervisor
+    - quench-nginx@local          # QuenchWorks' hardened nginx (from source), 8080/nonroot
+    - quench-shaarli@local
+    - php-8.5
+    - php-8.5-fpm
+    - php-8.5-fpm-config
+    - php-8.5-config
+    - php-8.5-ctype
+    - php-8.5-ctype-config
+    - php-8.5-curl
+    - php-8.5-curl-config
+    - php-8.5-dom
+    - php-8.5-dom-config
+    - php-8.5-fileinfo
+    - php-8.5-fileinfo-config
+    - php-8.5-gd
+    - php-8.5-gd-config
+    - php-8.5-iconv
+    - php-8.5-iconv-config
+    - php-8.5-intl
+    - php-8.5-intl-config
+    - php-8.5-mbstring
+    - php-8.5-mbstring-config
+    - php-8.5-openssl
+    - php-8.5-openssl-config
+    - php-8.5-simplexml
+    - php-8.5-simplexml-config
+    - php-8.5-xml
+    - php-8.5-xml-config
+
+accounts:
+  groups:
+    - groupname: shaarli
+      gid: 1001
+  users:
+    - username: shaarli
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  SHAARLI_TIMEZONE: UTC
+
+entrypoint:
+  command: /usr/libexec/shaarli-init
+
+work-dir: /var/www/shaarli
+
+paths:
+  - path: /tmp
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o1777
+  - path: /var/lib
+    type: directory
+    uid: 0
+    gid: 0
+    permissions: 0o755
+  - path: /var/lib/shaarli
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-shaarli"
+  org.opencontainers.image.licenses: "Zlib"
+  org.opencontainers.image.version: "__VER__"
