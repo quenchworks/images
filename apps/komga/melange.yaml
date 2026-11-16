@@ -25,6 +25,7 @@ environment:
       - busybox
       - ca-certificates-bundle
       - curl
+      - openjdk-21   # javac for the claim helper only
 
 pipeline:
   - uses: fetch
@@ -88,6 +89,72 @@ pipeline:
       have="$(ls "$lib" | grep -v '^spring-boot-jarmode-tools-' | sort)"
       [ "$idx" = "$have" ] || { echo "FATAL: classpath.idx and BOOT-INF/lib disagree"; echo "index: $idx"; echo "lib: $have"; exit 1; }
       chmod -R a+rX "$dest"
+
+  - name: Claim helper (first account for charts; verifies TLS against a CA file, never skips it)
+    runs: |
+      set -eu
+      d="${{targets.destdir}}/usr/lib/komga-claim"
+      install -d "$d" src
+      cat > src/KomgaClaim.java <<'JAVA'
+      import java.io.FileInputStream;
+      import java.net.URI;
+      import java.net.http.HttpClient;
+      import java.net.http.HttpRequest;
+      import java.net.http.HttpResponse;
+      import java.security.KeyStore;
+      import java.security.cert.CertificateFactory;
+      import java.time.Duration;
+      import javax.net.ssl.SSLContext;
+      import javax.net.ssl.TrustManagerFactory;
+
+      // Claims a fresh Komga server with KOMGA_CLAIM_EMAIL / KOMGA_CLAIM_PASSWORD at KOMGA_CLAIM_URL (the base URL).
+      // Waits up to KOMGA_CLAIM_WAIT seconds (default 600) for the server; exits 0 when it is claimed (by us or
+      // before). KOMGA_CLAIM_CA, if set, is a PEM CA file the server certificate must chain to.
+      public class KomgaClaim {
+        public static void main(String[] a) throws Exception {
+          String base = System.getenv("KOMGA_CLAIM_URL"), email = System.getenv("KOMGA_CLAIM_EMAIL"),
+              pass = System.getenv("KOMGA_CLAIM_PASSWORD"), ca = System.getenv("KOMGA_CLAIM_CA"), w = System.getenv("KOMGA_CLAIM_WAIT");
+          if (base == null || email == null || pass == null) { System.err.println("KOMGA_CLAIM_URL, _EMAIL and _PASSWORD are required"); System.exit(2); }
+          HttpClient.Builder b = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5));
+          if (ca != null && !ca.isEmpty()) {
+            KeyStore ks = KeyStore.getInstance(KeyStore.getDefaultType());
+            ks.load(null, null);
+            int i = 0;
+            try (FileInputStream in = new FileInputStream(ca)) {
+              for (var c : CertificateFactory.getInstance("X.509").generateCertificates(in)) ks.setCertificateEntry("ca" + i++, c);
+            }
+            TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+            tmf.init(ks);
+            SSLContext ctx = SSLContext.getInstance("TLS");
+            ctx.init(null, tmf.getTrustManagers(), null);
+            b.sslContext(ctx);
+          }
+          HttpClient http = b.build();
+          long deadline = System.currentTimeMillis() + 1000L * (w == null ? 600 : Integer.parseInt(w));
+          URI claim = URI.create(base.replaceAll("/+$", "") + "/api/v1/claim");
+          while (true) {
+            try {
+              HttpResponse<String> st = http.send(HttpRequest.newBuilder(claim).timeout(Duration.ofSeconds(10)).GET().build(), HttpResponse.BodyHandlers.ofString());
+              if (st.statusCode() == 200) {
+                if (st.body().replace(" ", "").contains("\"isClaimed\":true")) { System.out.println("komga-claim: already claimed"); return; }
+                HttpResponse<String> r = http.send(HttpRequest.newBuilder(claim).timeout(Duration.ofSeconds(30))
+                    .header("X-Komga-Email", email).header("X-Komga-Password", pass).POST(HttpRequest.BodyPublishers.noBody()).build(),
+                    HttpResponse.BodyHandlers.ofString());
+                if (r.statusCode() == 200) { System.out.println("komga-claim: claimed by " + email); return; }
+                System.err.println("komga-claim: claim answered " + r.statusCode() + " " + r.body());
+                System.exit(1);
+              }
+            } catch (java.io.IOException e) {
+              if (e instanceof javax.net.ssl.SSLException) { System.err.println("komga-claim: TLS: " + e.getMessage()); System.exit(1); }
+            }
+            if (System.currentTimeMillis() > deadline) { System.err.println("komga-claim: " + claim + " never answered"); System.exit(1); }
+            Thread.sleep(3000);
+          }
+        }
+      }
+      JAVA
+      /usr/lib/jvm/java-21-openjdk/bin/javac --release 21 -d "$d" src/KomgaClaim.java
+      test -f "$d/KomgaClaim.class"
 
 test:
   pipeline:

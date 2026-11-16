@@ -78,11 +78,14 @@ func init() {
 			t.Fatalf("comic: %v", err)
 		}
 		_ = os.Chmod(filepath.Join(books, "Smoke Series"), 0o755)
+		net := t.Name("net")
+		t.Docker("network", "create", net)
+		t.Cleanup(func() { docker("network", "rm", net) })
 		vol := t.Name("data")
 		t.Docker("volume", "create", vol)
 		t.Cleanup(func() { docker("volume", "rm", vol) })
 		start := func(name string) {
-			t.Start(name, []string{"--read-only", "--tmpfs", "/tmp:rw,exec,mode=1777", "-v", vol + ":/var/lib/komga",
+			t.Start(name, []string{"--read-only", "--tmpfs", "/tmp:rw,exec,mode=1777", "--network", net, "-v", vol + ":/var/lib/komga",
 				"-v", books + ":/books:ro", "-p", "127.0.0.1:18094:25600"})
 			t.waitFor(180, time.Second, name, "komga never answered /api/v1/claim", func() bool {
 				c, _ := komgaDo("GET", base+"/api/v1/claim", "", "", "", nil)
@@ -102,9 +105,17 @@ func init() {
 		}
 		name := t.Name("")
 		start(name)
-		claim := map[string]string{"X-Komga-Email": user, "X-Komga-Password": pw}
-		if c, b := komgaDo("POST", base+"/api/v1/claim", "", "", "", claim); c != http.StatusOK {
-			t.Fatalf("claim: %d %s\n%s", c, b, t.Logs(name))
+		// the image's claim helper (the chart runs it as a hook Job) claims the server, and is a no-op after that
+		helper := func() (string, error) {
+			return t.RunFlags([]string{"--network", net, "--entrypoint", "/usr/lib/jvm/java-21-openjdk/bin/java",
+				"-e", "KOMGA_CLAIM_URL=http://" + name + ":25600", "-e", "KOMGA_CLAIM_EMAIL=" + user, "-e", "KOMGA_CLAIM_PASSWORD=" + pw},
+				"-cp", "/usr/lib/komga-claim", "KomgaClaim")
+		}
+		if out, err := helper(); err != nil || !strings.Contains(out, "claimed by "+user) {
+			t.Fatalf("claim helper: %v %s\n%s", err, out, t.Logs(name))
+		}
+		if out, err := helper(); err != nil || !strings.Contains(out, "already claimed") {
+			t.Fatalf("claim helper on a claimed server: %v %s", err, out)
 		}
 		if c, _ := komgaDo("POST", base+"/api/v1/claim", "", "", "", map[string]string{"X-Komga-Email": "x@example.com", "X-Komga-Password": "Other-2026!"}); c != http.StatusBadRequest {
 			t.Fatalf("a second claim got %d, want 400", c)
@@ -137,6 +148,6 @@ func init() {
 		if n, _ := listBooks(lib.ID); n != 1 {
 			t.Fatalf("the book is gone after a restart (%d)", n)
 		}
-		t.Logf("smoke test passed (komga %s: read-only boot, server claimed once, wrong password refused, library scanned into a book with a JPEG thumbnail, account and book kept across a restart; user %s)", t.Want, u)
+		t.Logf("smoke test passed (komga %s: read-only boot, server claimed once by the claim helper (a second run and a second claim are no-ops/refused), wrong password refused, library scanned into a book with a JPEG thumbnail, account and book kept across a restart; user %s)", t.Want, u)
 	})
 }
