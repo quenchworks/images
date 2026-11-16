@@ -1,0 +1,50 @@
+# lego runtime: the lego CLI as the entrypoint, HOME at /home/lego (certificates go under --path).
+# Nonroot uid 1001, multi-arch. Image only.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-lego@local
+
+accounts:
+  groups:
+    - groupname: lego
+      gid: 1001
+  users:
+    - username: lego
+      uid: 1001
+      gid: 1001
+      homedir: /home/lego
+  run-as: 1001
+
+work-dir: /home/lego
+
+environment:
+  HOME: /home/lego
+
+paths:
+  - path: /home/lego
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+entrypoint:
+  command: /usr/bin/lego
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-lego"
+  org.opencontainers.image.licenses: "MIT"

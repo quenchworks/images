@@ -138,6 +138,7 @@ var table = map[string]check{
 	"task":                              {src: ghRel("go-task/task"), n: 1},
 	"microbin":                          {src: ghRel("szabodanika/microbin"), n: 1},
 	"miniserve":                         {src: ghRel("svenstaro/miniserve"), n: 1},
+	"lego":                              {src: ghRel("go-acme/lego"), n: 1},
 	"thelounge":                         {src: npmPkg("thelounge"), n: 1, f: filter{keep: noDash}},
 	"soju":                              {src: codebergRel("emersion/soju"), n: 1},
 	"go-httpbin":                        {src: ghRel("mccutchen/go-httpbin"), n: 1},
