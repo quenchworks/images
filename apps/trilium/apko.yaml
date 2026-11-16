@@ -1,0 +1,60 @@
+# Trilium Notes runtime: HTTP on 8080 (TRILIUM_PORT), the SQLite document, backups and logs in TRILIUM_DATA_DIR
+# (/var/lib/trilium, a volume). A new install asks the first visitor to create the document and set the password
+# (/api/setup/new-document, then /set-password). No TLS listener here. Nonroot uid 1001.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - tzdata
+    - quench-trilium@local
+
+accounts:
+  groups:
+    - groupname: trilium
+      gid: 1001
+  users:
+    - username: trilium
+      uid: 1001
+      gid: 1001
+      homedir: /var/lib/trilium
+  run-as: 1001
+
+environment:
+  NODE_ENV: production
+  TRILIUM_DATA_DIR: /var/lib/trilium
+  TRILIUM_PORT: "8080"
+
+paths:
+  - path: /var/lib
+    type: directory
+    uid: 0
+    gid: 0
+    permissions: 0o755
+  - path: /var/lib/trilium
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+work-dir: /app
+
+entrypoint:
+  command: /usr/bin/node /app/main.mjs
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-trilium"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"
+  org.opencontainers.image.version: "__VER__"

@@ -1,0 +1,72 @@
+# Trilium Notes server from the release tag, built with pnpm 12 on Wolfi nodejs-24: the bundled server (main.mjs), the
+# client, assets and the better-sqlite3 native module.
+package:
+  name: quench-trilium
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Trilium Notes server, built from source on Wolfi"
+  copyright:
+    - license: AGPL-3.0-only
+  dependencies:
+    runtime:
+      - nodejs-24
+      - ca-certificates-bundle
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - nodejs-24
+      - pnpm-12
+      - python-3.13
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/TriliumNext/Trilium/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: pnpm install, server build
+    runs: |
+      set -eu
+      export CI=true HOME="$(mktemp -d)" npm_config_store_dir="$(mktemp -d)" ELECTRON_SKIP_BINARY_DOWNLOAD=1
+      export npm_config_fetch_retries=5 npm_config_fetch_retry_maxtimeout=120000
+      grep -q '"version": "${{package.version}}"' apps/server/package.json
+      # the server copies better-sqlite3's native module, so it must build here; the server never uses Electron
+      sed -i 's/^  better-sqlite3: false$/  better-sqlite3: true/; s/^  electron: true$/  electron: false/' pnpm-workspace.yaml
+      grep -q '^  better-sqlite3: true$' pnpm-workspace.yaml
+      grep -q '^  electron: false$' pnpm-workspace.yaml
+      # fixed releases for the lockfile's findings; the server bundles its dependencies, so the fix has to be in the build
+      # (uuid 11 still ships CommonJS; minimatch 11 keeps the named export)
+      awk '{print} /^overrides:$/ {
+        print "  \"hono@<4.13.16\": 4.13.16"; print "  \"@hono/node-server@<2.1.6\": 2.1.6"
+        print "  \"minimatch@>=10 <11.0.1\": 11.0.1"; print "  \"qs@<6.16.1\": 6.16.1"
+        print "  \"undici@>=7 <7.30.1\": 7.30.1"; print "  \"uuid@<11.1.1\": 11.1.1" }' pnpm-workspace.yaml > ws.tmp
+      mv ws.tmp pnpm-workspace.yaml
+      grep -q '^  "uuid@<11.1.1": 11.1.1$' pnpm-workspace.yaml
+      pnpm install --no-frozen-lockfile
+      NODE_OPTIONS=--max-old-space-size=6144 pnpm --filter @triliumnext/server build
+      test -f apps/server/dist/main.mjs
+      d="${{targets.destdir}}/app"
+      install -d "$d"
+      cp -a apps/server/dist/. "$d/"
+      # drop musl builds (melange would add so:libc.musl) and the docker shell helpers this image cannot run
+      find "$d" -depth -type d -name '*linuxmusl*' -exec rm -rf {} +
+      # better-sqlite3 keeps prebuilt .node files per platform in prebuilds/ (files, not dirs): keep this arch's glibc one
+      arch="$(node -p process.arch)"
+      find "$d" -path '*/prebuilds/*' -type f -name '*.node' ! -name "linux-$arch.node" -print -delete
+      rm -f "$d/docker_healthcheck.sh" "$d/start-docker.sh"
+      cd "$d" && node -e "require('better-sqlite3')(':memory:').prepare('select 1').get(); console.log('better-sqlite3 ok')"
+
+test:
+  pipeline:
+    - runs: |
+        test -f /app/main.mjs
+        cd /app && node -e "require('better-sqlite3')(':memory:')"
