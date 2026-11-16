@@ -1,0 +1,322 @@
+# Snipe-IT from the release tag on Wolfi php-8.5-fpm + nginx (nginx comes from the sibling
+# quench-nginx package, installed by apko).
+package:
+  name: quench-snipe-it
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Snipe-IT (IT asset management) on Wolfi php-fpm + nginx"
+  copyright:
+    - license: AGPL-3.0-or-later
+  dependencies:
+    runtime:
+      - php-8.5
+      - php-8.5-config
+      - php-8.5-fpm
+      - php-8.5-fpm-config
+      - php-8.5-bcmath
+      - php-8.5-bcmath-config
+      - php-8.5-ctype
+      - php-8.5-ctype-config
+      - php-8.5-curl
+      - php-8.5-curl-config
+      - php-8.5-dom
+      - php-8.5-dom-config
+      - php-8.5-exif
+      - php-8.5-exif-config
+      - php-8.5-fileinfo
+      - php-8.5-fileinfo-config
+      - php-8.5-gd
+      - php-8.5-gd-config
+      - php-8.5-iconv
+      - php-8.5-iconv-config
+      - php-8.5-intl
+      - php-8.5-intl-config
+      - php-8.5-mbstring
+      - php-8.5-mbstring-config
+      - php-8.5-mysqlnd
+      - php-8.5-mysqlnd-config
+      - php-8.5-openssl
+      - php-8.5-openssl-config
+      - php-8.5-pdo
+      - php-8.5-pdo-config
+      - php-8.5-pdo_mysql
+      - php-8.5-pdo_mysql-config
+      - php-8.5-simplexml
+      - php-8.5-simplexml-config
+      - php-8.5-sodium
+      - php-8.5-sodium-config
+      - php-8.5-xml
+      - php-8.5-xml-config
+      - php-8.5-xmlwriter
+      - php-8.5-xmlwriter-config
+      - php-8.5-xmlreader
+      - php-8.5-xmlreader-config
+      - php-8.5-zip
+      - php-8.5-zip-config
+      - supervisor
+      - busybox
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - composer
+      - git
+      - jq
+      - php-8.5
+      - php-8.5-config
+      - php-8.5-bcmath
+      - php-8.5-bcmath-config
+      - php-8.5-ctype
+      - php-8.5-ctype-config
+      - php-8.5-curl
+      - php-8.5-curl-config
+      - php-8.5-dom
+      - php-8.5-dom-config
+      - php-8.5-exif
+      - php-8.5-exif-config
+      - php-8.5-fileinfo
+      - php-8.5-fileinfo-config
+      - php-8.5-gd
+      - php-8.5-gd-config
+      - php-8.5-iconv
+      - php-8.5-iconv-config
+      - php-8.5-intl
+      - php-8.5-intl-config
+      - php-8.5-mbstring
+      - php-8.5-mbstring-config
+      - php-8.5-mysqlnd
+      - php-8.5-mysqlnd-config
+      - php-8.5-openssl
+      - php-8.5-openssl-config
+      - php-8.5-pdo
+      - php-8.5-pdo-config
+      - php-8.5-pdo_mysql
+      - php-8.5-pdo_mysql-config
+      - php-8.5-simplexml
+      - php-8.5-simplexml-config
+      - php-8.5-sodium
+      - php-8.5-sodium-config
+      - php-8.5-xml
+      - php-8.5-xml-config
+      - php-8.5-xmlwriter
+      - php-8.5-xmlwriter-config
+      - php-8.5-xmlreader
+      - php-8.5-xmlreader-config
+      - php-8.5-zip
+      - php-8.5-zip-config
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/grokability/snipe-it/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Dependencies (composer, production) with laravel/framework and livewire raised
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" COMPOSER_HOME="$(mktemp -d)"
+      php -m | grep -qix tokenizer && php -m | grep -qix session
+      composer install --no-dev --no-interaction --no-progress --no-scripts
+      # the vcs repository (laravel-scim-server) would be read through the GitHub API, which refuses
+      # unauthenticated build hosts once their hourly budget is spent: clone it with git instead
+      jq '.repositories |= map(if .type == "vcs" then . + {"no-api": true} else . end)' composer.json > composer.json.new && mv composer.json.new composer.json
+      # the root ranges (laravel/framework ^12.0, livewire ^4.0) allow the fixed releases; -W moves the
+      # symfony http stack they pull in
+      composer update --no-dev --no-interaction --no-progress --no-scripts --with-all-dependencies laravel/framework livewire/livewire
+      composer dump-autoload --no-dev --optimize --no-scripts
+      for want in laravel/framework=12.71.0 livewire/livewire=4.4.8 symfony/http-foundation=7.4.23 symfony/http-kernel=7.4.23 \
+                  symfony/mime=7.4.22 symfony/routing=7.4.23; do
+        p=${want%=*} min=${want#*=}
+        have=$(jq -r --arg p "$p" '.packages[] | select(.name == $p) | .version' composer.lock | sed 's/^v//')
+        [ "$(printf '%s\n%s\n' "$min" "$have" | sort -V | head -1)" = "$min" ] || { echo "FATAL: $p $have below $min"; exit 1; }
+      done
+      # Passport's migrations ship in its package; upstream's image copies them in on every start
+      cp -a vendor/laravel/passport/database/migrations/. database/migrations/
+      APP_KEY=base64:$(head -c 32 /dev/urandom | base64) php artisan package:discover --ansi
+
+  - name: Lay out /var/www/snipe-it and the init script
+    runs: |
+      set -eu
+      d="${{targets.destdir}}/var/www/snipe-it"
+      install -d "$d"
+      cp -a app artisan bootstrap composer.json composer.lock config database public resources routes vendor "$d/"
+      grep -qF "'app_version' => 'v${{package.version}}'" "$d/config/version.php"
+      # storage/ and public/uploads live on the volume; the storage skeleton seeds it on first start
+      install -d "${{targets.destdir}}/usr/share/snipe-it"
+      cp -a storage "${{targets.destdir}}/usr/share/snipe-it/storage-skel"
+      rm -rf "$d/public/uploads"
+      ln -s /var/lib/snipeit/storage "$d/storage"
+      ln -s /var/lib/snipeit/uploads "$d/public/uploads"
+      cp -a public/uploads "${{targets.destdir}}/usr/share/snipe-it/uploads-skel"
+      install -d "${{targets.destdir}}/usr/libexec"
+      cat > "${{targets.destdir}}/usr/libexec/snipe-it-init" <<'SH'
+      #!/bin/sh
+      # seeds storage/ and uploads/ on the volume, waits for the database, makes the Passport keys, migrates,
+      # creates the admin from the environment, then runs supervisord (php-fpm + nginx)
+      set -eu
+      [ -n "${APP_KEY:-}" ] || { echo "APP_KEY is not set: base64:<32 random bytes>, e.g. from openssl rand -base64 32" >&2; exit 1; }
+      V=/var/lib/snipeit
+      mkdir -p "$V/storage" "$V/uploads"
+      cp -rn /usr/share/snipe-it/storage-skel/. "$V/storage/"
+      # config/view.php resolves framework/views with realpath(): it must exist before artisan boots
+      mkdir -p "$V/storage/framework/views" "$V/storage/framework/cache/data" "$V/storage/framework/sessions" \
+        "$V/storage/framework/testing" "$V/storage/logs" "$V/storage/app/public" "$V/storage/app/backups" "$V/storage/private_uploads"
+      cp -rn /usr/share/snipe-it/uploads-skel/. "$V/uploads/"
+      cd /var/www/snipe-it
+      i=0
+      until php -r 'new PDO(sprintf("mysql:host=%s;port=%s;dbname=%s", getenv("DB_HOST"), getenv("DB_PORT") ?: "3306", getenv("DB_DATABASE")), getenv("DB_USERNAME"), getenv("DB_PASSWORD"));' 2>/dev/null; do
+        i=$((i + 1)); [ "$i" -lt 60 ] || { echo "the database (DB_HOST) did not answer" >&2; exit 1; }
+        sleep 2
+      done
+      [ -f "$V/storage/oauth-private.key" ] || php artisan passport:keys --force
+      php artisan migrate --force
+      if [ -n "${ADMIN_USER:-}" ] && [ -n "${ADMIN_PASSWORD:-}" ]; then
+        # exits 0 either way; an existing username is reported and left alone
+        php artisan snipeit:create-admin --first_name=Admin --last_name=User --username="$ADMIN_USER" \
+          --email="${ADMIN_EMAIL:-$ADMIN_USER@example.com}" --password="$ADMIN_PASSWORD"
+      fi
+      php /usr/libexec/snipe-it-settings.php
+      php artisan view:clear >/dev/null
+      exec /usr/bin/supervisord -c /etc/snipe-it/supervisord.conf
+      SH
+      chmod 0755 "${{targets.destdir}}/usr/libexec/snipe-it-init"
+      # the setup wizard is done when a user AND a settings row exist (Setting::setupCompleted); this makes
+      # the settings row with the wizard's defaults when the table is empty
+      cat > "${{targets.destdir}}/usr/libexec/snipe-it-settings.php" <<'PHP'
+      <?php
+      require '/var/www/snipe-it/vendor/autoload.php';
+      $app = require '/var/www/snipe-it/bootstrap/app.php';
+      $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+      if (App\Models\Setting::count() > 0) {
+          exit(0);
+      }
+      $s = new App\Models\Setting;
+      $s->site_name = getenv('SITE_NAME') ?: 'Snipe-IT';
+      $s->alert_email = getenv('ADMIN_EMAIL') ?: 'admin@example.com';
+      $s->alerts_enabled = 1;
+      $s->pwd_secure_min = 10;
+      $s->brand = 1;
+      $s->locale = getenv('APP_LOCALE') ?: 'en-US';
+      $s->default_currency = getenv('DEFAULT_CURRENCY') ?: 'USD';
+      $s->next_auto_tag_base = 1;
+      $s->auto_increment_assets = 0;
+      $s->zerofill_count = 0;
+      $s->per_page = 20;
+      $s->created_by = 1;
+      if (! $s->save()) {
+          fwrite(STDERR, "settings row not saved: " . json_encode($s->getErrors()) . "\n");
+          exit(1);
+      }
+      echo "settings row created\n";
+      PHP
+
+  - name: nginx server block (FastCGI to php-fpm on :8080)
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/etc/nginx/conf.d"
+      cat > "$d/etc/nginx/conf.d/snipe-it.conf" <<'NGINX'
+      server {
+          listen 8080 default_server;
+          listen [::]:8080 default_server;
+          server_name _;
+          root /var/www/snipe-it/public;
+          index index.php;
+          charset utf-8;
+          client_max_body_size 50M;
+          access_log off;
+
+          location ~ /\. { return 403; }
+          location / { try_files $uri /index.php$is_args$args; }
+          location ~ \.php$ {
+              try_files $uri =404;
+              include        /etc/nginx/fastcgi_params;
+              fastcgi_param  SCRIPT_FILENAME $document_root$fastcgi_script_name;
+              fastcgi_pass   127.0.0.1:9000;
+          }
+          location ~* \.(js|css|png|jpg|svg|ico|woff2?|ttf|eot|map)$ { expires 30d; access_log off; }
+      }
+      NGINX
+  - name: php-fpm pool + php.ini (nonroot, read-only rootfs)
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/etc/php/php-fpm.d" "$d/etc/php/conf.d"
+      cat > "$d/etc/php/php-fpm.d/zzz-snipe-it.conf" <<'FPM'
+      [global]
+      daemonize = no
+      error_log = /proc/self/fd/2
+
+      [www]
+      listen = 127.0.0.1:9000
+      catch_workers_output = yes
+      decorate_workers_output = no
+      ; APP_KEY, DB_* and the other settings come from the container environment
+      clear_env = no
+      pm = dynamic
+      pm.max_children = 16
+      pm.start_servers = 2
+      pm.min_spare_servers = 1
+      pm.max_spare_servers = 4
+      FPM
+      cat > "$d/etc/php/conf.d/zzz-snipe-it.ini" <<'INI'
+      expose_php = Off
+      memory_limit = 256M
+      upload_max_filesize = 50M
+      post_max_size = 50M
+      sys_temp_dir = /tmp
+      upload_tmp_dir = /tmp
+      session.save_path = /tmp
+      display_errors = Off
+      log_errors = On
+      error_log = /proc/self/fd/2
+      date.timezone = UTC
+      opcache.enable = 1
+      opcache.revalidate_freq = 60
+      INI
+
+  - name: supervisord (php-fpm + nginx)
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/etc/snipe-it" "$d/etc/supervisor.d"
+      cat > "$d/etc/snipe-it/supervisord.conf" <<'SUP'
+      [supervisord]
+      nodaemon=true
+      logfile=/dev/stdout
+      logfile_maxbytes=0
+      pidfile=/tmp/supervisord.pid
+
+      [unix_http_server]
+      file=/tmp/supervisor.sock
+
+      [supervisorctl]
+      serverurl=unix:///tmp/supervisor.sock
+
+      [rpcinterface:supervisor]
+      supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+
+      [include]
+      files = /etc/supervisor.d/*.conf
+      SUP
+      printf '%s\n' '[program:php-fpm]' 'command=/usr/bin/php-fpm --nodaemonize --fpm-config /etc/php/php-fpm.conf' \
+        'autostart=true' 'autorestart=true' 'priority=10' 'stdout_logfile=/dev/stdout' 'stdout_logfile_maxbytes=0' \
+        'stderr_logfile=/dev/stderr' 'stderr_logfile_maxbytes=0' > "$d/etc/supervisor.d/php-fpm.conf"
+      printf '%s\n' '[program:nginx]' 'command=/usr/bin/nginx -g "daemon off;"' \
+        'autostart=true' 'autorestart=true' 'priority=20' 'stdout_logfile=/dev/stdout' 'stdout_logfile_maxbytes=0' \
+        'stderr_logfile=/dev/stderr' 'stderr_logfile_maxbytes=0' > "$d/etc/supervisor.d/nginx.conf"
+
+test:
+  pipeline:
+    - runs: |
+        set -eu
+        test -f /var/www/snipe-it/public/index.php
+        test -L /var/www/snipe-it/storage
+        php -m | grep -qi pdo_mysql
+        php -m | grep -qi exif
