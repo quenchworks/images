@@ -1,0 +1,64 @@
+# SilverBullet from the release tag: the client bundle built with npm, the Rust server with cargo auditable.
+package:
+  name: quench-silverbullet
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened SilverBullet notes server, built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      # cargo auditable embeds the crate list in a .dep-v0 section; without it Trivy sees no crates
+      - cargo-auditable
+      - rust-1.96
+      - nodejs-24
+      - npm
+      - git   # build/version.ts spawns git describe; with no repo it falls back to the package version
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/silverbulletmd/silverbullet/archive/refs/tags/${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Client bundle (npm)
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" npm_config_cache="$(mktemp -d)" npm_config_fetch_retries=5
+      grep -q '"version": "${{package.version}}"' package.json
+      export GITHUB_SHA="v${{package.version}}"
+      # npm 12 runs only allow-listed install scripts; esbuild's postinstall fetches its native binary
+      node -e 'const f="package.json",p=JSON.parse(require("fs").readFileSync(f));p.allowScripts={...(p.allowScripts||{}),esbuild:true};require("fs").writeFileSync(f,JSON.stringify(p,null,2))'
+      npm ci --include=dev
+      npm run build
+
+  - name: Server (cargo auditable, zip 9)
+    runs: |
+      set -eu
+      export CARGO_HOME="$(mktemp -d)"
+      # zip 8 has no fixed release; 9 keeps the API SilverBullet uses
+      sed -i 's/^zip = { version = "8", default-features = false, features = \["deflate"\] }$/zip = { version = "9", default-features = false, features = ["deflate"] }/' Cargo.toml
+      grep -q '^zip = { version = "9"' Cargo.toml || { echo "FATAL: zip requirement not raised"; exit 1; }
+      # zip 9's ZipFile::name() returns a Result (the self-upgrade unzip is the one caller)
+      sed -i 's|let name = entry.name().to_string();|let name = entry.name().map_err(\|e\| format!("failed to read zip entry {i} name: {e}"))?.to_string();|' server-common/src/upgrade.rs
+      grep -q 'entry.name().map_err' server-common/src/upgrade.rs || { echo "FATAL: zip 9 name() patch did not apply"; exit 1; }
+      cargo update
+      cargo auditable build --release --locked -p silverbullet
+      install -Dm755 target/release/silverbullet "${{targets.destdir}}/usr/bin/silverbullet"
+      readelf -S "${{targets.destdir}}/usr/bin/silverbullet" | grep -q '\.dep-v0'
+
+test:
+  pipeline:
+    - runs: test -x /usr/bin/silverbullet

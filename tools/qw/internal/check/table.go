@@ -155,6 +155,7 @@ var table = map[string]check{
 	"donetick":                          {src: ghRel("donetick/donetick"), n: 1},
 	"apprise-api":                       {src: ghRel("caronc/apprise-api"), n: 1},
 	"zipline":                           {src: ghRel("diced/zipline"), n: 1},
+	"silverbullet":                      {src: ghRel("silverbulletmd/silverbullet"), n: 1},
 	"thelounge":                         {src: npmPkg("thelounge"), n: 1, f: filter{keep: noDash}},
 	"soju":                              {src: codebergRel("emersion/soju"), n: 1},
 	"go-httpbin":                        {src: ghRel("mccutchen/go-httpbin"), n: 1},

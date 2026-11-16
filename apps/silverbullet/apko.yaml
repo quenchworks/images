@@ -1,0 +1,55 @@
+# SilverBullet runtime: HTTP on 3000 (SB_PORT), the space (Markdown files) in /data. SB_USER=user:password turns on the
+# login, SB_AUTH_TOKEN allows API calls with a bearer token. Shell commands are off (SB_SHELL_BACKEND). No TLS listener.
+# Nonroot uid 1001.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-silverbullet@local
+
+accounts:
+  groups:
+    - groupname: silverbullet
+      gid: 1001
+  users:
+    - username: silverbullet
+      uid: 1001
+      gid: 1001
+      homedir: /data
+  run-as: 1001
+
+environment:
+  SB_HOSTNAME: 0.0.0.0
+  SB_PORT: "3000"
+  SB_FOLDER: /data
+  SB_SHELL_BACKEND: "off"
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+work-dir: /data
+
+entrypoint:
+  command: /usr/bin/silverbullet /data
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-silverbullet"
+  org.opencontainers.image.licenses: "MIT"
+  org.opencontainers.image.version: "__VER__"
