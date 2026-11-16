@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -11,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/quenchworks/images/tools/qw/internal/common"
 	"github.com/quenchworks/images/tools/qw/internal/constants"
@@ -78,14 +80,27 @@ type pkgVersion struct {
 // package yet": any other failure used to become an empty list too, and a transient one
 // once delisted dragonfly's three published versions. A loud failure costs a re-run.
 func versionsOf(slug string) ([]lockVersion, error) {
-	out, err := exec.Command("gh", "api", "--paginate",
-		"/orgs/"+constants.Org+"/packages/container/images%2F"+slug+"/versions?per_page=100").CombinedOutput()
-	if err != nil {
-		if s := string(out); strings.Contains(s, "HTTP 404") || strings.Contains(s, "Not Found") {
+	// --paginate can fail on a later page after printing the first one, so stderr stays
+	// separate (it holds the real error) and a transient failure gets two more tries.
+	var out []byte
+	var stderr bytes.Buffer
+	for try := 1; ; try++ {
+		stderr.Reset()
+		cmd := exec.Command("gh", "api", "--paginate",
+			"/orgs/"+constants.Org+"/packages/container/images%2F"+slug+"/versions?per_page=100")
+		cmd.Stderr = &stderr
+		var err error
+		if out, err = cmd.Output(); err == nil {
+			break
+		}
+		if s := stderr.String(); strings.Contains(s, "HTTP 404") || strings.Contains(s, "Not Found") {
 			return nil, nil
 		}
-		msg := strings.TrimSpace(string(out))
-		return nil, fmt.Errorf("listing versions for images/%s FAILED (not a 404, so the package may well exist -- refusing to report it as unpublished): %s", slug, msg[:min(400, len(msg))])
+		if try == 3 {
+			msg := strings.TrimSpace(stderr.String())
+			return nil, fmt.Errorf("listing versions for images/%s FAILED after %d tries (not a 404, so the package may well exist -- refusing to report it as unpublished): %s", slug, try, msg[:min(400, len(msg))])
+		}
+		time.Sleep(time.Duration(try) * 5 * time.Second)
 	}
 	// --paginate concatenates page arrays as `][`
 	var raw []pkgVersion
