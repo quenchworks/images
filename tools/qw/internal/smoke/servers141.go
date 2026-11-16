@@ -21,8 +21,8 @@ func wallosForm(c *http.Client, u string, v url.Values) (int, string) {
 }
 
 func init() {
-	// On a read-only rootfs with /var/lib/wallos on a volume: the database is created, the first account
-	// registers, registration then closes, a wrong password is refused, the account signs in and sees the
+	// On a read-only rootfs with /var/lib/wallos on a volume: the database is created, WALLOS_ADMIN_* registers
+	// the first account through upstream's registration.php, web registration is then closed, a wrong password is refused, the account signs in and sees the
 	// dashboard, the database is not served, the schedule runs, and the account survives a restart.
 	register("wallos", func(t *T) {
 		const base = "http://127.0.0.1:18093"
@@ -37,7 +37,8 @@ func init() {
 				CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 		}
 		start := func(name string) {
-			t.Start(name, []string{"--read-only", "--tmpfs", "/tmp:rw,mode=1777", "-v", vol + ":/var/lib/wallos", "-p", "127.0.0.1:18093:8080"})
+			t.Start(name, []string{"--read-only", "--tmpfs", "/tmp:rw,mode=1777", "-v", vol + ":/var/lib/wallos", "-p", "127.0.0.1:18093:8080",
+				"-e", "WALLOS_ADMIN_USERNAME=admin", "-e", "WALLOS_ADMIN_PASSWORD=" + pw, "-e", "WALLOS_ADMIN_EMAIL=admin@quench-works.com"})
 			t.WaitHTTP(base+"/health.php", 90, name)
 		}
 		login := func(pass string) (int, string, *http.Client) {
@@ -50,13 +51,9 @@ func init() {
 		if c, _ := Get(base + "/db/wallos.db"); c != http.StatusForbidden {
 			t.Fatalf("/db/wallos.db answered %d, want 403", c)
 		}
-		reg := url.Values{"username": {"admin"}, "firstname": {"Smoke"}, "lastname": {"Test"}, "email": {"admin@quench-works.com"},
+		t.WaitLog(name, "wallos-admin: registered admin", 10)
+		reg := url.Values{"username": {"second"}, "firstname": {"Smoke"}, "lastname": {"Test"}, "email": {"second@quench-works.com"},
 			"password": {pw}, "confirm_password": {pw}, "main_currency": {"EUR"}, "language": {"en"}}
-		if code, loc := wallosForm(client(), base+"/registration.php", reg); code != http.StatusFound || !strings.HasPrefix(loc, "login.php?registered=true") {
-			t.Fatalf("first registration: %d %q\n%s", code, loc, t.Logs(name))
-		}
-		reg.Set("username", "second")
-		reg.Set("email", "second@quench-works.com")
 		if code, loc := wallosForm(client(), base+"/registration.php", reg); code != http.StatusFound || loc != "login.php" {
 			t.Fatalf("a second registration was not sent to login.php: %d %q", code, loc)
 		}
@@ -85,6 +82,6 @@ func init() {
 		if code, loc, _ := login(pw); code != http.StatusFound || loc != "." {
 			t.Fatalf("sign-in after a restart: %d %q", code, loc)
 		}
-		t.Logf("smoke test passed (wallos %s: read-only boot, database created, first account registered and registration closed, wrong password refused, subscriptions page behind the session, database not served, schedule running, account kept across a restart; user %s)", t.Want, u)
+		t.Logf("smoke test passed (wallos %s: read-only boot, database created, admin from the environment and registration closed, wrong password refused, subscriptions page behind the session, database not served, schedule running, account kept across a restart; user %s)", t.Want, u)
 	})
 }

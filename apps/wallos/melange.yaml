@@ -106,9 +106,30 @@ pipeline:
       php endpoints/cronjobs/createdatabase.php
       php endpoints/db/migrate.php
       php endpoints/cronjobs/updatenextpayment.php
+      php /usr/libexec/wallos-admin.php > /dev/null
       exec /usr/bin/supervisord -c /etc/wallos/supervisord.conf
       SH
       chmod 0755 "${{targets.destdir}}/usr/libexec/wallos-init"
+      # WALLOS_ADMIN_USERNAME/_PASSWORD (+ _EMAIL, _CURRENCY, _LANGUAGE) register the first account through
+      # upstream's own registration.php, once, so a deployment never waits with registration open
+      cat > "${{targets.destdir}}/usr/libexec/wallos-admin.php" <<'PHP'
+      <?php
+      chdir('/var/www/wallos');
+      $user = getenv('WALLOS_ADMIN_USERNAME');
+      $pass = getenv('WALLOS_ADMIN_PASSWORD');
+      if (!$user || !$pass) exit(0);
+      $count = fn() => (new SQLite3('db/wallos.db', SQLITE3_OPEN_READONLY))->querySingle('SELECT COUNT(*) FROM user');
+      if ($count() > 0) exit(0);
+      register_shutdown_function(function () use ($count, $user) {
+          if ($count() == 0) { fwrite(STDERR, "wallos-admin: could not register $user\n"); exit(1); }
+          fwrite(STDERR, "wallos-admin: registered $user\n");
+      });
+      $_SERVER['REQUEST_METHOD'] = 'POST';
+      $_POST = ['username' => $user, 'firstname' => '', 'lastname' => '', 'email' => getenv('WALLOS_ADMIN_EMAIL') ?: "$user@example.com",
+          'password' => $pass, 'confirm_password' => $pass, 'main_currency' => getenv('WALLOS_ADMIN_CURRENCY') ?: 'EUR',
+          'language' => getenv('WALLOS_ADMIN_LANGUAGE') ?: 'en'];
+      include 'registration.php';
+      PHP
       install -d "${{targets.destdir}}/etc/wallos"
       # upstream's schedule (cronjobs), logging to the container instead of /var/log/cron
       cat > "${{targets.destdir}}/etc/wallos/crontab" <<'CRON'
