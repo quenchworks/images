@@ -1,0 +1,55 @@
+# flatnotes runtime: uvicorn on 8080, notes (and the .flatnotes search index) in /data (FLATNOTES_PATH).
+# FLATNOTES_AUTH_TYPE none | read_only | password | totp, with FLATNOTES_USERNAME, FLATNOTES_PASSWORD,
+# FLATNOTES_SECRET_KEY (and FLATNOTES_TOTP_KEY). A FLATNOTES_PATH_PREFIX needs a writable /app/client/dist.
+# No TLS listener. Nonroot uid 1001.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-flatnotes@local
+
+accounts:
+  groups:
+    - groupname: flatnotes
+      gid: 1001
+  users:
+    - username: flatnotes
+      uid: 1001
+      gid: 1001
+      homedir: /data
+  run-as: 1001
+
+environment:
+  FLATNOTES_PATH: /data
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+
+paths:
+  - path: /data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+work-dir: /app
+
+entrypoint:
+  command: /app/venv/bin/python -m uvicorn main:app --app-dir server --host 0.0.0.0 --port 8080 --proxy-headers --forwarded-allow-ips *
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-flatnotes"
+  org.opencontainers.image.licenses: "MIT"
+  org.opencontainers.image.version: "__VER__"
