@@ -1,0 +1,50 @@
+# task runtime: the task CLI as the entrypoint, HOME at /home/task.
+# Nonroot uid 1001, multi-arch. Image only.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-task@local
+
+accounts:
+  groups:
+    - groupname: task
+      gid: 1001
+  users:
+    - username: task
+      uid: 1001
+      gid: 1001
+      homedir: /home/task
+  run-as: 1001
+
+work-dir: /home/task
+
+environment:
+  HOME: /home/task
+
+paths:
+  - path: /home/task
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+entrypoint:
+  command: /usr/bin/task
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-task"
+  org.opencontainers.image.licenses: "MIT"
