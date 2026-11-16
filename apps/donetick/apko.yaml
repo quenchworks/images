@@ -1,0 +1,59 @@
+# donetick runtime: HTTP on 2021 with the web UI embedded, the selfhosted profile (DT_ENV). The first start writes
+# config/selfhosted.yaml (random JWT secret) under /var/lib/donetick, and SQLite lives at DT_SQLITE_PATH; any setting
+# can be overridden with DT_<SECTION>_<KEY> (e.g. DT_JWT_SECRET, DT_DATABASE_TYPE=postgres). Nonroot uid 1001.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - tzdata
+    - quench-donetick@local
+
+accounts:
+  groups:
+    - groupname: donetick
+      gid: 1001
+  users:
+    - username: donetick
+      uid: 1001
+      gid: 1001
+      homedir: /var/lib/donetick
+  run-as: 1001
+
+environment:
+  DT_ENV: selfhosted
+  DT_SQLITE_PATH: /var/lib/donetick/donetick.db
+
+paths:
+  - path: /var/lib
+    type: directory
+    uid: 0
+    gid: 0
+    permissions: 0o755
+  - path: /var/lib/donetick
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+work-dir: /var/lib/donetick
+
+entrypoint:
+  command: /usr/bin/donetick
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-donetick"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"
+  org.opencontainers.image.version: "__VER__"

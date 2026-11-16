@@ -152,6 +152,7 @@ var table = map[string]check{
 	"wallos":                            {src: ghRel("ellite/Wallos"), n: 1},
 	"rss-bridge":                        {src: ghRel("RSS-Bridge/rss-bridge"), n: 1},
 	"chhoto-url":                        {src: ghRel("SinTan1729/chhoto-url"), n: 1},
+	"donetick":                          {src: ghRel("donetick/donetick"), n: 1},
 	"thelounge":                         {src: npmPkg("thelounge"), n: 1, f: filter{keep: noDash}},
 	"soju":                              {src: codebergRel("emersion/soju"), n: 1},
 	"go-httpbin":                        {src: ghRel("mccutchen/go-httpbin"), n: 1},
