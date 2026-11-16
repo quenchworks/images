@@ -2,7 +2,7 @@
 # BOTH first-party binaries: the operator (./cmd/operator -> keda) and the
 # metrics adapter (./cmd/adapter -> keda-adapter). Static builds, CGO disabled.
 # The release tarball vendors all modules, so the build runs `-mod=vendor` with
-# no network. go.mod declares go 1.26.x; we use the Wolfi go-1.26 toolchain with
+# no network. go.mod declares go 1.27.x; we use the Wolfi go-1.27 toolchain with
 # GOTOOLCHAIN=local so no toolchain is fetched. The version is stamped via the
 # upstream ldflags (version.Version / version.GitCommit, per the Makefile
 # GO_LDFLAGS) so the operator logs the real release at startup. Output is a
@@ -28,10 +28,10 @@ environment:
       - build-base
       - busybox
       - ca-certificates-bundle
-      # go.mod declares go 1.26.x; use the newest go-1.26 toolchain (latest
+      # go.mod declares go 1.27.x (since 2.21.1); use the newest go-1.27 toolchain (latest
       # stdlib CVE fixes) with GOTOOLCHAIN=local so the directive triggers no
       # toolchain download.
-      - go-1.26
+      - go-1.27
       - jq   # the floor pass reads go.mod replace directives
 
 pipeline:
@@ -42,7 +42,7 @@ pipeline:
   - runs: |
       set -eu
       export CGO_ENABLED=0
-      export GOTOOLCHAIN=local      # use the installed go-1.26, do not fetch go.mod's directive
+      export GOTOOLCHAIN=local      # use the installed go-1.27, do not fetch go.mod's directive
       export GO111MODULE=on
       export GOFLAGS=-mod=mod       # build off go.mod (see the CVE bump below)
 
