@@ -1,0 +1,63 @@
+# Chhoto URL runtime: HTTP on 4567 (no TLS listener), SQLite at /var/lib/chhoto-url/urls.sqlite (CHHOTO_DB_URL),
+# the web UI from /app/frontend/base. Set CHHOTO_PASSWORD for the web UI and CHHOTO_API_KEY (64+ random bytes,
+# base64url) for the API. CHHOTO_HEALTH_PORT's /healthz binds 127.0.0.1 only, so probe /api/version. A custom site
+# title needs a writable /app/frontend/final. Nonroot uid 1001.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-chhoto-url@local
+
+accounts:
+  groups:
+    - groupname: chhoto
+      gid: 1001
+  users:
+    - username: chhoto
+      uid: 1001
+      gid: 1001
+      homedir: /var/lib/chhoto-url
+  run-as: 1001
+
+environment:
+  CHHOTO_DB_URL: /var/lib/chhoto-url/urls.sqlite
+
+paths:
+  - path: /var/lib
+    type: directory
+    uid: 0
+    gid: 0
+    permissions: 0o755
+  - path: /var/lib/chhoto-url
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+  - path: /app/frontend/final
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+work-dir: /app
+
+entrypoint:
+  command: /app/chhoto-url
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-chhoto-url"
+  org.opencontainers.image.licenses: "MIT"
+  org.opencontainers.image.version: "__VER__"

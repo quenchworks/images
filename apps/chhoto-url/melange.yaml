@@ -1,0 +1,50 @@
+# Chhoto URL from the release tag, built with cargo auditable; frontend files from the same tag.
+package:
+  name: quench-chhoto-url
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Chhoto URL shortener, built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      # cargo auditable embeds the crate list in a .dep-v0 section; without it Trivy sees no crates
+      - cargo-auditable
+      - rust-1.96
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/SinTan1729/chhoto-url/archive/refs/tags/${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - runs: |
+      set -eu
+      export CARGO_HOME="$(mktemp -d)"
+      grep -q '^version = "${{package.version}}"' backend/Cargo.toml
+      (cd backend && cargo auditable build --release --locked --bin chhoto-url)
+      d="${{targets.destdir}}/app"
+      install -Dm755 backend/target/release/chhoto-url "$d/chhoto-url"
+      readelf -S "$d/chhoto-url" | grep -q '\.dep-v0'
+      # upstream's layout: frontend/base is served; frontend/final receives a copy when a custom title is set
+      install -d "$d/frontend"
+      cp -r frontend "$d/frontend/base"
+      install -d -m 0775 "$d/frontend/final"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /app/chhoto-url
+        test -f /app/frontend/base/index.html
