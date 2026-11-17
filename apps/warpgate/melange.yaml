@@ -36,6 +36,9 @@ environment:
     npm_config_allow_git: all
     # two unstable library features (warpgate-core gethostname, warpgate-protocol-rdp once_cell_try)
     RUSTC_BOOTSTRAP: "1"
+    # upstream's release profile uses fat LTO; its link outgrew the 16 GiB arm runner twice (runner
+    # shutdown, exit 143). Thin LTO keeps most of the gain at a fraction of the memory.
+    CARGO_PROFILE_RELEASE_LTO: thin
     SOURCE_DATE_EPOCH: "0"
 
 pipeline:
