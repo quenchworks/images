@@ -190,6 +190,7 @@ var table = map[string]check{
 	"convertx":                          {src: ghRel("C4illin/ConvertX"), n: 1},
 	"trilium":                           {src: ghRel("TriliumNext/Trilium"), n: 1},
 	"linkwarden":                        {src: ghRel("linkwarden/linkwarden"), n: 1},
+	"wikijs":                            {src: ghRel("requarks/wiki"), n: 1},
 	"external-dns":                      {src: ghRel("kubernetes-sigs/external-dns")},
 	"external-secrets":                  {src: ghRel("external-secrets/external-secrets")},
 	"fabric-orderer":                    {src: ghRel("hyperledger/fabric"), lines: 2, f: filter{keep: full(`\d+\.\d+\.\d+`)}},

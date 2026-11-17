@@ -1,0 +1,79 @@
+# Wiki.js from the release tag on Wolfi nodejs-26: frontend and blocks built, backend installed for production, laid
+# out like upstream's image (/wiki: assets, blocks/compiled, backend, config.yml).
+package:
+  name: quench-wikijs
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Wiki.js, built from source on Wolfi"
+  copyright:
+    - license: AGPL-3.0-only
+  dependencies:
+    runtime:
+      - nodejs-26
+      - git
+      - openssh-client
+      - ca-certificates-bundle
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - jq
+      - nodejs-26
+      - npm
+      - python-3.13
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/requarks/wiki/archive/refs/tags/${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: frontend, blocks, backend
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" npm_config_cache="$(mktemp -d)" npm_config_fund=false npm_config_audit=false
+      # npm 12 refuses remote-tarball and git dependencies by default; the frontend takes twemoji-assets from a GitHub
+      # tarball (pinned by integrity in the lockfile)
+      export npm_config_fetch_retries=5 PUPPETEER_SKIP_DOWNLOAD=1 npm_config_allow_remote=all npm_config_allow_git=all
+      # fixed releases for the lockfiles' findings (npm overrides, written into each package.json)
+      ov() { jq --argjson o "$2" '.overrides = ((.overrides // {}) + $o)' "$1/package.json" > "$1/p.tmp" && mv "$1/p.tmp" "$1/package.json"; }
+      ov backend '{"fast-uri@>=3 <3.1.9":"3.1.9","fast-uri@>=4 <4.2.3":"4.2.3","fast-xml-parser@<5.12.0":"5.12.0","undici@>=7 <7.30.1":"7.30.1","yaml@>=2 <2.8.3":"2.8.3"}'
+      ov frontend '{"dompurify@<3.4.17":"3.4.17","nanoid@>=3 <3.3.12":"3.3.12","lodash-es@<4.18.0":"4.18.0"}'
+      (cd frontend && npm install && NODE_OPTIONS=--max-old-space-size=6144 npm run build)
+      (cd blocks && npm ci && npm run build)
+      test -d assets && test -d blocks/compiled
+      # upstream leaves 3.0.0-dev in the backend package.json; stamp the real version (scanners match it against
+      # Wiki.js's own advisories, and the admin page reads it)
+      jq '.version = "${{package.version}}"' backend/package.json > backend/p.tmp && mv backend/p.tmp backend/package.json
+      (cd backend && npm install --omit=dev)
+      # Wolfi's nodejs-26 is built without V8's Temporal (v8_enable_temporal_support=0) and the backend calls
+      # Temporal.* at startup; the image preloads the polyfill upstream's own frontend uses (same exact version)
+      (cd backend && npm install --omit=dev --no-save temporal-polyfill@1.0.8)
+      test -f backend/node_modules/temporal-polyfill/global.esm.js
+      d="${{targets.destdir}}/wiki"
+      install -d "$d/blocks"
+      cp -a assets "$d/assets"
+      cp -a blocks/compiled "$d/blocks/compiled"
+      cp -a backend "$d/backend"
+      cp dev/build/config.yml "$d/config.yml"
+      cp LICENSE "$d/LICENSE"
+      find "$d/backend/node_modules" -depth -type d -name '*linuxmusl*' -exec rm -rf {} +
+      arch="$(node -p process.arch)"
+      find "$d/backend/node_modules" -path '*/prebuilds/*' -type f -name '*.node' ! -name "linux-$arch*.node" -delete
+      cd "$d/backend/node_modules" && for p in fast-xml-parser undici yaml; do [ -f "$p/package.json" ] && echo "$p $(jq -r .version $p/package.json)"; done
+
+test:
+  pipeline:
+    - runs: |
+        test -f /wiki/backend/package.json
+        test -d /wiki/assets
+        node --version | grep -q '^v26'
+        node --import /wiki/backend/node_modules/temporal-polyfill/global.esm.js -e 'Temporal.Now.instant()'

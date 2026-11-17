@@ -1,0 +1,55 @@
+# Wiki.js runtime: HTTP on 3000, PostgreSQL through DB_HOST, DB_PORT, DB_USER, DB_PASS, DB_NAME (config.yml reads
+# them), data in /wiki/data (a volume). The first visitor completes setup in the browser. No TLS listener.
+# Nonroot uid 1001.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - tzdata
+    - quench-wikijs@local
+
+accounts:
+  groups:
+    - groupname: wiki
+      gid: 1001
+  users:
+    - username: wiki
+      uid: 1001
+      gid: 1001
+      homedir: /tmp
+  run-as: 1001
+
+environment:
+  NODE_ENV: production
+  HOME: /tmp
+
+paths:
+  - path: /wiki/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+work-dir: /wiki
+
+entrypoint:
+  # the Temporal polyfill first: Wolfi nodejs-26 has no native Temporal
+  command: /usr/bin/node --import /wiki/backend/node_modules/temporal-polyfill/global.esm.js --no-experimental-webstorage backend
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-wikijs"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"
+  org.opencontainers.image.version: "__VER__"
