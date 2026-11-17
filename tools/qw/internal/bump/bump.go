@@ -82,7 +82,9 @@ func fetchSha(url, algo string) (string, error) {
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("User-Agent", "curl/8.0") // fastdl.mongodb.org 403s other agents
 	// no overall timeout: a big tarball takes minutes; a stalled read still fails below
-	c := &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: 60 * time.Second}}
+	// DisableCompression: some hosts (builds.matomo.org) label a .tar.gz "Content-Encoding: gzip", and Go's
+	// default transport then gunzips it, so the hash was of the inner .tar, never of the file the recipe fetches.
+	c := &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: 60 * time.Second, DisableCompression: true}}
 	resp, err := c.Do(req)
 	if err != nil {
 		return "", err
