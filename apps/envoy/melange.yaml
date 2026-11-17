@@ -1,0 +1,82 @@
+# envoy: built from source with Bazel (FROM_SOURCE=1). Public Wolfi stopped publishing envoy at
+# 1.38.1-r0 (the CVE fixes are enterprise-only, #71), so the image no longer takes Wolfi's apk.
+# Envoy 1.40 brings a hermetic LLVM 22 toolchain (toolchains_llvm) and its own Python and Rust
+# toolchains; Bazel 8 comes from Wolfi. The build needs more than a laptop: it runs on the CI
+# runners (4 CPU / 16 GiB, Bazel's output on /mnt).
+#
+# A static Envoy hides brotli, BoringSSL, nghttp2, zlib-ng, c-ares and its Rust crates from
+# Trivy. The image therefore ships the inventory under /usr/share/envoy/: the tag's Cargo.lock
+# (Trivy reads it in an image layer), deps.yaml (Envoy's dependency metadata with CPEs) and the
+# resolved Bazel module graph, which the build workflow turns into a CPE scan.
+package:
+  name: quench-envoy
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Envoy proxy, built from source with Bazel on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+  resources:
+    cpu: "4"
+    memory: 14Gi
+
+environment:
+  contents:
+    packages:
+      - bash
+      - bazel-8
+      - binutils
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - coreutils
+      - git
+      - patch
+      - python3
+      - wolfi-baselayout
+  environment:
+    # Bazel's server JVM plus 4 compile jobs fit in a 16 GiB runner; the link of envoy-static
+    # is the peak.
+    BAZEL_JOBS: "4"
+
+pipeline:
+  - uses: git-checkout
+    with:
+      repository: https://github.com/envoyproxy/envoy
+      tag: v${{package.version}}
+      expected-commit: __COMMIT__
+      destination: envoy
+
+  - working-directory: envoy
+    runs: |
+      set -eu
+      # the version Bazel was tested with is in .bazelversion; Wolfi's bazel-8 is the same major
+      echo "Bazel $(bazel --version) for .bazelversion $(cat .bazelversion)"
+      case "$(cat .bazelversion)" in 8.*) ;; *) echo "this recipe expects Bazel 8"; exit 1 ;; esac
+      bazel --output_user_root="$HOME/.bazel-root" build \
+        -c opt --jobs="$BAZEL_JOBS" \
+        --local_resources=memory=HOST_RAM*.7 \
+        --verbose_failures --noshow_progress --show_result=1 \
+        //source/exe:envoy-static.stripped
+      install -Dm755 bazel-bin/source/exe/envoy-static.stripped "${{targets.destdir}}/usr/bin/envoy"
+
+      # the inventory the scanner cannot read from the binary
+      inv="${{targets.destdir}}/usr/share/envoy"
+      install -Dm644 Cargo.lock "$inv/Cargo.lock"
+      install -Dm644 bazel/deps.yaml "$inv/deps.yaml"
+      bazel --output_user_root="$HOME/.bazel-root" mod graph --output=json > "$inv/bazel-mod-graph.json"
+      bazel --output_user_root="$HOME/.bazel-root" query --noshow_progress \
+        'deps(//source/exe:envoy-static)' \
+        --output=package 2>/dev/null | sed -n 's|^@\([^/]*\)//.*|\1|p' | sort -u > "$inv/linked-repos.txt"
+      test -s "$inv/linked-repos.txt"
+      bazel --output_user_root="$HOME/.bazel-root" shutdown
+      chmod -R u+w "$HOME/.bazel-root" && rm -rf "$HOME/.bazel-root"
+
+  - uses: strip
+
+test:
+  pipeline:
+    - runs: |
+        envoy --version | grep -F "/${{package.version}}/"

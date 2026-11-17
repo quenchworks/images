@@ -1,26 +1,19 @@
 name: build-envoy
 
-# LANGUAGE-RUNTIMES track. Hardened OpenJDK (JDK) base images, assembled
-# straight from Wolfi's versioned `openenvoy-N-default-envoy` packages with apko --
-# NO melange/from-source step, since Wolfi already packages OpenJDK. A MATRIX
-# fans out over the latest 3 LTS lines; each one runs a NATIVE per-arch apko
-# build (no QEMU), the hard 0-CVE Trivy gate, then a per-version merge job that
-# assembles + signs + attests the multi-arch index.
-#
-# IMAGE-ONLY: the JDK is a base/runtime image with no Helm chart, so there is
-# NO charts-repo dispatch.
-#
-# TEMPLATE: to add another LTS (or another runtime), copy a matrix entry and
-# change `ver`; apps/envoy/apko.yaml carries the `__VER__` placeholder that CI
-# substitutes per entry (it also feeds JAVA_HOME). No :latest tag is ever
-# published.
+# From-source build of Envoy with Bazel (#107). build.conf is the single source of truth:
+# prep emits VERSIONS, the matrix fans them over both native arches. One Envoy build is
+# about 3 hours on a 4-CPU runner and needs tens of GB of disk, so the job frees the runner's
+# preinstalled toolchains and puts melange's workspace (Bazel's output root) on the biggest
+# filesystem. A static Envoy hides its C and Rust dependencies from Trivy: the image ships
+# Cargo.lock (Trivy reads it) and the CPE inventory under /usr/share/envoy.
+# No charts dispatch: the envoy, contour and envoy-gateway charts are re-pinned by hand.
 on:
   workflow_dispatch:
 permissions:
   contents: read
-  packages: write        # push to GHCR
-  id-token: write        # cosign keyless + attestation signing
-  attestations: write    # SLSA build provenance + SBOM attestation
+  packages: write
+  id-token: write
+  attestations: write
 
 # one build per app at a time; a newer dispatch replaces an older one still pending (a stuck
 # queued run once ran 40 minutes late and republished a digest the chart had already pinned)
@@ -38,6 +31,7 @@ jobs:
     outputs:
       vers: ${{ steps.v.outputs.vers }}
       blocked: ${{ steps.v.outputs.blocked }}
+      latest: ${{ steps.v.outputs.latest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: v
@@ -45,10 +39,11 @@ jobs:
           set -euo pipefail
           source "apps/${APP}/build.conf"
           echo "blocked=$([ "${BLOCKED:-0}" = "1" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          n=${#VERSIONS[@]}; start=0  # build every entry: a 4th kept for a chart pin never rebuilt and drifted (2026-11-02)   # last up-to-3 (negative slice breaks for n<3)
+          n=${#VERSIONS[@]}; start=0  # build every entry: a 4th kept for a chart pin never rebuilt and drifted (2026-11-02)
           latest3=("${VERSIONS[@]:start}")
           echo "building: ${latest3[*]}"
           echo "vers=$(printf '%s\n' "${latest3[@]}" | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
+          echo "latest=${latest3[${#latest3[@]}-1]}" >> "$GITHUB_OUTPUT"
 
   build:
     needs: prep
@@ -56,28 +51,48 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # latest 3 LTS Wolfi-packaged OpenJDK lines x both native arches,
-        # driven by apps/envoy/build.conf VERSIONS (the single source of truth).
         ver: ${{ fromJson(needs.prep.outputs.vers) }}
         arch:
           - { name: x86_64,  platform: amd64, runner: ubuntu-24.04 }
-          - { name: aarch64, platform: arm64, runner: ubuntu-24.04-arm }   # native arm64, free for public repos
+          - { name: aarch64, platform: arm64, runner: ubuntu-24.04-arm }
     runs-on: ${{ matrix.arch.runner }}
+    timeout-minutes: 355
     defaults:
       run:
         working-directory: apps/envoy
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install apko (native ${{ matrix.arch.platform }})
+      - name: Install melange and apko (native ${{ matrix.arch.platform }})
         working-directory: ${{ github.workspace }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Authenticated + retried, not an anonymous api.github.com call: unauthenticated
-          # requests are rate-limited on runners, and the error JSON silently yields an
-          # EMPTY version, a malformed download URL, and `curl: (23)` as tar chokes on the
-          # response. Observed on build-ingress-nginx 2026-08-27.
+          set -euo pipefail
+          # bubblewrap: apt first. When the runner cannot resolve the Ubuntu mirrors (hours on 2026-11-11),
+          # fetch the same noble-updates .deb from other mirrors and check the archive index sha256.
+          if ! command -v bwrap >/dev/null && ! { timeout 300 sudo apt-get update -o Acquire::Retries=3 && timeout 300 sudo apt-get install -y bubblewrap; }; then
+            a="$(dpkg --print-architecture)"; deb="bubblewrap_0.9.0-1ubuntu0.3_${a}.deb"
+            case "$a" in
+              amd64) sum=2461f1beee9cb04c8942739fe1a2b37e7b7c2a3d518f0779dc75f9245baa3094
+                     m="http://archive.ubuntu.com/ubuntu http://security.ubuntu.com/ubuntu https://mirrors.edge.kernel.org/ubuntu https://ftp.uni-stuttgart.de/ubuntu" ;;
+              arm64) sum=dce3a2e5f0302eab717a64fe9c9411fe2d40469e2a7946e0f2ce1420a61025c3
+                     m="http://ports.ubuntu.com/ubuntu-ports https://ftp.tu-chemnitz.de/pub/linux/ubuntu-ports https://mirrors.ocf.berkeley.edu/ubuntu-ports https://mirrors.dotsrc.org/ubuntu-ports" ;;
+            esac
+            ok=0
+            for i in 1 2 3 4 5 6; do
+              for u in $m; do
+                if curl -fsSL -m 120 -o "/tmp/$deb" "$u/pool/main/b/bubblewrap/$deb" && echo "$sum  /tmp/$deb" | sha256sum -c -; then ok=1; break 2; fi
+              done
+              sleep 30
+            done
+            [ "$ok" = 1 ] || { echo "bubblewrap: no mirror reachable"; exit 1; }
+            sudo dpkg -i "/tmp/$deb"
+          fi
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          MELANGE_VER=v0.53.0
+          curl -fsSL "https://github.com/chainguard-dev/melange/releases/download/${MELANGE_VER}/melange_${MELANGE_VER#v}_linux_${{ matrix.arch.platform }}.tar.gz" \
+            | sudo tar xz --strip-components=1 -C /usr/local/bin
           APKO_VER=""
           for i in 1 2 3 4 5; do
             APKO_VER="$(gh api repos/chainguard-dev/apko/releases/latest --jq .tag_name 2>/dev/null || true)"
@@ -87,13 +102,33 @@ jobs:
           [ -n "$APKO_VER" ] || { echo "could not resolve latest apko"; exit 1; }
           curl -fsSL "https://github.com/chainguard-dev/apko/releases/download/${APKO_VER}/apko_${APKO_VER#v}_linux_${{ matrix.arch.platform }}.tar.gz" \
             | sudo tar xz --strip-components=1 -C /usr/local/bin
+          melange version | head -1
           apko version | head -1
 
-      - name: Render apko config for OpenJDK ${{ matrix.ver }} (build.conf render)
+      - name: Free disk for Bazel
+        working-directory: ${{ github.workspace }}
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/local/julia* /usr/share/swift || true
+          docker system prune -af >/dev/null 2>&1 || true
+          # melange's workspace holds Bazel's output root: put it where the space is
+          best=/; for d in /mnt /; do [ -d "$d" ] && [ "$(df --output=avail -B1G "$d" | tail -1)" -gt "$(df --output=avail -B1G "$best" | tail -1)" ] && best=$d; done
+          sudo mkdir -p "$best/melange-ws" && sudo chown "$(id -u):$(id -g)" "$best/melange-ws"
+          echo "MELANGE_WS=$best/melange-ws" >> "$GITHUB_ENV"
+          df -h / /mnt 2>/dev/null || df -h /
+          free -g
+
+      - name: Render recipes for ${{ matrix.ver }} (build.conf render)
         run: |
           set -euo pipefail
           source build.conf
-          sed -e "$(render '${{ matrix.ver }}')" apko.yaml > apko.rendered.yaml
+          prog="$(render '${{ matrix.ver }}')"
+          sed -e "$prog" melange.yaml > melange.rendered.yaml
+          sed -e "$prog" apko.yaml    > apko.rendered.yaml
+
+      - name: Build package from source (native ${{ matrix.arch.name }})
+        run: |
+          melange keygen melange.rsa
+          melange build melange.rendered.yaml --arch ${{ matrix.arch.name }} --signing-key melange.rsa --out-dir ./packages --workspace-dir "$MELANGE_WS"
 
       - name: Assemble single-arch image for the scan gate
         run: apko build apko.rendered.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}
@@ -110,12 +145,33 @@ jobs:
           severity: CRITICAL,HIGH,MEDIUM,LOW
           scanners: vuln
 
-      - name: Smoke test the single-arch image
+      # A green 0-CVE scan says nothing about whether the image RUNS. Publishing
+      # straight from the scan is how a build that could not start at all reached
+      # GHCR (elasticsearch 9.5.1: modules/apm removed, ES refused to boot, scan
+      # green). Boot the image and run its own smoke test BEFORE publishing.
+      #
+      # The second argument is the expected version; every test.sh takes it as an
+      # optional $2 and the ones that ignore it are unaffected.
+      - name: Boot test the single-arch image (must run before publish)
         run: |
-          docker load < image.tar
-          # apko load tags the image as <ref>-<arch>; the scan ref ended in the platform.
-          docker tag "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}-${{ matrix.arch.platform }}" envoy-smoke:local
-          bash test.sh envoy-smoke:local "3.13"
+          # Take the tag from `docker load` rather than reconstructing it: apko
+          # appends the arch to the tag it was given, so a tar built as
+          # `:scan-amd64` loads as `:scan-amd64-amd64`. Reconstructing that
+          # suffix by hand is what broke the first cut of this step.
+          # Keep the load output: the previous version piped it straight into sed, so a
+          # failure printed "no image" and threw away the only evidence of WHY.
+          out="$(docker load < image.tar 2>&1)" || true
+          printf '%s\n' "$out"
+          # Two forms exist. A tagged tar prints "Loaded image: repo:tag"; an untagged one
+          # prints "Loaded image ID: sha256:...", and that id is a perfectly good ref.
+          img="$(printf '%s\n' "$out" | sed -n -e 's/^Loaded image: //p' -e 's/^Loaded image ID: //p' | head -1)"
+          if [ -z "$img" ]; then
+            echo "FATAL: docker load produced no usable image ref (output above)"
+            echo "image.tar: $(ls -l image.tar 2>&1)"
+            exit 1
+          fi
+          docker tag "$img" envoy-boot:local
+          bash test.sh envoy-boot:local "3.13"
 
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -124,7 +180,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish the single-arch image
+      - name: Publish the single-arch image (tag = full X.Y.Z)
         run: apko publish apko.rendered.yaml "${GHCR_IMAGE}:${{ matrix.ver }}-${{ matrix.arch.platform }}" --arch ${{ matrix.arch.name }}
 
   merge:
@@ -146,7 +202,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Assemble the multi-arch index
+      - name: Assemble the multi-arch index (tag = full X.Y.Z)
         id: merge
         run: |
           docker buildx imagetools create -t "${GHCR_IMAGE}:${{ matrix.ver }}" \
@@ -183,4 +239,4 @@ jobs:
           push-to-registry: true
           create-storage-record: false
 
-      # IMAGE-ONLY: no charts-repo dispatch. The JDK is a base/runtime image.
+      # No charts dispatch: envoy, contour and envoy-gateway are re-pinned by hand (#107).

@@ -127,7 +127,7 @@ var table = map[string]check{
 	"emissary":                          {src: ghRel("emissary-ingress/emissary"), n: 1},
 	"emqx":                              {src: ghRel("emqx/emqx")},
 	"envoy-gateway":                     {src: ghRel("envoyproxy/gateway")},
-	"envoy":                             {wolfiPrefix: "envoy-", lines: 2, lineOnly: false},
+	"envoy":                             {src: ghRel("envoyproxy/envoy"), n: 1},
 	"erlang":                            {wolfiPrefix: "erlang-", lines: 1, lineOnly: false},
 	"ergo":                              {src: ghRel("ergochat/ergo"), n: 1},
 	"rest-server":                       {src: ghRel("restic/rest-server"), n: 1},
