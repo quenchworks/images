@@ -82,9 +82,11 @@ pipeline:
       install -Dm644 Cargo.lock "$inv/Cargo.lock"
       install -Dm644 bazel/deps.yaml "$inv/deps.yaml"
       bazel --output_user_root="$HOME/.bazel-root" mod graph --output=json > "$inv/bazel-mod-graph.json"
-      bazel --output_user_root="$HOME/.bazel-root" query --noshow_progress \
-        'deps(//source/exe:envoy-static)' \
-        --output=package 2>/dev/null | sed -n 's|^@\([^/]*\)//.*|\1|p' | sort -u > "$inv/linked-repos.txt"
+      # cquery, not query: query walks every select() branch and failed (exit 7) after the build;
+      # cquery follows the real configuration, and --notool_deps drops build-host tools
+      bazel --output_user_root="$HOME/.bazel-root" cquery --noshow_progress --notool_deps \
+        'deps(//source/exe:envoy-static)' --output=label > /tmp/cquery.txt
+      sed -n 's|^@@\([^/]*\)//.*|\1|p' /tmp/cquery.txt | sort -u > "$inv/linked-repos.txt"
       test -s "$inv/linked-repos.txt"
       python3 ../inventory.py "$inv"
       bazel --output_user_root="$HOME/.bazel-root" shutdown
