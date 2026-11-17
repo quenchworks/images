@@ -1,0 +1,52 @@
+# NetBird client: the NetBird client (a peer or a routing peer); netstack mode by default, kernel mode with NET_ADMIN. Nonroot uid 1001.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-netbird@local
+
+accounts:
+  groups:
+    - groupname: netbird
+      gid: 1001
+  users:
+    - username: netbird
+      uid: 1001
+      gid: 1001
+      homedir: /var/lib/netbird
+  run-as: 1001
+
+paths:
+  - path: /var/lib/netbird
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+environment:
+  NETBIRD_BIN: "/usr/bin/netbird"
+  NB_LOG_FILE: "console"
+  NB_USE_NETSTACK_MODE: "true"
+  NB_ENABLE_NETSTACK_LOCAL_FORWARDING: "true"
+  NB_CONFIG: "/var/lib/netbird/config.json"
+  NB_STATE_DIR: "/var/lib/netbird"
+  NB_DAEMON_ADDR: "unix:///var/lib/netbird/netbird.sock"
+  NB_ENTRYPOINT_SERVICE_TIMEOUT: "30"
+entrypoint:
+  command: /usr/bin/netbird-entrypoint.sh
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-netbird"
+  org.opencontainers.image.licenses: "BSD-3-Clause"

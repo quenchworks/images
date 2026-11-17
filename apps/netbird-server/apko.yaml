@@ -1,0 +1,43 @@
+# NetBird combined server: management, signal and relay in one process. Nonroot uid 1001.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-netbird-server@local
+
+accounts:
+  groups:
+    - groupname: netbird
+      gid: 1001
+  users:
+    - username: netbird
+      uid: 1001
+      gid: 1001
+      homedir: /var/lib/netbird
+  run-as: 1001
+
+paths:
+  - path: /var/lib/netbird
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+entrypoint:
+  command: /usr/bin/netbird-server --config /etc/netbird/config.yaml
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-netbird-server"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"

@@ -1,0 +1,38 @@
+# NetBird dashboard: the static Next.js site on Wolfi nginx, port 8080, nonroot uid 1001, read-only
+# rootfs (needs a writable /tmp). Set AUTH_AUTHORITY, AUTH_CLIENT_ID, AUTH_AUDIENCE,
+# AUTH_SUPPORTED_SCOPES, USE_AUTH0 and NETBIRD_MGMT_API_ENDPOINT, as for upstream's image.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - quench-netbird-dashboard@local
+
+accounts:
+  groups:
+    - groupname: netbird
+      gid: 1001
+  users:
+    - username: netbird
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/netbird-dashboard-init
+cmd: /usr/sbin/nginx -e /dev/stderr -c /etc/netbird-dashboard/nginx.conf
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-netbird-dashboard"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"

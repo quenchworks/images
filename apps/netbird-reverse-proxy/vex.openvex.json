@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/netbird-reverse-proxy/2026-11-17",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-17T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-54909"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/pion/stun/v3@v3.1.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "Measured 2026-11-17 on NetBird v0.83.1. The fix (pion/stun commit fa9f074a33, 'Fix panic on short XOR-MAPPED-ADDRESS value', released in 3.1.5) moves the len(value) <= 4 check in XORMappedAddress.GetFromAs ahead of the read of the address family. Every fixed stun release moves to pion/transport v4, whose types NetBird's client passes into stun (client/internal/relay/relay.go), so the module stays at v3.1.0 and the build applies that exact change to the vendored copy: apps/<image>/stun-v3.1.0-xoraddr.patch, patched in melange.yaml with go mod vendor and built with -mod=vendor, and the build fails unless the check sits before the family read. The vulnerable code is therefore not in the binary. Revisit when NetBird moves to pion/stun 3.1.5 or later."
+    }
+  ]
+}

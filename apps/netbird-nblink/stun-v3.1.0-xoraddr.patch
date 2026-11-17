@@ -1,0 +1,22 @@
+--- a/xoraddr.go	2026-11-17 20:37:48.429569552 +0300
++++ b/xoraddr.go	2026-11-17 20:37:48.494135796 +0300
+@@ -91,6 +91,9 @@
+ 	if err != nil {
+ 		return err
+ 	}
++	if len(value) <= 4 {
++		return io.ErrUnexpectedEOF
++	}
+ 	family := bin.Uint16(value[0:2])
+ 	if family != familyIPv6 && family != familyIPv4 {
+ 		return newDecodeErr("xor-mapped address", "family",
+@@ -111,9 +114,6 @@
+ 		}
+ 	}
+ 
+-	if len(value) <= 4 {
+-		return io.ErrUnexpectedEOF
+-	}
+ 	if err := CheckOverflow(attr, len(value[4:]), len(a.IP)); err != nil {
+ 		return err
+ 	}

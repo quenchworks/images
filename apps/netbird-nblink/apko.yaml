@@ -1,0 +1,45 @@
+# NetBird nblink: nblink, a userspace NetBird link. Nonroot uid 1001.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-netbird-nblink@local
+
+accounts:
+  groups:
+    - groupname: netbird
+      gid: 1001
+  users:
+    - username: netbird
+      uid: 1001
+      gid: 1001
+      homedir: /var/lib/netbird
+  run-as: 1001
+
+paths:
+  - path: /var/lib/netbird
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+environment:
+  NB_LOG_LEVEL: "info"
+entrypoint:
+  command: /usr/bin/nblink
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-netbird-nblink"
+  org.opencontainers.image.licenses: "BSD-3-Clause"

@@ -1,0 +1,105 @@
+# NetBird dashboard, built from source: npm ci + next build (output: export) into a static site,
+# served by Wolfi nginx. Upstream's init_react_envs.sh writes the OIDC settings into the site and the
+# CSP header into the server config at start; it is patched to do that on a copy under /tmp, so the
+# image runs on a read-only rootfs. The browser RDP client (IronRDP v0.0.2 wasm, runs in the user's
+# browser) is the one prebuilt part, as in upstream's build, pinned by sha256.
+package:
+  name: quench-netbird-dashboard
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened NetBird dashboard, built from source on Wolfi"
+  copyright:
+    - license: AGPL-3.0-only
+  dependencies:
+    runtime:
+      - bash
+      - busybox
+      - ca-certificates-bundle
+      - gettext
+      - nginx
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - curl
+      - nodejs-24
+      - npm
+  environment:
+    NEXT_TELEMETRY_DISABLED: "1"
+    npm_config_allow_remote: all
+    npm_config_allow_git: all
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/netbirdio/dashboard/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      # IronRDP browser client, as upstream's CI downloads it
+      r=https://github.com/netbirdio/IronRDP/releases/download/v0.0.2
+      mkdir -p public/ironrdp-pkg
+      for f in "ironrdp_web.d.ts a7818512bb18bd5cc3f237d616e6a203742c7152a60aaffca336b8f12dc67678" \
+               "ironrdp_web.js d325a35d6c86d7a83f0ca48079898323ec03d96c6f93ba2f824317476bcda207" \
+               "ironrdp_web_bg.wasm 7f83df3fdd07985e90e74f932aa9a0ad4fa3debb07d36b3430004f1b2c20ae33" \
+               "ironrdp_web_bg.wasm.d.ts df61fad9d7c70c9b4f850be687efb699f10676da3b6dd989e384985c8d387fa1"; do
+        set -- $f
+        curl -fsSL -o "public/ironrdp-pkg/$1" "$r/$1"
+        echo "$2  public/ironrdp-pkg/$1" | sha256sum -c -
+      done
+      echo '{}' > .local-config.json
+      npm ci --no-audit --no-fund
+      NEXT_PUBLIC_DASHBOARD_VERSION=v${{package.version}} npm run build
+      test -f out/index.html
+      grep -rlq AUTH_SUPPORTED_SCOPES out
+
+      d="${{targets.destdir}}"
+      install -d "$d/usr/share/netbird-dashboard" "$d/etc/netbird-dashboard"
+      cp -a out/. "$d/usr/share/netbird-dashboard/"
+      # server block: port 8080, root on the /tmp copy the init script prepares
+      sed -e 's/listen 80 default_server;/listen 8080 default_server;/' \
+          -e 's/listen \[::\]:80 default_server;/listen [::]:8080 default_server;/' \
+          -e 's|/usr/share/nginx/html|/tmp/netbird-dashboard/html|g' docker/default.conf > "$d/etc/netbird-dashboard/default.conf"
+      grep -q 'listen 8080 default_server;' "$d/etc/netbird-dashboard/default.conf"
+      ! grep -q /usr/share/nginx/html "$d/etc/netbird-dashboard/default.conf"
+      cat > "$d/etc/netbird-dashboard/nginx.conf" <<'NGX'
+      daemon off;
+      worker_processes auto;
+      pid /tmp/netbird-dashboard/nginx.pid;
+      error_log /dev/stderr warn;
+      events { worker_connections 1024; }
+      http {
+          include /etc/nginx/mime.types;
+          default_type application/octet-stream;
+          server_tokens off;
+          access_log /dev/stdout;
+          client_body_temp_path /tmp/netbird-dashboard/client_body;
+          proxy_temp_path /tmp/netbird-dashboard/proxy;
+          fastcgi_temp_path /tmp/netbird-dashboard/fastcgi;
+          uwsgi_temp_path /tmp/netbird-dashboard/uwsgi;
+          scgi_temp_path /tmp/netbird-dashboard/scgi;
+          sendfile on;
+          gzip on;
+          gzip_types text/plain text/css application/json application/javascript text/xml application/xml image/svg+xml application/wasm;
+          include /tmp/netbird-dashboard/default.conf;
+      }
+      NGX
+      # init script: upstream's, working on a /tmp copy of the site and server config
+      w=/tmp/netbird-dashboard
+      sed -e 's|/usr/share/nginx/html|'"$w"'/html|g' -e 's|/etc/nginx/http.d/default.conf|'"$w"'/default.conf|g' \
+          docker/init_react_envs.sh > /tmp/init.sh
+      ! grep -qE '/usr/share/nginx/html|/etc/nginx/http.d' /tmp/init.sh
+      install -d "$d/usr/bin"
+      { sed -n '1p' /tmp/init.sh
+        echo "rm -rf $w && mkdir -p $w && cp -r /usr/share/netbird-dashboard $w/html && cp /etc/netbird-dashboard/default.conf $w/default.conf"
+        sed '1d' /tmp/init.sh; } > "$d/usr/bin/netbird-dashboard-init"
+      chmod 0755 "$d/usr/bin/netbird-dashboard-init"
+      head -1 "$d/usr/bin/netbird-dashboard-init" | grep -q bash
+      grep -q 'exec "\$@"' "$d/usr/bin/netbird-dashboard-init"
