@@ -45,6 +45,7 @@ environment:
       - zlib
       - patch
       - python3
+      - py3.13-pyyaml            # inventory.py reads deps.yaml
       - wolfi-baselayout
   environment:
     # Bazel's server JVM plus 4 compile jobs fit in a 16 GiB runner; the link of envoy-static
@@ -85,6 +86,7 @@ pipeline:
         'deps(//source/exe:envoy-static)' \
         --output=package 2>/dev/null | sed -n 's|^@\([^/]*\)//.*|\1|p' | sort -u > "$inv/linked-repos.txt"
       test -s "$inv/linked-repos.txt"
+      python3 ../inventory.py "$inv"
       bazel --output_user_root="$HOME/.bazel-root" shutdown
       chmod -R u+w "$HOME/.bazel-root" && rm -rf "$HOME/.bazel-root"
 

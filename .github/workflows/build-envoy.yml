@@ -130,12 +130,28 @@ jobs:
           melange keygen melange.rsa
           melange build melange.rendered.yaml --arch ${{ matrix.arch.name }} --signing-key melange.rsa --out-dir ./packages --workspace-dir "$MELANGE_WS"
 
+      # the built apk (binary + /usr/share/envoy inventory), kept even when a later gate fails
+      - name: Keep the built package
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: envoy-${{ matrix.ver }}-${{ matrix.arch.name }}-apk
+          path: apps/envoy/packages/
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Assemble single-arch image for the scan gate
         run: apko build apko.rendered.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}
+
+      - name: Check VEX
+        working-directory: ${{ github.workspace }}
+        run: go -C tools/qw run . vex envoy
 
       - name: Scan, the hard 0-CVE gate (before publish)
         uses: aquasecurity/trivy-action@d2a0b60797ff03db6132bd4e2b293f9b37081297 # master 2026-09-26, v0.36.0+11, bundles trivy v0.71.2
         env:
+          # gRPC-Go advisories matched to gRPC C++ by CPE: apps/envoy/vex.openvex.json
+          TRIVY_VEX: apps/envoy/vex.openvex.json
           TRIVY_DETECTION_PRIORITY: comprehensive
         with:
           input: apps/envoy/image.tar
@@ -144,6 +160,22 @@ jobs:
           ignore-unfixed: true
           severity: CRITICAL,HIGH,MEDIUM,LOW
           scanners: vuln
+
+      # Trivy cannot see the C/C++ libraries compiled into a static Envoy. The recipe writes
+      # their inventory (linked Bazel modules with their CPEs, at the resolved versions) to
+      # /usr/share/envoy/inventory.cdx.json; grype matches it by CPE. Same rule as Trivy: any
+      # finding with a fix fails, VEX applies.
+      - name: Scan the compiled-in dependency inventory (CPE gate)
+        run: |
+          set -euo pipefail
+          d="$(mktemp -d)"
+          tar -xzf packages/${{ matrix.arch.name }}/quench-envoy-*.apk -C "$d" usr/share/envoy 2>/dev/null
+          test -s "$d/usr/share/envoy/inventory.cdx.json"
+          jq -r '.components[]|"\(.name) \(.version)"' "$d/usr/share/envoy/inventory.cdx.json"
+          jq -r '.properties[]?|select(.name=="envoy:unversioned")|"no release version (not CPE-matched): \(.value)"' "$d/usr/share/envoy/inventory.cdx.json"
+          docker run --rm --user "$(id -u)" -e GRYPE_DB_CACHE_DIR=/tmp/grype-db -v "$d/usr/share/envoy:/inv:ro" -v "$PWD:/app:ro" \
+            ghcr.io/quenchworks/images/grype@sha256:e9794d1ed84df82f2d82656112c33f7e0a8239c56be87c1ab32f181f6cf494cc \
+            sbom:/inv/inventory.cdx.json --vex /app/vex.openvex.json --only-fixed --fail-on low -o table
 
       # A green 0-CVE scan says nothing about whether the image RUNS. Publishing
       # straight from the scan is how a build that could not start at all reached
