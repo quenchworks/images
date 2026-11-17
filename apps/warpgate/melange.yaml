@@ -1,0 +1,57 @@
+# Warpgate, built from source on Wolfi as upstream's Dockerfile does: the web UI (npm ci, the OpenAPI
+# clients through openapi-generator on a JRE, vite build) embedded into the Rust binary, with the mysql,
+# postgres and rdp-openssl-tls features. cargo auditable keeps the crate list in the binary for the scanner.
+package:
+  name: quench-warpgate
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Warpgate bastion, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - libssl3
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - cargo-auditable
+      - git
+      - nodejs-24
+      - npm
+      - openjdk-21-default-jdk   # openapi-generator-cli runs java from PATH
+      - openssl-dev
+      - perl
+      - rust-1.98
+  environment:
+    npm_config_allow_remote: all
+    npm_config_allow_git: all
+    # two unstable library features (warpgate-core gethostname, warpgate-protocol-rdp once_cell_try)
+    RUSTC_BOOTSTRAP: "1"
+    SOURCE_DATE_EPOCH: "0"
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/warp-tech/warpgate/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+  - runs: |
+      set -eu
+      cd warpgate-web
+      npm ci --no-audit --no-fund
+      npm run openapi:client:admin
+      npm run openapi:client:gateway
+      npm run build
+      cd ..
+      cargo auditable build --release --locked --features mysql,postgres,rdp-openssl-tls
+      install -Dm755 target/release/warpgate "${{targets.destdir}}/usr/bin/warpgate"
+      "${{targets.destdir}}/usr/bin/warpgate" version | grep -F "${{package.version}}"
+      readelf -S "${{targets.destdir}}/usr/bin/warpgate" | grep -q dep-v0

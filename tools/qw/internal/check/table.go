@@ -434,6 +434,7 @@ var table = map[string]check{
 	"tekton":                            {src: ghRel("tektoncd/pipeline"), n: 1},
 	"telegraf":                          {src: ghRel("influxdata/telegraf"), lines: 2},
 	"teleport":                          {src: ghRel("gravitational/teleport"), n: 1},
+	"warpgate":                          {src: ghRel("warp-tech/warpgate"), n: 1},
 	"netbird":                           {src: ghRel("netbirdio/netbird"), n: 1},
 	"netbird-management":                {src: ghRel("netbirdio/netbird"), n: 1},
 	"netbird-signal":                    {src: ghRel("netbirdio/netbird"), n: 1},
