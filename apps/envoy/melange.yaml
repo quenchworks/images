@@ -84,6 +84,9 @@ pipeline:
       cargo update -p rustls --precise 0.23.46
       grep -A1 '^name = "rustls"$' Cargo.lock | grep -q '^version = "0.23.46"$'
       export CARGO_BAZEL_REPIN=true
+      # 1.39's hermetic LLVM is a prebuilt release linked against libtinfo.so.5; Wolfi ships .so.6
+      # (same ABI for what clang uses). 1.40's toolchain does not ask for it.
+      [ -e /usr/lib/libtinfo.so.5 ] || ln -s libtinfo.so.6 /usr/lib/libtinfo.so.5
       bazel --output_user_root="$HOME/.bazel-root" build \
         -c opt --jobs="$BAZEL_JOBS" \
         --local_resources=memory=HOST_RAM*.7 \
