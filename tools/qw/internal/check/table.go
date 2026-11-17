@@ -193,6 +193,7 @@ var table = map[string]check{
 	"wikijs":                            {src: ghRel("requarks/wiki"), n: 1},
 	"calibre-web":                       {src: ghRel("janeczku/calibre-web"), n: 1},
 	"ghostfolio":                        {src: ghRel("ghostfolio/ghostfolio"), n: 1},
+	"paperless-ngx":                     {src: ghRel("paperless-ngx/paperless-ngx"), n: 1},
 	"external-dns":                      {src: ghRel("kubernetes-sigs/external-dns")},
 	"external-secrets":                  {src: ghRel("external-secrets/external-secrets")},
 	"fabric-orderer":                    {src: ghRel("hyperledger/fabric"), lines: 2, f: filter{keep: full(`\d+\.\d+\.\d+`)}},

@@ -1,0 +1,78 @@
+# Paperless-ngx runtime: one image, several roles. The default runs the web server (granian, ASGI, on 8000); the
+# chart also runs `venv/bin/celery --skip-checks --app paperless worker`, `... beat`, and
+# `venv/bin/python manage.py document_consumer --skip-checks`, with `manage.py migrate --skip-checks --no-input` and
+# `manage.py manage_superuser` (PAPERLESS_ADMIN_USER / PAPERLESS_ADMIN_PASSWORD) before them. PostgreSQL via
+# PAPERLESS_DBHOST..., Redis via PAPERLESS_REDIS, PAPERLESS_SECRET_KEY required. Data, media and the consume folder
+# under /usr/src/paperless (volumes). AI features are not in this image; OCR cleaning is off (no unpaper).
+# No TLS listener. Nonroot uid 1001.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - tzdata
+    - quench-paperless-ngx@local
+
+accounts:
+  groups:
+    - groupname: paperless
+      gid: 1001
+  users:
+    - username: paperless
+      uid: 1001
+      gid: 1001
+      homedir: /tmp
+  run-as: 1001
+
+environment:
+  HOME: /tmp
+  PATH: /usr/src/paperless/venv/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  PYTHONDONTWRITEBYTECODE: "1"
+  PAPERLESS_DATA_DIR: /usr/src/paperless/data
+  PAPERLESS_MEDIA_ROOT: /usr/src/paperless/media
+  PAPERLESS_CONSUMPTION_DIR: /usr/src/paperless/consume
+  # web and worker run as separate containers: uploads are handed over through the shared data volume, not /tmp
+  PAPERLESS_SCRATCH_DIR: /usr/src/paperless/data
+  PAPERLESS_OCR_CLEAN: none
+  PAPERLESS_AI_ENABLED: "false"
+  GRANIAN_HOST: 0.0.0.0
+  GRANIAN_PORT: "8000"
+
+paths:
+  - path: /usr/src/paperless/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+  - path: /usr/src/paperless/media
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+  - path: /usr/src/paperless/consume
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+work-dir: /usr/src/paperless/src
+
+entrypoint:
+  command: /usr/src/paperless/venv/bin/granian --interface asginl --ws --loop asyncio paperless.asgi:application
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-paperless-ngx"
+  org.opencontainers.image.licenses: "GPL-3.0-only"
+  org.opencontainers.image.version: "__VER__"

@@ -1,0 +1,153 @@
+# Paperless-ngx from the release tag: a venv over Wolfi's Python natives, the built Angular UI, and the OCR tools.
+package:
+  name: quench-paperless-ngx
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Paperless-ngx, built from source on Wolfi"
+  copyright:
+    - license: GPL-3.0-only
+  dependencies:
+    runtime:
+      - python-3.13
+      - py3.13-pillow
+      - py3.13-lxml
+      - py3.13-scipy
+      - py3.13-scikit-learn
+      - py3.13-cryptography
+      - py3.13-psycopg
+      - libqpdf30
+      - libpq-18
+      - tesseract
+      - tesseract-eng
+      - tesseract-osd
+      - ghostscript
+      - qpdf
+      - pngquant
+      - poppler-utils
+      - imagemagick-7
+      - libmagic
+      - zbar
+      - ca-certificates-bundle
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - cargo-auditable
+      - corepack
+      - gettext
+      - nodejs-24
+      - python-3.13
+      - python-3.13-dev
+      - py3.13-pip
+      - py3.13-pillow
+      - py3.13-lxml
+      - py3.13-scipy
+      - py3.13-scikit-learn
+      - py3.13-cryptography
+      - py3.13-psycopg
+      - qpdf-dev
+      - libmagic        # collectstatic imports the models, which import python-magic
+      - libpq-18
+      - postgresql-18-dev
+      - rust-1.96
+      - uv
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/paperless-ngx/paperless-ngx/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Angular UI (pnpm through corepack)
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" COREPACK_ENABLE_DOWNLOAD_PROMPT=0 COREPACK_HOME="$(mktemp -d)" npm_config_fetch_retries=5
+      mkdir -p "$HOME/bin" && corepack enable --install-directory "$HOME/bin" && export PATH="$HOME/bin:$PATH"
+      cd src-ui
+      pnpm install --frozen-lockfile
+      NODE_OPTIONS=--max-old-space-size=6144 ./node_modules/.bin/ng build --configuration production
+      test -f ../src/documents/static/frontend/en-US/index.html || test -d ../src/documents/static/frontend
+
+  - name: Python venv without the AI stack
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" PIP_NO_CACHE_DIR=1 UV_PYTHON=python3.13
+      grep -q '^version = "${{package.version}}"' pyproject.toml
+      # the AI features are off by default and load lazily (#106): drop their dependencies and re-resolve
+      sed -i -E '/^dependencies = \[/,/^\]/{/^\s*"(llama-index[^"]*|openai[^"]*|sentence-transformers[^"]*|sqlite-vec[^"]*|torch[^"]*)",?\s*$/d}' pyproject.toml
+      ! sed -n '/^dependencies = \[/,/^\]/p' pyproject.toml | grep -qE 'llama-index|sentence-transformers|"torch|sqlite-vec|"openai'
+      # fixed releases resolved by uv with the rest: Rust extensions on pyo3 < 0.29 (GHSA-36hh HIGH) and granian's rustls
+      # < 0.23.45 (tantivy past its ~=0.26.0 pin: the search index the smoke test queries; granian under its <2.9 pin),
+      # oauthlib 4.0.1, tornado 6.6.1
+      sed -i '/^\[tool.uv\]$/,/^\[/{s/^package = false$/package = false\noverride-dependencies = ["tantivy>=0.27.0", "pydantic>=2.14.3", "rpds-py>=2026.9.1", "granian>=2.8.8,<2.9", "oauthlib>=4.0.1", "tornado>=6.6.1"]/}' pyproject.toml
+      grep -q '^override-dependencies = \["tantivy>=0.27.0"' pyproject.toml
+      # a missing data/index makes a process open an in-memory index and lose every write (upstream's s6
+      # init-folders creates it; a fresh volume has none): create it on disk instead
+      sed -i 's|^    if not index_dir.exists():$|    index_dir.mkdir(parents=True, exist_ok=True)\n&|' src/documents/search/_schema.py
+      grep -q '^    index_dir.mkdir(parents=True, exist_ok=True)$' src/documents/search/_schema.py
+      uv lock -q
+      uv export --quiet --no-dev --extra postgres --extra webserver --format requirements-txt --no-hashes -o req.full.txt
+      ! grep -qiE '^(torch|transformers|tokenizers|huggingface-hub|llama-index)' req.full.txt
+      # natives come from Wolfi (system site packages); uvloop vendors libuv and is not shipped
+      grep -viE '^(pillow|lxml|numpy|scipy|scikit-learn|cryptography|cffi|pycparser|psycopg|psycopg-c|psycopg-binary|uvloop)==' req.full.txt > req.txt
+      a=/usr/src/paperless
+      install -d "${{targets.destdir}}$a"
+      V="${{targets.destdir}}$a/venv"
+      python3.13 -m venv --system-site-packages "$V"
+      "$V/bin/pip" install -q -r req.txt
+      # pikepdf's wheel bundles its own qpdf: build it against Wolfi's
+      "$V/bin/pip" install -q --force-reinstall --no-deps --no-binary pikepdf "pikepdf==$(grep -iE '^pikepdf==' req.full.txt | cut -d= -f3 | cut -d' ' -f1)"
+      # Rust extensions (granian, watchfiles, ...) from their sdists through cargo auditable, so the crates are scannable
+      SITE="$V/lib/python3.13/site-packages"
+      RUSTSO='
+      import importlib.metadata as m, os, sys
+      for d in m.distributions(path=[sys.argv[1]]):
+          for f in d.files or ():
+              p = str(f.locate())
+              if ".so" not in f.name or os.path.islink(p):
+                  continue
+              b = open(p, "rb").read()
+              if b"rustc version" not in b and b".dep-v0" not in b and b"/cargo/registry/src/" not in b:
+                  continue
+              if sys.argv[2] == "all" or b".dep-v0" not in b:
+                  print(d.metadata["Name"] + "==" + d.version)
+                  break
+      '
+      CW=$(mktemp -d); export CARGO_HOME="$(mktemp -d)"
+      printf '#!/bin/sh\ncase "$1" in build|rustc) exec /usr/bin/cargo auditable "$@";; esac\nexec /usr/bin/cargo "$@"\n' > "$CW/cargo"
+      chmod +x "$CW/cargo"
+      for spec in $("$V/bin/python" -c "$RUSTSO" "$SITE" blind); do
+        PATH="$CW:$PATH" "$V/bin/pip" install -q --no-deps --force-reinstall --no-binary "${spec%%==*}" "$spec"
+      done
+      BLIND=$("$V/bin/python" -c "$RUSTSO" "$SITE" blind)
+      test -z "$BLIND" || { echo "FATAL: Rust extensions without .dep-v0: $BLIND"; exit 1; }
+      echo "Rust extensions, all auditable:" $("$V/bin/python" -c "$RUSTSO" "$SITE" all)
+      "$V/bin/pip" check
+      for m in PIL lxml numpy scipy sklearn cryptography psycopg; do
+        test ! -e "$SITE/$m" || { echo "FATAL: $m installed into the venv instead of from Wolfi"; exit 1; }
+      done
+      cp -a src "${{targets.destdir}}$a/src"
+      cd "${{targets.destdir}}$a/src"
+      export PAPERLESS_SECRET_KEY=build-time-dummy PAPERLESS_DATA_DIR="$(mktemp -d)" PAPERLESS_MEDIA_ROOT="$(mktemp -d)"
+      "$V/bin/python" manage.py collectstatic --clear --no-input
+      "$V/bin/python" manage.py compilemessages
+      "$V/bin/python" -m pip uninstall -y -q pip
+      # manage.py ran from the venv, so bin/ also holds a __pycache__ directory: rewrite regular files only
+      rm -rf "$V/bin/__pycache__"
+      find "$V/bin" -maxdepth 1 -type f -exec sed -i "s|${{targets.destdir}}||g" {} +
+      sed -i "s|${{targets.destdir}}||g" "$V/pyvenv.cfg"
+      ! grep -rq "${{targets.destdir}}" "$V/bin" "$V/pyvenv.cfg"
+
+test:
+  pipeline:
+    - runs: |
+        cd /usr/src/paperless/src && /usr/src/paperless/venv/bin/python -c "import paperless, documents, granian, pikepdf, ocrmypdf"
+        tesseract --version | head -1
