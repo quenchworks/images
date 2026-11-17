@@ -51,6 +51,13 @@ pipeline:
       npm run openapi:client:gateway
       npm run build
       cd ..
+      # warpgate stamps its version from `git describe --tags` at compile time (git_version!, fallback
+      # "unknown"); the release tarball has no .git, so tag a local commit of the tree as built
+      git init -q
+      git add -A
+      git -c user.name=quenchworks -c user.email=build@quench-works.com commit -qm "warpgate v${{package.version}}"
+      git tag "v${{package.version}}"
+      test "$(git describe --tags --always --dirty=-modified --match 'v[0-9]*')" = "v${{package.version}}"
       cargo auditable build --release --locked --features mysql,postgres,rdp-openssl-tls
       install -Dm755 target/release/warpgate "${{targets.destdir}}/usr/bin/warpgate"
       "${{targets.destdir}}/usr/bin/warpgate" version | grep -F "${{package.version}}"
