@@ -69,8 +69,15 @@ pipeline:
       case "$(cat .bazelversion)" in 8.*) ;; *) echo "this recipe expects Bazel 8"; exit 1 ;; esac
       # CVE floors on Bazel modules (minimal version selection keeps the highest any module asks for):
       # c-ares 1.34.7+ fixes CVE-2026-33630 (HIGH), CVE-2026-69184 (HIGH) and CVE-2026-69186
-      sed -i 's|^bazel_dep(name = "c-ares", version = "[^"]*")|bazel_dep(name = "c-ares", version = "1.34.9.bcr.1")|' MODULE.bazel
-      grep -q '^bazel_dep(name = "c-ares", version = "1.34.9.bcr.1")' MODULE.bazel
+      # 1.40+ takes c-ares as a Bazel module; 1.39 pins it in repository_locations.bzl (sha256 of the
+      # upstream c-ares-1.34.9.tar.gz release asset; Envoy's c-ares.patch applies to it)
+      if grep -q '^bazel_dep(name = "c-ares"' MODULE.bazel; then
+        sed -i 's|^bazel_dep(name = "c-ares", version = "[^"]*")|bazel_dep(name = "c-ares", version = "1.34.9.bcr.1")|' MODULE.bazel
+        grep -q '^bazel_dep(name = "c-ares", version = "1.34.9.bcr.1")' MODULE.bazel
+      else
+        sed -i '/^    c_ares = dict(/,/^    ),/{s|version = "[^"]*"|version = "1.34.9"|;s|sha256 = "[^"]*"|sha256 = "9364b70a12eb59a06830fb488d9357f90100dff0d98b23ea3593a183d43e6f2f"|}' bazel/repository_locations.bzl
+        sed -n '/^    c_ares = dict(/,/^    ),/p' bazel/repository_locations.bzl | grep -q 'version = "1.34.9"'
+      fi
       # Rust crates linked into envoy-static (Cargo.lock, scanned by Trivy in the image): rustls 0.23.46
       # fixes GHSA-c8m5-c952-6cm4, GHSA-h2v8-394m-p7vv, GHSA-vp88-798v-h67f and GHSA-w44r-93j7-qv28.
       # CARGO_BAZEL_REPIN makes crate_universe regenerate Cargo.Bazel.envoy.lock from the new Cargo.lock.
@@ -88,6 +95,7 @@ pipeline:
       inv="${{targets.destdir}}/usr/share/envoy"
       install -Dm644 Cargo.lock "$inv/Cargo.lock"
       install -Dm644 bazel/deps.yaml "$inv/deps.yaml"
+      if [ -f bazel/repository_locations.bzl ]; then install -Dm644 bazel/repository_locations.bzl "$inv/repository_locations.bzl"; fi
       bazel --output_user_root="$HOME/.bazel-root" mod graph --output=json > "$inv/bazel-mod-graph.json"
       # cquery, not query: query walks every select() branch and failed (exit 7) after the build;
       # cquery follows the real configuration, and --notool_deps drops build-host tools

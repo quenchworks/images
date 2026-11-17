@@ -1,9 +1,13 @@
 # Envoy dependency inventory as CycloneDX: every Bazel module linked into envoy-static that
 # deps.yaml gives a CPE, at its resolved version. Usage: inventory.py <share-dir>
-import json, re, sys, yaml
+import json, os, re, sys, yaml
 d = sys.argv[1]
 deps = yaml.safe_load(open(f"{d}/deps.yaml"))
-linked = {l.strip().lstrip("@").split("+")[0] for l in open(f"{d}/linked-repos.txt") if l.strip()}
+# module repos print as name or name++ext+repo; repos a root extension makes as +ext+repo
+linked = set()
+for l in open(f"{d}/linked-repos.txt"):
+    parts = [p for p in l.strip().lstrip("@").split("+") if p]
+    linked.update(parts[:1] + parts[-1:])
 graph = json.load(open(f"{d}/bazel-mod-graph.json"))
 ver = {}
 def walk(n):
@@ -14,6 +18,10 @@ def walk(n):
             ver.setdefault(name, v)
         walk(c)
 walk(graph)
+# 1.39 and older pin most repos in repository_locations.bzl, keyed like deps.yaml
+if os.path.exists(f"{d}/repository_locations.bzl"):
+    for name, v in re.findall(r'^ {4}(\w+) = dict\(\s*version = "([^"]+)"', open(f"{d}/repository_locations.bzl").read(), re.M):
+        ver.setdefault(name, v)
 comps, skipped = [], []
 for key, m in deps.items():
     cpe = m.get("cpe")
