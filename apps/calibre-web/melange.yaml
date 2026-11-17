@@ -1,0 +1,80 @@
+# Calibre-Web from the release tag in a venv over Wolfi's native Python packages.
+package:
+  name: quench-calibre-web
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Calibre-Web, built from source on Wolfi"
+  copyright:
+    - license: GPL-3.0-only
+  dependencies:
+    runtime:
+      - python-3.13
+      - py3.13-cryptography
+      - py3.13-lxml
+      - py3.13-regex
+      - py3.13-tornado
+      - py3.13-nh3
+      - libmagic
+      - imagemagick-7
+      - ca-certificates-bundle
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - python-3.13
+      - python-3.13-dev
+      - py3.13-pip
+      - py3.13-cryptography
+      - py3.13-lxml
+      - py3.13-regex
+      - py3.13-tornado
+      - py3.13-nh3
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/janeczku/calibre-web/archive/refs/tags/${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: venv over Wolfi natives, five upstream caps lifted
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" PIP_NO_CACHE_DIR=1
+      grep -qE "^STABLE_VERSION *= *'${{package.version}}'" cps/constants.py
+      # the upper bounds that hold these below their fixes: pypdf (<6.11), cryptography (<48), tornado (<6.6),
+      # certifi (<2026.5.21), regex (<2026.1.16); every other bound stays
+      # pypdf stays on 6.x (all fixes are there; 7 is a new major the app was not built for)
+      for p in PyPDF cryptography tornado certifi regex; do
+        sed -i -E "s/^($p>=[^,]+),<[^;]+/\1/I" requirements.txt
+      done
+      ! grep -iE "^(pypdf|cryptography|tornado|certifi|regex)>=[^,]+,<" requirements.txt
+      grep -vE "python_version<'3.12'|win32" requirements.txt > req.txt
+      a="${{targets.destdir}}/app"
+      install -d "$a"
+      python3.13 -m venv --system-site-packages "$a/venv"
+      "$a/venv/bin/pip" install -q -r req.txt 'pypdf>=6.21.4,<7' 'certifi>=2026.10.18'
+      # run from the source tree (cps.py + cps/): pyproject's version points at a calibreweb package that only
+      # upstream's release packaging creates
+      cp -a cps.py cps "$a/"
+      find "$a/cps" -name '__pycache__' -prune -exec rm -rf {} +
+      "$a/venv/bin/pip" check
+      for m in cryptography lxml regex tornado; do
+        test ! -e "$a/venv/lib/python3.13/site-packages/$m" || { echo "FATAL: $m installed into the venv instead of from Wolfi"; exit 1; }
+      done
+      "$a/venv/bin/python" -c "import pypdf, certifi, cryptography, tornado; print('pypdf', pypdf.__version__, 'cryptography', cryptography.__version__, 'tornado', tornado.version)"
+      "$a/venv/bin/python" -m pip uninstall -y -q pip
+      sed -i "s|${{targets.destdir}}||g" "$a/venv/pyvenv.cfg" "$a"/venv/bin/*
+      ! grep -rq "${{targets.destdir}}" "$a/venv/bin" "$a/venv/pyvenv.cfg"
+
+test:
+  pipeline:
+    - runs: |
+        cd /app && /app/venv/bin/python -c "import cps.constants as c; print(c.STABLE_VERSION)"

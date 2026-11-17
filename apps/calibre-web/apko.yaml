@@ -1,0 +1,60 @@
+# Calibre-Web runtime: HTTP on 8083, settings in /config (CALIBRE_DBPATH: app.db, logs), the Calibre library
+# (metadata.db + books) mounted at /books and chosen in the admin UI. Upstream creates admin / admin123 on first
+# start: change it (`cps.py -p /config/app.db -s admin:<password>`; the chart does). No TLS listener. Nonroot uid 1001.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - tzdata
+    - quench-calibre-web@local
+
+accounts:
+  groups:
+    - groupname: calibre
+      gid: 1001
+  users:
+    - username: calibre
+      uid: 1001
+      gid: 1001
+      homedir: /config
+  run-as: 1001
+
+environment:
+  CALIBRE_DBPATH: /config
+  HOME: /config
+  PYTHONDONTWRITEBYTECODE: "1"
+
+paths:
+  - path: /config
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+  - path: /books
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+work-dir: /app
+
+entrypoint:
+  command: /app/venv/bin/python /app/cps.py
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-calibre-web"
+  org.opencontainers.image.licenses: "GPL-3.0-only"
+  org.opencontainers.image.version: "__VER__"
