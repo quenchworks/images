@@ -4,7 +4,7 @@ package:
   name: quench-teleport
   version: __VER__
   epoch: 0
-  description: "Quenchworks hardened Teleport (AGPL build: teleport with embedded web UI and RDP client, tctl, tsh, tbot, teleport-update), built from source on Wolfi"
+  description: "Quenchworks hardened Teleport (AGPL build: teleport with embedded web UI and RDP client, tctl, tsh, tbot), built from source on Wolfi"
   copyright:
     - license: AGPL-3.0-only
   dependencies:
@@ -96,7 +96,8 @@ pipeline:
       # Quote.Version, OpenConfig.TPMVersion, ActivationParameters.TPMVersion); Teleport only ever set 2.0.
       # ParseAKPublic also lost its version argument (0.6 takes only the public blob).
       # (busybox grep: no --include, so find picks the files)
-      find lib tool -name '*.go' -exec grep -l 'attest.TPMVersion20' {} + | xargs -r sed -i -E '/^\s+((TPMVersion|Version):\s+)?attest\.TPMVersion20,$/d'
+      # 18.11 may already be clean: grep -l with no match makes find exit 1 under pipefail
+      { find lib tool -name '*.go' -exec grep -l 'attest.TPMVersion20' {} + || true; } | xargs -r sed -i -E '/^\s+((TPMVersion|Version):\s+)?attest\.TPMVersion20,$/d'
       ! find lib tool -name '*.go' ! -name '*_test.go' -exec grep -n 'attest.TPMVersion20' {} + || { echo "FATAL: TPMVersion20 references left"; exit 1; }
       floor github.com/containerd/containerd v1.7.36
       floor github.com/go-git/go-git/v5 v5.19.2
@@ -124,18 +125,25 @@ pipeline:
       command -v wasm-opt
       sed -i 's|^\tcargo install --locked wasm-opt@\$(WASM_OPT_VERSION)$|\tcommand -v wasm-opt|' Makefile
       ! grep -q 'cargo install --locked wasm-opt' Makefile || { echo "FATAL: wasm-opt rule not replaced"; exit 1; }
+      # 18.11 setver also regenerates the Terraform module READMEs (terraform-docs + git describe); the
+      # tarball has no .git, and our Makefile edits make make re-run setver. Docs only: drop that line.
+      sed -i '/\$(MAKE) -C integrations\/terraform-modules update-version/d' version.mk
+      ! grep -q 'integrations/terraform-modules update-version' version.mk || { echo "FATAL: terraform-modules docs step left"; exit 1; }
       # Go 1.26.11/1.27.4 cgo refuses LLVM bitcode sections (.llvmbc, .llvmcmd) in the archives a
       # package links; librdp_client.a and librdp_decoder.a carry them from Rust's prebuilt std. Strip
       # them right after cargo builds each (the release and deps copies are hard links, so both are done).
       sed -i '/cargo build -p rdp-\(client\|decoder\) /a\\tfind target -name "librdp_*.a" -exec objcopy --remove-section=.llvmbc --remove-section=.llvmcmd {} \\;' Makefile
       [ "$(grep -c 'find target -name "librdp_\*.a"' Makefile)" = 2 ] || { echo "FATAL: llvmbc strip not added after both rdp cargo builds"; exit 1; }
       grep -q 'objcopy --remove-section=.llvmbc' Makefile || { echo "FATAL: rdpclient strip not added"; exit 1; }
-      make full
-      for b in teleport tctl tsh tbot teleport-update; do test -x "build/$b"; done
+      # teleport-update (the host agent auto-updater) is left out: from 18.11 it needs Teleport's release
+      # signing keys or an unsigned dev build, and a container updates by its image, not in place.
+      make full BINS_default="teleport tctl tsh tbot fdpass-teleport"
+      test ! -e build/teleport-update
+      for b in teleport tctl tsh tbot; do test -x "build/$b"; done
       ./build/teleport version | grep -q "v${{package.version}}"
       go version -m build/teleport | grep -E '^\s+dep\s+golang.org/x/net\s' | grep -q 'v0.62'
       install -d "${{targets.destdir}}/usr/bin"
-      for b in teleport tctl tsh tbot teleport-update; do install -m 0755 "build/$b" "${{targets.destdir}}/usr/bin/$b"; done
+      for b in teleport tctl tsh tbot; do install -m 0755 "build/$b" "${{targets.destdir}}/usr/bin/$b"; done
 
 test:
   pipeline:
