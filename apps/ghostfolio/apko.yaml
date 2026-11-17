@@ -1,0 +1,49 @@
+# Ghostfolio runtime: HTTP on 3333 (API and client), PostgreSQL via DATABASE_URL, Redis/Valkey via REDIS_HOST /
+# REDIS_PORT / REDIS_PASSWORD, ACCESS_TOKEN_SALT and JWT_SECRET_KEY required. start.mjs runs prisma migrate deploy,
+# the seed, then the server. The first account created becomes the admin. No TLS listener. Nonroot uid 1001.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - tzdata
+    - quench-ghostfolio@local
+
+accounts:
+  groups:
+    - groupname: ghostfolio
+      gid: 1001
+  users:
+    - username: ghostfolio
+      uid: 1001
+      gid: 1001
+      homedir: /tmp
+  run-as: 1001
+
+environment:
+  NODE_ENV: production
+  HOME: /tmp
+  HOST: 0.0.0.0
+  PORT: "3333"
+
+work-dir: /ghostfolio/apps/api
+
+entrypoint:
+  command: /usr/bin/node /ghostfolio/apps/api/start.mjs
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-ghostfolio"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"
+  org.opencontainers.image.version: "__VER__"

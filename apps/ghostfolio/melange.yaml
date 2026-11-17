@@ -1,0 +1,87 @@
+# Ghostfolio from the release tag on Wolfi nodejs-24: the built API and client, a production node_modules with the
+# prisma CLI, and a node launcher.
+package:
+  name: quench-ghostfolio
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Ghostfolio, built from source on Wolfi"
+  copyright:
+    - license: AGPL-3.0-only
+  dependencies:
+    runtime:
+      - nodejs-24
+      - openssl
+      - ca-certificates-bundle
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - git
+      - jq
+      - nodejs-24
+      - npm
+      - openssl
+      - python-3.13
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/ghostfolio/ghostfolio/archive/refs/tags/${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: npm ci, nx build, production API install, launcher
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" npm_config_cache="$(mktemp -d)" npm_config_fund=false npm_config_audit=false
+      export npm_config_fetch_retries=5 npm_config_allow_remote=all npm_config_allow_git=all NX_DAEMON=false
+      grep -q '"version": "${{package.version}}"' package.json
+      # the build as upstream runs it: its lock, its versions
+      npm ci
+      NODE_OPTIONS=--max-old-space-size=6144 npm run build:production
+      test -f dist/apps/api/main.js
+      api=dist/apps/api
+      # The API ships only what its bundle imports: the package.json Nx generates (generatePackageJson), not the root
+      # one upstream copies over it (which drags the Angular build tooling into the runtime tree). Fixed releases for
+      # that tree go in as overrides; node-forge 1.4.3 fixes all but CVE-2026-85393 (no fix: vex.openvex.json).
+      jq -e '.dependencies' "$api/package.json" >/dev/null
+      ! jq -e '.dependencies["@angular/core"]' "$api/package.json" >/dev/null
+      jq '.overrides = ((.overrides // {}) + {
+            "node-forge":"1.4.3", "axios@<0.34.0":"0.34.0", "body-parser@>=2 <2.4.0":"2.4.0",
+            "fast-uri@>=3 <3.1.9":"3.1.9", "follow-redirects":"1.16.2", "multer":"2.5.0", "piscina@>=5 <5.3.2":"5.3.2",
+            "underscore":"1.13.8", "undici@>=7 <7.30.1":"7.30.1", "uuid@<11.1.1":"11.1.1"})' "$api/package.json" > p.tmp && mv p.tmp "$api/package.json"
+      cp -a .config prisma "$api/"
+      # the prisma CLI and @prisma/config (root devDependencies) for migrate deploy, with the dev-server set Rallly
+      # needed: @hono/node-server, hono, mysql2, deepmerge-ts
+      jq '.overrides += {"@hono/node-server":"2.1.6", "hono":"4.13.16", "mysql2":"^3.23.1", "deepmerge-ts":"8.0.0"}' "$api/package.json" > p.tmp && mv p.tmp "$api/package.json"
+      (cd "$api" && rm -f package-lock.json && npm install --omit=dev && npm install --omit=dev --no-save prisma@7.10.0 @prisma/config@7.10.0 dotenv@18.0.9 dotenv-expand@13.0.0 && npx prisma generate --config .config/prisma.ts)
+      test -f "$api/node_modules/.prisma/client/index.js" || test -d "$api/node_modules/@prisma/client"
+      cat > "$api/start.mjs" <<'JS'
+      import { execFileSync } from 'node:child_process';
+      const run = (args) => execFileSync(process.execPath, args, { stdio: 'inherit' });
+      run(['node_modules/prisma/build/index.js', 'migrate', 'deploy', '--config', '.config/prisma.ts']);
+      run(['prisma/seed.mts']);
+      await import('./main.js');
+      JS
+      d="${{targets.destdir}}/ghostfolio"
+      install -d "$d"
+      cp -a dist/apps "$d/apps"
+      # musl builds of native packages (lightningcss-linux-x64-musl, sass-embedded-linux-musl-x64, linuxmusl prebuilds,
+      # ...): melange would add so:libc.musl, and this image is glibc
+      find "$d" -depth -type d -path '*node_modules*' -name '*musl*' -exec rm -rf {} +
+      arch="$(node -p process.arch)"
+      find "$d" -path '*/prebuilds/*' -type f -name '*.node' ! -name "linux-$arch*.node" -delete
+      jq -r .version "$d/apps/api/node_modules/node-forge/package.json"
+
+test:
+  pipeline:
+    - runs: |
+        test -f /ghostfolio/apps/api/main.js
+        test -f /ghostfolio/apps/api/start.mjs

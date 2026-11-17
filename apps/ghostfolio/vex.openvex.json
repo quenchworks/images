@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/ghostfolio/2026-11-17",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-17T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-85393"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/node-forge@1.4.3"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Measured 2026-11-17 on Ghostfolio 3.100.0. The flaw is in node-forge's RSA PKCS#1 v1.5 signature verification. The only importer of node-forge in the API's production tree is google-p12-pem 3.1.4 (via gtoken <- google-auth-library), and its whole use of the library is build/src/index.js:36-43: util.decode64, asn1.fromDer, pkcs12.pkcs12FromAsn1 (whose integrity check is an HMAC MAC, not an RSA signature), getBags and pki.privateKeyToPem. No RSA signature is verified on any path. Revisit if another package in the tree starts importing node-forge or google-p12-pem changes its calls."
+    }
+  ]
+}
