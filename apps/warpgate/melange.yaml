@@ -51,6 +51,10 @@ pipeline:
       npm run openapi:client:gateway
       npm run build
       cd ..
+      # crate floors (cargo update rewrites Cargo.lock; --locked then holds the build to it)
+      # russh 0.65.2 (fixed in 0.65.1): CVE-2026-128087 (two LOW findings on 0.65.0)
+      cargo update -p russh --precise 0.65.2
+      grep -A1 '^name = "russh"$' Cargo.lock | grep -q '^version = "0.65.2"$'
       # warpgate stamps its version from `git describe --tags` at compile time (git_version!, fallback
       # "unknown"); the release tarball has no .git, so tag a local commit of the tree as built
       git init -q
