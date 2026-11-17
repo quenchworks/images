@@ -1333,15 +1333,20 @@ apps:
       - amd64
       - arm64
     versions:
+      - version: 12.0.2
+        digest: sha256:d75914d4f9b65044a4aff78634204f5829203d6fa98c653da4a3a5f93b55a607
+        published: "2026-11-17T15:38:51Z"
+        size: 446.2 MB
+        layers: 1
       - version: 11.11.4
-        digest: sha256:7fc6808ce960778bdd8d92dbbe55956397e2457d824e10265c8a1e5b313854fc
-        published: "2026-11-11T17:13:03Z"
+        digest: sha256:8e45665098b7889041cdd5a26516b82a7f9cc305e8b69d22731889132de880af
+        published: "2026-11-17T15:38:50Z"
         size: 411.2 MB
         layers: 1
-      - version: 12.0.2
-        digest: sha256:d0517ba623e2d90aa74f8001636aff9fb4fc5922cffa4262150a0c48495a90eb
-        published: "2026-11-11T17:06:59Z"
-        size: 446.2 MB
+      - version: 12.1.0
+        digest: sha256:a62f7b2552affb956d000316ea73336db4bceedc23b9cbd1ba5573c601e2a209
+        published: "2026-11-17T15:38:35Z"
+        size: 435.7 MB
         layers: 1
   varnish:
     image: ghcr.io/quenchworks/images/varnish
@@ -11105,7 +11110,7 @@ apps:
   teleport:
     image: ghcr.io/quenchworks/images/teleport
     category: Identity
-    summary: 'Teleport (AGPL community source), the identity-based access plane for SSH, Kubernetes, databases, apps and Windows desktops. Built from source with upstream''s own make full: the Rust RDP client, the IronRDP wasm module and the web UI are built and embedded, with tctl, tsh, tbot and teleport-update alongside, on current Go and patched modules.'
+    summary: 'Teleport (AGPL community source), the identity-based access plane for SSH, Kubernetes, databases, apps and Windows desktops. Built from source with upstream''s own make full: the Rust RDP client, the IronRDP wasm module and the web UI are built and embedded, with tctl, tsh and tbot alongside, on current Go and patched modules.'
     source: https://github.com/gravitational/teleport
     upstream: https://goteleport.com
     license: AGPL-3.0-only
@@ -11115,10 +11120,15 @@ apps:
       - amd64
       - arm64
     versions:
+      - version: 18.11.10
+        digest: sha256:058e3c36eaaf13d0d2fd1962500e76a1e681185afbaf9460de1bf89b5c85adc4
+        published: "2026-11-17T17:37:46Z"
+        size: 218.0 MB
+        layers: 1
       - version: 18.10.0
-        digest: sha256:a76f290440c6f223c99aaf2e4a50075c6ab8ddd77ecd12aa0463ce5991814d16
-        published: "2026-11-14T14:39:29Z"
-        size: 228.8 MB
+        digest: sha256:2fe51e0d2ba482d002e3dc1203995de37abdaff7567f787268342d9591783d33
+        published: "2026-11-17T17:37:27Z"
+        size: 210.3 MB
         layers: 1
   dagger:
     image: ghcr.io/quenchworks/images/dagger
@@ -12918,4 +12928,166 @@ apps:
         digest: sha256:ca07f24ba495abb99c05576cc75467f57c5c0f1b8a7a3224918e2b0a0a268d05
         published: "2026-11-17T00:38:22Z"
         size: 92.0 MB
+        layers: 1
+  netbird:
+    image: ghcr.io/quenchworks/images/netbird
+    category: Networking
+    summary: 'NetBird client: a WireGuard peer, or a routing peer that gives the mesh access to a network. Runs in userspace netstack mode as uid 1001 by default; kernel WireGuard mode with NET_ADMIN. Built from source; part of the NetBird set (the netbird chart runs them together).'
+    source: https://github.com/netbirdio/netbird
+    upstream: https://netbird.io
+    license: BSD-3-Clause
+    tier: standard
+    status: built
+    arches:
+      - amd64
+      - arm64
+    versions:
+      - version: 0.83.1
+        digest: sha256:bc9cfcab715c779695abbe59164ca74bd341cea3c0777a2cb5271bf0e6d8ef7b
+        published: "2026-11-17T18:19:00Z"
+        size: 32.3 MB
+        layers: 1
+  netbird-management:
+    image: ghcr.io/quenchworks/images/netbird-management
+    category: Networking
+    summary: 'NetBird management: the control plane for peers, users, groups, access policies and the API, with an embedded Dex identity provider; SQLite or PostgreSQL store. Built from source; part of the NetBird set (the netbird chart runs them together).'
+    source: https://github.com/netbirdio/netbird
+    upstream: https://netbird.io
+    license: AGPL-3.0-only
+    tier: standard
+    status: built
+    arches:
+      - amd64
+      - arm64
+    versions:
+      - version: 0.83.1
+        digest: sha256:7d040af372ec5f6fce277c4d2d69c28aa7a39b61790e484701e41d00c2f113b7
+        published: "2026-11-17T18:21:03Z"
+        size: 26.4 MB
+        layers: 1
+  netbird-signal:
+    image: ghcr.io/quenchworks/images/netbird-signal
+    category: Networking
+    summary: 'NetBird signal server: brokers the connection offers peers exchange to set up direct WireGuard tunnels. Built from source; part of the NetBird set (the netbird chart runs them together).'
+    source: https://github.com/netbirdio/netbird
+    upstream: https://netbird.io
+    license: AGPL-3.0-only
+    tier: standard
+    status: built
+    arches:
+      - amd64
+      - arm64
+    versions:
+      - version: 0.83.1
+        digest: sha256:b7e5a9603dbacb16873f6af4b7b77ce7f044092101cfd507b8c3695b798e6f39
+        published: "2026-11-17T18:25:48Z"
+        size: 7.7 MB
+        layers: 1
+  netbird-relay:
+    image: ghcr.io/quenchworks/images/netbird-relay
+    category: Networking
+    summary: 'NetBird relay server: carries peer traffic over WebSocket when two peers cannot connect directly. Built from source; part of the NetBird set (the netbird chart runs them together).'
+    source: https://github.com/netbirdio/netbird
+    upstream: https://netbird.io
+    license: AGPL-3.0-only
+    tier: standard
+    status: built
+    arches:
+      - amd64
+      - arm64
+    versions:
+      - version: 0.83.1
+        digest: sha256:4c1b9e1c34288ca7188a094c2011852d93417618580785fd772717ae55e8d8a5
+        published: "2026-11-17T18:18:30Z"
+        size: 7.5 MB
+        layers: 1
+  netbird-server:
+    image: ghcr.io/quenchworks/images/netbird-server
+    category: Networking
+    summary: 'NetBird combined server: management, signal and relay in one process on one port, with the embedded identity provider. Built from source; part of the NetBird set (the netbird chart runs them together).'
+    source: https://github.com/netbirdio/netbird
+    upstream: https://netbird.io
+    license: AGPL-3.0-only
+    tier: standard
+    status: built
+    arches:
+      - amd64
+      - arm64
+    versions:
+      - version: 0.83.1
+        digest: sha256:ef6cd2e41f307f57f54c57a76f834cc632771b3b2980951fbc8a4aeb20ef533d
+        published: "2026-11-17T18:20:30Z"
+        size: 29.0 MB
+        layers: 1
+  netbird-reverse-proxy:
+    image: ghcr.io/quenchworks/images/netbird-reverse-proxy
+    category: Networking
+    summary: 'NetBird reverse proxy: exposes services that sit behind NetBird peers on public domains, with ACME certificates. Built from source; part of the NetBird set (the netbird chart runs them together).'
+    source: https://github.com/netbirdio/netbird
+    upstream: https://netbird.io
+    license: BSD-3-Clause
+    tier: standard
+    status: built
+    arches:
+      - amd64
+      - arm64
+    versions:
+      - version: 0.83.1
+        digest: sha256:c35532801a726354823e66e3c27fb3e49af5d3ec18347f5ac58b7007ac854176
+        published: "2026-11-17T18:22:02Z"
+        size: 18.4 MB
+        layers: 1
+  netbird-upload:
+    image: ghcr.io/quenchworks/images/netbird-upload
+    category: Networking
+    summary: 'NetBird upload server: receives the debug bundles clients upload for support. Built from source; part of the NetBird set (the netbird chart runs them together).'
+    source: https://github.com/netbirdio/netbird
+    upstream: https://netbird.io
+    license: BSD-3-Clause
+    tier: standard
+    status: built
+    arches:
+      - amd64
+      - arm64
+    versions:
+      - version: 0.83.1
+        digest: sha256:ca3f39ac4207d45ccfa61010dfa15294c4325e364cf173075c36d2227f324f92
+        published: "2026-11-17T18:18:35Z"
+        size: 4.6 MB
+        layers: 1
+  netbird-nblink:
+    image: ghcr.io/quenchworks/images/netbird-nblink
+    category: Networking
+    summary: 'NetBird nblink: a userspace NetBird link without the full client. Built from source; part of the NetBird set (the netbird chart runs them together).'
+    source: https://github.com/netbirdio/netbird
+    upstream: https://netbird.io
+    license: BSD-3-Clause
+    tier: standard
+    status: built
+    arches:
+      - amd64
+      - arm64
+    versions:
+      - version: 0.83.1
+        digest: sha256:5442568adc7220f261736a16551d714f8d2a9bfe333c4031a809f267e9567262
+        published: "2026-11-17T18:25:47Z"
+        size: 15.0 MB
+        layers: 1
+  netbird-dashboard:
+    image: ghcr.io/quenchworks/images/netbird-dashboard
+    category: Networking
+    summary: 'NetBird dashboard: the web console for peers, access control, routes and DNS. Next.js built from source, served by nginx on 8080 from a read-only rootfs; OIDC settings come from environment variables at start. Built from source; part of the NetBird set (the netbird chart runs them together).'
+    source: https://github.com/netbirdio/dashboard
+    upstream: https://netbird.io
+    license: AGPL-3.0-only
+    tier: standard
+    status: built
+    arches:
+      - amd64
+      - arm64
+    versions:
+      - version: 2.97.0
+        digest: sha256:c771bc5b4c39575267fbc7aa1944ed47775d2d7c8e376b4c68662cca74fe5d8f
+        published: "2026-11-17T18:19:26Z"
+        size: 28.9 MB
         layers: 1
