@@ -36,4 +36,5 @@ bom = {"bomFormat": "CycloneDX", "specVersion": "1.5", "version": 1, "components
        "properties": [{"name": "envoy:unversioned", "value": " ".join(sorted(skipped))}]}
 json.dump(bom, open(f"{d}/inventory.cdx.json", "w"), indent=1)
 print(f"inventory: {len(comps)} components with CPEs; no release version: {' '.join(sorted(skipped)) or 'none'}")
-assert comps, "empty inventory"
+# 16 on 1.40.2: far fewer means the linked-repo list broke (build 6 shipped 3), not a smaller Envoy
+assert len(comps) >= 10, f"inventory has only {len(comps)} components"
