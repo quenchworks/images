@@ -230,7 +230,8 @@ pipeline:
           [ -e "$j" ] || continue
           n=$((n+1)); old="${j##*/}"; v="${old#"$1"}"; v="${v%.jar}"
           if [ "$(printf '%s\n%s\n' "$v" "$want" | sort -V | head -1)" = "$want" ]; then
-            echo "  keep $old"; continue
+            # the shade step below may still rebuild a bundled copy from the fixed release
+            echo "  keep $old"; fetch "$2" "$3"; continue
           fi
           fetch "$2" "$3"
           install -m 0644 "$J/$new" "$L/$new"; rm -f "$j"
