@@ -2,7 +2,7 @@
   "@context": "https://openvex.dev/ns/v0.2.0",
   "@id": "https://quench-works.com/vex/emissary/2026-10-05",
   "author": "QuenchWorks <info@quench-works.com>",
-  "timestamp": "2026-10-05T00:00:00Z",
+  "timestamp": "2026-11-18T00:00:00Z",
   "version": 1,
   "statements": [
     {
@@ -56,6 +56,106 @@
       "status": "not_affected",
       "justification": "vulnerable_code_not_present",
       "impact_statement": "emissary-ingress links only API-type and utility packages of k8s.io/kubernetes v1.30.3: apiext links pkg/util/node, busyambassador pkg/apis/{apps,autoscaling,core,core/v1,extensions/v1beta1,networking,networking/v1,networking/v1beta1}, pkg/api/v1/service, pkg/features, pkg/util/node and pkg/util/parsers . Checked with `go list -deps ./cmd/apiext ./cmd/busyambassador` at v4.1.0: no kubelet, volume plugin, controller or admission plugin package is in either build, and the build fails if one is ever linked. The vulnerable code is kube-apiserver's NodeRestriction admission plugin (plugin/pkg/admission/noderestriction)."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-84303"
+      },
+      "products": [
+        {
+          "@id": "pkg:generic/grpc@1.83.0"
+        },
+        {
+          "@id": "pkg:generic/com_github_grpc_grpc@1.81.1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "Measured 2026-11-17 on Envoy 1.40.2. The advisory is for gRPC-Go (GHSA ecosystem go, package google.golang.org/grpc, fixed in 1.83.1/1.83.2). Envoy links gRPC C++ core (Bazel module grpc 1.83.0.envoy from Envoy's registry) and contains no Go code; the inventory scan matches it only through the shared CPE cpe:2.3:a:grpc:grpc. Revisit if a gRPC C++ advisory with the same identifier appears. Envoy 1.39.6 links gRPC C++ 1.81.1 (repository com_github_grpc_grpc), same reasoning."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-84304"
+      },
+      "products": [
+        {
+          "@id": "pkg:generic/grpc@1.83.0"
+        },
+        {
+          "@id": "pkg:generic/com_github_grpc_grpc@1.81.1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "Measured 2026-11-17 on Envoy 1.40.2. The advisory is for gRPC-Go (GHSA ecosystem go, package google.golang.org/grpc, fixed in 1.83.1/1.83.2). Envoy links gRPC C++ core (Bazel module grpc 1.83.0.envoy from Envoy's registry) and contains no Go code; the inventory scan matches it only through the shared CPE cpe:2.3:a:grpc:grpc. Revisit if a gRPC C++ advisory with the same identifier appears. Envoy 1.39.6 links gRPC C++ 1.81.1 (repository com_github_grpc_grpc), same reasoning."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-84445"
+      },
+      "products": [
+        {
+          "@id": "pkg:generic/grpc@1.83.0"
+        },
+        {
+          "@id": "pkg:generic/com_github_grpc_grpc@1.81.1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "Measured 2026-11-17 on Envoy 1.40.2. The advisory is for gRPC-Go (GHSA ecosystem go, package google.golang.org/grpc, fixed in 1.83.1/1.83.2). Envoy links gRPC C++ core (Bazel module grpc 1.83.0.envoy from Envoy's registry) and contains no Go code; the inventory scan matches it only through the shared CPE cpe:2.3:a:grpc:grpc. Revisit if a gRPC C++ advisory with the same identifier appears. Envoy 1.39.6 links gRPC C++ 1.81.1 (repository com_github_grpc_grpc), same reasoning."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-111497"
+      },
+      "products": [
+        {
+          "@id": "pkg:generic/brotli@1.2.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "Measured 2026-11-17 on Envoy 1.40.2. Envoy builds brotli at commit 42a2ed4355bc (2026-09-30), labelled 1.2.0-260930-42a2ed4.envoy. The fix on brotli's main branch is commit 0ed4268a4401 (2026-02-27), an ancestor of 42a2ed4 (GitHub compare 0ed4268...42a2ed4: ahead, behind_by=0). The 2026-10-21 commits 50a9b70a, b418fa81 and da980636 are its backports to the v1.2, v1.1 and v1.0 release branches, which is why the advisory names only release versions (1.2.1, 1.1.1, 1.0.10). The vulnerable code is therefore not in the build."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-27135"
+      },
+      "products": [
+        {
+          "@id": "pkg:generic/nghttp2@1.66.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "Measured 2026-11-17 on Envoy 1.40.2. Envoy takes nghttp2 from its own Bazel registry as module 1.66.0.envoy (envoyproxy/bazel-registry 8ef390e1, modules/nghttp2/1.66.0.envoy/source.json), which applies nghttp2-CVE-2026-27135_part1.patch to _part4.patch over the v1.66.0 release tarball. The vulnerable code is therefore not in the build."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-85229"
+      },
+      "products": [
+        {
+          "@id": "pkg:generic/skywalking-data-collect-protocol@10.4.0"
+        }
+      ],
+      "status": "not_affected",
+      "impact_statement": "Measured 2026-11-17 on Envoy 1.40.2. The advisory is for the Apache SkyWalking server (web page generation in the UI). Envoy links only skywalking-data-collect-protocol, the protobuf definitions its envoy.tracers.skywalking extension (via cpp2sky) uses to send spans; no SkyWalking server, UI or alarm code is built into envoy-static.",
+      "justification": "vulnerable_code_not_present"
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-71216"
+      },
+      "products": [
+        {
+          "@id": "pkg:generic/skywalking-data-collect-protocol@10.4.0"
+        }
+      ],
+      "status": "not_affected",
+      "impact_statement": "Measured 2026-11-17 on Envoy 1.40.2. The advisory is for the Apache SkyWalking server (the PagerDuty alarm hook). Envoy links only skywalking-data-collect-protocol, the protobuf definitions its envoy.tracers.skywalking extension (via cpp2sky) uses to send spans; no SkyWalking server, UI or alarm code is built into envoy-static.",
+      "justification": "vulnerable_code_not_present"
     }
   ]
 }

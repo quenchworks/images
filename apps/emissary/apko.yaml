@@ -1,6 +1,6 @@
 # Assembles the Emissary-ingress runtime image. Multi-arch, nonroot, SBOM by apko. Upstream's
-# layout: ENTRYPOINT busyambassador entrypoint, which runs diagd (Python) and envoy (Wolfi
-# envoy-1.37) found through /usr/local/bin; uid 8888 in group root with /ambassador group
+# layout: ENTRYPOINT busyambassador entrypoint, which runs diagd (Python) and envoy (built
+# from source, apps/envoy) found through /usr/local/bin; uid 8888 in group root with /ambassador group
 # writable, so the arbitrary-UID mode of upstream's chart also works. bash and busybox stand
 # in for the shell tools upstream copies in.
 contents:
@@ -15,7 +15,6 @@ contents:
     - ca-certificates-bundle
     - bash
     - busybox
-    - envoy-1.37
     - quench-emissary@local
 
 accounts:

@@ -147,7 +147,8 @@ openssl pkcs12 -in ks.p12 -passin pass:changeit -nokeys | grep -c "BEGIN CERTIFI
 		t.Logf("version: %s\nsmoke test passed (nonroot user: %s)", v, u)
 	})
 	register("emissary", func(t *T) {
-		t.Match(t.RunEntry("/usr/local/bin/envoy", "--version"), `/1\.37\.[0-9]+/`, "envoy 1.37")
+		// 4.2 pairs with Envoy 1.40 (upstream CHANGELOG); the binary is our from-source envoy
+		t.Match(t.RunEntry("/usr/local/bin/envoy", "--version"), `/1\.40\.[0-9]+/`, "envoy 1.40")
 		t.RunEntry("/opt/ambassador/emissary/bin/python", "-c", "import ambassador, ambassador_diag.diagd, orjson, requests")
 		// without a cluster the entrypoint starts ambex, diagd and envoy, then stops when the watcher cannot reach an API server
 		out, _ := t.RunAnyFor(60*time.Second, nil)

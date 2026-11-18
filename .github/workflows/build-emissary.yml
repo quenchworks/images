@@ -130,7 +130,8 @@ jobs:
         env:
           TRIVY_DETECTION_PRIORITY: comprehensive
           # Documented VEX clearance: four k8s.io/kubernetes v1.30.3 CVEs in kubelet,
-          # volume and admission code that busyambassador does not link.
+          # volume and admission code that busyambassador does not link, plus apps/envoy's
+          # statements for the libraries compiled into Envoy (used by the CPE gate below).
           # trivy-action has no `vex:` input; pass it through the TRIVY_VEX env.
           TRIVY_VEX: apps/emissary/vex.openvex.json
         with:
@@ -140,6 +141,19 @@ jobs:
           ignore-unfixed: true
           severity: CRITICAL,HIGH,MEDIUM,LOW
           scanners: vuln
+
+      # Trivy cannot see the C/C++ libraries compiled into Envoy; the envoy image's inventory
+      # (/usr/share/envoy/inventory.cdx.json, copied in by melange.yaml) lists them with CPEs.
+      - name: Scan the compiled-in dependency inventory (CPE gate)
+        run: |
+          set -euo pipefail
+          d="$(mktemp -d)"
+          tar -xzf packages/${{ matrix.arch.name }}/quench-emissary-*.apk -C "$d" usr/share/envoy 2>/dev/null
+          test -s "$d/usr/share/envoy/inventory.cdx.json"
+          jq -r '.components[]|"\(.name) \(.version)"' "$d/usr/share/envoy/inventory.cdx.json"
+          docker run --rm --user "$(id -u)" -e GRYPE_DB_CACHE_DIR=/tmp/grype-db -v "$d/usr/share/envoy:/inv:ro" -v "$(realpath vex.openvex.json):/vex.json:ro" \
+            ghcr.io/quenchworks/images/grype@sha256:e9794d1ed84df82f2d82656112c33f7e0a8239c56be87c1ab32f181f6cf494cc \
+            sbom:/inv/inventory.cdx.json --vex /vex.json --only-fixed --fail-on low -o table
 
       # A green 0-CVE scan says nothing about whether the image RUNS. Publishing
       # straight from the scan is how a build that could not start at all reached
