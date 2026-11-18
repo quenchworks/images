@@ -1,0 +1,120 @@
+# Sim from the release tag, built like upstream's docker/app.Dockerfile: the package holds the Next standalone tree
+# under /app with the native modules and workers the tracer misses.
+package:
+  name: quench-sim
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Sim AI workflow builder, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - tzdata
+      - bun
+      - nodejs-24
+      - ffmpeg
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - bun
+      - nodejs-24
+      - python3
+      - build-base
+      - git
+      # Wolfi node links these shared, so node-gyp's link line needs their -dev packages
+      - brotli-dev
+      - c-ares-dev
+      - openssl-dev
+      - icu-dev
+      - nghttp2-dev
+      - libuv-dev
+      - zlib-dev
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/simstudioai/sim/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  # CVE-2026-114607 (CRITICAL, better-auth < 1.7.7): upstream pins the family at 1.6.27. Move every member to 1.7.7;
+  # 1.7 carries the RFC 8707 resource parameter that upstream's oauth-provider@1.6.27 patch adds, so the patch goes.
+  - name: better-auth family to 1.7.7
+    runs: |
+      set -eu
+      export BA=1.7.7
+      for f in package.json apps/*/package.json packages/*/package.json; do
+        sed -i -E "s#(\"(better-auth|@better-auth/(core|sso|stripe|oauth-provider|drizzle-adapter|kysely-adapter|memory-adapter|mongo-adapter|prisma-adapter|telemetry))\": \")1\.6\.27\"#\1$BA\"#" "$f"
+      done
+      bun -e '
+        const fs = require("fs"); const p = JSON.parse(fs.readFileSync("package.json"));
+        for (const k of Object.keys(p.patchedDependencies)) if (k.startsWith("@better-auth/")) delete p.patchedDependencies[k];
+        for (const n of ["better-auth", "@better-auth/core", "@better-auth/sso", "@better-auth/stripe", "@better-auth/oauth-provider",
+          "@better-auth/drizzle-adapter", "@better-auth/kysely-adapter", "@better-auth/memory-adapter", "@better-auth/mongo-adapter",
+          "@better-auth/prisma-adapter", "@better-auth/telemetry"]) p.overrides[n] = process.env.BA;
+        fs.writeFileSync("package.json", JSON.stringify(p, null, 2) + "\n");'
+      rm patches/@better-auth%2Foauth-provider@1.6.27.patch
+      if grep -rqs '"1\.6\.27"' package.json apps/*/package.json packages/*/package.json; then exit 1; fi
+
+  - name: prune, install, rebuild isolated-vm, next build
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" BUN_INSTALL_CACHE_DIR="$(mktemp -d)" HUSKY=0
+      src="$(pwd)" b="$(mktemp -d)"
+      tv="$(bun -e "console.log(require('./package.json').devDependencies.turbo)")"
+      bunx --bun "turbo@$tv" prune @sim/app --docker
+      cp -a out/json/. "$b/"
+      cp -a bun.lock patches "$b/"
+      mkdir -p "$b/apps/sim/scripts"
+      cp apps/sim/scripts/verify-oracledb-patch.cjs apps/sim/scripts/oracledb-patch-self-test.cjs "$b/apps/sim/scripts/"
+      cd "$b"
+      bun install --ignore-scripts --linker=hoisted
+      node apps/sim/scripts/verify-oracledb-patch.cjs
+      node apps/sim/scripts/oracledb-patch-self-test.cjs
+      # timer.h uses uint32_t without <cstdint>; GCC 15+ no longer pulls it in transitively
+      (cd node_modules/isolated-vm && CXXFLAGS="-include cstdint" JOBS=4 "$b/node_modules/.bin/node-gyp" rebuild --release)
+      cp -a "$src/out/full/." "$b/"
+      export NEXT_TELEMETRY_DISABLED=1 VERCEL_TELEMETRY_DISABLED=1 DOCKER_BUILD=1 \
+        DATABASE_URL=postgresql://user:pass@localhost:5432/dummy NEXT_PUBLIC_APP_URL=http://localhost:3000
+      bun run build
+      bun build apps/sim/bootstrap.ts --target=bun --outfile=apps/sim/bootstrap.js
+
+      # the runner layout from upstream's Dockerfile, in the same order (later copies win over the standalone tree)
+      d="${{targets.destdir}}/app"
+      install -d "$d/apps/sim/.next" "$d/packages/sim-cli/dist" "$d/apps/sim/dist" \
+        "$d/apps/sim/lib/internal/oracledb" "$d/apps/sim/lib/execution" "$d/node_modules"
+      cp -a apps/sim/public "$d/apps/sim/public"
+      cp -a apps/sim/.next/standalone/. "$d/"
+      cp -a apps/sim/.next/static "$d/apps/sim/.next/static"
+      cp apps/sim/bootstrap.js "$d/apps/sim/bootstrap.js"
+      cp packages/sim-cli/dist/runtime.js "$d/packages/sim-cli/dist/runtime.js"
+      cp -a apps/sim/content "$d/apps/sim/content"
+      cp apps/sim/scripts/verify-oracledb-patch.cjs apps/sim/scripts/oracledb-patch-self-test.cjs "$d/apps/sim/scripts/"
+      cp apps/sim/lib/internal/oracledb/oracle-worker.cjs "$d/apps/sim/lib/internal/oracledb/"
+      for m in isolated-vm oracledb lib0 yjs y-protocols sharp @img @napi-rs ws; do
+        rm -rf "$d/node_modules/$m"; cp -a "node_modules/$m" "$d/node_modules/$m"
+      done
+      rm -rf "$d/node_modules/isolated-vm/build/Release/obj.target" "$d/node_modules/isolated-vm/build/Release/.deps"
+      cp apps/sim/lib/execution/isolated-vm-worker.cjs apps/sim/lib/execution/isolated-vm-host.cjs "$d/apps/sim/lib/execution/"
+      cp apps/sim/dist/xlsx-worker.mjs "$d/apps/sim/dist/"
+      install -d "$d/apps/sim/lib/execution/sandbox"
+      rm -rf "$d/apps/sim/lib/execution/sandbox/bundles"
+      cp -a apps/sim/lib/execution/sandbox/bundles "$d/apps/sim/lib/execution/sandbox/"
+      install -d "$d/apps/sim/.next/cache" "$d/apps/sim/.next/server/route-cache"
+      (cd "$d" && node apps/sim/scripts/oracledb-patch-self-test.cjs --worker apps/sim/lib/internal/oracledb/oracle-worker.cjs)
+
+test:
+  pipeline:
+    - runs: |
+        test -f /app/apps/sim/bootstrap.js
+        test -f /app/apps/sim/server.js
+        test -f /app/node_modules/isolated-vm/build/Release/isolated_vm.node
+        cd /app && node -e "require('isolated-vm')"
+        command -v bun node ffmpeg

@@ -1,0 +1,48 @@
+# Sim realtime: socket.io collaboration server on 3002 (GET /health). Needs DATABASE_URL, BETTER_AUTH_URL,
+# BETTER_AUTH_SECRET and INTERNAL_API_SECRET (the app's values) and NEXT_PUBLIC_APP_URL; REDIS_URL is optional (multi-replica).
+# Nonroot 1001, no writes outside /tmp.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-sim-realtime@local
+
+accounts:
+  groups:
+    - groupname: sim
+      gid: 1001
+  users:
+    - username: sim
+      uid: 1001
+      gid: 1001
+      homedir: /tmp
+  run-as: 1001
+
+environment:
+  NODE_ENV: production
+  HOME: /tmp
+  TMPDIR: /tmp
+  PORT: "3002"
+
+work-dir: /app
+
+entrypoint:
+  command: /usr/bin/bun apps/realtime/src/bootstrap.ts
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-sim-realtime"
+  org.opencontainers.image.licenses: "Apache-2.0"
+  org.opencontainers.image.version: "__VER__"

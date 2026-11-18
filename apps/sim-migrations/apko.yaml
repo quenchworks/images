@@ -1,0 +1,47 @@
+# Sim migrations: runs packages/db/scripts/migrate.ts against MIGRATION_DATABASE_URL or DATABASE_URL (PostgreSQL with
+# pgvector) and exits. ENCRYPTION_KEY (same as the app) lets its script migration seal stored account tokens. Run it
+# as a Job or init container before the app. Nonroot 1001, no writes outside /tmp.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-sim-migrations@local
+
+accounts:
+  groups:
+    - groupname: sim
+      gid: 1001
+  users:
+    - username: sim
+      uid: 1001
+      gid: 1001
+      homedir: /tmp
+  run-as: 1001
+
+environment:
+  NODE_ENV: production
+  HOME: /tmp
+  TMPDIR: /tmp
+
+work-dir: /app/packages/db
+
+entrypoint:
+  command: /usr/bin/bun ./scripts/migrate.ts
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-sim-migrations"
+  org.opencontainers.image.licenses: "Apache-2.0"
+  org.opencontainers.image.version: "__VER__"

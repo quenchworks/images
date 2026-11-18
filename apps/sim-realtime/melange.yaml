@@ -1,0 +1,71 @@
+# Sim's apps/realtime with production dependencies only, run by bun. The package holds the pruned workspace under /app.
+package:
+  name: quench-sim-realtime
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Sim realtime server, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - bun
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - bun
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/simstudioai/sim/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  # CVE-2026-114607 (CRITICAL, better-auth < 1.7.7): upstream pins the family at 1.6.27. Move every member to 1.7.7;
+  # 1.7 carries the RFC 8707 resource parameter that upstream's oauth-provider@1.6.27 patch adds, so the patch goes.
+  - name: better-auth family to 1.7.7
+    runs: |
+      set -eu
+      export BA=1.7.7
+      for f in package.json apps/*/package.json packages/*/package.json; do
+        sed -i -E "s#(\"(better-auth|@better-auth/(core|sso|stripe|oauth-provider|drizzle-adapter|kysely-adapter|memory-adapter|mongo-adapter|prisma-adapter|telemetry))\": \")1\.6\.27\"#\1$BA\"#" "$f"
+      done
+      bun -e '
+        const fs = require("fs"); const p = JSON.parse(fs.readFileSync("package.json"));
+        for (const k of Object.keys(p.patchedDependencies)) if (k.startsWith("@better-auth/")) delete p.patchedDependencies[k];
+        for (const n of ["better-auth", "@better-auth/core", "@better-auth/sso", "@better-auth/stripe", "@better-auth/oauth-provider",
+          "@better-auth/drizzle-adapter", "@better-auth/kysely-adapter", "@better-auth/memory-adapter", "@better-auth/mongo-adapter",
+          "@better-auth/prisma-adapter", "@better-auth/telemetry"]) p.overrides[n] = process.env.BA;
+        fs.writeFileSync("package.json", JSON.stringify(p, null, 2) + "\n");'
+      rm patches/@better-auth%2Foauth-provider@1.6.27.patch
+      if grep -rqs '"1\.6\.27"' package.json apps/*/package.json packages/*/package.json; then exit 1; fi
+
+  - name: prune to @sim/realtime, install production dependencies
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" BUN_INSTALL_CACHE_DIR="$(mktemp -d)" HUSKY=0
+      tv="$(bun -e "console.log(require('./package.json').devDependencies.turbo)")"
+      bunx --bun "turbo@$tv" prune @sim/realtime --docker
+      cp -R out production
+      bun scripts/prune-production-workspace.ts @sim/realtime production/full production/json
+      d="${{targets.destdir}}/app"
+      install -d "$d"
+      cp -a production/json/. "$d/"
+      cp production/bun.lock "$d/bun.lock"
+      (cd "$d" && bun install --linker=hoisted --omit=dev --ignore-scripts)
+      cp -a production/full/. "$d/"
+      test -f "$d/apps/realtime/src/bootstrap.ts"
+      test -d "$d/node_modules/socket.io"
+
+test:
+  pipeline:
+    - runs: |
+        test -f /app/apps/realtime/src/bootstrap.ts
+        cd /app && bun -e "require('socket.io')"
