@@ -37,7 +37,7 @@ static_resources:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
 `
 
-// cilium-envoy: the Envoy binary serves a static listener on a read-only rootfs, reports the
+// cilium-envoy: the Envoy binary serves a static listener, reports the
 // Envoy release the image is versioned by, and the starter and healthcheck binaries the cilium
 // chart's DaemonSet runs are present and executable.
 func init() {
@@ -52,8 +52,9 @@ func init() {
 		os.WriteFile(filepath.Join(dir, "envoy.yaml"), []byte(ciliumEnvoyBootstrap), 0o644)
 		name := t.Name("")
 		t.Cleanup(func() { docker("rm", "-f", name) })
-		// a bind mount of a temp dir is refused under Docker Desktop: docker cp before start
-		t.Docker("create", "--name", name, "--read-only", "--tmpfs", "/tmp", "-p", "127.0.0.1:18083:8080",
+		// a bind mount of a temp dir is refused under Docker Desktop: docker cp before start (which a
+		// --read-only container refuses too, so the rootfs stays writable here)
+		t.Docker("create", "--name", name, "-p", "127.0.0.1:18083:8080",
 			"--entrypoint", "/usr/bin/cilium-envoy", t.Image, "-c", "/etc/envoy.yaml", "--log-level", "warn")
 		t.Docker("cp", filepath.Join(dir, "envoy.yaml"), name+":/etc/envoy.yaml")
 		t.Docker("start", name)
