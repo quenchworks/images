@@ -1,0 +1,90 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/sim/2026-11-18",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-18T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-114607"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/better-auth@1.6.27"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Measured 2026-11-18 on the simstudioai/sim v0.9.62 source. GHSA-965c-763c-88jm needs the Magic Link plugin enabled: an OAuth state value is accepted as a Magic Link token. Sim never enables it. The app's betterAuth() plugins come from apps/sim/lib/auth/auth.ts:19-27 (admin, captcha, customSession, emailOTP, genericOAuth, oneTimeToken, organization; no magicLink), and the realtime server's verifier imports only oneTimeToken (packages/auth/src/verify.ts:5). The one 'magic-link' string in the tree is a reserved provider id in apps/sim/lib/auth/sso/provider-repository.ts:23, not a plugin. The fix is only in better-auth 1.7.7, whose 1.7 line removes genericOAuthClient and changes the OAuth schema (1.7.0 release notes), so a drop-in bump breaks the build. Revisit when upstream Sim moves to 1.7.7 or enables Magic Link."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-44jh-23m7-hpcf"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/%40better-auth/drizzle-adapter@1.6.27"
+        },
+        {
+          "@id": "pkg:npm/better-auth@1.6.27"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Measured 2026-11-18 on the simstudioai/sim v0.9.62 source. The advisory needs rate-limit records stored in PostgreSQL through the Drizzle adapter. Neither Sim betterAuth() call sets rateLimit (apps/sim/lib/auth/auth.ts, packages/auth/src/verify.ts), so better-auth 1.6.27 keeps them in memory, or in secondary storage when one is configured (dist/context/create-context.mjs:174, storage: options.rateLimit?.storage || (options.secondaryStorage ? 'secondary-storage' : 'memory')); the Drizzle adapter never stores them. Revisit if Sim sets rateLimit.storage to 'database'."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-q84f-53jg-9ppm"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/better-auth@1.6.27"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Measured 2026-11-18 on the simstudioai/sim v0.9.62 source. The advisory needs the opt-in deviceAuthorization() plugin (device login approval). Sim never enables it: the app's betterAuth() plugins are admin, captcha, customSession, emailOTP, genericOAuth, oneTimeToken and organization (apps/sim/lib/auth/auth.ts:19-27), and the realtime verifier imports only oneTimeToken (packages/auth/src/verify.ts:5). The fix is only on the breaking 1.7 line. Revisit if Sim enables deviceAuthorization."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-44jh-23m7-hpcf"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/%40better-auth/kysely-adapter@1.6.27"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Measured 2026-11-18 on the simstudioai/sim v0.9.62 source. The Kysely adapter is only a dependency of better-auth here: the app's betterAuth() uses Sim's own adapter (database: createSimAuthAdapter, apps/sim/lib/auth/auth.ts:333) and the realtime verifier uses drizzleAdapter (packages/auth/src/verify.ts:4), and neither call sets rateLimit, so better-auth 1.6.27 keeps rate-limit records in memory or secondary storage (dist/context/create-context.mjs:174), never in PostgreSQL through any adapter. Revisit if Sim switches to the Kysely adapter or sets rateLimit.storage to 'database'."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-r4xp-prcw-77qf"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/better-auth@1.6.27"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Measured 2026-11-18 on the simstudioai/sim v0.9.62 source. The advisory needs the OAuth Proxy plugin. Sim never enables it: no oAuthProxy anywhere in apps/sim, apps/realtime or packages, and the app's betterAuth() plugins are admin, captcha, customSession, emailOTP, genericOAuth, oneTimeToken, organization (apps/sim/lib/auth/auth.ts:19-27) plus oauthProvider, sso and stripe. The fix is only in better-auth 1.7.7 on the breaking 1.7 line. Revisit if Sim enables oAuthProxy."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-p2fr-6hmx-4528"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/%40better-auth/oauth-provider@1.6.27"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
+      "impact_statement": "Measured 2026-11-18 on the simstudioai/sim v0.9.62 source. The advisory needs more than one validAudiences entry, or JWT access tokens whose aud claim resource servers trust. Sim's oauthProvider() (apps/sim/lib/auth/auth.ts:1526) sets no validAudiences, so the only audience is the server's base URL and no token can target another one, and it sets disableJwtPlugin: true, so access tokens are opaque and revocable rather than JWTs carrying aud. Sim also binds the issued resource itself (customTokenResponseFields: bindOAuthIssuedResource, and upstream's oauth-provider patch adds the resource parameter to the authorize request). Revisit if Sim adds validAudiences or turns the JWT plugin on."
+    }
+  ]
+}

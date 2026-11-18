@@ -44,25 +44,6 @@ pipeline:
       uri: https://github.com/simstudioai/sim/archive/refs/tags/v${{package.version}}.tar.gz
       expected-sha256: __SHA256__
 
-  # CVE-2026-114607 (CRITICAL, better-auth < 1.7.7): upstream pins the family at 1.6.27. Move every member to 1.7.7;
-  # 1.7 carries the RFC 8707 resource parameter that upstream's oauth-provider@1.6.27 patch adds, so the patch goes.
-  - name: better-auth family to 1.7.7
-    runs: |
-      set -eu
-      export BA=1.7.7
-      for f in package.json apps/*/package.json packages/*/package.json; do
-        sed -i -E "s#(\"(better-auth|@better-auth/(core|sso|stripe|oauth-provider|drizzle-adapter|kysely-adapter|memory-adapter|mongo-adapter|prisma-adapter|telemetry))\": \")1\.6\.27\"#\1$BA\"#" "$f"
-      done
-      bun -e '
-        const fs = require("fs"); const p = JSON.parse(fs.readFileSync("package.json"));
-        for (const k of Object.keys(p.patchedDependencies)) if (k.startsWith("@better-auth/")) delete p.patchedDependencies[k];
-        for (const n of ["better-auth", "@better-auth/core", "@better-auth/sso", "@better-auth/stripe", "@better-auth/oauth-provider",
-          "@better-auth/drizzle-adapter", "@better-auth/kysely-adapter", "@better-auth/memory-adapter", "@better-auth/mongo-adapter",
-          "@better-auth/prisma-adapter", "@better-auth/telemetry"]) p.overrides[n] = process.env.BA;
-        fs.writeFileSync("package.json", JSON.stringify(p, null, 2) + "\n");'
-      rm patches/@better-auth%2Foauth-provider@1.6.27.patch
-      if grep -rqs '"1\.6\.27"' package.json apps/*/package.json packages/*/package.json; then exit 1; fi
-
   - name: prune, install, rebuild isolated-vm, next build
     runs: |
       set -eu
