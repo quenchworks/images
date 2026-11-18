@@ -93,6 +93,12 @@ pipeline:
         (cd "$E" && cargo update -p rustls --precise 0.23.46)
         export CARGO_BAZEL_REPIN=true
       fi
+      if grep -A1 '^name = "hickory-resolver"$' "$E/Cargo.lock" 2>/dev/null | grep -q '^version = "0\.26\.[01]"$'; then
+        # hickory-resolver 0.26.3 (as in Envoy 1.40.2): GHSA-5j98-2g5x-46v6, GHSA-6w6g-hm98-mhgm (HIGH), GHSA-6f2x-v7q7-m7m5
+        (cd "$E" && cargo update -p hickory-resolver --precise 0.26.3)
+        export CARGO_BAZEL_REPIN=true
+      fi
+      if grep -A1 -E '^name = "hickory-(resolver|proto)"$' "$E/Cargo.lock" 2>/dev/null | grep -q '^version = "0\.26\.[01]"$'; then echo "hickory still below 0.26.2"; exit 1; fi
       # upstream's Makefile writes these two before building
       echo "__COMMIT__" > SOURCE_VERSION
       [ -e /usr/lib/libtinfo.so.5 ] || ln -s libtinfo.so.6 /usr/lib/libtinfo.so.5

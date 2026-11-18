@@ -86,6 +86,12 @@ pipeline:
       # CARGO_BAZEL_REPIN makes crate_universe regenerate Cargo.Bazel.envoy.lock from the new Cargo.lock.
       cargo update -p rustls --precise 0.23.46
       grep -A1 '^name = "rustls"$' Cargo.lock | grep -q '^version = "0.23.46"$'
+      # hickory-resolver 0.26.3 (as in 1.40.2) fixes GHSA-5j98-2g5x-46v6, GHSA-6w6g-hm98-mhgm (HIGH) and
+      # GHSA-6f2x-v7q7-m7m5; 1.39.6 locks 0.26.1
+      if grep -A1 '^name = "hickory-resolver"$' Cargo.lock | grep -q '^version = "0\.26\.[01]"$'; then
+        cargo update -p hickory-resolver --precise 0.26.3
+      fi
+      if grep -A1 -E '^name = "hickory-(resolver|proto)"$' Cargo.lock | grep -q '^version = "0\.26\.[01]"$'; then echo "hickory still below 0.26.2"; exit 1; fi
       export CARGO_BAZEL_REPIN=true
       # 1.39's hermetic LLVM is a prebuilt release linked against libtinfo.so.5; Wolfi ships .so.6
       # (same ABI for what clang uses). 1.40's toolchain does not ask for it.
