@@ -85,6 +85,19 @@
       "status": "not_affected",
       "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
       "impact_statement": "Measured 2026-11-18 on the simstudioai/sim v0.9.62 source. The advisory needs more than one validAudiences entry, or JWT access tokens whose aud claim resource servers trust. Sim's oauthProvider() (apps/sim/lib/auth/auth.ts:1526) sets no validAudiences, so the only audience is the server's base URL and no token can target another one, and it sets disableJwtPlugin: true, so access tokens are opaque and revocable rather than JWTs carrying aud. Sim also binds the issued resource itself (customTokenResponseFields: bindOAuthIssuedResource, and upstream's oauth-provider patch adds the resource parameter to the authorize request). Revisit if Sim adds validAudiences or turns the JWT plugin on."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-118764"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/minimatch@10.2.6"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Measured 2026-11-18 on the simstudioai/sim v0.9.62 source and the published packages. GHSA-g3hv-75wg-m249 needs an attacker-supplied glob pattern compiled by minimatch with optimizationLevel >= 2. No Sim source imports minimatch or glob (apps/sim, apps/realtime, packages). In the image this copy is reached only through archiver 8.0.0's readdir-glob, which archiver calls only from directory() and glob() (lib/core.js:570-650 and :672); Sim uses archiver's ZipArchive only through append(), finalize(), on(), once() and destroy() (apps/sim/lib/workspace-files/api/archive-presenter.ts:32-84, apps/sim/lib/knowledge/transfer/export-archive.ts:96-207). The other consumer, glob 13 via react-email, is a devDependency (apps/sim/package.json:343) whose glob use is its email CLI (dist/cli/index.mjs). The fix is only in minimatch 11, which removes makeRe and changes Minimatch.set, so glob 13 and readdir-glob 3 cannot take it in place. Revisit if Sim calls archive.directory() or archive.glob(), or upstream moves to minimatch 11."
     }
   ]
 }
