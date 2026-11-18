@@ -96,7 +96,8 @@ pipeline:
       # upstream's Makefile writes these two before building
       echo "__COMMIT__" > SOURCE_VERSION
       [ -e /usr/lib/libtinfo.so.5 ] || ln -s libtinfo.so.6 /usr/lib/libtinfo.so.5
-      G="$(ls -d /usr/lib/gcc/*-linux-gnu/13)"; T="$(basename "$(dirname "$G")")"
+      # the host triple: Wolfi also installs a cross aarch64 gcc 13 tree next to the native one
+      T="$(cc -dumpmachine)"; G="/usr/lib/gcc/$T/13"
       test -f "$G/libstdc++.a" && test -f "$G/include/c++/$T/bits/c++config.h"
       mkdir -p /usr/include/c++ && ln -sfn "$G/include/c++" /usr/include/c++/13
       BAZELRC_FILE="$PWD/clang.bazelrc" bash bazel/setup_clang.sh /usr/lib/llvm-18
