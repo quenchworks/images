@@ -132,7 +132,8 @@ pipeline:
       install -Dm644 Cargo.lock "$inv/Cargo.lock"
       install -Dm644 bazel/deps.yaml "$inv/deps.yaml"
       if [ -f bazel/repository_locations.bzl ]; then install -Dm644 bazel/repository_locations.bzl "$inv/repository_locations.bzl"; fi
-      bazel --output_user_root="$HOME/.bazel-root" mod graph --output=json > "$inv/bazel-mod-graph.json"
+      # 1.39 is not a Bzlmod root (mod graph refuses to run); the inventory then reads repository_locations.bzl
+      bazel --output_user_root="$HOME/.bazel-root" mod graph --output=json > "$inv/bazel-mod-graph.json" 2>/dev/null || echo '{}' > "$inv/bazel-mod-graph.json"
       # cquery, not query: query walks every select() branch and failed (exit 7) after the build;
       # cquery follows the real configuration, and --notool_deps drops build-host tools
       bazel --output_user_root="$HOME/.bazel-root" cquery $STDLIB --noshow_progress --notool_deps \
