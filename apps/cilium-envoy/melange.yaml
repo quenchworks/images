@@ -103,6 +103,13 @@ pipeline:
         echo "build:clang-local --features=-module_maps --features=-layering_check"
         echo "build:clang-local --host_features=-module_maps --host_features=-layering_check"
         echo "build --config=clang-local"
+        # envoy.bazelrc passes the libc++ settings as --action_env, but the autodetected C++
+        # toolchain (used for host tools too) reads them from the repository environment;
+        # without these, host compiles fell back to GCC 16's libstdc++, which clang 18 cannot parse
+        echo "build --repo_env=CC=clang --repo_env=CXX=clang++"
+        echo "build --repo_env=BAZEL_CXXOPTS=-stdlib=libc++"
+        echo "build --repo_env=BAZEL_LINKLIBS=-l%:libc++.a:-l%:libc++abi.a"
+        echo "build --repo_env=BAZEL_LINKOPTS=-lm:-pthread"
       } >> clang.bazelrc
       B="bazel --output_user_root=$HOME/.bazel-root"
       $B build --config=release --override_repository=envoy="$E" \
