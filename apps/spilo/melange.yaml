@@ -1,0 +1,197 @@
+# Spilo's scripts and runit services from the pinned commit, plus bg_mon and pgextwlist built against Wolfi
+# PostgreSQL 18 with PGXS. PostgreSQL, Patroni, WAL-G and the service tools are runtime dependencies from Wolfi.
+package:
+  name: quench-spilo
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Spilo (PostgreSQL + Patroni + WAL-G), built on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - tzdata
+      # Spilo initdb uses en_US.UTF-8 (INITDB_LOCALE), as upstream clusters do
+      - glibc-locale-en
+      - busybox
+      - bash
+      - coreutils
+      - curl
+      - openssl
+      - postgresql-18~__VER__
+      - postgresql-18-client~__VER__
+      - postgresql-18-contrib~__VER__
+      - pg_auth_mon-18
+      - pg_cron-18
+      - pg_stat_kcache-18
+      - pg-partman-18
+      - set_user-18
+      - pgvector-18
+      - patroni
+      - wal-g
+      - pgqd
+      - runit
+      - dumb-init
+      - cronie
+      - libevent
+      - brotli
+      - python-3.13
+      - py3.13-psutil
+      - py3.13-pystache
+      - py3.13-pyyaml
+      - py3.13-requests
+      - py3.13-six
+      # patroni ships without its etcd client; Spilo supports etcd and etcd3 DCS (the operator uses kubernetes)
+      - py3.13-etcd
+      - py3.13-dnspython
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - build-base
+      - ca-certificates-bundle
+      - postgresql-18-dev
+      - postgresql-18~__VER__
+      - libevent-dev
+      - brotli-dev
+      - lz4-dev
+      - openssl-dev
+      - krb5-dev
+      - c-ares-dev
+      - linux-headers
+      - pkgconf
+      - python-3.13-dev
+      - bison
+      - flex
+      - perl
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/zalando/spilo/archive/__SPILO_COMMIT__.tar.gz
+      expected-sha256: __SPILO_SHA256__
+
+  # fetch's directory: must exist before it extracts there
+  - runs: mkdir -p bg_mon pgextwlist pgbouncer postgres-src
+
+  - uses: fetch
+    with:
+      uri: https://github.com/CyberDem0n/bg_mon/archive/__BG_MON_COMMIT__.tar.gz
+      expected-sha256: __BG_MON_SHA256__
+      strip-components: 1
+      directory: bg_mon
+
+  - uses: fetch
+    with:
+      uri: https://github.com/dimitri/pgextwlist/archive/refs/tags/v__EXTWLIST__.tar.gz
+      expected-sha256: __EXTWLIST_SHA256__
+      strip-components: 1
+      directory: pgextwlist
+
+  - uses: fetch
+    with:
+      uri: https://www.pgbouncer.org/downloads/files/__PGBOUNCER__/pgbouncer-__PGBOUNCER__.tar.gz
+      expected-sha256: __PGBOUNCER_SHA256__
+      strip-components: 1
+      directory: pgbouncer
+
+  - name: pgbouncer from source (Wolfi's is stuck at 1.24.1)
+    runs: |
+      set -eu
+      cd pgbouncer
+      ./configure --prefix=/usr --with-openssl --with-cares --without-pam --without-systemd
+      make -j"$(nproc)" pgbouncer
+      install -Dm755 pgbouncer "${{targets.destdir}}/usr/bin/pgbouncer"
+
+  - uses: fetch
+    with:
+      uri: https://ftp.postgresql.org/pub/source/v__VER__/postgresql-__VER__.tar.bz2
+      expected-sha256: __PG_SRC_SHA256__
+      strip-components: 1
+      directory: postgres-src
+
+  - name: plpython3u for Wolfi PostgreSQL 18, from the same release's source
+    runs: |
+      set -eu
+      cd postgres-src
+      # the module only has to match the server's ABI (version, NAMEDATALEN, FUNC_MAX_ARGS, ...), which defaults keep
+      ./configure --prefix=/usr --libdir=/usr/lib --with-python PYTHON=python3 --without-readline --without-icu
+      make -C src/backend generated-headers
+      make -C src/pl/plpython -j"$(nproc)"
+      install -Dm755 src/pl/plpython/plpython3.so "${{targets.destdir}}$(pg_config --pkglibdir)/plpython3.so"
+      install -d "${{targets.destdir}}$(pg_config --sharedir)/extension"
+      install -m644 src/pl/plpython/plpython3u.control src/pl/plpython/plpython3u--*.sql "${{targets.destdir}}$(pg_config --sharedir)/extension/"
+
+  # with_llvm=no: Wolfi PostgreSQL has JIT, so PGXS would also emit clang bitcode; the JIT copy is optional
+  - name: bg_mon and pgextwlist (PGXS, against Wolfi PostgreSQL 18)
+    runs: |
+      set -eu
+      for d in bg_mon pgextwlist; do
+        make -C "$d" USE_PGXS=1 with_llvm=no -j"$(nproc)"
+        make -C "$d" USE_PGXS=1 with_llvm=no DESTDIR="${{targets.destdir}}" install
+      done
+      test -f "${{targets.destdir}}$(pg_config --pkglibdir)/bg_mon.so"
+      test -f "${{targets.destdir}}$(pg_config --pkglibdir)/pgextwlist.so"
+
+  - name: Spilo scripts, runit services, launch.sh and the unprivileged cron shim
+    runs: |
+      set -eu
+      a=postgres-appliance d="${{targets.destdir}}"
+      # timescaledb is not shipped for PostgreSQL 18 here: drop it from the preload table so configure_spilo.py does not
+      # add a library the server cannot load
+      sed -i "/^    'timescaledb': /d" $a/scripts/spilo_commons.py
+      if grep -q "'timescaledb'" $a/scripts/spilo_commons.py; then exit 1; fi
+      install -d "$d/scripts" "$d/etc/runit/runsvdir/default" "$d/usr/local/lib" "$d/usr/lib/postgresql/18"
+      cp -a $a/scripts/. $a/bootstrap/. $a/major_upgrade/. "$d/scripts/"
+      # upstream rewrites /etc/passwd (made group-writable) for any non-root uid; here postgres is uid 101 already, so
+      # rewrite only when the running uid has no entry, and /etc/passwd stays read-only
+      sed -i 's/^if \[ "$(id -u)" -ne 0 \]; then$/if [ "$(id -u)" -ne 0 ] \&\& ! id -un >\/dev\/null 2>\&1; then/' $a/launch.sh
+      grep -q 'id -un >/dev/null' $a/launch.sh
+      install -m755 $a/launch.sh "$d/launch.sh"
+      install -m644 $a/motd "$d/etc/motd"
+      for s in $a/runit/*; do
+        n="$(basename "$s")"
+        install -d "$d/etc/runit/runsvdir/default/$n"
+        install -m755 "$s"/* "$d/etc/runit/runsvdir/default/$n/"
+        ln -s "/run/supervise/$n" "$d/etc/runit/runsvdir/default/$n/supervise"
+      done
+      # runit owns /etc/service in Wolfi: point launch.sh at RW_DIR/service, where configure_spilo.py links services
+      sed -i 's|/etc/service|"$RW_DIR/service"|g' "$d/launch.sh"
+      if grep -q '/etc/service' "$d/launch.sh"; then exit 1; fi
+      # Wolfi paths: cronie's crond (foreground -n), pgbouncer and pgqd found on PATH
+      sed -i 's|/usr/sbin/cron -f|/usr/sbin/crond -n|' "$d/etc/runit/runsvdir/default/cron/run"
+      sed -i 's| /usr/sbin/pgbouncer | pgbouncer |' "$d/etc/runit/runsvdir/default/pgbouncer/run"
+      sed -i 's| /usr/bin/pgqd | pgqd |' "$d/etc/runit/runsvdir/default/pgqd/run"
+      if grep -rqsE '/usr/sbin/cron |/usr/sbin/pgbouncer|/usr/bin/pgqd' "$d/etc/runit"/*/run; then exit 1; fi
+      # Spilo runs daemontools envdir throughout; runit's chpst -e reads the same directory format
+      install -d "$d/usr/bin"
+      printf '#!/bin/sh\nd="$1"; shift\nexec chpst -e "$d" "$@"\n' > "$d/usr/bin/envdir"
+      chmod 755 "$d/usr/bin/envdir"
+      gcc -s -shared -fPIC -o "$d/usr/local/lib/cron_unprivileged.so" $a/cron_unprivileged.c
+      # Spilo finds the server under /usr/lib/postgresql/<major>/bin (spilo_commons.LIB_DIR)
+      ln -s "$(pg_config --bindir)" "$d/usr/lib/postgresql/18/bin"
+      install -d "$d/home/postgres"
+      install -m644 $a/pgq_ticker.ini "$d/home/postgres/pgq_ticker.ini"
+      # upstream post_build.sh: PGHOME points into RW_DIR for what configure_spilo.py writes at start
+      ln -s /run/postgres.yml "$d/home/postgres/postgres.yml"
+      ln -s /run/etc "$d/home/postgres/etc"
+      install -d "$d/home/postgres/.config/patroni"
+      ln -s /home/postgres/postgres.yml "$d/home/postgres/.config/patroni/patronictl.yaml"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /launch.sh
+        test -f /scripts/configure_spilo.py
+        /usr/lib/postgresql/18/bin/postgres --version
+        python3 -c "import psutil, pystache, yaml, requests, six, patroni, etcd"
+        test -f /usr/lib/postgresql18/plpython3.so
+        patroni --version
+        wal-g --version
+        command -v runsvdir sv chpst dumb-init pgbouncer pgqd crond bash
+        mkdir -p /tmp/e && echo hi > /tmp/e/QW && test "$(envdir /tmp/e sh -c 'echo $QW')" = hi

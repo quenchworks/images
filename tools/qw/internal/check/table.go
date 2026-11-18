@@ -386,6 +386,7 @@ var table = map[string]check{
 	"postgres-exporter":                 {src: ghRel("prometheus-community/postgres_exporter")},
 	"postgresql-15":                     {src: scrapeSrc("https://ftp.postgresql.org/pub/source/", `href="v(15\.\d+)/"`)},
 	"postgresql":                        {src: scrapeSrc("https://ftp.postgresql.org/pub/source/", `href="v(\d+\.\d+(?:\.\d+)?)/"`), lines: 1},
+	"spilo":                             {src: wolfiPkg("postgresql-18"), n: 1},
 	"postgrest":                         {src: ghRel("PostgREST/postgrest")},
 	"prefect":                           {src: pypiPkg("prefect"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
 	"privatebin":                        {src: ghRel("PrivateBin/PrivateBin"), n: 1},

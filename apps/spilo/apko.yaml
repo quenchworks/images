@@ -1,0 +1,76 @@
+# Spilo runtime: /launch.sh init (dumb-init, then configure_spilo.py writes Patroni's config and runsvdir starts patroni
+# and the enabled services). PostgreSQL 5432, Patroni REST 8008, pgbouncer 6432 when enabled. Data under
+# /home/postgres/pgdata (the operator mounts its volume there); runtime files under /run (RW_DIR). Runs as postgres
+# (uid 101, gid 103, the ids the Zalando operator's spilo_runasuser and spilo_fsgroup settings use).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-spilo@local
+
+accounts:
+  groups:
+    - groupname: postgres
+      gid: 103
+  users:
+    - username: postgres
+      uid: 101
+      gid: 103
+      homedir: /home/postgres
+      shell: /bin/bash
+  run-as: 101
+
+environment:
+  LC_ALL: C.UTF-8
+  PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/lib/postgresql/18/bin
+  PGHOME: /home/postgres
+  RW_DIR: /run
+  SVDIR: /run/service
+  WALG_ENV_DIR: /run/etc/wal-e.d/env
+  LOG_ENV_DIR: /run/etc/log.d/env
+  PGROOT: /home/postgres/pgdata/pgroot
+  PGDATA: /home/postgres/pgdata/pgroot/data
+  PGLOG: /home/postgres/pgdata/pgroot/pg_log
+  PGVERSION: "18"
+  USE_OLD_LOCALES: "false"
+  DEMO: "false"
+
+paths:
+  - path: /home/postgres
+    type: directory
+    uid: 101
+    gid: 103
+    permissions: 0o750
+  - path: /home/postgres/pgdata
+    type: directory
+    uid: 101
+    gid: 103
+    permissions: 0o750
+  - path: /run
+    type: directory
+    uid: 101
+    gid: 103
+    permissions: 0o755
+
+work-dir: /home/postgres
+
+entrypoint:
+  command: /bin/sh /launch.sh init
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-spilo"
+  org.opencontainers.image.licenses: "Apache-2.0"
+  org.opencontainers.image.version: "__VER__"
