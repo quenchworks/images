@@ -119,6 +119,10 @@ pipeline:
         # libstdc++ lowers 16-byte atomics to libatomic calls (V8 mksnapshot: undefined
         # __atomic_compare_exchange, on arm64 and x86_64); link the sysroot's GCC 13 libatomic.a
         STDLIB="$STDLIB --linkopt=-l:libatomic.a --host_linkopt=-l:libatomic.a"
+        # Without a hermetic toolchain and remote cache the 1.39 build ran past the runners' 6-hour job
+        # limit on x86_64 (arm64: 5h23m). Drop the Wasm runtimes (V8 is the largest single part of the
+        # build): this line exists for kgateway's data plane, which does not use Wasm filters.
+        STDLIB="$STDLIB --define wasm=disabled"
       fi
       bazel --output_user_root="$HOME/.bazel-root" build $STDLIB \
         -c opt --jobs="$BAZEL_JOBS" \
