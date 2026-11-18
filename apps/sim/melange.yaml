@@ -62,6 +62,10 @@ pipeline:
       # timer.h uses uint32_t without <cstdint>; GCC 15+ no longer pulls it in transitively
       (cd node_modules/isolated-vm && CXXFLAGS="-include cstdint" JOBS=4 "$b/node_modules/.bin/node-gyp" rebuild --release)
       cp -a "$src/out/full/." "$b/"
+      # static generation runs one worker per CPU minus one, each inheriting the 8 GB heap: three of them killed the
+      # x86 runner at "Generating static pages" (run 44366808411). One worker keeps the peak at one heap.
+      sed -i 's/^  experimental: {$/  experimental: {\n    cpus: 1,/' apps/sim/next.config.ts
+      grep -q '^    cpus: 1,$' apps/sim/next.config.ts
       export NEXT_TELEMETRY_DISABLED=1 VERCEL_TELEMETRY_DISABLED=1 DOCKER_BUILD=1 \
         DATABASE_URL=postgresql://user:pass@localhost:5432/dummy NEXT_PUBLIC_APP_URL=http://localhost:3000
       bun run build
@@ -83,6 +87,8 @@ pipeline:
         rm -rf "$d/node_modules/$m"; cp -a "node_modules/$m" "$d/node_modules/$m"
       done
       rm -rf "$d/node_modules/isolated-vm/build/Release/obj.target" "$d/node_modules/isolated-vm/build/Release/.deps"
+      # isolated-vm ships prebuilt x86 and musl binaries; the module loads the build/Release one rebuilt above
+      rm -rf "$d/node_modules/isolated-vm/prebuilds"
       cp apps/sim/lib/execution/isolated-vm-worker.cjs apps/sim/lib/execution/isolated-vm-host.cjs "$d/apps/sim/lib/execution/"
       cp apps/sim/dist/xlsx-worker.mjs "$d/apps/sim/dist/"
       install -d "$d/apps/sim/lib/execution/sandbox"
