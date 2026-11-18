@@ -274,7 +274,7 @@ func envoyPaired(app, repo string, pinOf func(string) (string, string)) func(io.
 			fmt.Fprintf(w, "  envoy pairing:      %s %s wants envoy %s; we ship %s -- NO %s LINE, cannot pair (do not bump)\n",
 				app, cand, pin, common.PyList(sortedAsc(common.Keys(lines))), line)
 		case core.Vless(ours, pin):
-			fmt.Fprintf(w, "  envoy pairing:      %s %s wants envoy %s; we ship %s (same %s line, ours is older) -- pairable, bump envoy when Wolfi has %s\n",
+			fmt.Fprintf(w, "  envoy pairing:      %s %s wants envoy %s; we ship %s (same %s line, ours is older) -- pairable, add %s to apps/envoy VERSIONS\n",
 				app, cand, pin, ours, line, pin)
 		default:
 			fmt.Fprintf(w, "  envoy pairing:      %s %s wants envoy %s; we ship %s -- pairable\n", app, cand, pin, ours)

@@ -41,7 +41,9 @@ environment:
       - build-base
       - busybox
       - ca-certificates-bundle
-      - go-1.26
+      - curl
+      - go-1.27
+      - jq
 
 pipeline:
   - uses: fetch
@@ -52,8 +54,7 @@ pipeline:
       set -eu
       export CGO_ENABLED=0
       export GOFLAGS=-mod=mod
-      # go.mod declares `go 1.26.7` and Wolfi's go-1.26 IS 1.26.7: satisfied locally,
-      # so no toolchain download.
+      # go.mod declares `go 1.27.4` and Wolfi's go-1.27 satisfies it: no toolchain download.
       export GOTOOLCHAIN=local
 
       # 2026-09-14: the nightly scan flagged google.golang.org/grpc below its fix
@@ -92,3 +93,26 @@ pipeline:
       # Upstream's entrypoint, byte for byte from the release tarball.
       install -Dm0755 cmd/envoyinit/docker-entrypoint.sh \
         "${{targets.destdir}}/docker-entrypoint.sh"
+
+  # Envoy comes from our from-source envoy image (apps/envoy), pinned by index digest per
+  # kgateway release in build.conf. Every hop (index, arch manifest, layer) is checked
+  # against its sha256 before use; the inventory under /usr/share/envoy rides along for
+  # the CPE gate.
+  - runs: |
+      set -eu
+      repo=quenchworks/images/envoy
+      case "${{build.arch}}" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac
+      tok="$(curl -fsSL "https://ghcr.io/token?scope=repository:$repo:pull" | jq -r .token)"
+      get() {
+        curl -fsSL -H "Authorization: Bearer $tok" -H "Accept: $2" "https://ghcr.io/v2/$repo/$1" > "$3"
+        test "sha256:$(sha256sum "$3" | cut -d' ' -f1)" = "${1#*/}"
+      }
+      get manifests/__ENVOY_INDEX__ application/vnd.oci.image.index.v1+json /tmp/envoy-index.json
+      m="$(jq -r --arg a "$arch" '.manifests[]|select(.platform.architecture==$a)|.digest' /tmp/envoy-index.json)"
+      get "manifests/$m" application/vnd.oci.image.manifest.v1+json /tmp/envoy-manifest.json
+      for l in $(jq -r '.layers[].digest' /tmp/envoy-manifest.json); do
+        get "blobs/$l" '*/*' /tmp/envoy-layer.tgz
+        tar -xzf /tmp/envoy-layer.tgz -C "${{targets.destdir}}" usr/bin/envoy usr/share/envoy 2>/dev/null || true
+      done
+      "${{targets.destdir}}/usr/bin/envoy" --version
+      test -s "${{targets.destdir}}/usr/share/envoy/inventory.cdx.json"

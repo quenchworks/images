@@ -164,7 +164,7 @@ func init() {
 		ev := t.RunEntry("/usr/local/bin/envoy", "--version")
 		minor := t.Match(ev, `/(\d+\.\d+)\.\d+/`, "envoy version")
 		line := regexp.MustCompile(`^\d+\.\d+`).FindString(t.Want)
-		if want := map[string]string{"2.3": "1.37", "2.4": "1.38"}[line]; want != "" && minor != want {
+		if want := map[string]string{"2.3": "1.37", "2.4": "1.38", "2.5": "1.39"}[line]; want != "" && minor != want {
 			t.Fatalf("kgateway %s expects envoy %s.x, image has %s", t.Want, want, ev)
 		}
 		if out := t.RunEntryAny("/bin/sh", "-c", "command -v wget >/dev/null && echo ok"); out != "ok" {

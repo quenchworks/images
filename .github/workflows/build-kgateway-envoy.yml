@@ -1,12 +1,11 @@
 name: build-kgateway-envoy
 
-# From-source build (the kgateway DATA PLANE: Wolfi's envoy apk plus kgateway's own
+# From-source build (the kgateway DATA PLANE: our from-source envoy plus kgateway's own
 # `envoyinit` bootstrap shim built from source -- upstream's `envoy-wrapper` image,
-# rebuilt clean-room). build.conf is the SINGLE SOURCE OF TRUTH: prep emits up to the
-# latest 3 stable versions (full X.Y.Z, as-is) -- two minor lines, in LOCKSTEP with
-# apps/kgateway. The build matrix fans them x both NATIVE arches (amd64 + arm64, no
+# rebuilt clean-room). build.conf is the SINGLE SOURCE OF TRUTH: prep emits its
+# VERSIONS (full X.Y.Z, as-is), in LOCKSTEP with apps/kgateway. The build matrix fans them x both NATIVE arches (amd64 + arm64, no
 # QEMU). Recipes render via build.conf render() (__VER__ + per-version __SHA256__
-# source-tarball pin + __ENVOY_PKG__ Wolfi envoy apk). Per-version merge job assembles
+# source-tarball pin + __ENVOY_INDEX__ envoy image digest). Per-version merge job assembles
 # the multi-arch index, signs + attests it, notifies charts on newest.
 #
 # PAIRED WITH build-kgateway.yml. Dispatch both for the same window, always.
@@ -123,9 +122,15 @@ jobs:
       - name: Assemble single-arch image for the scan gate
         run: apko build apko.rendered.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}
 
+      - name: Check VEX
+        working-directory: ${{ github.workspace }}
+        run: go -C tools/qw run . vex kgateway-envoy
+
       - name: Scan, the hard 0-CVE gate (before publish)
         uses: aquasecurity/trivy-action@d2a0b60797ff03db6132bd4e2b293f9b37081297 # master 2026-09-26, v0.36.0+11, bundles trivy v0.71.2
         env:
+          # a symlink to apps/envoy/vex.openvex.json: this image runs that envoy binary
+          TRIVY_VEX: apps/kgateway-envoy/vex.openvex.json
           TRIVY_DETECTION_PRIORITY: comprehensive
         with:
           input: apps/kgateway-envoy/image.tar
@@ -134,6 +139,19 @@ jobs:
           ignore-unfixed: true
           severity: CRITICAL,HIGH,MEDIUM,LOW
           scanners: vuln
+
+      # Trivy cannot see the C/C++ libraries compiled into Envoy; the envoy image's inventory
+      # (/usr/share/envoy/inventory.cdx.json, copied in by melange.yaml) lists them with CPEs.
+      - name: Scan the compiled-in dependency inventory (CPE gate)
+        run: |
+          set -euo pipefail
+          d="$(mktemp -d)"
+          tar -xzf packages/${{ matrix.arch.name }}/quench-kgateway-envoy-*.apk -C "$d" usr/share/envoy 2>/dev/null
+          test -s "$d/usr/share/envoy/inventory.cdx.json"
+          jq -r '.components[]|"\(.name) \(.version)"' "$d/usr/share/envoy/inventory.cdx.json"
+          docker run --rm --user "$(id -u)" -e GRYPE_DB_CACHE_DIR=/tmp/grype-db -v "$d/usr/share/envoy:/inv:ro" -v "$(realpath vex.openvex.json):/vex.json:ro" \
+            ghcr.io/quenchworks/images/grype@sha256:e9794d1ed84df82f2d82656112c33f7e0a8239c56be87c1ab32f181f6cf494cc \
+            sbom:/inv/inventory.cdx.json --vex /vex.json --only-fixed --fail-on low -o table
 
       # A green 0-CVE scan says nothing about whether the image RUNS. Publishing
       # straight from the scan is how a build that could not start at all reached

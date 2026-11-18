@@ -11,12 +11,12 @@
       },
       "products": [
         {
-          "@id": "pkg:golang/istio.io/istio@v0.0.0-20260605182440-f18fd540c0e8"
+          "@id": "pkg:golang/istio.io/istio@v0.0.0-20261029165818-11c1ab520145"
         }
       ],
       "status": "not_affected",
       "justification": "component_not_present",
-      "impact_statement": "PROVEN false-positive. The advisory is against istio/envoy -- Istio's FORK of the Envoy C++ proxy -- and is a denial of service from mishandled regular expressions on long URIs. This image ships no Istio Envoy and no istio-proxy: its data plane binary is Wolfi's stock envoy apk, and the control-plane image carries that same stock envoy only for `envoy --mode validate`. Verified on the built artifact rather than reasoned about: `strings` over usr/bin/kgateway returns 0 matches for istio.io/istio/pkg/envoy and 0 for istio.io/istio/istioctl, and the image contains no istio-proxy binary at all. The vulnerable component is a different program in a different language. The metadata is also unfixable by any pin, permanently: istio tags its releases as `1.14.1` with no `v` prefix, so the Go module proxy publishes no semver versions at all -- `go list -m -versions istio.io/istio` printed an EMPTY list, and `go get istio.io/istio@v1.14.1` cannot resolve. A pseudo-version is therefore the only obtainable form of this module, and v0.0.0-<date>-<sha> sorts below every number the advisory calls fixed, by construction rather than by staleness. Checked the dates too: the pinned commit f18fd540c0e86dae7596e144759caadb477f8ff2 is 'Do not parse dry-run if there is no value (#60480)' on istio master, committer date 2026-06-05T18:24:40Z, while the newest fix release named across these five advisories is 1.14.1, tagged 2022-06-09T19:09:15Z (and 1.11.1 2021-08-24, 1.2.4 and 1.1.13 2019-08-06). The code linked here postdates every one of them by about four years."
+      "impact_statement": "PROVEN false-positive. The advisory is against istio/envoy -- Istio's FORK of the Envoy C++ proxy -- and is a denial of service from mishandled regular expressions on long URIs. This image ships no Istio Envoy and no istio-proxy: its data plane binary is a stock upstream Envoy built from source (the quench envoy image), and the control-plane image carries that same stock envoy only for `envoy --mode validate`. Verified on the built artifact rather than reasoned about: `strings` over usr/bin/kgateway returns 0 matches for istio.io/istio/pkg/envoy and 0 for istio.io/istio/istioctl, and the image contains no istio-proxy binary at all. The vulnerable component is a different program in a different language. The metadata is also unfixable by any pin, permanently: istio tags its releases as `1.14.1` with no `v` prefix, so the Go module proxy publishes no semver versions at all -- `go list -m -versions istio.io/istio` printed an EMPTY list, and `go get istio.io/istio@v1.14.1` cannot resolve. A pseudo-version is therefore the only obtainable form of this module, and v0.0.0-<date>-<sha> sorts below every number the advisory calls fixed, by construction rather than by staleness. Checked the dates too: the pinned commit f18fd540c0e86dae7596e144759caadb477f8ff2 is 'Do not parse dry-run if there is no value (#60480)' on istio master, committer date 2026-06-05T18:24:40Z, while the newest fix release named across these five advisories is 1.14.1, tagged 2022-06-09T19:09:15Z (and 1.11.1 2021-08-24, 1.2.4 and 1.1.13 2019-08-06). The code linked here postdates every one of them by about four years."
     },
     {
       "vulnerability": {
@@ -24,7 +24,7 @@
       },
       "products": [
         {
-          "@id": "pkg:golang/istio.io/istio@v0.0.0-20260605182440-f18fd540c0e8"
+          "@id": "pkg:golang/istio.io/istio@v0.0.0-20261029165818-11c1ab520145"
         }
       ],
       "status": "not_affected",
@@ -37,7 +37,7 @@
       },
       "products": [
         {
-          "@id": "pkg:golang/istio.io/istio@v0.0.0-20260605182440-f18fd540c0e8"
+          "@id": "pkg:golang/istio.io/istio@v0.0.0-20261029165818-11c1ab520145"
         }
       ],
       "status": "not_affected",
@@ -50,7 +50,7 @@
       },
       "products": [
         {
-          "@id": "pkg:golang/istio.io/istio@v0.0.0-20260605182440-f18fd540c0e8"
+          "@id": "pkg:golang/istio.io/istio@v0.0.0-20261029165818-11c1ab520145"
         }
       ],
       "status": "not_affected",
@@ -63,7 +63,7 @@
       },
       "products": [
         {
-          "@id": "pkg:golang/istio.io/istio@v0.0.0-20260605182440-f18fd540c0e8"
+          "@id": "pkg:golang/istio.io/istio@v0.0.0-20261029165818-11c1ab520145"
         }
       ],
       "status": "not_affected",

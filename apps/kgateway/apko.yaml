@@ -8,7 +8,7 @@
 # /dev/fd/0` once per translation when `validation.level: strict` is set, which is a
 # first-class chart setting. Upstream's controller image carries an envoy binary for
 # exactly this reason. Ours is the same apk that backs the quench `envoy` image, pinned
-# per kgateway release by build.conf (__ENVOY_PKG__).
+# per kgateway release by build.conf (ENVOY_INDEX, pulled by melange.yaml).
 #
 # NOT present, and the chart README says so: librust_module.so plus
 # ENVOY_DYNAMIC_MODULES_SEARCH_PATH. See apps/kgateway/build.conf for why (Rust 1.95 vs
@@ -25,7 +25,6 @@ contents:
   packages:
     - wolfi-baselayout
     - ca-certificates-bundle
-    - __ENVOY_PKG__
     - quench-kgateway@local
 
 accounts:

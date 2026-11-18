@@ -1,12 +1,12 @@
 name: build-kgateway
 
 # From-source build (kgateway Gateway API control plane, single static Go binary, no
-# CGO). build.conf is the SINGLE SOURCE OF TRUTH: prep emits up to the latest 3 stable
-# versions (full X.Y.Z, as-is) -- kgateway ships TWO minor lines, because 2.2.x pins its
-# amd64 data plane to the solo-io envoy-gloo fork we do not rebuild (see build.conf).
+# CGO). build.conf is the SINGLE SOURCE OF TRUTH: prep emits its VERSIONS
+# (full X.Y.Z, as-is): the 2.5 line, paired with the Envoy 1.39 our envoy image builds
+# (see build.conf).
 # The build matrix fans them x both NATIVE arches (amd64 + arm64, no QEMU). Recipes
 # render via build.conf render() (__VER__ + per-version __SHA256__ source-tarball pin +
-# __ENVOY_PKG__ Wolfi envoy apk for the strict-validation binary). Per-version merge job
+# __ENVOY_INDEX__ envoy image digest for the strict-validation binary). Per-version merge job
 # assembles the multi-arch index, signs + attests it, notifies charts on newest.
 #
 # PAIRED WITH build-kgateway-envoy.yml. That workflow builds the DATA PLANE from the
@@ -152,6 +152,20 @@ jobs:
           ignore-unfixed: true
           severity: CRITICAL,HIGH,MEDIUM,LOW
           scanners: vuln
+
+      # Trivy cannot see the C/C++ libraries compiled into Envoy; the envoy image's inventory
+      # (/usr/share/envoy/inventory.cdx.json, copied in by melange.yaml) lists them with CPEs.
+      # The binary is the envoy image's, so its VEX is apps/envoy/vex.openvex.json.
+      - name: Scan the compiled-in dependency inventory (CPE gate)
+        run: |
+          set -euo pipefail
+          d="$(mktemp -d)"
+          tar -xzf packages/${{ matrix.arch.name }}/quench-kgateway-*.apk -C "$d" usr/share/envoy 2>/dev/null
+          test -s "$d/usr/share/envoy/inventory.cdx.json"
+          jq -r '.components[]|"\(.name) \(.version)"' "$d/usr/share/envoy/inventory.cdx.json"
+          docker run --rm --user "$(id -u)" -e GRYPE_DB_CACHE_DIR=/tmp/grype-db -v "$d/usr/share/envoy:/inv:ro" -v "$(realpath ../envoy/vex.openvex.json):/vex.json:ro" \
+            ghcr.io/quenchworks/images/grype@sha256:e9794d1ed84df82f2d82656112c33f7e0a8239c56be87c1ab32f181f6cf494cc \
+            sbom:/inv/inventory.cdx.json --vex /vex.json --only-fixed --fail-on low -o table
 
       # A green 0-CVE scan says nothing about whether the image RUNS. Publishing
       # straight from the scan is how a build that could not start at all reached
