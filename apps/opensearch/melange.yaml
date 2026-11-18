@@ -99,7 +99,12 @@ pipeline:
           for f in $(find "$dest" -name "$art-$old.jar"); do cp "$jar" "$f"; n=$((n+1)); done
         done
         rm -f "$jar"
-        [ "$n" -gt 0 ] || [ -n "$(find "$dest" -name "$art-$fixed.jar")" ] || { echo "no $art $* or $fixed in the dist; it moved"; exit 1; }
+        # nothing swapped: the dist must already ship this line at or past the fix (3.10.0 ships 2.22.4/3.2.4)
+        if [ "$n" -eq 0 ]; then
+          top="$(find "$dest" -name "$art-${fixed%%.*}.*.jar" | sed "s|.*/$art-||; s|\.jar$||" | sort -V | tail -1)"
+          [ -n "$top" ] && [ "$(printf '%s\n%s\n' "$fixed" "$top" | sort -V | head -1)" = "$fixed" ] \
+            || { echo "no $art $* and nothing at or past $fixed in the dist (newest: ${top:-none}); it moved"; exit 1; }
+        fi
       done
       # (2b) jsoup 1.15.3 -> 1.23.2 in opensearch-reports-scheduler (CVE-2026-71497).
       #      Standalone plugin jar, so a content swap keeping the filename (same
