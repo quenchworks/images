@@ -89,6 +89,10 @@ pipeline:
       rm -rf "$d/node_modules/isolated-vm/build/Release/obj.target" "$d/node_modules/isolated-vm/build/Release/.deps"
       # isolated-vm ships prebuilt x86 and musl binaries; the module loads the build/Release one rebuilt above
       rm -rf "$d/node_modules/isolated-vm/prebuilds"
+      # the install also pulls musl variants of the platform packages (@img/sharp-*linuxmusl*, @napi-rs/*-musl); on this
+      # glibc image they only add so:libc.musl, which nothing provides
+      find "$d/node_modules" -maxdepth 2 -type d \( -name '*linuxmusl*' -o -name '*-musl' \) -prune -exec rm -rf {} +
+      if find "$d/node_modules" -maxdepth 2 -type d \( -name '*linuxmusl*' -o -name '*-musl' \) | grep -q .; then exit 1; fi
       cp apps/sim/lib/execution/isolated-vm-worker.cjs apps/sim/lib/execution/isolated-vm-host.cjs "$d/apps/sim/lib/execution/"
       cp apps/sim/dist/xlsx-worker.mjs "$d/apps/sim/dist/"
       install -d "$d/apps/sim/lib/execution/sandbox"
