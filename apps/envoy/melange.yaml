@@ -106,6 +106,10 @@ pipeline:
         inc="external/sysroot_linux_$sr/usr/include"
         STDLIB="--config=libstdc++ --repo_env=BAZEL_LLVM_PATH=/usr/lib/llvm-18"
         for d in "$inc/c++/13" "$inc/$tr/c++/13"; do STDLIB="$STDLIB --cxxopt=-isystem$d --host_cxxopt=-isystem$d"; done
+        # rules_foreign_cc's CMake checks link through clang's default linker, GNU ld, which does
+        # not map the sysroot's libc.so script paths (/lib/<triple>/libc.so.6) into the sysroot;
+        # lld does (checked by building //bazel/foreign_cc:event locally). 1.40 uses hermetic lld.
+        ln -sf ld.lld /usr/bin/ld
       fi
       bazel --output_user_root="$HOME/.bazel-root" build $STDLIB \
         -c opt --jobs="$BAZEL_JOBS" \
