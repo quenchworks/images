@@ -39,10 +39,9 @@ environment:
       - ca-certificates-bundle
       - clang-18
       - coreutils
+      - gcc-13                   # libstdc++ 13 for clang 18 (see the pipeline)
       - git
       - go-1.26
-      - libcxx1-18-dev            # clang-local builds against libc++ (envoy.bazelrc), not GCC 16 libstdc++
-      - libcxx1-18-static
       - libxml2-2.13-2
       - libzstd1
       - lld-18
@@ -97,19 +96,22 @@ pipeline:
       # upstream's Makefile writes these two before building
       echo "__COMMIT__" > SOURCE_VERSION
       [ -e /usr/lib/libtinfo.so.5 ] || ln -s libtinfo.so.6 /usr/lib/libtinfo.so.5
+      G="$(ls -d /usr/lib/gcc/*-linux-gnu/13)"; T="$(basename "$(dirname "$G")")"
+      test -f "$G/libstdc++.a" && test -f "$G/include/c++/$T/bits/c++config.h"
+      mkdir -p /usr/include/c++ && ln -sfn "$G/include/c++" /usr/include/c++/13
       BAZELRC_FILE="$PWD/clang.bazelrc" bash bazel/setup_clang.sh /usr/lib/llvm-18
       {
         echo "build:clang-local --repo_env=BAZEL_LLVM_PATH=/usr/lib/llvm-18"
         echo "build:clang-local --features=-module_maps --features=-layering_check"
         echo "build:clang-local --host_features=-module_maps --host_features=-layering_check"
         echo "build --config=clang-local"
-        # envoy.bazelrc passes the libc++ settings as --action_env, but the autodetected C++
-        # toolchain (used for host tools too) reads them from the repository environment;
-        # without these, host compiles fell back to GCC 16's libstdc++, which clang 18 cannot parse
-        echo "build --repo_env=CC=clang --repo_env=CXX=clang++"
-        echo "build --repo_env=BAZEL_CXXOPTS=-stdlib=libc++"
-        echo "build --repo_env=BAZEL_LINKLIBS=-l%:libc++.a:-l%:libc++abi.a"
-        echo "build --repo_env=BAZEL_LINKOPTS=-lm:-pthread"
+        # cilium's own toolchains (bazel/toolchains) compile with the system libstdc++ and link
+        # -l:libstdc++.a, as on Ubuntu with GCC 13. clang picks the newest GCC it finds, Wolfi's
+        # build-base GCC 16, whose headers clang 18 cannot parse. Point it at GCC 13's instead,
+        # through /usr/include so the toolchain's builtin include directories cover them.
+        echo "build --cxxopt=-nostdinc++ --cxxopt=-isystem/usr/include/c++/13 --cxxopt=-isystem/usr/include/c++/13/$T"
+        echo "build --host_cxxopt=-nostdinc++ --host_cxxopt=-isystem/usr/include/c++/13 --host_cxxopt=-isystem/usr/include/c++/13/$T"
+        echo "build --linkopt=-L$G --host_linkopt=-L$G"
       } >> clang.bazelrc
       B="bazel --output_user_root=$HOME/.bazel-root"
       $B build --config=release --override_repository=envoy="$E" \
