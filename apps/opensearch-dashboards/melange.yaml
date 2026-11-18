@@ -1,5 +1,5 @@
-# Packages OpenSearch Dashboards onto Wolfi: the official dist without its bundled Node.js,
-# run on Wolfi nodejs-22 so the runtime stays the scanned surface.
+# Packages OpenSearch Dashboards onto Wolfi: the official dist without its bundled Node.js, run on
+# Node.js 22 from our from-source node image (Wolfi's public nodejs-22 is frozen at 22.23.2; OSD needs node <23).
 package:
   name: quench-opensearch-dashboards
   version: __VER__
@@ -9,7 +9,6 @@ package:
     - license: Apache-2.0
   dependencies:
     runtime:
-      - nodejs-22
       - ca-certificates-bundle
 
 environment:
@@ -21,8 +20,9 @@ environment:
     packages:
       - busybox
       - curl
+      - jq
       - ca-certificates-bundle
-      - nodejs-22
+      - nodejs-22              # build-time scripts only; the shipped node comes from our node image below
 
 pipeline:
   # Per-arch dists: plugins and node_modules carry native modules per arch.
@@ -57,6 +57,14 @@ pipeline:
       fi
       rm -rf "$p/node_modules/maplibre-gl" "$p/node_modules/mapbox-gl"
 
+      # assistantDashboards depends on postinstall 0.11.2, an install-time file copier with no run script here; it
+      # alone pulls glob 11 (fix only in 14) and through it minimatch 10 (fix only in 11). Nothing at runtime loads them.
+      p="$dest/plugins/assistantDashboards"
+      if grep -rlE "(require\(|from )['\"](postinstall|glob|minimatch)['\"]" "$p/server" "$p/common"; then
+        echo "assistantDashboards server code now loads postinstall, glob or minimatch; revisit" >&2; exit 1
+      fi
+      rm -rf "$p/node_modules/postinstall" "$p/node_modules/glob" "$p/node_modules/minimatch"
+
       fetchpkg() {  # <url> <sha256>: unpack into npmpkg/package
         curl -fsSL -o pkg.tgz "$1"
         echo "$2  pkg.tgz" | sha256sum -c -
@@ -85,18 +93,22 @@ pipeline:
       swap axios                1.20.0 $R/axios/-/axios-1.20.0.tgz                               5aa2dc9a5d6ced926e4b6ca8ef8e0253b118867e240db8650c49379e972c12ac 1.
       swap brace-expansion      1.1.21 $R/brace-expansion/-/brace-expansion-1.1.21.tgz           d56cc19743e0521ebe46964412a5a4b247749036de7af3a9f78dd384f58fdb56 1.
       swap brace-expansion      5.0.12 $R/brace-expansion/-/brace-expansion-5.0.12.tgz           ef8448ec78f20b692f04fa6d01f39b5ab34c66404bea3429f5a39c6c9e0be8b4 5.
-      swap decode-uri-component 0.5.0  $R/decode-uri-component/-/decode-uri-component-0.5.0.tgz f42d289f996e6c9f0e33d8f31de1fe9a7a077c612dca489cafdb2df4cbb6122f 0.4.
+      swap decode-uri-component 0.5.1  $R/decode-uri-component/-/decode-uri-component-0.5.1.tgz 68747a955bbb6a700d758155cf5ff15595c0dfa38504d385abdb249c688bfb15 0.5.
       swap dompurify            3.4.16 $R/dompurify/-/dompurify-3.4.16.tgz                       d288ced25e6bda3e5fc76d1fc9bca899260cf886e005e84f232e686ada57f1b4 3.
       swap fast-uri             3.1.8  $R/fast-uri/-/fast-uri-3.1.8.tgz                          86be033b406a7737c0521edc8fe3e15c7ac0cb6b5e509478cc9539a2efaa086c 3.
       swap ip-address           10.7.1 $R/ip-address/-/ip-address-10.7.1.tgz                     7f99ac7abda701afe1fd1e36de462236fb4d1eb8c595d7ae0267bba7d8ee55f8 10.
-      swap joi                  18.2.9 $R/joi/-/joi-18.2.9.tgz                                   2f88b529b9c3040627f53ca91c9d45e33b73d9a286e4f4ca5c9170f8f284efef 18.
+      swap joi                  18.3.1 $R/joi/-/joi-18.3.1.tgz                                   4ce17d585df44d93e7f0b23c5994212252a7360b338bce8801f275bd7da52bb1 18.
       swap js-yaml              4.3.2  $R/js-yaml/-/js-yaml-4.3.2.tgz                            c7b241d2224cf9253ff53854aa4cee87da91bd889c4d0fa3a3ffd1041ecee5b1 4.
       swap moment               2.31.0 $R/moment/-/moment-2.31.0.tgz                             efddf549c13aa7cf270f573d9c464978ab0810c0652673ae6af1189bb56ab3f8 2.
       swap nanoid               5.1.16 $R/nanoid/-/nanoid-5.1.16.tgz                             d3fd9cbdc9e6c8f9617a92e6b06a308c56a62c744f748e393d10203866c1b3f8 5.
-      swap pbkdf2               3.1.7  $R/pbkdf2/-/pbkdf2-3.1.7.tgz                              ea4e99e34a01a2e64fe51cb5dbcca2d5a2a5701fd7764066d4f88b878de978bd 3.
       swap source-map-js        1.2.2  $R/source-map-js/-/source-map-js-1.2.2.tgz                05c8cf8e7c3a6b56cada7668fe9342b10f4b625efc92aba9ba05b9e8fe4d71a3 1.
       swap tar                  7.5.21 $R/tar/-/tar-7.5.21.tgz                                   bcedf25a21daecd1a18fb5e19ab855b7d79ec8ef1da175e8ba85cfc0ed0069d1 7.
-      swap @tootallnate/once    2.0.1  $R/@tootallnate/once/-/once-2.0.1.tgz                     22d30ea3fe3c960161800b64cc25d258623a565ba1de04c5e2d3adacf700557b 2.
+      swap follow-redirects     1.16.2 $R/follow-redirects/-/follow-redirects-1.16.2.tgz         97926c99452df68ec21aa3d518101b6d93a803652d6e1e7d70b273a8930224c8 1.
+      # fast-xml-parser 5.12.0 raises strnum to ^2.5.1 (which adds anynum ^1.0.1, already 1.0.1 in the tree) and
+      # is-unsafe to ^2.0.3: move both with it
+      swap fast-xml-parser      5.12.0 $R/fast-xml-parser/-/fast-xml-parser-5.12.0.tgz           104218e11e0bb8e2708211c76b649082d940c45149ccd1b4f7da4aafeb397aec 5.
+      swap strnum               2.5.1  $R/strnum/-/strnum-2.5.1.tgz                              ced67dded4b9d8122292bc5f41e0c5e65fee378c4fb902e3680790abcb1b90bd 2.
+      swap is-unsafe            2.0.3  $R/is-unsafe/-/is-unsafe-2.0.3.tgz                        e3e2374d34a8999f03f2ed9aa85c143ef143b259fe130032812ad15583f28a35 2.
       # linkify-it 3.0.3 -> 5.0.2 (fixed only on 5.x; ansi-to-react, browser code): 5.x needs
       # uc.micro ^2 where the tree holds 1.x, so nest 2.1.0 under each swapped copy.
       swap linkify-it           5.0.2  $R/linkify-it/-/linkify-it-5.0.2.tgz                      f5169c5e5d837b5229180cb7214102d42f5c963f6932f284b608ef9549e927b4
@@ -105,6 +117,27 @@ pipeline:
         rm -rf "$d/node_modules/uc.micro" && mkdir -p "$d/node_modules/uc.micro"
         cp -a npmpkg/package/. "$d/node_modules/uc.micro/"
       done
+
+
+  # Node.js 22 from our from-source node image (apps/node), pinned by index digest in build.conf. Every hop (index,
+  # arch manifest, layer) is checked against its sha256; melange adds the shared libraries it links as dependencies.
+  - runs: |
+      set -eu
+      repo=quenchworks/images/node
+      case "${{build.arch}}" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac
+      tok="$(curl -fsSL "https://ghcr.io/token?scope=repository:$repo:pull" | jq -r .token)"
+      get() {
+        curl -fsSL -H "Authorization: Bearer $tok" -H "Accept: $2" "https://ghcr.io/v2/$repo/$1" > "$3"
+        test "sha256:$(sha256sum "$3" | cut -d' ' -f1)" = "${1#*/}"
+      }
+      get manifests/__NODE_INDEX__ application/vnd.oci.image.index.v1+json /tmp/node-index.json
+      m="$(jq -r --arg a "$arch" '.manifests[]|select(.platform.architecture==$a)|.digest' /tmp/node-index.json)"
+      get "manifests/$m" application/vnd.oci.image.manifest.v1+json /tmp/node-manifest.json
+      for l in $(jq -r '.layers[].digest' /tmp/node-manifest.json); do
+        get "blobs/$l" '*/*' /tmp/node-layer.tgz
+        tar -xzf /tmp/node-layer.tgz -C "${{targets.destdir}}" usr/bin/node 2>/dev/null || true
+      done
+      "${{targets.destdir}}/usr/bin/node" --version | grep -q '^v22\.'
 
 test:
   pipeline:
