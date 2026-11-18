@@ -87,7 +87,12 @@ pipeline:
       # 1.39's hermetic LLVM is a prebuilt release linked against libtinfo.so.5; Wolfi ships .so.6
       # (same ABI for what clang uses). 1.40's toolchain does not ask for it.
       [ -e /usr/lib/libtinfo.so.5 ] || ln -s libtinfo.so.6 /usr/lib/libtinfo.so.5
-      bazel --output_user_root="$HOME/.bazel-root" build \
+      # 1.39 pins hermetic LLVM 18.1.8, whose libc++ has no std::atomic_ref; V8 14.6 uses it
+      # unguarded (src/base/atomicops.h). Envoy's libstdc++ config keeps the hermetic clang and
+      # links the sysroot's libstdc++, which has had atomic_ref since GCC 10. 1.40 (LLVM 22) keeps libc++.
+      STDLIB=""
+      if grep -q '^_LLVM_VERSION_HERMETIC = "18\.' bazel/toolchains.bzl 2>/dev/null; then STDLIB="--config=libstdc++"; fi
+      bazel --output_user_root="$HOME/.bazel-root" build $STDLIB \
         -c opt --jobs="$BAZEL_JOBS" \
         --local_resources=memory=HOST_RAM*.7 \
         --verbose_failures --noshow_progress --show_result=1 \
@@ -102,7 +107,7 @@ pipeline:
       bazel --output_user_root="$HOME/.bazel-root" mod graph --output=json > "$inv/bazel-mod-graph.json"
       # cquery, not query: query walks every select() branch and failed (exit 7) after the build;
       # cquery follows the real configuration, and --notool_deps drops build-host tools
-      bazel --output_user_root="$HOME/.bazel-root" cquery --noshow_progress --notool_deps \
+      bazel --output_user_root="$HOME/.bazel-root" cquery $STDLIB --noshow_progress --notool_deps \
         'deps(//source/exe:envoy-static)' --output=label > /tmp/cquery.txt
       # root-visible repos print as @name//, the rest as @@name+//
       sed -n 's|^@\{1,2\}\([^/]*\)//.*|\1|p' /tmp/cquery.txt | sort -u > "$inv/linked-repos.txt"
