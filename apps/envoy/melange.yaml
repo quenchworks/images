@@ -39,7 +39,10 @@ environment:
       - git
       - openjdk-21-default-jdk   # Bazel's server JVM
       # host libraries Envoy's hermetic LLVM 22 binaries (ld.lld, clang) link against
+      - clang-18                 # local LLVM for the 1.39 line (see the build step)
       - libxml2-2.13-2
+      - lld-18
+      - llvm-18
       - libzstd1
       - ncurses
       - zlib
@@ -88,10 +91,15 @@ pipeline:
       # (same ABI for what clang uses). 1.40's toolchain does not ask for it.
       [ -e /usr/lib/libtinfo.so.5 ] || ln -s libtinfo.so.6 /usr/lib/libtinfo.so.5
       # 1.39 pins hermetic LLVM 18.1.8, whose libc++ has no std::atomic_ref; V8 14.6 uses it
-      # unguarded (src/base/atomicops.h). Envoy's libstdc++ config keeps the hermetic clang and
-      # links the sysroot's libstdc++, which has had atomic_ref since GCC 10. 1.40 (LLVM 22) keeps libc++.
+      # unguarded (src/base/atomicops.h). --config=libstdc++ alone is not enough: with the hermetic
+      # LLVM, toolchains.bzl also hands toolchains_llvm prebuilt libc++ (cxx_cross_lib), which forces
+      # libc++ on linux targets. Upstream drops it only for a local LLVM, so use Wolfi's llvm-18 (the
+      # same 18.1.8) as BAZEL_LLVM_PATH; the hermetic sysroot's libstdc++ is then used (bazel aquery:
+      # -stdlib=libstdc++ --sysroot=external/sysroot_linux_amd64). 1.40 (LLVM 22) keeps libc++.
       STDLIB=""
-      if grep -q '^_LLVM_VERSION_HERMETIC = "18\.' bazel/toolchains.bzl 2>/dev/null; then STDLIB="--config=libstdc++"; fi
+      if grep -q '^_LLVM_VERSION_HERMETIC = "18\.' bazel/toolchains.bzl 2>/dev/null; then
+        STDLIB="--config=libstdc++ --repo_env=BAZEL_LLVM_PATH=/usr/lib/llvm-18"
+      fi
       bazel --output_user_root="$HOME/.bazel-root" build $STDLIB \
         -c opt --jobs="$BAZEL_JOBS" \
         --local_resources=memory=HOST_RAM*.7 \
