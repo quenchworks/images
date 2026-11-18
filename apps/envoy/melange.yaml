@@ -98,7 +98,14 @@ pipeline:
       # -stdlib=libstdc++ --sysroot=external/sysroot_linux_amd64). 1.40 (LLVM 22) keeps libc++.
       STDLIB=""
       if grep -q '^_LLVM_VERSION_HERMETIC = "18\.' bazel/toolchains.bzl 2>/dev/null; then
+        # Bazel's sandbox rebuilds the sysroot's lib -> usr/lib symlink as a real directory, so
+        # clang's relative path from the GCC 13 install to its C++ headers dangles ('memory' file
+        # not found); name the headers explicitly. Linking finds libstdc++.a unaided (checked by
+        # building @v8//:noicu/torque locally with these flags).
+        case "$(uname -m)" in x86_64) sr=amd64 tr=x86_64-linux-gnu ;; aarch64) sr=arm64 tr=aarch64-linux-gnu ;; esac
+        inc="external/sysroot_linux_$sr/usr/include"
         STDLIB="--config=libstdc++ --repo_env=BAZEL_LLVM_PATH=/usr/lib/llvm-18"
+        for d in "$inc/c++/13" "$inc/$tr/c++/13"; do STDLIB="$STDLIB --cxxopt=-isystem$d --host_cxxopt=-isystem$d"; done
       fi
       bazel --output_user_root="$HOME/.bazel-root" build $STDLIB \
         -c opt --jobs="$BAZEL_JOBS" \
