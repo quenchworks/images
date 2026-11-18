@@ -493,6 +493,10 @@ pipeline:
       # GHSA-r292-9mhp-454m, and it is pure build cache, not part of Ghost). The app's
       # own tar is correctly 7.5.22 via the override; this copy was never reachable by it.
       rm -rf .local/share/pnpm .local/state/pnpm .cache/pnpm .npm 2>/dev/null || true
+      # better-sqlite3 13 ships every platform's prebuilt .node in prebuilds/ (files, not dirs):
+      # keep this arch's glibc one, or melange adds so:ld-linux-aarch64.so.1 to the x86 package
+      arch="$(node -p process.arch)"
+      find . -path '*/better-sqlite3/prebuilds/*' -type f -name '*.node' ! -name "linux-$arch.node" -print -delete
       # Fail the build if any pnpm store survives into the image, so this cannot regress.
       if find . -path './node_modules' -prune -o -type d -name pnpm -print 2>/dev/null | grep -q .; then
         echo "pnpm store/artifacts still present in the image tree:"
