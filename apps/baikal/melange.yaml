@@ -95,10 +95,31 @@ pipeline:
       expected-sha256: __SHA256__
       extract: false
 
+  # symfony/yaml v7.4.23 (CVE-2026-123792; the zip bundles v7.4.21). Same requires as v7.4.21, so
+  # the vendored tree is swapped in place and Composer's metadata moved with it (Trivy reads
+  # vendor/composer/installed.json).
+  - uses: fetch
+    with:
+      uri: https://github.com/symfony/yaml/archive/refs/tags/v7.4.23.tar.gz
+      expected-sha256: f54acbce8b86f9e56aca0de7f9209e9b9d8ef72e6b40992772b9103c4dbb8f3a
+      strip-components: 0
+
   - name: Lay out /var/www/baikal and the setup step
     runs: |
       set -eu
       unzip -q baikal-${{package.version}}.zip && rm baikal-${{package.version}}.zip
+      y=baikal/vendor/symfony/yaml
+      grep -q '"version": "v7.4.21"' baikal/vendor/composer/installed.json
+      rm -rf "$y" && mv yaml-7.4.23 "$y"
+      php -r '$f="baikal/vendor/composer/installed.json"; $j=json_decode(file_get_contents($f), true);
+        foreach ($j["packages"] as &$p) { if ($p["name"] !== "symfony/yaml") continue;
+          $p["version"]="v7.4.23"; $p["version_normalized"]="7.4.23.0";
+          $p["source"]["reference"]=$p["dist"]["reference"]="1e601207ffe627a2e621faa9d661f1d32dcf1cec";
+          $p["dist"]["url"]="https://api.github.com/repos/symfony/yaml/zipball/1e601207ffe627a2e621faa9d661f1d32dcf1cec"; }
+        file_put_contents($f, json_encode($j, JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)."\n");'
+      grep -q '"version": "v7.4.23"' baikal/vendor/composer/installed.json
+      sed -i "/'symfony\/yaml' => array(/,/),/{s/'v7.4.21'/'v7.4.23'/;s/'7.4.21.0'/'7.4.23.0'/;s/'reference' => '[0-9a-f]*'/'reference' => '1e601207ffe627a2e621faa9d661f1d32dcf1cec'/}" baikal/vendor/composer/installed.php
+      grep -A3 "'symfony/yaml' => array(" baikal/vendor/composer/installed.php | grep -q "'v7.4.23'"
       cd baikal
       grep -qF 'define("BAIKAL_VERSION", "${{package.version}}")' Core/Distrib.php
       d="${{targets.destdir}}/var/www/baikal"
