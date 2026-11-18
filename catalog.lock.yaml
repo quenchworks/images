@@ -2837,9 +2837,14 @@ apps:
       - arm64
     versions:
       - version: 1.40.2
-        digest: sha256:0482b98a651a3eedec07f3ffeca9cb8d51435c5782f22db57481d209fc7a88fe
-        published: "2026-11-17T19:46:14Z"
+        digest: sha256:ec71c22ab4c46c7bbde1a82c4ec45d5e85c249763e1feb8d35c83dbbd22f9c2a
+        published: "2026-11-18T17:23:45Z"
         size: 48.2 MB
+        layers: 1
+      - version: 1.39.6
+        digest: sha256:5adab49e60a16ac4f97c75b9db4d8475e18dab412136cf831594ddaf0f506b41
+        published: "2026-11-18T17:23:40Z"
+        size: 35.7 MB
         layers: 1
   skipper:
     image: ghcr.io/quenchworks/images/skipper
@@ -10183,15 +10188,10 @@ apps:
       - amd64
       - arm64
     versions:
-      - version: 2.4.7
-        digest: sha256:b0d9194572efc6097bcd83807a238b8f1ee97411c78d77dde01b3524794a2416
-        published: "2026-10-22T11:31:25Z"
-        size: 85.1 MB
-        layers: 1
-      - version: 2.3.11
-        digest: sha256:c0e91544095e2de288dd56c2882f6b4b486e33f2278aab56312c9a8c4ab056f0
-        published: "2026-10-22T11:25:22Z"
-        size: 73.7 MB
+      - version: 2.5.2
+        digest: sha256:5de2d6051888fb1be6fd03f451744374cf75c86b373ac41735d6b6ed146d5724
+        published: "2026-11-18T18:27:50Z"
+        size: 72.5 MB
         layers: 1
   kgateway-envoy:
     image: ghcr.io/quenchworks/images/kgateway-envoy
@@ -10206,15 +10206,10 @@ apps:
       - amd64
       - arm64
     versions:
-      - version: 2.4.7
-        digest: sha256:6a8f24ba9e10e8e94d39cfc5b5d12bc0e9a3bf21c523f75cf9b887cdbbd69801
-        published: "2026-10-22T11:04:43Z"
-        size: 59.2 MB
-        layers: 1
-      - version: 2.3.11
-        digest: sha256:e61ceaf2ff7ddbfabbb2044d30fe899914738ba835d63f0e3aa132fb4080d5ce
-        published: "2026-10-22T11:04:05Z"
-        size: 51.6 MB
+      - version: 2.5.2
+        digest: sha256:072266f2e259312379f9ebe2175f179a833f1ee3607df56449126363337c682f
+        published: "2026-11-18T18:24:20Z"
+        size: 48.9 MB
         layers: 1
   contour:
     image: ghcr.io/quenchworks/images/contour
@@ -13071,4 +13066,71 @@ apps:
         digest: sha256:4c4533ac65959390cf0b37364bb2b579c982f5b42c66f3a1db27d12e812d0611
         published: "2026-11-17T21:32:02Z"
         size: 59.1 MB
+        layers: 1
+  sim:
+    image: ghcr.io/quenchworks/images/sim
+    category: Machine learning & AI
+    summary: 'Sim: visual builder for AI agent workflows (a maintained replacement for the archived Flowise). Next.js app built from source and run on Bun, with isolated-vm rebuilt against Wolfi Node.js 24; no npm in the image. Needs PostgreSQL with pgvector (schema from sim-migrations); runs as uid 1001 on a read-only root filesystem.'
+    source: https://github.com/simstudioai/sim
+    upstream: https://github.com/simstudioai/sim
+    license: Apache-2.0
+    tier: standard
+    status: built
+    arches:
+      - amd64
+      - arm64
+    versions: []
+  sim-realtime:
+    image: ghcr.io/quenchworks/images/sim-realtime
+    category: Machine learning & AI
+    summary: 'Sim realtime: the socket.io collaboration server for the Sim workflow editor (port 3002), built from source and run on Bun. Pairs with the sim image; runs as uid 1001 on a read-only root filesystem.'
+    source: https://github.com/simstudioai/sim
+    upstream: https://github.com/simstudioai/sim
+    license: Apache-2.0
+    tier: standard
+    status: built
+    arches:
+      - amd64
+      - arm64
+    versions:
+      - version: 0.9.62
+        digest: sha256:3164b7487d7805ace3c2dfa12e4a772d09e3648bd29c3a8058d83b78310e1840
+        published: "2026-11-18T18:14:12Z"
+        size: 117.8 MB
+        layers: 1
+  sim-migrations:
+    image: ghcr.io/quenchworks/images/sim-migrations
+    category: Machine learning & AI
+    summary: 'Sim migrations: applies the Sim database schema (drizzle, pgvector) to PostgreSQL and exits; run it as a Job or init container before the app. Built from source and run on Bun; runs as uid 1001.'
+    source: https://github.com/simstudioai/sim
+    upstream: https://github.com/simstudioai/sim
+    license: Apache-2.0
+    tier: standard
+    status: built
+    arches:
+      - amd64
+      - arm64
+    versions:
+      - version: 0.9.62
+        digest: sha256:b9bbf650002829a9e55d84dd57f97d97d7dcb5e1d584dc64c27967c814acf21d
+        published: "2026-11-18T18:13:35Z"
+        size: 105.8 MB
+        layers: 1
+  spilo:
+    image: ghcr.io/quenchworks/images/spilo
+    category: Relational
+    summary: 'Spilo: PostgreSQL 18 with Patroni high availability and WAL-G backups in one image, the database image the Zalando Postgres Operator runs. Built on Wolfi with Spilo''s scripts at a pinned commit; bg_mon, pgextwlist, plpython3u and pgbouncer compiled from source, pgvector and pg_cron included. Runs as postgres (uid 101); DCS is Kubernetes, etcd or etcd3.'
+    source: https://github.com/zalando/spilo
+    upstream: https://github.com/zalando/spilo
+    license: Apache-2.0
+    tier: standard
+    status: built
+    arches:
+      - amd64
+      - arm64
+    versions:
+      - version: "18.7"
+        digest: sha256:0918ebf4bb93a2302af66b3b4cc97a37b6724d567ebd8876ceb428f37253e1a2
+        published: "2026-11-18T18:59:38Z"
+        size: 162.2 MB
         layers: 1
