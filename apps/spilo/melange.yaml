@@ -180,6 +180,9 @@ pipeline:
       # upstream post_build.sh: PGHOME points into RW_DIR for what configure_spilo.py writes at start
       ln -s /run/postgres.yml "$d/home/postgres/postgres.yml"
       ln -s /run/etc "$d/home/postgres/etc"
+      # under the operator, configure_spilo.py writes the PAM OAuth2 config here (upstream links it into RW_DIR too)
+      install -d "$d/etc/pam.d"
+      ln -s /run/pam.d-postgresql "$d/etc/pam.d/postgresql"
       install -d "$d/home/postgres/.config/patroni"
       ln -s /home/postgres/postgres.yml "$d/home/postgres/.config/patroni/patronictl.yaml"
 

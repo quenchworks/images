@@ -24,7 +24,9 @@ func init() {
 		start := func() {
 			t.Start(name, []string{"--network", net_, "-p", "127.0.0.1:18008:8008", "-v", vol + ":/home/postgres/pgdata",
 				"-e", "SCOPE=smoke", "-e", "ETCD3_HOSTS='" + etcd + ":2379'", "-e", "PGPASSWORD_SUPERUSER=" + pw,
-				"-e", "PGPASSWORD_STANDBY=" + pw + "-standby", "-e", "ALLOW_NOSSL=true"})
+				"-e", "PGPASSWORD_STANDBY=" + pw + "-standby", "-e", "ALLOW_NOSSL=true",
+				// the operator always sets this; configure_spilo.py then writes /etc/pam.d/postgresql
+				"-e", "PAM_OAUTH2=https://info.example.com/oauth2/tokeninfo?access_token= uid realm=/employees"})
 		}
 		primary := func() {
 			t.waitFor(90, 2*time.Second, name, "Patroni never reported a primary", func() bool {
