@@ -110,6 +110,9 @@ pipeline:
         # not map the sysroot's libc.so script paths (/lib/<triple>/libc.so.6) into the sysroot;
         # lld does (checked by building //bazel/foreign_cc:event locally). 1.40 uses hermetic lld.
         ln -sf ld.lld /usr/bin/ld
+        # aarch64 lowers 16-byte atomics to libatomic calls (V8 mksnapshot: undefined
+        # __atomic_compare_exchange); link the sysroot's GCC 13 libatomic.a statically
+        if [ "$sr" = arm64 ]; then STDLIB="$STDLIB --linkopt=-l:libatomic.a --host_linkopt=-l:libatomic.a"; fi
       fi
       bazel --output_user_root="$HOME/.bazel-root" build $STDLIB \
         -c opt --jobs="$BAZEL_JOBS" \
