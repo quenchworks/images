@@ -55,3 +55,23 @@ func init() {
 		t.Logf("smoke test passed (uid %s, Patroni primary on etcd, Spilo preloads, pgvector, data kept across a restart)", u)
 	})
 }
+
+func init() {
+	// The operator against a dead API server (OPERATOR_NAMESPACE stands in for the pod's service-account namespace file):
+	// it prints its stamped version, builds its client from the kubeconfig and calls the API, and
+	// neither panics nor writes to the read-only root.
+	register("postgres-operator", func(t *T) {
+		u := t.User("1001")
+		kc := t.DeadKubeconfig()
+		out, _ := t.RunAnyFor(25*time.Second, []string{"--read-only", "--tmpfs", "/tmp", "-e", "OPERATOR_NAMESPACE=default", "-v", kc + ":/etc/kubeconfig:ro"},
+			"-outofcluster", "-kubeconfig", "/etc/kubeconfig")
+		t.Contains(out, "Spilo operator "+t.Want, "stamped version")
+		// the operator logs no address: this fatal follows KubeClient.Namespaces().Get (pkg/controller/controller.go:503-504),
+		// so reaching it means the client was built from the kubeconfig and called the dead API server
+		t.Contains(out, `Could not find the watched namespace \"default\"`, "called the configured API server")
+		if strings.Contains(out, "panic:") || strings.Contains(out, "read-only file system") {
+			t.Fatalf("crashed or wrote to the root:\n%s", out)
+		}
+		t.Logf("smoke test passed (uid %s, version stamped, called the configured API server)", u)
+	})
+}
