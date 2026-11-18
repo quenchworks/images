@@ -47,7 +47,8 @@ pipeline:
 
       # pinot-fastdev would skip the checks too, but it also sets shade.phase.prop=none (no
       # shaded jars, and the bin-dist assembly fails), so the checks are skipped one by one
-      mvn -B -T 2 -Dmaven.repo.local=/tmp/m2 install -DskipTests -Pbin-dist -Pbuild-shaded-jar \
+      # no -T: JavaCC keeps static state, and two modules running it at once crashed LexGen (NPE)
+      mvn -B -Dmaven.repo.local=/tmp/m2 install -DskipTests -Pbin-dist -Pbuild-shaded-jar \
         -Dcheckstyle.skip -Dlicense.skip -Drat.skip -Dspotless.check.skip -Dspotless.apply.skip -Denforcer.skip \
         -Daws.sdk.version=2.57.13 -Dparquet.version=1.18.2 -Dpulsar.version=4.0.14 -Dasync-http-client.version=3.0.14
 

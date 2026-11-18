@@ -50,7 +50,9 @@ pipeline:
       swap() { # <artifact> <sha256 of 2.25.5>
         old="$dest/lib/$1-2.25.3.jar"; new="$dest/lib/$1-2.25.5.jar"
         test -f "$old" || { echo "FATAL: $1-2.25.3.jar not shipped; re-audit this swap"; ls "$dest/lib"; exit 1; }
-        curl -fsSL -o "$new" "$M/$1/2.25.5/$1-2.25.5.jar"
+        # Maven Central answers 429 to runner IPs under bursts: retry, then the second host
+        curl -fsSL --retry 5 --retry-all-errors --retry-delay 15 -o "$new" "$M/$1/2.25.5/$1-2.25.5.jar" ||
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 15 -o "$new" "https://repo.maven.apache.org/maven2/org/apache/logging/log4j/$1/2.25.5/$1-2.25.5.jar"
         echo "$2  $new" | sha256sum -c -
         rm -f "$old"
       }
