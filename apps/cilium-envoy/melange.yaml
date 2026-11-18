@@ -1,0 +1,133 @@
+# cilium-envoy: Cilium's Envoy build (cilium/proxy) from source with Bazel. cilium/proxy is a
+# WORKSPACE that takes Envoy as a git_repository at an exact release commit plus its own patches,
+# and adds the Cilium filters (L7 policy, proxylib bridge), cilium-envoy-starter and
+# cilium-envoy-healthcheck. Upstream builds with a system LLVM 18 (clang.bazelrc, config
+# clang-local) instead of Envoy's hermetic one; Wolfi's llvm-18 is the same 18.1.8.
+#
+# The Envoy checkout is ours (override_repository) so the CVE floors can edit it: the cilium
+# patches are applied to it exactly as the git_repository rule would (patch_strip = 1).
+#
+# As with apps/envoy, a static Envoy hides its C/C++ libraries from Trivy, so the image ships
+# the inventory under /usr/share/cilium-envoy/ for the workflow's CPE gate.
+package:
+  name: quench-cilium-envoy
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened cilium-envoy (Cilium's Envoy with its L7 filters), built from source"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - libatomic
+  resources:
+    cpu: "4"
+    memory: 14Gi
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - bash
+      - bazel-8
+      - binutils
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - clang-18
+      - coreutils
+      - git
+      - go-1.26
+      - libxml2-2.13-2
+      - libzstd1
+      - lld-18
+      - llvm-18
+      - llvm-18-dev
+      - ncurses
+      - openjdk-21-default-jdk   # Bazel's server JVM
+      - patch
+      - python3
+      - py3.13-pyyaml            # inventory.py reads deps.yaml
+      - rust-1.98
+      - wolfi-baselayout
+      - zlib
+  environment:
+    BAZEL_JOBS: "4"
+
+pipeline:
+  - runs: |
+      set -eu
+      # cilium/proxy builds are not tagged: fetch the exact commit cilium's chart pins
+      git init -q proxy
+      git -C proxy fetch -q --depth 1 https://github.com/cilium/proxy __COMMIT__
+      git -C proxy checkout -q FETCH_HEAD
+      test "$(git -C proxy rev-parse HEAD)" = "__COMMIT__"
+      envoy_sha="$(sed -n 's/^ENVOY_SHA = "\([0-9a-f]*\)"$/\1/p' proxy/WORKSPACE)"
+      test "$envoy_sha" = "__ENVOY_COMMIT__"
+      git init -q envoy
+      git -C envoy fetch -q --depth 1 https://github.com/envoyproxy/envoy "$envoy_sha"
+      git -C envoy checkout -q FETCH_HEAD
+      test "$(git -C envoy rev-parse HEAD)" = "$envoy_sha"
+      # the same patches, in the same order, as the git_repository rule in proxy/WORKSPACE
+      for p in $(sed -n 's|^ *"@//patches:\(.*\.patch\)",$|\1|p' proxy/WORKSPACE); do
+        echo "patch $p"; patch -d envoy -p1 --forward < "proxy/patches/$p"
+      done
+      test "$(sed -n 's|^ *"@//patches:\(.*\.patch\)",$|\1|p' proxy/WORKSPACE | wc -l)" -ge 1
+
+  - working-directory: proxy
+    runs: |
+      set -eu
+      echo "Bazel $(bazel --version) for .bazelversion $(cat .bazelversion)"
+      case "$(cat .bazelversion)" in 8.*) ;; *) echo "this recipe expects Bazel 8"; exit 1 ;; esac
+      E="$(cd ../envoy && pwd)"
+      # CVE floor (same as apps/envoy): c-ares 1.34.9 fixes CVE-2026-33630, CVE-2026-69184 and
+      # CVE-2026-69186; sha256 of the upstream c-ares-1.34.9.tar.gz release asset.
+      sed -i '/^    c_ares = dict(/,/^    ),/{s|version = "[^"]*"|version = "1.34.9"|;s|sha256 = "[^"]*"|sha256 = "9364b70a12eb59a06830fb488d9357f90100dff0d98b23ea3593a183d43e6f2f"|}' "$E/bazel/repository_locations.bzl"
+      sed -n '/^    c_ares = dict(/,/^    ),/p' "$E/bazel/repository_locations.bzl" | grep -q 'version = "1.34.9"'
+      # rustls floor where the tree links Rust crates (apps/envoy: 0.23.46)
+      if grep -q '^name = "rustls"$' "$E/Cargo.lock" 2>/dev/null; then
+        (cd "$E" && cargo update -p rustls --precise 0.23.46)
+        export CARGO_BAZEL_REPIN=true
+      fi
+      # upstream's Makefile writes these two before building
+      echo "__COMMIT__" > SOURCE_VERSION
+      [ -e /usr/lib/libtinfo.so.5 ] || ln -s libtinfo.so.6 /usr/lib/libtinfo.so.5
+      BAZELRC_FILE="$PWD/clang.bazelrc" bash bazel/setup_clang.sh /usr/lib/llvm-18
+      {
+        echo "build:clang-local --repo_env=BAZEL_LLVM_PATH=/usr/lib/llvm-18"
+        echo "build:clang-local --features=-module_maps --features=-layering_check"
+        echo "build:clang-local --host_features=-module_maps --host_features=-layering_check"
+        echo "build --config=clang-local"
+      } >> clang.bazelrc
+      B="bazel --output_user_root=$HOME/.bazel-root"
+      $B build --config=release --override_repository=envoy="$E" \
+        --jobs="$BAZEL_JOBS" --local_resources=memory=HOST_RAM*.7 \
+        --verbose_failures --noshow_progress --show_result=1 \
+        //:cilium-envoy //:cilium-envoy-starter //:cilium-envoy-healthcheck
+      install -Dm755 bazel-bin/cilium-envoy "${{targets.destdir}}/usr/bin/cilium-envoy"
+      install -Dm755 bazel-bin/cilium-envoy-starter "${{targets.destdir}}/usr/bin/cilium-envoy-starter"
+      install -Dm755 bazel-bin/bin/cilium-envoy-healthcheck "${{targets.destdir}}/usr/bin/cilium-envoy-healthcheck"
+
+      inv="${{targets.destdir}}/usr/share/cilium-envoy"
+      install -Dm644 "$E/bazel/deps.yaml" "$inv/deps.yaml"
+      install -Dm644 "$E/bazel/repository_locations.bzl" "$inv/repository_locations.bzl"
+      if [ -f "$E/Cargo.lock" ]; then install -Dm644 "$E/Cargo.lock" "$inv/Cargo.lock"; fi
+      # a WORKSPACE root may have no module graph; the inventory then reads repository_locations.bzl
+      $B mod graph --output=json --override_repository=envoy="$E" > "$inv/bazel-mod-graph.json" 2>/dev/null || echo '{}' > "$inv/bazel-mod-graph.json"
+      $B cquery --config=release --override_repository=envoy="$E" --noshow_progress --notool_deps \
+        'deps(//:cilium-envoy)' --output=label > /tmp/cquery.txt
+      sed -n 's|^@\{1,2\}\([^/]*\)//.*|\1|p' /tmp/cquery.txt | sort -u > "$inv/linked-repos.txt"
+      test -s "$inv/linked-repos.txt"
+      python3 ../inventory.py "$inv"
+      $B shutdown
+      chmod -R u+w "$HOME/.bazel-root" && rm -rf "$HOME/.bazel-root"
+
+  - uses: strip
+
+test:
+  pipeline:
+    - runs: |
+        cilium-envoy --version | grep -F "/${{package.version}}/"

@@ -755,6 +755,17 @@ var table = map[string]check{
 	"zabbix-web":    {src: zabbixSources, lines: 2},
 	"graylog":       {src: ghTags("Graylog2/graylog2-server"), lines: 2, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
 	// coolify pins its realtime image in versions.json; read it at the newest 4.0-4.3 tag that has one.
+	// cilium-envoy follows the Envoy release the newest cilium release pins (envoy.image.tag
+	// v<envoy>-<timestamp>-<cilium/proxy commit> in install/kubernetes/cilium/values.yaml).
+	"cilium-envoy": {src: func() ([]string, error) {
+		tags, err := core.Github("cilium/cilium")
+		if err != nil || len(tags) == 0 {
+			return nil, err
+		}
+		core.SortDesc(tags)
+		return core.Scrape("https://raw.githubusercontent.com/cilium/cilium/v"+strings.TrimPrefix(tags[0], "v")+"/install/kubernetes/cilium/values.yaml",
+			`tag: "v(\d+\.\d+\.\d+)-\d+-[0-9a-f]{40}"`)
+	}, n: 1},
 	"coolify-realtime": {src: func() ([]string, error) {
 		tags, err := core.Github("coollabsio/coolify")
 		if err != nil {
@@ -868,7 +879,7 @@ var table = map[string]check{
 		}
 		return out, nil
 	}, n: 1},
-	// kgateway-envoy moves in lockstep with kgateway: same VERSIONS and ENVOY_PKG.
+	// kgateway-envoy moves in lockstep with kgateway: same VERSIONS and ENVOY_INDEX.
 	"kgateway-envoy": {run: func(w io.Writer) error {
 		tags, err := core.Github("kgateway-dev/kgateway")
 		if err != nil {
@@ -876,7 +887,7 @@ var table = map[string]check{
 		}
 		report(w, "kgateway-envoy", tags, 0, filter{})
 		window := func(app string) string {
-			out, _ := exec.Command("bash", "-c", "source "+core.ImagesRoot+"/apps/"+app+"/build.conf; echo ${VERSIONS[@]} '|' ${ENVOY_PKG[@]}").Output()
+			out, _ := exec.Command("bash", "-c", "source "+core.ImagesRoot+"/apps/"+app+"/build.conf; echo ${VERSIONS[@]} '|' ${ENVOY_INDEX[@]}").Output()
 			return strings.Join(strings.Fields(string(out)), " ")
 		}
 		cp, dp := window("kgateway"), window("kgateway-envoy")
