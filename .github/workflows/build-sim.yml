@@ -111,6 +111,14 @@ jobs:
           sed -e "$prog" melange.yaml > melange.rendered.yaml
           sed -e "$prog" apko.yaml    > apko.rendered.yaml
 
+      - name: Add swap for next build
+        # next build (8 GB heap plus Turbopack's native memory) outgrows the runner's 16 GB: both arches died at exit 143
+        # six minutes in (run 44349837773). A 16 GB swapfile carries the peak.
+        run: |
+          d=/; [ -d /mnt ] && [ "$(df --output=avail -B1G /mnt | tail -1)" -gt 20 ] && d=/mnt
+          sudo fallocate -l 16G "$d/qw-swap" && sudo chmod 600 "$d/qw-swap" && sudo mkswap "$d/qw-swap" >/dev/null && sudo swapon "$d/qw-swap"
+          free -g
+
       - name: Build package from source (native ${{ matrix.arch.name }})
         run: |
           melange keygen melange.rsa
