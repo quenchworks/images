@@ -72,6 +72,13 @@ pipeline:
       set -eu
       grep -qx '${{package.version}}' VERSION
       export HOME="$(mktemp -d)" BUNDLE_FORCE_RUBY_PLATFORM=true
+      # Wolfi links Ruby against OpenSSL 4, and the openssl gem 3.3.x GitLab pins cannot run on it
+      # (OpenSSL::PKey::DH.new raises ArgumentError at boot). Wolfi ruby-3.4 itself ships the openssl 4.0.2
+      # default gem, so move GitLab's pin there before deployment mode freezes the lockfile.
+      sed -i "s/^gem 'openssl', '~> 3.3.2'/gem 'openssl', '~> 4.0.2'/" Gemfile
+      grep -q "^gem 'openssl', '~> 4.0.2'" Gemfile
+      bundle lock --update openssl
+      grep -qx '    openssl (4.0.2)' Gemfile.lock
       bundle config set --local deployment true
       bundle config set --local without 'development test'
       bundle config set --local build.nokogiri --use-system-libraries
