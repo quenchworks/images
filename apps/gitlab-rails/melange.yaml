@@ -1,0 +1,115 @@
+# GitLab CE Rails from the gitlab-foss release tag: production gems with every native extension compiled from source
+# against Wolfi's libraries, frontend assets compiled without a database, installed under /srv/gitlab.
+package:
+  name: quench-gitlab-rails
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened GitLab CE Rails (Puma, Sidekiq, toolbox), built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - tzdata
+      - busybox
+      - bash
+      - ruby-3.4
+      - ruby3.4-bundler
+      - git
+      - graphicsmagick
+      - exiftool
+      - libpq-18
+      - postgresql-18-client
+  resources:
+    cpu: "4"
+    memory: 14Gi
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - bash
+      - ca-certificates-bundle
+      - build-base
+      - git
+      - curl
+      - pkgconf
+      - cmake
+      - clang-19
+      - llvm-19
+      - rust-1.100
+      - ruby-3.4
+      - ruby3.4-bundler
+      - ruby-3.4-dev
+      - icu-dev
+      - krb5-dev
+      - re2-dev
+      - abseil-cpp-dev
+      - postgresql-18-dev
+      - libxml2-dev
+      - libxslt-dev
+      - gpgme-dev
+      - libffi-dev
+      - openssl-dev
+      - zlib-dev
+      - yaml-dev
+      - libgit2-dev
+      - nodejs-22               # build-time only: the image ships compiled assets, not node
+      - yarn
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://gitlab.com/gitlab-org/gitlab-foss/-/archive/v${{package.version}}/gitlab-foss-v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: gems (native extensions from source)
+    runs: |
+      set -eu
+      grep -qx '${{package.version}}' VERSION
+      export HOME="$(mktemp -d)" BUNDLE_FORCE_RUBY_PLATFORM=true
+      bundle config set --local deployment true
+      bundle config set --local without 'development test'
+      bundle config set --local build.nokogiri --use-system-libraries
+      # re2 links Wolfi's re2 and abseil instead of downloading and building its own
+      bundle config set --local build.re2 --enable-system-libraries
+      # grpc builds its bundled abseil, which GCC 16 rejects (absl hash_policy_traits.h); clang-19 builds it.
+      # grpc's extconf takes the compiler only from CC/CXX (extconf.rb:78), so install it first with clang
+      # into the bundle path; bundle install then reuses it and builds the rest with gcc.
+      gv="$(sed -n 's/^    grpc (\([0-9.]*\))$/\1/p' Gemfile.lock)"
+      CC=clang CXX=clang++ gem install grpc -v "$gv" --platform ruby --ignore-dependencies --no-document \
+        --install-dir "vendor/bundle/ruby/$(ruby -e 'print RbConfig::CONFIG["ruby_version"]')"
+      CC=gcc CXX=g++ bundle install -j4 || { echo "bundle install failed"; exit 1; }
+
+  - name: frontend assets (no database)
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" BUNDLE_FORCE_RUBY_PLATFORM=true
+      cp config/gitlab.yml.example config/gitlab.yml
+      cp config/database.yml.postgresql config/database.yml
+      cp config/resque.yml.example config/resque.yml
+      yarn install --frozen-lockfile --non-interactive
+      export RAILS_ENV=production NODE_ENV=production USE_DB=false SKIP_STORAGE_VALIDATION=true CI=true
+      bundle exec rake gitlab:assets:compile
+      test -d public/assets
+      rm -f config/gitlab.yml config/database.yml config/resque.yml
+
+  - name: install under /srv/gitlab
+    runs: |
+      set -eu
+      d="${{targets.destdir}}/srv/gitlab"
+      install -d "$d"
+      rm -rf node_modules tmp/cache spec qa ee
+      cp -a . "$d/"
+      install -d "$d/tmp" "$d/log" "$d/shared"
+
+test:
+  pipeline:
+    - runs: |
+        test -f /srv/gitlab/VERSION
+        cd /srv/gitlab && ruby -e 'puts RUBY_VERSION'
+        test -d /srv/gitlab/public/assets

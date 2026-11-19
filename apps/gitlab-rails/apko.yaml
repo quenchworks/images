@@ -1,0 +1,65 @@
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-gitlab-rails@local
+
+accounts:
+  groups:
+    - groupname: git
+      gid: 1001
+  users:
+    - username: git
+      uid: 1001
+      gid: 1001
+      homedir: /srv/gitlab
+  run-as: 1001
+
+# Rails writes here; the chart mounts emptyDirs or volumes over them (read-only rootfs)
+paths:
+  - path: /srv/gitlab/tmp
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /srv/gitlab/log
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /srv/gitlab/shared
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  RAILS_ENV: production
+  RAILS_LOG_TO_STDOUT: "true"
+  BUNDLE_APP_CONFIG: /srv/gitlab/.bundle
+  BUNDLE_FROZEN: "true"
+  HOME: /tmp
+
+work-dir: /srv/gitlab
+
+# One image, three roles by command: puma (webservice, default), sidekiq, or any rake task (toolbox / migrations).
+entrypoint:
+  command: /usr/bin/bundle exec
+cmd: puma -C config/puma.rb
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-gitlab-rails"
+  org.opencontainers.image.licenses: "MIT"

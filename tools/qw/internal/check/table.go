@@ -583,16 +583,8 @@ var table = map[string]check{
 		func(d any) []string {
 			return common.Each(d, func(r any) string { return strings.TrimLeft(common.Str(common.Path(r, "name")), "v") })
 		}), n: 1},
-	"gitlab-workhorse": {src: jsonList("https://gitlab.com/api/v4/projects/gitlab-org%2Fgitlab-foss/repository/tags?per_page=40",
-		func(d any) []string {
-			return common.Each(d, func(r any) string {
-				v := strings.TrimLeft(common.Str(common.Path(r, "name")), "v")
-				if strings.Contains(v, "-") { // rc and ee tags
-					return ""
-				}
-				return v
-			})
-		}), n: 1},
+	"gitlab-rails":              gitlabFossCheck,
+	"gitlab-workhorse":          gitlabFossCheck,
 	"gravitee-console":          graviteeCheck,
 	"gravitee-gateway":          graviteeCheck,
 	"gravitee-management-api":   graviteeCheck,
@@ -1127,3 +1119,15 @@ var table = map[string]check{
 	"kgateway":      {run: envoyPaired("kgateway", "kgateway-dev/kgateway", kgatewayEnvoyPin)},
 	"apisix":        {run: apisixCheck},
 }
+
+// gitlabFossCheck reads the gitlab-foss release tags (workhorse and rails ship from the same tree).
+var gitlabFossCheck = check{src: jsonList("https://gitlab.com/api/v4/projects/gitlab-org%2Fgitlab-foss/repository/tags?per_page=40",
+	func(d any) []string {
+		return common.Each(d, func(r any) string {
+			v := strings.TrimLeft(common.Str(common.Path(r, "name")), "v")
+			if strings.Contains(v, "-") { // rc and ee tags
+				return ""
+			}
+			return v
+		})
+	}), n: 1}
