@@ -1,0 +1,547 @@
+CVE-2026-123633: use-after-free in HTTP/2 stream creation (nginx.org: critical,
+CVSS 4.0 9.2, unauthenticated remote code execution; fixed in 1.31.9 / 1.30.7).
+
+An HTTP/2 connection could be marked reusable while it already had streams.  A
+connection with no streams and a partial frame read from the client is
+registered as reusable (to limit DoS), and the reusable status was not reset
+when the remaining bytes arrived and a stream was created.  While processing
+that stream (for example when connecting to an upstream) the connection could be
+drained, a GOAWAY send attempted, and on send failure the connection closed and
+its pool released, which triggers a use-after-free further up the stack.  The
+bug needs HTTP/2 enabled and, for this CVE, a config that proxies to an upstream.
+
+Backport of upstream nginx commit 0c87dd1db413 ("HTTP/2: reset reusable
+connection status on stream creation"), cherry-picked with no functional
+changes (only hunk offsets differ against the patched 1.27.1 base):
+https://github.com/nginx/nginx/commit/0c87dd1db413e440a4e3ef7ee8acc518509e8809
+
+The fix is one line: ngx_reusable_connection(h2c->connection, 0) in
+ngx_http_v2_create_stream().
+
+Why this applies to this build: the behaviour was introduced upstream by
+76672e650 ("HTTP/2: reuse of connections with incomplete frames", Feb 2021,
+nginx 1.19.7), which is an ancestor of 1.27.1, so the vulnerable code is present.
+
+Compatibility: only the body of ngx_http_v2_create_stream() changes.  No header,
+struct layout, public symbol or directive is touched, so there is no ABI impact
+for third-party modules.
+
+Reported upstream by Albert of Vexera AI.
+
+diff --git a/src/http/v2/ngx_http_v2.c b/src/http/v2/ngx_http_v2.c
+index bea5c88eae..e0e7ef379b 100644
+--- a/src/http/v2/ngx_http_v2.c
++++ b/src/http/v2/ngx_http_v2.c
+@@ -3109,6 +3109,8 @@ ngx_http_v2_create_stream(ngx_http_v2_connection_t *h2c)
+ 
+     h2c->processing++;
+ 
++    ngx_reusable_connection(h2c->connection, 0);
++
+     h2c->priority_limit += h2scf->concurrent_streams;
+ 
+     if (h2c->connection->read->timer_set) {
+CVE-2026-123007: HTTP/2 flow control window overflow leading to memory
+corruption (nginx.org: critical, CVSS 4.0 9.2, unauthenticated remote code
+execution; fixed in 1.31.9 / 1.30.7).
+
+When a stream is terminated, its unsent payload length is refunded to the
+connection flow control window.  If the client had raised the window with
+WINDOW_UPDATE after the stream frames were queued and before the stream was
+terminated, the refund could push the window past NGX_HTTP_V2_MAX_WINDOW.  That
+breaks the buffer size control in ngx_http_v2_send_chain(), which leads to
+memory corruption and a possible crash or worse.  HTTP/2 must be enabled.
+
+Backport of upstream nginx commit b89c4100bf67 ("HTTP/2: account for queued
+frames when validating WINDOW_UPDATE"), cherry-picked with no functional
+changes (only hunk offsets differ against the patched 1.27.1 base):
+https://github.com/nginx/nginx/commit/b89c4100bf6762a45e4a6463eaf4b70368277c94
+
+The fix tracks queued-but-unsent frame bytes in a new h2c->send_queued counter
+(incremented in ngx_http_v2_send_chain(), decremented when a DATA frame is sent
+and when a stream is cleaned up) and counts it when validating a client
+WINDOW_UPDATE, as the client sees queued frames as part of the window.
+
+Why this applies to this build: the refund logic dates back to nginx 1.9.5
+(2015) per the public write-up, so it is present in 1.27.1.
+
+Compatibility (ABI): this patch adds a field, send_queued, to
+ngx_http_v2_connection_s in ngx_http_v2.h, which changes the struct layout.
+Third-party dynamic modules built against stock nginx that touch the HTTP/2
+connection struct may need rebuilding.  The build compiles every module it
+ships (NDK, set-misc, headers-more, lua) from source in the same build, so
+nothing shipped in the image is affected.  No directive or public symbol changes.
+
+Reported upstream by Xint.io.
+
+diff --git a/src/http/v2/ngx_http_v2.c b/src/http/v2/ngx_http_v2.c
+index e0e7ef379b..e5d93733f0 100644
+--- a/src/http/v2/ngx_http_v2.c
++++ b/src/http/v2/ngx_http_v2.c
+@@ -2484,13 +2484,13 @@ ngx_http_v2_state_window_update(ngx_http_v2_connection_t *h2c, u_char *pos,
+         return ngx_http_v2_state_complete(h2c, pos, end);
+     }
+ 
+-    if (window > NGX_HTTP_V2_MAX_WINDOW - h2c->send_window) {
++    if (window > NGX_HTTP_V2_MAX_WINDOW - h2c->send_window - h2c->send_queued) {
+         ngx_log_error(NGX_LOG_INFO, h2c->connection->log, 0,
+                       "client violated connection flow control: "
+                       "received WINDOW_UPDATE frame "
+                       "with window increment %uz "
+                       "not allowed for window %uz",
+-                      window, h2c->send_window);
++                      window, h2c->send_window + h2c->send_queued);
+ 
+         return ngx_http_v2_connection_error(h2c, NGX_HTTP_V2_FLOW_CTRL_ERROR);
+     }
+diff --git a/src/http/v2/ngx_http_v2.h b/src/http/v2/ngx_http_v2.h
+index beb77a5c1d..0c8066e665 100644
+--- a/src/http/v2/ngx_http_v2.h
++++ b/src/http/v2/ngx_http_v2.h
+@@ -137,6 +137,7 @@ struct ngx_http_v2_connection_s {
+     ngx_uint_t                       priority_limit;
+ 
+     size_t                           send_window;
++    size_t                           send_queued;
+     size_t                           recv_window;
+     size_t                           init_window;
+ 
+diff --git a/src/http/v2/ngx_http_v2_filter_module.c b/src/http/v2/ngx_http_v2_filter_module.c
+index 6b73b1e687..fe235fbd89 100644
+--- a/src/http/v2/ngx_http_v2_filter_module.c
++++ b/src/http/v2/ngx_http_v2_filter_module.c
+@@ -1224,6 +1224,7 @@ ngx_http_v2_send_chain(ngx_connection_t *fc, ngx_chain_t *in, off_t limit)
+             ngx_http_v2_queue_frame(h2c, frame);
+ 
+             h2c->send_window -= frame_size;
++            h2c->send_queued += frame_size;
+ 
+             stream->send_window -= frame_size;
+             stream->queued++;
+@@ -1619,6 +1620,7 @@ ngx_http_v2_data_frame_handler(ngx_http_v2_connection_t *h2c,
+     stream->request->header_size += NGX_HTTP_V2_FRAME_HEADER_SIZE;
+ 
+     h2c->payload_bytes += frame->length;
++    h2c->send_queued -= frame->length;
+ 
+     ngx_http_v2_handle_frame(stream, frame);
+ 
+@@ -1753,6 +1755,7 @@ ngx_http_v2_filter_cleanup(void *data)
+     }
+ 
+     h2c->send_window += window;
++    h2c->send_queued -= window;
+ }
+ 
+ 
+CVE-2026-123634: resolver use-after-free when the same name is resolved
+concurrently in subrequests (reported by Xint.io, disclosed 2026-11-18 as part
+of "NGINX2Root"; fixed in nginx 1.31.9 / 1.30.7).
+
+nginx changes (1.30.7): "use-after-free condition might occur if the
+"resolver" directive was used and the same name was simultaneously resolved in
+subrequests, allowing an attacker who is able to trigger name resolution to
+cause segmentation fault in a worker process, or might have potential other
+impact".
+
+When a resolve handler terminates its request and that calls
+ngx_resolve_name_done() or ngx_resolve_addr_done() for another resolve of the
+same name or address, that other context may already be detached from
+rn->waiting and about to be reported (this produced the "could not cancel ...
+resolving" alert), or detached with its node reset while following a CNAME.
+It was freed anyway and then used.  The fix leaves such a context allocated
+and installs ngx_resolver_free_handler as its handler, so the memory is
+released when the resolve is reported; the alert becomes a debug message.
+
+This patch contains two upstream commits, applied in order with no functional
+changes (only hunk offsets differ against the patched 1.27.1 base):
+
+  - 8492a8b8a ("Resolver: report error on CNAME restart failure"); stable-1.30
+    cherry-pick 338f6231e is identical:
+    https://github.com/nginx/nginx/commit/8492a8b8a92acb345e1a34a6789f9ebb93f86e22
+    It carries no CVE, but upstream committed it directly before the fix in
+    both branches, and the fix needs it.  When a CNAME answer restarts a
+    lookup and the restart fails on a memory allocation error, the waiting
+    contexts stay detached from any node.  With the fix alone,
+    ngx_resolve_name_done() keeps such a context for
+    ngx_resolver_free_handler, which nothing calls afterwards, so the context
+    is not freed until the worker exits.  This commit reports the error to the
+    waiting contexts at once, and their owners release them.
+  - e39708edc ("Resolver: fix non-current resolve finalization from resolve
+    handler"), the fix for the CVE; stable-1.30 cherry-pick 7426c29f1 is
+    identical:
+    https://github.com/nginx/nginx/commit/e39708edc69a9c0c992b6af075db761946969534
+
+Reachability in ingress-nginx: through snippets; no way through annotations
+alone was found.  It is independent of HTTP/2.  The template always configures
+a "resolver".  Upstream describes the trigger as an upstream resolve whose
+handler terminates the request while at least one subrequest is resolving the
+same name.  Xint tested it with a request-derived proxy_pass destination and
+mirror with mirror_request_body off, where "the main request and its mirror
+wait for the same DNS answer".  The configuration that ingress-nginx generates
+does not do that:
+
+  - the location that serves the request always proxies to
+    "upstream_balancer", which does not use the resolver;
+  - the mirror annotations (mirror-target with a variable, such as the
+    documented https://test.env.com$request_uri) make only the mirror
+    subrequest resolve at request time;
+  - auth-url without auth-keepalive resolves in the auth_request subrequest
+    ("proxy_pass $target"), but auth_request runs in the access phase and has
+    finished before mirror starts its subrequest in the precontent phase.
+
+A snippet can give the main request a resolved proxy_pass: one that puts a
+proxy_pass with a variable into a location that also uses mirror or SSI.
+allow-snippet-annotations defaults to false.  No runtime reproduction of the
+use-after-free was attempted.
+
+Compatibility: src/core/ngx_resolver.c only; no public header, struct layout,
+symbol or directive change, so no ABI impact for third-party modules.
+
+diff --git a/src/core/ngx_resolver.c b/src/core/ngx_resolver.c
+index b3eb0f4d..08bd28fb 100644
+--- a/src/core/ngx_resolver.c
++++ b/src/core/ngx_resolver.c
+@@ -2789,7 +2789,22 @@ ngx_resolver_process_a(ngx_resolver_t *r, u_char *buf, size_t n,
+                 next->node = NULL;
+             }
+ 
+-            (void) ngx_resolve_name_locked(r, ctx, &name);
++            if (ngx_resolve_name_locked(r, ctx, &name) == NGX_ERROR) {
++
++                /* unlock name mutex */
++
++                do {
++                    ctx->state = NGX_ERROR;
++                    ctx->valid = ngx_time() + (r->valid ? r->valid : 10);
++                    next = ctx->next;
++
++                    ctx->handler(ctx);
++
++                    ctx = next;
++                } while (ctx);
++
++                return;
++            }
+         }
+ 
+         /* unlock name mutex */
+@@ -3174,7 +3189,22 @@ ngx_resolver_process_srv(ngx_resolver_t *r, u_char *buf, size_t n,
+                 next->node = NULL;
+             }
+ 
+-            (void) ngx_resolve_name_locked(r, ctx, &name);
++            if (ngx_resolve_name_locked(r, ctx, &name) == NGX_ERROR) {
++
++                /* unlock name mutex */
++
++                do {
++                    ctx->state = NGX_ERROR;
++                    ctx->valid = ngx_time() + (r->valid ? r->valid : 10);
++                    next = ctx->next;
++
++                    ctx->handler(ctx);
++
++                    ctx = next;
++                } while (ctx);
++
++                return;
++            }
+         }
+ 
+         /* unlock name mutex */
+diff --git a/src/core/ngx_resolver.c b/src/core/ngx_resolver.c
+index 08bd28fb..f21ce6be 100644
+--- a/src/core/ngx_resolver.c
++++ b/src/core/ngx_resolver.c
+@@ -120,6 +120,7 @@ static ngx_int_t ngx_resolver_copy(ngx_resolver_t *r, ngx_str_t *name,
+ static ngx_int_t ngx_resolver_set_timeout(ngx_resolver_t *r,
+     ngx_resolver_ctx_t *ctx);
+ static void ngx_resolver_timeout_handler(ngx_event_t *ev);
++static void ngx_resolver_free_handler(ngx_resolver_ctx_t *ctx);
+ static void ngx_resolver_free_node(ngx_resolver_t *r, ngx_resolver_node_t *rn);
+ static void *ngx_resolver_alloc(ngx_resolver_t *r, size_t size);
+ static void *ngx_resolver_calloc(ngx_resolver_t *r, size_t size);
+@@ -809,9 +810,11 @@ ngx_resolve_name_done(ngx_resolver_ctx_t *ctx)
+                 w = w->next;
+             }
+ 
+-            ngx_log_error(NGX_LOG_ALERT, r->log, 0,
+-                          "could not cancel %V resolving", &ctx->name);
++            ngx_log_debug1(NGX_LOG_DEBUG_CORE, r->log, 0,
++                           "could not cancel %V resolving", &ctx->name);
+         }
++
++        ctx->handler = ngx_resolver_free_handler;
+     }
+ 
+ done:
+@@ -829,9 +832,12 @@ done:
+ 
+     if (ctx->event) {
+         ngx_resolver_free_locked(r, ctx->event);
++        ctx->event = NULL;
+     }
+ 
+-    ngx_resolver_free_locked(r, ctx);
++    if (ctx->handler != ngx_resolver_free_handler) {
++        ngx_resolver_free_locked(r, ctx);
++    }
+ 
+     /* unlock alloc mutex */
+ 
+@@ -1441,6 +1447,7 @@ ngx_resolve_addr_done(ngx_resolver_ctx_t *ctx)
+             }
+         }
+ 
++#if (NGX_DEBUG)
+         {
+             u_char     text[NGX_SOCKADDR_STRLEN];
+             ngx_str_t  addrtext;
+@@ -1449,9 +1456,12 @@ ngx_resolve_addr_done(ngx_resolver_ctx_t *ctx)
+             addrtext.len = ngx_sock_ntop(ctx->addr.sockaddr, ctx->addr.socklen,
+                                          text, NGX_SOCKADDR_STRLEN, 0);
+ 
+-            ngx_log_error(NGX_LOG_ALERT, r->log, 0,
+-                          "could not cancel %V resolving", &addrtext);
++            ngx_log_debug1(NGX_LOG_DEBUG_CORE, r->log, 0,
++                           "could not cancel %V resolving", &addrtext);
+         }
++#endif
++
++        ctx->handler = ngx_resolver_free_handler;
+     }
+ 
+ done:
+@@ -1464,9 +1474,12 @@ done:
+ 
+     if (ctx->event) {
+         ngx_resolver_free_locked(r, ctx->event);
++        ctx->event = NULL;
+     }
+ 
+-    ngx_resolver_free_locked(r, ctx);
++    if (ctx->handler != ngx_resolver_free_handler) {
++        ngx_resolver_free_locked(r, ctx);
++    }
+ 
+     /* unlock alloc mutex */
+ 
+@@ -3244,6 +3257,11 @@ ngx_resolver_resolve_srv_names(ngx_resolver_ctx_t *ctx, ngx_resolver_node_t *rn)
+     ngx_resolver_ctx_t       *cctx;
+     ngx_resolver_srv_name_t  *srvs;
+ 
++    if (ctx->handler == ngx_resolver_free_handler) {
++        ctx->handler(ctx);
++        return;
++    }
++
+     r = ctx->resolver;
+ 
+     ctx->node = NULL;
+@@ -4375,6 +4393,13 @@ ngx_resolver_timeout_handler(ngx_event_t *ev)
+ }
+ 
+ 
++static void
++ngx_resolver_free_handler(ngx_resolver_ctx_t *ctx)
++{
++    ngx_resolver_free(ctx->resolver, ctx);
++}
++
++
+ static void
+ ngx_resolver_free_node(ngx_resolver_t *r, ngx_resolver_node_t *rn)
+ {
+CVE-2026-121810: HTTP/3 (QUIC) use-after-free when worker_connections run out
+(reported by Xint.io, disclosed 2026-11-18 as part of "NGINX2Root"; fixed in
+nginx 1.31.9 / 1.30.7).
+
+nginx changes (1.30.7): "use-after-free might occur in a worker process when
+using HTTP/3 if worker_connections were not enough".
+
+ngx_quic_create_stream() cleared the main connection's reusable flag and then
+called ngx_get_connection() before inserting the new stream into the stream
+tree.  If the worker was low on free connections, the drain inside
+ngx_get_connection() could close an idle stream of the same main connection.
+With the new stream not yet in the tree, that close found no streams left and
+marked the main connection reusable again, so it could later be drained and
+freed while one of its streams was still in use (for example while connecting
+to an upstream).  The fix inserts the stream into the tree before calling
+ngx_get_connection() and removes it again on the error paths.
+
+Backport of upstream nginx commit b5252dae1 ("QUIC: avoid main connection
+reuse after creating a stream"); its stable-1.30 cherry-pick c58d2a22d is
+identical.  Applied with no functional changes (only hunk offsets differ
+against the patched 1.27.1 base):
+https://github.com/nginx/nginx/commit/b5252dae1ca0d4c516b8bcffd9fa7fd967b73075
+
+Reachability in ingress-nginx: the controller template has no QUIC/HTTP3
+listener, so this is only reachable if a "listen ... quic" is added through a
+snippet.  The QUIC code is compiled in (--with-http_v3_module).  Included for
+defense in depth, as with patches 43 and 44.
+
+Compatibility: src/event/quic only; no public header, struct layout, symbol or
+directive change, so no ABI impact for third-party modules.
+
+diff --git a/src/event/quic/ngx_event_quic_streams.c b/src/event/quic/ngx_event_quic_streams.c
+index 178b805e..2c342c22 100644
+--- a/src/event/quic/ngx_event_quic_streams.c
++++ b/src/event/quic/ngx_event_quic_streams.c
+@@ -723,12 +723,15 @@ ngx_quic_create_stream(ngx_connection_t *c, uint64_t id)
+         addr_text.data = NULL;
+     }
+ 
++    ngx_rbtree_insert(&qc->streams.tree, &qs->node);
++
+     reusable = c->reusable;
+     ngx_reusable_connection(c, 0);
+ 
+     sc = ngx_get_connection(c->fd, log);
+     if (sc == NULL) {
+         ngx_destroy_pool(pool);
++        ngx_rbtree_delete(&qc->streams.tree, &qs->node);
+         ngx_queue_insert_tail(&qc->streams.free, &qs->queue);
+         ngx_reusable_connection(c, reusable);
+         return NULL;
+@@ -795,6 +798,7 @@ ngx_quic_create_stream(ngx_connection_t *c, uint64_t id)
+     if (cln == NULL) {
+         ngx_close_connection(sc);
+         ngx_destroy_pool(pool);
++        ngx_rbtree_delete(&qc->streams.tree, &qs->node);
+         ngx_queue_insert_tail(&qc->streams.free, &qs->queue);
+         ngx_reusable_connection(c, reusable);
+         return NULL;
+@@ -803,8 +807,6 @@ ngx_quic_create_stream(ngx_connection_t *c, uint64_t id)
+     cln->handler = ngx_quic_stream_cleanup_handler;
+     cln->data = sc;
+ 
+-    ngx_rbtree_insert(&qc->streams.tree, &qs->node);
+-
+     return qs;
+ }
+ 
+CVE-2026-118899: worker endless loop while reading a request body over SSL
+(reported by Maxim Dounin; fixed in nginx 1.31.9 / 1.30.7).
+
+nginx changes (1.30.7): "worker processes might get caught in an endless loop
+while reading the request body over SSL".
+
+ngx_http_do_read_client_request_body() keeps calling c->recv() for as long as
+c->read->ready is set.  With SSL, c->read->ready may still be set when
+c->recv() returns NGX_AGAIN, for example on SSL_ERROR_WANT_WRITE, so the loop
+never goes back to the event loop and the worker spins.  The fix remembers the
+last c->recv() result and, on NGX_AGAIN, arms client_body_timeout and waits
+for the next event, as it already did when c->read->ready was cleared.
+
+This patch contains two upstream commits, applied in order with no functional
+changes (only hunk offsets differ against the patched 1.27.1 base):
+
+  - 2b129b936 ("Request body: explicit handling of NGX_AGAIN."), originally
+    freenginx 392e8e2fd22a; stable-1.30 cherry-pick 1b723277a is identical:
+    https://github.com/nginx/nginx/commit/2b129b9363f07d7642bf7203c9c4d8796d19c8fa
+  - c51ffa2d1 ("HTTP/3: explicit handling of NGX_AGAIN"), the same change in
+    ngx_http_v3_do_read_client_request_body(), which upstream shipped with it;
+    stable-1.30 cherry-pick d1640655f is identical:
+    https://github.com/nginx/nginx/commit/c51ffa2d1a6b9f16b2a384fd2e23157e80621ad7
+
+Reachability in ingress-nginx: default.  Request bodies sent over TLS with
+HTTP/1.x are read through ngx_http_do_read_client_request_body(), with both
+buffered (proxy-request-buffering "on", the default) and unbuffered
+proxying.  HTTP/2 request bodies use a separate reader, so disabling HTTP/2
+does not avoid this.  The HTTP/3 part is only reachable through a snippet
+that adds a "listen ... quic".
+
+Compatibility: src/http/ngx_http_request_body.c and
+src/http/v3/ngx_http_v3_request.c only; no public header, struct layout,
+symbol or directive change, so no ABI impact for third-party modules.
+
+diff --git a/src/http/ngx_http_request_body.c b/src/http/ngx_http_request_body.c
+index afb04239..cd21f74d 100644
+--- a/src/http/ngx_http_request_body.c
++++ b/src/http/ngx_http_request_body.c
+@@ -307,6 +307,7 @@ ngx_http_do_read_client_request_body(ngx_http_request_t *r)
+     c = r->connection;
+     rb = r->request_body;
+     flush = 1;
++    n = NGX_AGAIN;
+ 
+     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, c->log, 0,
+                    "http read client request body");
+@@ -432,7 +433,7 @@ ngx_http_do_read_client_request_body(ngx_http_request_t *r)
+             break;
+         }
+ 
+-        if (!c->read->ready || rb->rest == 0) {
++        if (n == NGX_AGAIN || !c->read->ready || rb->rest == 0) {
+ 
+             clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
+             ngx_add_timer(c->read, clcf->client_body_timeout);
+diff --git a/src/http/v3/ngx_http_v3_request.c b/src/http/v3/ngx_http_v3_request.c
+index e457d884..2d2cc088 100644
+--- a/src/http/v3/ngx_http_v3_request.c
++++ b/src/http/v3/ngx_http_v3_request.c
+@@ -1346,6 +1346,7 @@ ngx_http_v3_do_read_client_request_body(ngx_http_request_t *r)
+     c = r->connection;
+     rb = r->request_body;
+     flush = 1;
++    n = NGX_AGAIN;
+ 
+     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, c->log, 0,
+                    "http3 read client request body");
+@@ -1469,7 +1470,7 @@ ngx_http_v3_do_read_client_request_body(ngx_http_request_t *r)
+             break;
+         }
+ 
+-        if (!c->read->ready || rb->rest == 0) {
++        if (n == NGX_AGAIN || !c->read->ready || rb->rest == 0) {
+ 
+             clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
+             ngx_add_timer(c->read, clcf->client_body_timeout);
+CVE-2026-120967: stream client SSL certificates verified against the default
+server instead of the SNI-selected server (reported by CERT.PL; fixed in nginx
+1.31.9 / 1.30.7).
+
+nginx changes (1.30.7): "in the stream module, an attacker who is able to
+complete the SSL handshake synchronously might cause client SSL certificates
+to be verified using the configuration of the default server rather than the
+virtual server selected by SNI".
+
+If the SSL handshake completed in the first call of ngx_stream_ssl_handler(),
+the client certificate was verified with the ngx_stream_ssl_module
+configuration read before the handshake, which is that of the default server,
+not the one selected by SNI during the handshake.  The problem was introduced
+by upstream d21675228 (nginx 1.25.5), which is present in 1.27.1.  The fix
+re-reads the server configuration before verifying the client certificate.
+
+Backport of upstream nginx commit 6f9fceed8 ("Stream: client SSL certificates
+were not checked with SNI"); its stable-1.30 cherry-pick 77f90f1c0 is
+identical.  Applied with no functional changes (only hunk offsets differ
+against the patched 1.27.1 base):
+https://github.com/nginx/nginx/commit/6f9fceed8dd7eb7d39b3930dc4f6824ecfe88559
+
+Reachability in ingress-nginx: not with the default template.  The stream
+servers it generates for tcp-services and udp-services are plain TCP/UDP
+proxies without "ssl", and SSL passthrough is done by the controller's own Go
+TCP proxy, not by the nginx stream SSL module.  Only a stream snippet that
+terminates TLS with ssl_verify_client across several SNI-selected stream
+servers exposes it.  The module is compiled in (--with-stream_ssl_module), so
+this is included for defense in depth.
+
+Compatibility: src/stream/ngx_stream_ssl_module.c only; no public header,
+struct layout, symbol or directive change, so no ABI impact for third-party
+modules.
+
+diff --git a/src/stream/ngx_stream_ssl_module.c b/src/stream/ngx_stream_ssl_module.c
+index 6dee106d..5166be09 100644
+--- a/src/stream/ngx_stream_ssl_module.c
++++ b/src/stream/ngx_stream_ssl_module.c
+@@ -363,6 +363,8 @@ ngx_stream_ssl_handler(ngx_stream_session_t *s)
+         }
+     }
+ 
++    sscf = ngx_stream_get_module_srv_conf(s, ngx_stream_ssl_module);
++
+     if (sscf->verify) {
+         rc = SSL_get_verify_result(c->ssl->connection);
+ 

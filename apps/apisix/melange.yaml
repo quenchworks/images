@@ -283,6 +283,13 @@ pipeline:
         ( cd "$OR/bundle/nginx-1.31.8" && patch -p1 --fuzz=0 -i "$WORK/nginx-1.31.9-security.patch" )
         grep -q 'h2c->send_window - h2c->send_queued' "$OR/bundle/nginx-1.31.8/src/http/v2/ngx_http_v2.c"
       fi
+      # 3.19.0's 1.29.2 core takes Chainguard's per-CVE backports for nginx 1.27.1 (chainguard-forks/ingress-nginx
+      # controller-v1.15.16) after api7's patches without fuzz: CVE-2026-123633, -123007, -123634, -121810, -118899,
+      # -120967; -125283 and -123640 (minor) do not apply to this core
+      if [ -d "$OR/bundle/nginx-1.29.2" ]; then
+        ( cd "$OR/bundle/nginx-1.29.2" && patch -p1 --fuzz=0 -i "$WORK/nginx-1.29.2-security.patch" )
+        grep -q 'h2c->send_window - h2c->send_queued' "$OR/bundle/nginx-1.29.2/src/http/v2/ngx_http_v2.c"
+      fi
 
       # ngx_http_ffi_client compiles against lua-nginx-module's public headers, which it
       # reaches through OpenResty's BUNDLED copy rather than a separate checkout.
