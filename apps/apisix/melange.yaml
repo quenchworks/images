@@ -274,6 +274,14 @@ pipeline:
       echo "apisix-nginx-module patch set: $npatch patches"
       [ "$npatch" -ge 37 ] || { echo "expected >=37 patches, found $npatch"; exit 1; }
 
+      # nginx 1.31.9's security fixes (10 advisories of 2026-11-18, among them CVE-2026-123007 and CVE-2026-123633,
+      # both HTTP/2) backported to the nginx 1.31.8 core after api7's patches: nginx's own 1.31.8..1.31.9 src/ diff
+      # without the version bump, applied without fuzz; the 1.29.2 core (3.19.0) does not take it cleanly
+      if [ -d "$OR/bundle/nginx-1.31.8" ]; then
+        ( cd "$OR/bundle/nginx-1.31.8" && patch -p1 --fuzz=0 -i "$WORK/nginx-1.31.9-security.patch" )
+        grep -q 'h2c->send_window - h2c->send_queued' "$OR/bundle/nginx-1.31.8/src/http/v2/ngx_http_v2.c"
+      fi
+
       # ngx_http_ffi_client compiles against lua-nginx-module's public headers, which it
       # reaches through OpenResty's BUNDLED copy rather than a separate checkout.
       NGX_LUA_DIR="$(find "$OR/bundle" -maxdepth 1 -type d -name 'ngx_lua-*' | head -1)"
