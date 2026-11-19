@@ -27,6 +27,7 @@ environment:
       - busybox
       - ca-certificates-bundle
       - linux-headers
+      - patch              # nginx-1.31.9-security.patch (GNU patch for --fuzz=0)
       - openssl-3.6-dev    # openssl-4.0-dev also provides openssl-dev at a higher version, and this does not build on OpenSSL 4 (run 2026-10-11)
       - pcre2-dev
       - perl
@@ -40,6 +41,15 @@ pipeline:
 
   - runs: |
       set -eu
+      # nginx 1.31.9's security fixes (10 advisories of 2026-11-18, among them CVE-2026-123007 HTTP/2 flow control and
+      # CVE-2026-123633 HTTP/2 use-after-free), backported to the bundled nginx 1.31.8 core until OpenResty ships a
+      # release on 1.31.9: the 1.31.8..1.31.9 src/ diff without the version bump, which applies without fuzz
+      if [ -d bundle/nginx-1.31.8 ]; then
+        pf="$PWD/nginx-1.31.9-security.patch"
+        ( cd bundle/nginx-1.31.8 && patch -p1 --fuzz=0 -i "$pf" )
+        # the CVE-2026-123007 fix: WINDOW_UPDATE validation counts queued frames
+        grep -q 'h2c->send_window - h2c->send_queued' bundle/nginx-1.31.8/src/http/v2/ngx_http_v2.c
+      fi
       # OpenResty's configure is a perl wrapper that passes the nginx options
       # through. No comments inside the continuation: a `#` ends it.
       ./configure -j"$(nproc)" \
