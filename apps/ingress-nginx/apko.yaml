@@ -15,6 +15,10 @@ contents:
     - wolfi-baselayout
     - ca-certificates-bundle
     - __PKG__
+    # lua-resty-lock 0.10-r0 (Wolfi, 2026-11-19) needs a newer lua-resty-core and ngx_lua than the controller ships:
+    # nginx dies at init_by_lua with "atomic ownership operations require an updated lua-resty-core and nginx"
+    # (balancer/ewma.lua). Hold 0.09 until the controller package moves; the chart gate catches a mismatch.
+    - lua-resty-lock=0.09-r10
 
 accounts:
   groups:
