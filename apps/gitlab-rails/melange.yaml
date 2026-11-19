@@ -13,8 +13,7 @@ package:
       - tzdata
       - busybox
       - bash
-      - ruby-3.4
-      - ruby3.4-bundler
+      - ruby-3.4                # satisfied by quench-ruby@local in the image (bundler included)
       - git
       - graphicsmagick
       - exiftool
@@ -61,6 +60,7 @@ environment:
       - libgit2-dev
       - posix-libc-utils        # getconf for prometheus-client-mmap while Rails loads for the asset compile
       - patch                   # devise security backport
+      - go-1.27                 # rebuilds the devfile gem's Go helper from its source
       - node-gyp                # tree-sitter has no arm64 prebuild; yarn falls back to node-gyp rebuild
       - python3
       - nodejs-22               # build-time only: the image ships compiled assets, not node
@@ -130,6 +130,20 @@ pipeline:
         sed -i "s/Gem::Version.new('8.0.2')/Gem::Version.new('$pv')/" config/initializers/puma_io_thread_exit_patch.rb
         grep -q "Gem::Version.new('$pv')" config/initializers/puma_io_thread_exit_patch.rb
       fi
+      # devfile ships prebuilt Go helpers for four platforms (Go 1.27.0, old modules). Rebuild this arch's Linux one from
+      # the gem's own source with the fixed modules, and drop the rest. docker/cli and docker/docker stay (v29 breaks
+      # oras-go v1 / has no module path; VEX).
+      dfd="$(dirname "$dg")/devfile-$(sed -n 's/^    devfile (\([0-9.]*\))$/\1/p' Gemfile.lock)"
+      case "$(uname -m)" in x86_64) ga=amd64 ;; aarch64) ga=arm64 ;; esac
+      rm -f "$dfd"/out/devfile-*
+      (cd "$dfd/ext" && export GOFLAGS=-mod=mod GOTOOLCHAIN=local GOPATH="$HOME/go" && \
+        go get github.com/containerd/containerd@v1.7.36 github.com/klauspost/compress@v1.18.7 golang.org/x/net@v0.62.0 \
+          golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/text@v0.43.0 google.golang.org/grpc@v1.83.2 \
+          go.opentelemetry.io/otel/trace@v1.47.0 && \
+        go mod tidy && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "../out/devfile-$ga-linux" .)
+      go version -m "$dfd/out/devfile-$ga-linux" > /tmp/devfile.mods
+      grep -q 'golang.org/x/net	v0.62.0' /tmp/devfile.mods
+      rm -rf "$dfd/ext"
 
   - name: frontend assets (no database)
     runs: |

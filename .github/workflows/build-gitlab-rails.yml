@@ -122,6 +122,16 @@ jobs:
           melange keygen melange.rsa
           melange build melange.rendered.yaml --arch ${{ matrix.arch.name }} --signing-key melange.rsa --out-dir ./packages
 
+      - name: Package Ruby 3.4 without its stale default json and resolv gems (apps/ruby recipe)
+        # Wolfi's ruby-3.4 ships json 2.9.1 as a default gem (CVE-2026-54696); apko cannot drop a file from an apk, so
+        # build the catalog's quench-ruby package (it provides ruby-3.4) and install it in place of Wolfi's.
+        run: |
+          set -euo pipefail
+          v="$(bash -c 'source ../ruby/build.conf; for x in "${VERSIONS[@]}"; do case "$x" in 3.4.*) echo "$x";; esac; done' | tail -1)"
+          test -n "$v"
+          sed -e "s/__FULLVER__/${v}/g; s/__VER__/3.4/g" ../ruby/melange.yaml > ruby.rendered.yaml
+          melange build ruby.rendered.yaml --arch ${{ matrix.arch.name }} --signing-key melange.rsa --out-dir ./packages
+
       - name: Assemble single-arch image for the scan gate
         run: apko build apko.rendered.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}
 
