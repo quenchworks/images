@@ -121,6 +121,15 @@ pipeline:
       gq="$(dirname "$dg")/graphql-$(sed -n 's/^    graphql (\([0-9.]*\))$/\1/p' Gemfile.lock)"
       grep -q 'RESERVED_KEYS = \[GLOBALID_KEY' "$gq/lib/graphql/subscriptions/serialize.rb"
       rm config/initializers/graphql_subscriptions_serialize_patch.rb
+      # GitLab pins its puma thread-pool patch to 8.0.2. The 8.0.x security releases do not carry the upstream fix
+      # (puma #3968 is on main only) and ship thread_pool.rb unchanged, so once the cooldown lets puma float the
+      # patch still applies: check the file is 8.0.2's byte for byte, then move the guard to the installed version.
+      pv="$(sed -n 's/^    puma (\([0-9.]*\))$/\1/p' Gemfile.lock)"
+      if [ "$pv" != 8.0.2 ]; then
+        echo "4332be74d7046785d41a814fb568467160fe937d1590693051c3162e826b9c23  $(dirname "$dg")/puma-$pv/lib/puma/thread_pool.rb" | sha256sum -c -
+        sed -i "s/Gem::Version.new('8.0.2')/Gem::Version.new('$pv')/" config/initializers/puma_io_thread_exit_patch.rb
+        grep -q "Gem::Version.new('$pv')" config/initializers/puma_io_thread_exit_patch.rb
+      fi
 
   - name: frontend assets (no database)
     runs: |
