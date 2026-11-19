@@ -166,6 +166,7 @@ var table = map[string]check{
 	"readeck":                           {src: codebergRel("readeck/readeck"), n: 1},
 	"atuin-server":                      {src: ghRel("atuinsh/atuin"), n: 1},
 	"grocy":                             {src: ghRel("grocy/grocy"), n: 1},
+	"audiobookshelf":                    {src: ghRel("advplyr/audiobookshelf"), n: 1},
 	"kener":                             {src: ghRel("rajnandan1/kener"), n: 1},
 	"gotosocial":                        {src: codebergRel("superseriousbusiness/gotosocial"), n: 1},
 	"wstunnel":                          {src: ghRel("erebe/wstunnel"), n: 1},

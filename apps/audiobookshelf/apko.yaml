@@ -1,0 +1,64 @@
+# Audiobookshelf runtime: node runs /app/dist-server/index.js on 13378. Config (SQLite) in /config, metadata
+# (covers, cache, backups) in /metadata: both volumes; mount media anywhere and add it as a library.
+# Nonroot uid 1001, multi-arch, shell-free.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-audiobookshelf@local
+
+accounts:
+  groups:
+    - groupname: audiobookshelf
+      gid: 1001
+  users:
+    - username: audiobookshelf
+      uid: 1001
+      gid: 1001
+      homedir: /app
+  run-as: 1001
+
+work-dir: /app
+
+environment:
+  NODE_ENV: production
+  PORT: "13378"
+  CONFIG_PATH: /config
+  METADATA_PATH: /metadata
+  SOURCE: docker
+  SKIP_BINARIES_CHECK: "1"
+  FFMPEG_PATH: /usr/bin/ffmpeg
+  FFPROBE_PATH: /usr/bin/ffprobe
+  TZ: UTC
+
+paths:
+  - path: /config
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+  - path: /metadata
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+entrypoint:
+  command: /usr/bin/node /app/dist-server/index.js
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-audiobookshelf"
+  org.opencontainers.image.licenses: "GPL-3.0-only"

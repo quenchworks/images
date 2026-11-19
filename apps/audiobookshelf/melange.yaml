@@ -1,0 +1,82 @@
+# Audiobookshelf from the release tag into /app, built like upstream's Dockerfile.
+package:
+  name: quench-audiobookshelf
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Audiobookshelf, built from source on Wolfi"
+  copyright:
+    - license: GPL-3.0-only
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - ffmpeg
+      - nodejs-24
+      - sqlite-libs
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - jq
+      - libuv-dev                # Wolfi node links libuv shared: node-gyp addons include uv.h from here
+      - nodejs-24
+      - node-gyp
+      - npm
+      - python3
+      - sqlite-dev
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/advplyr/audiobookshelf/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - runs: |
+      set -eu
+      export HOME="$(mktemp -d)" npm_config_cache="$(mktemp -d)"
+      # client: only the generated static files ship (client/dist), as in upstream's image
+      ( cd client && npm ci --no-fund --no-audit && npm run generate )
+      test -f client/dist/index.html
+      # server CVE floors: direct deps to the newest fixed release of their line (nodemailer 6 -> 10: the
+      # 6 line has no fix; createTransport/sendMail are unchanged), transitive ones by override
+      jq '.dependencies.axios = "^0.35.0" | .dependencies.express = "^4.22.3" | .dependencies.nodemailer = "^10.6.0"
+        | .dependencies.sequelize = "^6.37.8" | .dependencies["socket.io"] = "^4.8.4"
+        | .dependencies["express-session"] = "^1.19.0" | .dependencies["cookie-parser"] = "^1.4.7"
+        | .overrides = {"uuid": "11.1.1", "lodash": "4.18.1", "moment": "2.31.0", "validator": "13.15.35",
+            "jws": "3.2.3", "jose": "4.15.9", "form-data": "4.0.6", "follow-redirects": "1.16.3", "dottie": "2.0.7",
+            "brace-expansion": "1.1.22", "tar-fs": "2.1.5", "tar": "7.5.23", "ws": "8.23.0",
+            "socket.io-parser": "4.2.7", "engine.io": "6.6.12", "qs": "6.17.1", "on-headers": "1.1.0",
+            "proxy-addr": "2.0.8"}' package.json > package.json.new && mv package.json.new package.json
+      npm install --no-fund --no-audit --ignore-scripts
+      npm run build:server
+      # optional deps are sqlite3's node-gyp tree (tar, cacache, ip, @tootallnate/once); Wolfi's node-gyp builds it
+      npm prune --omit=dev --omit=optional --no-fund --no-audit
+      ( cd node_modules/sqlite3 && node-gyp rebuild --release --nodedir=/usr --sqlite=/usr --sqlite_libname=sqlite3 )
+      find node_modules -type d -name prebuilds -prune -exec rm -rf {} +
+      rm -rf dist-server/test dist-server/.tsbuildinfo
+      for p in node-gyp cacache ip @tootallnate/once; do
+        if [ -e "node_modules/$p" ]; then echo "optional tree left: $p"; exit 1; fi
+      done
+      if find node_modules -type f -name '*.node' -exec readelf -d {} \; 2>/dev/null | grep -q 'libc.musl'; then
+        echo "a musl-linked native module is left"; exit 1
+      fi
+      # the binding must use the system libsqlite3, not the bundled amalgamation
+      readelf -d node_modules/sqlite3/build/Release/node_sqlite3.node | grep -q 'libsqlite3.so'
+      node -e 'const s=require("sqlite3"); new s.Database(":memory:").get("select sqlite_version() v",(e,r)=>{if(e)throw e;console.log("sqlite",r.v)})'
+      node -e 'require("nodemailer").createTransport({jsonTransport:true}).sendMail({from:"a@b.c",to:"d@e.f",text:"x"}).then(i=>console.log("nodemailer ok"))'
+      [ "$(node -p 'require("./package.json").version')" = "${{package.version}}" ]
+      app="${{targets.destdir}}/app"
+      install -d "$app/client"
+      cp -a node_modules package.json dist-server "$app/"
+      cp -a client/dist "$app/client/"
+
+test:
+  pipeline:
+    - runs: test -f /app/dist-server/index.js
