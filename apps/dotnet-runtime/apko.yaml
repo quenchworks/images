@@ -1,33 +1,21 @@
-# Assembles a hardened .NET RUNTIME base image directly from Wolfi's own
-# versioned `dotnet-N-runtime` packages. No Dockerfile, NO melange build --
-# apko pulls the pinned `dotnet-__VER__-runtime` package straight from the Wolfi
-# `os` repository. That package pulls the matching `dotnet-N` host (which
-# provides the `/usr/bin/dotnet` muxer) plus the Microsoft.NETCore.App shared
-# framework -- WITHOUT the SDK / compilers / targeting packs. So each major band
-# is a pure package-assembly and stays RUNTIME-ONLY.
+# Hardened .NET RUNTIME image: melange.yaml packages Microsoft's official .NET Linux release tarball
+# (sha512-verified, build.conf) on Wolfi glibc, ICU, zlib and OpenSSL 4, and apko installs that package.
+# Until 10.0.114 this image installed Wolfi's apk directly; Wolfi moved dotnet-10 to enterprise-packages
+# on 2026-11-12 (#117). No SDK here: build with quench-dotnet, run the output on this image.
 #
-# This is the run-time companion to the `dotnet` (SDK) image: publish your app
-# with quench-dotnet, then run the framework-dependent output on
-# quench-dotnet-runtime. There is deliberately NO SDK here.
-#
-# IMAGE-ONLY -- no Helm chart. This is a LANGUAGE RUNTIME image: the 0-CVE,
-# signed, nonroot, multi-arch answer to `mcr.microsoft.com/dotnet/runtime:N`.
-# Developers `FROM` it in the final stage of a multi-stage build, or run
-# `dotnet app.dll` directly.
-#
-# TEMPLATE NOTE: `__VER__` is a build-time placeholder. CI substitutes the major
-# version (8 / 9 / 10) per matrix entry with `sed` before apko runs, so this
-# single file covers every shipped version. To roll this pattern to another
-# runtime, copy this file and swap the package names + entrypoint.
+# IMAGE-ONLY, no Helm chart: the signed, nonroot, multi-arch answer to `mcr.microsoft.com/dotnet/runtime:N`.
+# `__PKG__`, `__VER__` and the pins are build-time placeholders filled by build.conf render().
 contents:
   keyring:
     - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
   repositories:
     - https://packages.wolfi.dev/os
+    - "@local ./packages"
   packages:
     - wolfi-baselayout
     - ca-certificates-bundle
-    - __PKG__      # RUNTIME-only .NET band from Wolfi (pulls dotnet-N host -> /usr/bin/dotnet + Microsoft.NETCore.App); NO SDK
+    - __PKG__      # Microsoft's official .NET release tarball, packaged by melange.yaml (Wolfi moved dotnet-10 to enterprise)
 
 accounts:
   groups:

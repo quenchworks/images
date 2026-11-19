@@ -1,0 +1,58 @@
+# Packages Microsoft's official .NET Linux release tarball (dotnet-runtime or aspnetcore-runtime) onto Wolfi.
+# Wolfi moved dotnet-10 to enterprise-packages on 2026-11-12 (wolfi-dev/os #433300), so its public index stopped at
+# 10.0.114 while CVE-2026-114149 and CVE-2026-118747 are fixed in .NET 10.0.15. The tarball is verified against the
+# sha512 Microsoft publishes in release-metadata/10.0/releases.json (build.conf holds the URL and hash per arch).
+# It runs on Wolfi glibc, ICU, zlib and OpenSSL 4 (the runtime dlopens libssl.so.4 first: opensslshim.c in
+# dotnet/runtime v10.0.15). Shared by apps/aspnet through a symlink; render() fills the package name and the pins.
+package:
+  name: __PKGNAME__
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks .NET runtime from Microsoft's official Linux release, on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      # dlopen'd or data dependencies the SCA cannot see from DT_NEEDED
+      - glibc
+      - icu
+      - ca-certificates-bundle
+      - libgcc
+      - libstdc++
+      - zlib
+      - so:libssl.so.4
+      - so:libcrypto.so.4
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - curl
+      - ca-certificates-bundle
+
+pipeline:
+  - runs: |
+      set -eu
+      case "$(uname -m)" in
+        x86_64)  url=__URL_X64__; sha=__SHA_X64__ ;;
+        aarch64) url=__URL_ARM__; sha=__SHA_ARM__ ;;
+        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+      esac
+      curl -fsSL -o dotnet.tgz "$url"
+      echo "${sha}  dotnet.tgz" | sha512sum -c -
+      D="${{targets.destdir}}/usr/share/dotnet"
+      mkdir -p "$D" "${{targets.destdir}}/usr/bin"
+      tar -xzf dotnet.tgz -C "$D"
+      ln -s ../share/dotnet/dotnet "${{targets.destdir}}/usr/bin/dotnet"
+      # LTTng tracing provider: optional (the runtime skips it when absent) and the only user of liblttng-ust
+      find "$D" -name libcoreclrtraceptprovider.so -delete
+      test -d "$D/shared/Microsoft.NETCore.App/__VER_RT__"
+
+test:
+  pipeline:
+    - runs: |
+        dotnet --list-runtimes | grep -F 'Microsoft.NETCore.App __VER_RT__'

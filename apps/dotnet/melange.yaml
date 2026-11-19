@@ -1,7 +1,7 @@
-# Repackages Wolfi's `dotnet-N-sdk` apk with the bundled NuGet client patched, so
-# the 0-CVE gate passes without waiting on a Wolfi rebuild. Wolfi's dotnet-8-sdk
-# and dotnet-10-sdk both bundle the NuGet client assemblies NuGet.Packaging +
-# NuGet.Protocol at a PRE-RELEASE stamp (8 -> 6.8.2-rc.32767, 10 -> 7.0.3-rc.65534).
+# Packages Microsoft's official .NET SDK Linux tarball (sha512 from releases.json, build.conf) on Wolfi with the
+# bundled NuGet client patched. Until 10.0.114 this repackaged Wolfi's dotnet-N-sdk apk; Wolfi moved dotnet-10 to
+# enterprise-packages on 2026-11-12, so the public apk stopped at 10.0.114 (#117). The SDKs bundle the NuGet client assemblies NuGet.Packaging +
+# NuGet.Protocol at a PRE-RELEASE stamp (Wolfi 10 -> 7.0.3-rc.65534, Microsoft 10.0.115 -> 7.0.3-rc.3008).
 # OSV's affected range for each line is [.., <release>); the `-rc.NNNNN` builds
 # sort BELOW the final, so Trivy's dotnet-core analyzer (which reads the version
 # from the SDK's *.deps.json manifests) flags them under GHSA-g4vj-cjjj-v7hg
@@ -19,8 +19,8 @@
 # full (no ignore-list).
 #
 # TEMPLATE NOTE: build.conf render() substitutes, per band: __VER__ (the .NET
-# X.Y.Z -- image tag + package version), __MELENV__ (the exact Wolfi dotnet-N-sdk
-# apk pin to repackage), __RELVER__ (released NuGet version to swap in),
+# X.Y.Z -- image tag + package version), __URL_X64__/__SHA_X64__/__URL_ARM__/__SHA_ARM__
+# (the SDK tarball per arch + its sha512), __RELVER__ (released NuGet version to swap in),
 # __NUGET_TFM__ (the nupkg lib/ TFM to extract -- net8.0 for the 7.0.3 line,
 # net5.0 for the 6.8.2 line, since 6.8.2 ships no net8.0 build), and the four
 # sha256 pins for the two nupkgs + their extracted DLLs.
@@ -28,27 +28,21 @@ package:
   name: quench-dotnet
   version: __VER__
   epoch: 0
-  description: "Quenchworks hardened .NET SDK, repackaged from Wolfi dotnet-N-sdk with NuGet.Packaging/Protocol patched to the released build (GHSA-g4vj-cjjj-v7hg)"
+  description: "Quenchworks hardened .NET SDK, from Microsoft's official SDK release with NuGet.Packaging/Protocol patched to the released build (GHSA-g4vj-cjjj-v7hg)"
   copyright:
     - license: MIT
   dependencies:
     runtime:
-      # .NET native runtime + globalization + TLS. melange's SCA resolves the
-      # DT_NEEDED so: deps from the bundled native .so files; these are the
-      # dlopen'd / data packages SCA cannot see, mirroring Wolfi's own
-      # dotnet-N-runtime / dotnet-N / aspnet-N-runtime dependency set.
+      # dlopen'd or data dependencies the SCA cannot see from DT_NEEDED; Microsoft's runtime dlopens libssl.so.4
+      # first (opensslshim.c, dotnet/runtime v10.0.15), so it runs on Wolfi's OpenSSL 4.
       - glibc
       - icu
       - ca-certificates-bundle
       - libgcc
       - libstdc++
-      - libunwind
-      - lttng-ust
-      - libcrypto3
-      - libssl3
       - zlib
-      - libbrotlidec1
-      - libexpat1
+      - so:libssl.so.4
+      - so:libcrypto.so.4
 
 environment:
   contents:
@@ -60,7 +54,6 @@ environment:
       - busybox                          # sh + cp/sed/grep/find/sha256sum/unzip for the pipeline
       - curl                             # fetch the fixed NuGet assemblies from nuget.org
       - ca-certificates-bundle
-      - __MELENV__                       # the exact Wolfi dotnet-N-sdk apk pin to repackage
 
 pipeline:
   - runs: |
@@ -69,11 +62,20 @@ pipeline:
       REL="__RELVER__"
       TFM="__NUGET_TFM__"
 
-      # 1) Install Wolfi's .NET tree + the /usr/bin/dotnet launcher verbatim.
-      mkdir -p "$D/usr/share" "$D/usr/bin"
-      cp -a /usr/share/dotnet "$D/usr/share/dotnet"
-      cp -a /usr/bin/dotnet   "$D/usr/bin/dotnet"      # symlink -> /usr/share/dotnet/dotnet
+      # 1) Install Microsoft's SDK tarball for this arch (sha512-verified) + the /usr/bin/dotnet link.
+      case "$(uname -m)" in
+        x86_64)  url=__URL_X64__; sha=__SHA_X64__ ;;
+        aarch64) url=__URL_ARM__; sha=__SHA_ARM__ ;;
+        *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+      esac
+      curl -fsSL -o sdk.tgz "$url"
+      echo "${sha}  sdk.tgz" | sha512sum -c -
       DOTNET="$D/usr/share/dotnet"
+      mkdir -p "$DOTNET" "$D/usr/bin"
+      tar -xzf sdk.tgz -C "$DOTNET" && rm sdk.tgz
+      ln -s ../share/dotnet/dotnet "$D/usr/bin/dotnet"
+      # LTTng tracing provider: optional (the runtime skips it when absent) and the only user of liblttng-ust
+      find "$DOTNET" -name libcoreclrtraceptprovider.so -delete
 
       # 2) Fetch the released assemblies (sha256-pinned nupkg + DLL) and swap
       #    every bundled copy of the two flagged NuGet assemblies. The released

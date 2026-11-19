@@ -511,9 +511,9 @@ var table = map[string]check{
 	"ansible":                         {src: pypiPkg("ansible"), n: 2, f: filter{keep: numDots}},
 	"apache-pinot":                    {src: ghRel("apache/pinot"), n: 1, f: group(`(?:release-)?(\d+\.\d+\.\d+)`)},
 	"apache-polaris":                  {src: ghRel("apache/polaris"), n: 1, f: group(`apache-polaris-(\d+\.\d+\.\d+)`)},
-	"aspnet":                          {run: reportWolfiSuffix("aspnet", `^aspnet-\d+-runtime$`, "aspnet-{maj}-runtime")},
-	"dotnet-runtime":                  {run: reportWolfiSuffix("dotnet-runtime", `^dotnet-\d+-runtime$`, "dotnet-{maj}-runtime")},
-	"dotnet":                          {run: reportWolfiSuffix("dotnet", `^dotnet-\d+-sdk$`, "dotnet-{maj}-sdk")},
+	"aspnet":                          dotnetCheck,
+	"dotnet-runtime":                  dotnetCheck,
+	"dotnet":                          dotnetCheck,
 	"backdrop":                        {src: ghRel("backdrop/backdrop"), lines: 2},
 	"buildah":                         {src: ghRel("containers/buildah"), lines: 2},
 	"fulcio":                          {src: ghRel("sigstore/fulcio"), lines: 2},
@@ -1130,4 +1130,21 @@ var gitlabFossCheck = check{src: jsonList("https://gitlab.com/api/v4/projects/gi
 			}
 			return v
 		})
+	}), n: 1}
+
+// dotnetCheck reads Microsoft's .NET 10 release metadata: the images package the official tarballs (Wolfi moved
+// dotnet-10 to enterprise-packages on 2026-11-12) and tag them on the SDK 1xx band (10.0.1xx).
+var dotnetCheck = check{src: jsonList("https://builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json",
+	func(d any) []string {
+		var out []string
+		rels, _ := common.Path(d, "releases").([]any)
+		for _, r := range rels {
+			out = append(out, common.Each(common.Path(r, "sdks"), func(s any) string {
+				if v := common.Str(common.Path(s, "version")); regexp.MustCompile(`^10\.0\.1\d\d$`).MatchString(v) {
+					return v
+				}
+				return ""
+			})...)
+		}
+		return out
 	}), n: 1}
