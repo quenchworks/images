@@ -153,6 +153,11 @@ func holdReason(app string) string {
 		}
 		return "BLOCKED: " + cut(status, 90)
 	}
+	// "STATUS ...: UNBLOCKED (BLOCKED=1 -> 0)" records a lifted hold; it must not read as one (it hid
+	// cockroachdb 26.3.6 / 26.4.1 until 2026-11-19).
+	if regexp.MustCompile(`\bUNBLOCKED\b`).MatchString(status) {
+		return ""
+	}
 	if regexp.MustCompile(`\b(HELD|DEFERRED|BLOCKED)\b`).MatchString(status) {
 		if m := regexp.MustCompile(`DEFERRED to (\d{4}-\d{2}-\d{2})`).FindStringSubmatch(status); m != nil && m[1] <= time.Now().Format("2006-01-02") {
 			return ""
