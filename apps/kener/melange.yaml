@@ -57,8 +57,8 @@ pipeline:
       if find node_modules -type f -name '*.node' -exec readelf -d {} \; 2>/dev/null | grep -q 'libc.musl'; then
         echo "a musl-linked native module is left"; exit 1
       fi
-      [ "$(node -p "require('@sveltejs/kit/package.json').version")" = 2.70.4 ]
-      [ "$(node -p "require('fast-xml-parser/package.json').version")" = 5.12.0 ]
+      [ "$(node -p "JSON.parse(require('fs').readFileSync('node_modules/@sveltejs/kit/package.json')).version")" = 2.70.4 ]
+      [ "$(node -p "JSON.parse(require('fs').readFileSync('node_modules/fast-xml-parser/package.json')).version")" = 5.12.0 ]
       node -e 'require("better-sqlite3")(":memory:").prepare("select 1").get(); require("bcrypt"); require("sharp")'
       grep -F "${{package.version}}" package.json
       app="${{targets.destdir}}/app"
