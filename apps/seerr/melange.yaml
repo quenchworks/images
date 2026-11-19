@@ -1,0 +1,87 @@
+# Seerr from the release tag into /app, built like upstream's Dockerfile.
+package:
+  name: quench-seerr
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Seerr (Jellyseerr), built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - nodejs-24
+      - sqlite-libs
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - jq
+      - libuv-dev                # Wolfi node links libuv shared: node-gyp addons include uv.h from here
+      - nodejs-24
+      - node-gyp
+      - pnpm
+      - python3
+      - sqlite-dev
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/fallenbagel/jellyseerr/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - runs: |
+      set -eu
+      export HOME="$(mktemp -d)" NEXT_TELEMETRY_DISABLED=1 CYPRESS_INSTALL_BINARY=0 CI=true
+      # Wolfi's pnpm (11) builds it; the packageManager pin would make it fetch pnpm 10, and the engines pin asks
+      # for Node 22 (no longer public in Wolfi)
+      jq 'del(.packageManager) | del(.engines) | del(.scripts.preinstall) | del(.scripts.postinstall)' package.json > p.json && mv p.json package.json
+      # CVE floors (pnpm 11 reads them from pnpm-workspace.yaml): next 16.4.2 -> 16.4.5; nodemailer 7 -> 10.6.0
+      # (8.x leaves 9.0.1/10.x advisories; createTransport/sendMail unchanged); glob 10.5.0 and 13.0.6 -> 14.0.2 and
+      # minimatch 10.2.6 -> 11.0.1 for typeorm's entity and migration loader (both still ship CommonJS; the smoke
+      # test boots through the migrations); postcss-selector-parser 6.0.10 -> 6.1.5 (same line)
+      test ! -e pnpm-workspace.yaml
+      printf '%s\n' 'onlyBuiltDependencies: []' 'overrides:' \
+        '  "@types/express-session": 1.18.2' '  "@types/react": 19.2.14' '  "@types/react-dom": 19.2.3' \
+        '  next: 16.4.5' '  nodemailer: 10.6.0' '  "glob@10": 14.0.2' '  "glob@13": 14.0.2' '  "minimatch@10": 11.0.1' \
+        '  "postcss-selector-parser@6": 6.1.5' > pnpm-workspace.yaml
+      jq '.dependencies.next = "16.4.5" | .dependencies.nodemailer = "10.6.0"' package.json > p.json && mv p.json package.json
+      pnpm install --no-frozen-lockfile --ignore-scripts
+      pnpm build
+      test -f dist/index.js && test -d .next
+      pnpm install --prod --no-frozen-lockfile --ignore-scripts
+      # npm-style install scripts did not run: compile the addons against Wolfi's Node (sqlite3 on Wolfi SQLite)
+      for d in node_modules/.pnpm/sqlite3@*/node_modules/sqlite3; do
+        ( cd "$d" && node-gyp rebuild --release --nodedir=/usr --sqlite=/usr --sqlite_libname=sqlite3 )
+        readelf -d "$d/build/Release/node_sqlite3.node" | grep -q 'libsqlite3.so'
+      done
+      for d in node_modules/.pnpm/bcrypt@*/node_modules/bcrypt; do ( cd "$d" && node-gyp rebuild --release --nodedir=/usr ); done
+      find node_modules/.pnpm -type d -name prebuilds -prune -exec rm -rf {} +
+      if find node_modules/.pnpm -type f -name '*.node' -exec readelf -d {} \; 2>/dev/null | grep -q 'libc.musl'; then
+        echo "a musl-linked native module is left"; exit 1
+      fi
+      node -e 'const s=require("sqlite3");new s.Database(":memory:").get("select 1",(e)=>{if(e)throw e});require("bcrypt").hashSync("x",4);console.log("natives ok")'
+      [ "$(node -p 'require("next/package.json").version')" = 16.4.5 ]
+      if find node_modules/.pnpm -maxdepth 1 -name 'glob@1[03].*' -o -maxdepth 1 -name 'minimatch@10.*' | grep -q .; then
+        echo "glob 10/13 or minimatch 10 left"; exit 1
+      fi
+      grep -q "\"version\": \"${{package.version}}\"" package.json
+      app="${{targets.destdir}}/app"
+      install -d "$app/config"
+      cp -a node_modules dist package.json public seerr-api.yml "$app/"
+      install -d "$app/.next"
+      (cd .next && tar --exclude=./cache -cf - .) | (cd "$app/.next" && tar -xf -)
+      find "$app/.next" "$app/node_modules" -name '*.map' -delete
+      printf '{"commitTag": "v%s"}\n' "${{package.version}}" > "$app/committag.json"
+      touch "$app/config/DOCKER"
+
+test:
+  pipeline:
+    - runs: test -f /app/dist/index.js

@@ -1,0 +1,61 @@
+# Seerr runtime: node runs /app/dist/index.js on 5055 (TypeORM migrations at start). Settings and the SQLite
+# database in /app/config (the volume). Nonroot uid 1001, multi-arch, shell-free.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-seerr@local
+
+accounts:
+  groups:
+    - groupname: seerr
+      gid: 1001
+  users:
+    - username: seerr
+      uid: 1001
+      gid: 1001
+      homedir: /app
+  run-as: 1001
+
+work-dir: /app
+
+environment:
+  NODE_ENV: production
+  PORT: "5055"
+  CONFIG_DIRECTORY: /app/config
+  NEXT_TELEMETRY_DISABLED: "1"
+  TZ: UTC
+
+paths:
+  - path: /app/config
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+    recursive: true
+  # next's image optimizer caches here; mount an emptyDir on a read-only rootfs
+  - path: /app/.next/cache
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+entrypoint:
+  command: /usr/bin/node /app/dist/index.js
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-seerr"
+  org.opencontainers.image.licenses: "MIT"

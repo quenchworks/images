@@ -119,6 +119,7 @@ var table = map[string]check{
 	"ezbookkeeping":                     {src: ghRel("mayswind/ezbookkeeping"), n: 1},
 	"adguardhome":                       {src: ghRel("AdguardTeam/AdGuardHome"), n: 1},
 	"kanidm":                            {src: ghRel("kanidm/kanidm"), n: 1},
+	"seerr":                             {src: ghRel("fallenbagel/jellyseerr"), n: 1},
 	"semaphore":                         {src: ghRel("semaphoreui/semaphore"), n: 1},
 	"sftpgo":                            {src: ghRel("drakkan/sftpgo"), n: 1},
 	"easegress":                         {src: ghRel("easegress-io/easegress"), lines: 2},
