@@ -39,7 +39,8 @@ pipeline:
       export HOME="$(mktemp -d)" npm_config_cache="$(mktemp -d)"
       # CVE floors (both inside npm's 14-day release cooldown until 2026-11-19, see build.conf):
       # @sveltejs/kit 2.70.4 (CVE-2026-128117; it stays in the pruned tree) and fast-xml-parser 5.12.0
-      jq '.devDependencies["@sveltejs/kit"] = "2.70.4" | .overrides = {"@sveltejs/kit": "2.70.4", "fast-xml-parser": "5.12.0"}' \
+      # (and cookie 0.7.2 under kit only: CVE-2024-47764; other packages keep their own cookie major)
+      jq '.devDependencies["@sveltejs/kit"] = "2.70.4" | .overrides = {"@sveltejs/kit": {".": "2.70.4", "cookie": "0.7.2"}, "fast-xml-parser": "5.12.0"}' \
         package.json > package.json.new && mv package.json.new package.json
       npm install --no-fund --no-audit
       # upstream's image without the bundled docs (they need a Redis index job and a second build)
@@ -59,6 +60,8 @@ pipeline:
       fi
       [ "$(node -p "JSON.parse(require('fs').readFileSync('node_modules/@sveltejs/kit/package.json')).version")" = 2.70.4 ]
       [ "$(node -p "JSON.parse(require('fs').readFileSync('node_modules/fast-xml-parser/package.json')).version")" = 5.12.0 ]
+      # kit 2 pins cookie ^0.6.0 (CVE-2024-47764, fixed 0.7.0); the override is scoped to kit, so no cookie 0.6 may remain
+      if find node_modules -path '*/node_modules/cookie/package.json' -exec grep -l '"version": "0\.6\.' {} + 2>/dev/null | grep -q .; then echo "cookie 0.6 left"; exit 1; fi
       node -e 'require("better-sqlite3")(":memory:").prepare("select 1").get(); require("bcrypt"); require("sharp")'
       grep -F "${{package.version}}" package.json
       app="${{targets.destdir}}/app"

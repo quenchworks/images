@@ -1,0 +1,61 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/kener/2026-11-19",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-19T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-128120"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/%40sveltejs/kit@2.70.4"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is a DoS while parsing form data sent to a remote functions form, and it only affects apps that enable the experimental remote functions flag and use form, query or command (GHSA-3r8g-jcqq-3p5j). Kener's kit config (svelte.config.js:15-26) sets adapter, output, paths and csrf only: no experimental.remoteFunctions flag, and the source has no remote functions (no query/form/command/query.batch, no $app/server import, no *.remote.js|ts file under src/). Kener's two form actions (src/routes/(account)/account/signin/+page.server.ts, logout/+page.server.ts) are ordinary form actions, not remote functions. Measured 2026-11-19 on the rajnandan1/kener v4.2.2 source the image builds, with @sveltejs/kit floored to 2.70.4 (apps/kener/melange.yaml; GitHub advisory data: only CVE-2026-128117 was backported to 2.70.4, these are fixed only in kit 3.x, and Kener 4.2.2 still declares @sveltejs/kit ^2.53.3). Revisit when Kener moves to SvelteKit 3 or adopts that feature."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-128119"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/%40sveltejs/kit@2.70.4"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is private query.batch remote functions sharing a batch, and it only affects apps using the experimental remote functions flag with non-exported query.batch functions (GHSA-6cf5-gc4q-fm3x). Kener's kit config (svelte.config.js:15-26) sets adapter, output, paths and csrf only: no experimental.remoteFunctions flag, and the source has no remote functions (no query/form/command/query.batch, no $app/server import, no *.remote.js|ts file under src/). Measured 2026-11-19 on the rajnandan1/kener v4.2.2 source the image builds, with @sveltejs/kit floored to 2.70.4 (apps/kener/melange.yaml; GitHub advisory data: only CVE-2026-128117 was backported to 2.70.4, these are fixed only in kit 3.x, and Kener 4.2.2 still declares @sveltejs/kit ^2.53.3). Revisit when Kener moves to SvelteKit 3 or adopts that feature."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-114060"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/%40sveltejs/kit@2.70.4"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is an open redirect after an enhanced form submission (use:enhance) on routes that accept paths beginning with // (GHSA-pfhg-q3qv-9q6r). Kener never uses use:enhance: no file under src/ contains it, so the vulnerable client-side enhance path is not shipped in use. Measured 2026-11-19 on the rajnandan1/kener v4.2.2 source the image builds, with @sveltejs/kit floored to 2.70.4 (apps/kener/melange.yaml; GitHub advisory data: only CVE-2026-128117 was backported to 2.70.4, these are fixed only in kit 3.x, and Kener 4.2.2 still declares @sveltejs/kit ^2.53.3). Revisit when Kener moves to SvelteKit 3 or adopts that feature."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-114061"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/%40sveltejs/kit@2.70.4"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The flaw is XSS through an untrusted cache-control header written into a prerendered page (GHSA-27mw-82g8-phjj). Kener prerenders nothing: no route under src/ exports prerender = true, and adapter-node serves every page at request time. Measured 2026-11-19 on the rajnandan1/kener v4.2.2 source the image builds, with @sveltejs/kit floored to 2.70.4 (apps/kener/melange.yaml; GitHub advisory data: only CVE-2026-128117 was backported to 2.70.4, these are fixed only in kit 3.x, and Kener 4.2.2 still declares @sveltejs/kit ^2.53.3). Revisit when Kener moves to SvelteKit 3 or adopts that feature."
+    }
+  ]
+}

@@ -113,6 +113,8 @@ func kenerForm(base, action string, form url.Values) (int, string) {
 	req, _ := http.NewRequest("POST", base+"/account/signin?/"+action, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", base)
+	// as a browser posts it: with Accept */* SvelteKit answers a form action with JSON {"type":"redirect"} and 200
+	req.Header.Set("Accept", "text/html")
 	c := &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	r, err := c.Do(req)
 	if err != nil {
