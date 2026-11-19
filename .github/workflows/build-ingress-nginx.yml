@@ -1,31 +1,9 @@
 name: build-ingress-nginx
 
-# Hardened ingress-nginx controller image. Assembled with apko from Wolfi's
-# `ingress-nginx-controller-1.15` apk, PLUS a melange shim that rebuilds the
-# controller BINARY from source: Wolfi's apk is built against golang.org/x/net
-# v0.55.0 (CVE-2026-46600 HIGH) and x/text v0.37.0 (CVE-2026-56852 HIGH), and
-# Wolfi's newest revision still is, so the floors cannot be reached any other way.
-# nginx itself, the lua/modsecurity module set and the templates all still come
-# from the apk -- only the one Go binary is replaced, and the recipe fails the
-# build the day Wolfi rebuilds the controller so the shim cannot outlive it.
-#
-# Each matrix entry runs a NATIVE per-arch build (no QEMU), the hard 0-CVE Trivy
-# gate, the boot smoke test, then a per-version merge job that assembles + signs
-# + attests the multi-arch index.
-#
-# The controller is deployed by a chart, so this DOES dispatch the charts repo.
-#
-# TEMPLATE: to add another LTS (or another runtime), copy a matrix entry and
-# change `ver`; apps/ingress-nginx/apko.yaml carries the `__VER__` placeholder that CI
-# substitutes per entry (it also feeds JAVA_HOME). No :latest tag is ever
-# published.
-on:
-  workflow_dispatch:
-permissions:
-  contents: read
-  packages: write        # push to GHCR
-  id-token: write        # cosign keyless + attestation signing
-  attestations: write    # SLSA build provenance + SBOM attestation
+# Hardened ingress-nginx controller image, assembled with apko from Wolfi's
+# `ingress-nginx-controller-1.15` apk. Until 1.15.15-r0 a melange shim rebuilt the controller
+# binary with golang.org/x/net floored; Wolfi now builds it with x/net v0.62.0, so the image is
+# the apk as is.
 
 # one build per app at a time; a newer dispatch replaces an older one still pending (a stuck
 # queued run once ran 40 minutes late and republished a digest the chart had already pinned)
@@ -129,21 +107,7 @@ jobs:
           set -euo pipefail
           source build.conf
           prog="$(render '${{ matrix.ver }}')"
-          sed -e "$prog" melange.yaml > melange.rendered.yaml
           sed -e "$prog" apko.yaml    > apko.rendered.yaml
-
-      # FROM_SOURCE shim: Wolfi's ingress-nginx-controller apk is built against
-      # golang.org/x/net v0.55.0 (CVE-2026-46600 HIGH) and x/text v0.37.0
-      # (CVE-2026-56852 HIGH), and Wolfi's newest revision still is. Only the
-      # controller BINARY is rebuilt from source with the floors applied; nginx, the
-      # lua/modsecurity modules and the templates still come from the apk. The recipe
-      # carries a guard that fails the build once Wolfi rebuilds the controller, so
-      # this shim cannot outlive its reason.
-      - name: Build the controller shim package from source (native ${{ matrix.arch.name }})
-        run: |
-          set -euo pipefail
-          melange keygen melange.rsa
-          melange build melange.rendered.yaml --arch ${{ matrix.arch.name }} --signing-key melange.rsa --out-dir ./packages
 
       - name: Assemble single-arch image for the scan gate
         run: apko build apko.rendered.yaml "${GHCR_IMAGE}:scan-${{ matrix.arch.platform }}" image.tar --arch ${{ matrix.arch.name }}
