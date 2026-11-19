@@ -83,6 +83,19 @@ pipeline:
       grep -q "^gem 'openssl', '~> 4.0.2'" Gemfile
       bundle lock --update openssl
       grep -qx '    openssl (4.0.2)' Gemfile.lock
+      # CVE floats inside each gem's line (sized on 19.6.0, images#20). Three Gemfile pins block them; bundler 4.1's
+      # release cooldown still holds puma 8.0.3 (UNKNOWN severity) until about 2026-11-20.
+      sed -i -e "s/^gem 'mail', '= 2.9.0'/gem 'mail', '= 2.9.1'/" \
+             -e "s/^gem 'view_component', '~> 4.12.0'/gem 'view_component', '~> 4.14.0'/" \
+             -e "s/^gem 'omniauth', '~> 2.1.0'/gem 'omniauth', '~> 2.2.0'/" Gemfile
+      bundle lock --conservative --patch --update addressable graphql mail msgpack net-ssh puma rack resolv rubyntlm sanitize
+      bundle lock --conservative --minor --update faraday-http-cache view_component omniauth
+      for want in 'addressable 2.9.[1-9]' 'faraday-http-cache 2.[89]' 'graphql 2.6.1[4-9]' 'mail 2.9.[1-9]' \
+                  'msgpack 1.8.[7-9]' 'net-ssh 7.3.([5-9]|[1-9][0-9])' 'rack 2.2.(2[5-9]|[3-9][0-9])' 'resolv 0.7.[2-9]' \
+                  'rubyntlm 0.6.[6-9]' 'sanitize 7.0.[2-9]' 'view_component 4.1[4-9]' 'omniauth 2.2'; do
+        set -- $want
+        grep -qE "^    $1 \\($2" Gemfile.lock || { echo "float did not land: $1 $2"; exit 1; }
+      done
       bundle config set --local deployment true
       bundle config set --local without 'development test'
       bundle config set --local build.nokogiri --use-system-libraries
@@ -115,7 +128,12 @@ pipeline:
       set -eu
       d="${{targets.destdir}}/srv/gitlab"
       install -d "$d"
-      rm -rf node_modules tmp/cache spec qa ee
+      # not part of what runs: build and dev trees, and lockfiles the scanner would read as installed (the frontend is
+      # compiled into public/assets; the path gems' own dev lockfiles; workhorse ships as its own image; doc/ stays:
+      # the help pages read it)
+      rm -rf node_modules tmp/cache spec qa ee workhorse storybook rubocop danger
+      rm -f yarn.lock package.json Pipfile Pipfile.lock Gemfile.next Gemfile.next.lock
+      find gems vendor/gems -name Gemfile.lock -delete
       # the package destdir (melange-out) sits inside the workspace: copy everything but it
       for f in * .[!.]*; do
         if [ -e "$f" ] && [ "$f" != melange-out ]; then cp -a "$f" "$d/"; fi
