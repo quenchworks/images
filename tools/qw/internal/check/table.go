@@ -167,6 +167,7 @@ var table = map[string]check{
 	"atuin-server":                      {src: ghRel("atuinsh/atuin"), n: 1},
 	"grocy":                             {src: ghRel("grocy/grocy"), n: 1},
 	"audiobookshelf":                    {src: ghRel("advplyr/audiobookshelf"), n: 1},
+	"kutt":                              {src: ghRel("thedevs-network/kutt"), n: 1},
 	"kener":                             {src: ghRel("rajnandan1/kener"), n: 1},
 	"gotosocial":                        {src: codebergRel("superseriousbusiness/gotosocial"), n: 1},
 	"wstunnel":                          {src: ghRel("erebe/wstunnel"), n: 1},

@@ -1,0 +1,59 @@
+# Kutt runtime: node runs /app/start.js (knex migrations, then the server) on 3000. JWT_SECRET is required.
+# SQLite at /var/lib/kutt/data.sqlite (the volume) unless DB_CLIENT selects pg or mysql2. Nonroot uid 1001,
+# multi-arch, shell-free.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-kutt@local
+
+accounts:
+  groups:
+    - groupname: kutt
+      gid: 1001
+  users:
+    - username: kutt
+      uid: 1001
+      gid: 1001
+      homedir: /app
+  run-as: 1001
+
+work-dir: /app
+
+environment:
+  NODE_ENV: production
+  PORT: "3000"
+  DB_FILENAME: /var/lib/kutt/data.sqlite
+  TZ: UTC
+
+paths:
+  - path: /var/lib
+    type: directory
+    uid: 0
+    gid: 0
+    permissions: 0o755
+  - path: /var/lib/kutt
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+entrypoint:
+  command: /usr/bin/node /app/start.js
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-kutt"
+  org.opencontainers.image.licenses: "MIT"
