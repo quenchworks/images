@@ -20,6 +20,7 @@ package:
       - exiftool
       - libpq-18
       - postgresql-18-client
+      - posix-libc-utils        # getconf: prometheus-client-mmap reads the page size at every Rails boot
   resources:
     cpu: "4"
     memory: 14Gi
@@ -58,6 +59,7 @@ environment:
       - zlib-dev
       - yaml-dev
       - libgit2-dev
+      - posix-libc-utils        # getconf for prometheus-client-mmap while Rails loads for the asset compile
       - nodejs-22               # build-time only: the image ships compiled assets, not node
       - yarn
 
