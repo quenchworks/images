@@ -147,6 +147,344 @@
       "status": "not_affected",
       "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
       "impact_statement": "The flaw is a ReDoS in RuleSet#expand_shorthand! on crafted dimension shorthands (margin/padding values with unclosed functions); user-controlled style attributes are reduced to text-align: left, center or right before premailer sees them, and the stylesheets are GitLab's own. Measured 2026-11-19 on gitlab-foss v19.6.0, premailer 1.27.0, premailer-rails 1.12.0 and css_parser 1.22.0. In the CE image css_parser is reached only through premailer, which inlines CSS into outgoing mail (config/initializers/action_mailer_hooks.rb:18, app/workers/emails_on_push_worker.rb:112). premailer-rails strips every <link rel=stylesheet> from the mail (premailer-rails lib/premailer/rails/css_helper.rb:26-33) and hands premailer the CSS as a string from the asset pipeline only, the production strategy (config/initializers/premailer.rb:10; customized_premailer.rb:14), so premailer's load_uri! path never runs; css_parser parses that GitLab-built asset CSS and the <style> blocks of the mail HTML (premailer lib/premailer/premailer.rb:282-283, 330-331). Mail HTML comes from GitLab's own templates plus user markdown rendered through Banzai's sanitizer, whose element allowlist has no style element (html-pipeline 2.14.3 lib/html/pipeline/sanitization_filter.rb:43-50; GitLab adds only span, details, summary, abbr, section and input: gems/gitlab-banzai/lib/banzai/filter/base_sanitization_filter.rb:30-46, lib/banzai/filter/sanitization_filter.rb:85-95) and which reduces style attributes to text-align on table cells (lib/banzai/filter/sanitization_filter.rb:36-38, 107-112). The other dependents do not run in the CE image: prawn-svg backs only lib/gitlab/pdf, which nothing in the foss tree calls (its callers are in ee/), and lookbook is in the development group (Gemfile:534). The fixes are only in css_parser 3.x, which needs ssrf_filter ~> 1.5 while carrierwave 1.3.4 caps it below 1.1 and GitLab's config/initializers/ssrf_filter_patch.rb:8 refuses ssrf_filter >= 1.2, so the bundle cannot resolve; GitLab master still locks 1.22.0. Revisit when GitLab moves to carrierwave 2 and css_parser 3, or lets user content carry <style>."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-24001"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/diff@1.0.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "Measured 2026-11-19 on the image's compiled frontend. The match is a name collision: the file is srv/gitlab/public/assets/webpack/gitlab-web-ide-vscode-workbench-0.0.1-dev-20260106142046/vscode/extensions/diff/package.json, the manifest of a VS Code built-in language extension that GitLab's Web IDE ships (npm @gitlab/web-ide 0.0.1-dev-20260106142046, package/.../vscode/extensions/diff/package.json: name diff, version 1.0.0, publisher vscode, engines.vscode set), not the npm package of that name. The npm package diff is not in the image: the frontend is compiled into public/assets and node_modules is removed at build (apps/gitlab-rails/melange.yaml, install step). The Web IDE reads these manifests at runtime, so they stay."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-h6ch-v84p-w6p9"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/diff@1.0.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "Measured 2026-11-19 on the image's compiled frontend. The match is a name collision: the file is srv/gitlab/public/assets/webpack/gitlab-web-ide-vscode-workbench-0.0.1-dev-20260106142046/vscode/extensions/diff/package.json, the manifest of a VS Code built-in language extension that GitLab's Web IDE ships (npm @gitlab/web-ide 0.0.1-dev-20260106142046, package/.../vscode/extensions/diff/package.json: name diff, version 1.0.0, publisher vscode, engines.vscode set), not the npm package of that name. The npm package diff is not in the image: the frontend is compiled into public/assets and node_modules is removed at build (apps/gitlab-rails/melange.yaml, install step). The Web IDE reads these manifests at runtime, so they stay."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2015-8861"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/handlebars@1.0.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "Measured 2026-11-19 on the image's compiled frontend. The match is a name collision: the file is srv/gitlab/public/assets/webpack/gitlab-web-ide-vscode-workbench-0.0.1-dev-20260106142046/vscode/extensions/handlebars/package.json, the manifest of a VS Code built-in language extension that GitLab's Web IDE ships (npm @gitlab/web-ide 0.0.1-dev-20260106142046, package/.../vscode/extensions/handlebars/package.json: name handlebars, version 1.0.0, publisher vscode, engines.vscode set), not the npm package of that name. The npm package handlebars is not in the image: the frontend is compiled into public/assets and node_modules is removed at build (apps/gitlab-rails/melange.yaml, install step). The Web IDE reads these manifests at runtime, so they stay."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2019-19919"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/handlebars@1.0.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "Measured 2026-11-19 on the image's compiled frontend. The match is a name collision: the file is srv/gitlab/public/assets/webpack/gitlab-web-ide-vscode-workbench-0.0.1-dev-20260106142046/vscode/extensions/handlebars/package.json, the manifest of a VS Code built-in language extension that GitLab's Web IDE ships (npm @gitlab/web-ide 0.0.1-dev-20260106142046, package/.../vscode/extensions/handlebars/package.json: name handlebars, version 1.0.0, publisher vscode, engines.vscode set), not the npm package of that name. The npm package handlebars is not in the image: the frontend is compiled into public/assets and node_modules is removed at build (apps/gitlab-rails/melange.yaml, install step). The Web IDE reads these manifests at runtime, so they stay."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2019-20920"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/handlebars@1.0.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "Measured 2026-11-19 on the image's compiled frontend. The match is a name collision: the file is srv/gitlab/public/assets/webpack/gitlab-web-ide-vscode-workbench-0.0.1-dev-20260106142046/vscode/extensions/handlebars/package.json, the manifest of a VS Code built-in language extension that GitLab's Web IDE ships (npm @gitlab/web-ide 0.0.1-dev-20260106142046, package/.../vscode/extensions/handlebars/package.json: name handlebars, version 1.0.0, publisher vscode, engines.vscode set), not the npm package of that name. The npm package handlebars is not in the image: the frontend is compiled into public/assets and node_modules is removed at build (apps/gitlab-rails/melange.yaml, install step). The Web IDE reads these manifests at runtime, so they stay."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2021-23369"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/handlebars@1.0.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "Measured 2026-11-19 on the image's compiled frontend. The match is a name collision: the file is srv/gitlab/public/assets/webpack/gitlab-web-ide-vscode-workbench-0.0.1-dev-20260106142046/vscode/extensions/handlebars/package.json, the manifest of a VS Code built-in language extension that GitLab's Web IDE ships (npm @gitlab/web-ide 0.0.1-dev-20260106142046, package/.../vscode/extensions/handlebars/package.json: name handlebars, version 1.0.0, publisher vscode, engines.vscode set), not the npm package of that name. The npm package handlebars is not in the image: the frontend is compiled into public/assets and node_modules is removed at build (apps/gitlab-rails/melange.yaml, install step). The Web IDE reads these manifests at runtime, so they stay."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2021-23383"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/handlebars@1.0.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "Measured 2026-11-19 on the image's compiled frontend. The match is a name collision: the file is srv/gitlab/public/assets/webpack/gitlab-web-ide-vscode-workbench-0.0.1-dev-20260106142046/vscode/extensions/handlebars/package.json, the manifest of a VS Code built-in language extension that GitLab's Web IDE ships (npm @gitlab/web-ide 0.0.1-dev-20260106142046, package/.../vscode/extensions/handlebars/package.json: name handlebars, version 1.0.0, publisher vscode, engines.vscode set), not the npm package of that name. The npm package handlebars is not in the image: the frontend is compiled into public/assets and node_modules is removed at build (apps/gitlab-rails/melange.yaml, install step). The Web IDE reads these manifests at runtime, so they stay."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-2cf5-4w76-r9qv"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/handlebars@1.0.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "Measured 2026-11-19 on the image's compiled frontend. The match is a name collision: the file is srv/gitlab/public/assets/webpack/gitlab-web-ide-vscode-workbench-0.0.1-dev-20260106142046/vscode/extensions/handlebars/package.json, the manifest of a VS Code built-in language extension that GitLab's Web IDE ships (npm @gitlab/web-ide 0.0.1-dev-20260106142046, package/.../vscode/extensions/handlebars/package.json: name handlebars, version 1.0.0, publisher vscode, engines.vscode set), not the npm package of that name. The npm package handlebars is not in the image: the frontend is compiled into public/assets and node_modules is removed at build (apps/gitlab-rails/melange.yaml, install step). The Web IDE reads these manifests at runtime, so they stay."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-g9r4-xpmj-mj65"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/handlebars@1.0.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "Measured 2026-11-19 on the image's compiled frontend. The match is a name collision: the file is srv/gitlab/public/assets/webpack/gitlab-web-ide-vscode-workbench-0.0.1-dev-20260106142046/vscode/extensions/handlebars/package.json, the manifest of a VS Code built-in language extension that GitLab's Web IDE ships (npm @gitlab/web-ide 0.0.1-dev-20260106142046, package/.../vscode/extensions/handlebars/package.json: name handlebars, version 1.0.0, publisher vscode, engines.vscode set), not the npm package of that name. The npm package handlebars is not in the image: the frontend is compiled into public/assets and node_modules is removed at build (apps/gitlab-rails/melange.yaml, install step). The Web IDE reads these manifests at runtime, so they stay."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-q2c6-c6pm-g3gh"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/handlebars@1.0.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "Measured 2026-11-19 on the image's compiled frontend. The match is a name collision: the file is srv/gitlab/public/assets/webpack/gitlab-web-ide-vscode-workbench-0.0.1-dev-20260106142046/vscode/extensions/handlebars/package.json, the manifest of a VS Code built-in language extension that GitLab's Web IDE ships (npm @gitlab/web-ide 0.0.1-dev-20260106142046, package/.../vscode/extensions/handlebars/package.json: name handlebars, version 1.0.0, publisher vscode, engines.vscode set), not the npm package of that name. The npm package handlebars is not in the image: the frontend is compiled into public/assets and node_modules is removed at build (apps/gitlab-rails/melange.yaml, install step). The Web IDE reads these manifests at runtime, so they stay."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-q42p-pg8m-cqh6"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/handlebars@1.0.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "Measured 2026-11-19 on the image's compiled frontend. The match is a name collision: the file is srv/gitlab/public/assets/webpack/gitlab-web-ide-vscode-workbench-0.0.1-dev-20260106142046/vscode/extensions/handlebars/package.json, the manifest of a VS Code built-in language extension that GitLab's Web IDE ships (npm @gitlab/web-ide 0.0.1-dev-20260106142046, package/.../vscode/extensions/handlebars/package.json: name handlebars, version 1.0.0, publisher vscode, engines.vscode set), not the npm package of that name. The npm package handlebars is not in the image: the frontend is compiled into public/assets and node_modules is removed at build (apps/gitlab-rails/melange.yaml, install step). The Web IDE reads these manifests at runtime, so they stay."
+    },
+    {
+      "vulnerability": {
+        "name": "NSWG-ECO-519"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/handlebars@1.0.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "Measured 2026-11-19 on the image's compiled frontend. The match is a name collision: the file is srv/gitlab/public/assets/webpack/gitlab-web-ide-vscode-workbench-0.0.1-dev-20260106142046/vscode/extensions/handlebars/package.json, the manifest of a VS Code built-in language extension that GitLab's Web IDE ships (npm @gitlab/web-ide 0.0.1-dev-20260106142046, package/.../vscode/extensions/handlebars/package.json: name handlebars, version 1.0.0, publisher vscode, engines.vscode set), not the npm package of that name. The npm package handlebars is not in the image: the frontend is compiled into public/assets and node_modules is removed at build (apps/gitlab-rails/melange.yaml, install step). The Web IDE reads these manifests at runtime, so they stay."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2020-7788"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/ini@1.0.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "Measured 2026-11-19 on the image's compiled frontend. The match is a name collision: the file is srv/gitlab/public/assets/webpack/gitlab-web-ide-vscode-workbench-0.0.1-dev-20260106142046/vscode/extensions/ini/package.json, the manifest of a VS Code built-in language extension that GitLab's Web IDE ships (npm @gitlab/web-ide 0.0.1-dev-20260106142046, package/.../vscode/extensions/ini/package.json: name ini, version 1.0.0, publisher vscode, engines.vscode set), not the npm package of that name. The npm package ini is not in the image: the frontend is compiled into public/assets and node_modules is removed at build (apps/gitlab-rails/melange.yaml, install step). The Web IDE reads these manifests at runtime, so they stay."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2020-7712"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/json@1.0.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "Measured 2026-11-19 on the image's compiled frontend. The match is a name collision: the file is srv/gitlab/public/assets/webpack/gitlab-web-ide-vscode-workbench-0.0.1-dev-20260106142046/vscode/extensions/json/package.json, the manifest of a VS Code built-in language extension that GitLab's Web IDE ships (npm @gitlab/web-ide 0.0.1-dev-20260106142046, package/.../vscode/extensions/json/package.json: name json, version 1.0.0, publisher vscode, engines.vscode set), not the npm package of that name. The npm package json is not in the image: the frontend is compiled into public/assets and node_modules is removed at build (apps/gitlab-rails/melange.yaml, install step). The Web IDE reads these manifests at runtime, so they stay."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2013-4116"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/npm@1.0.1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "Measured 2026-11-19 on the image's compiled frontend. The match is a name collision: the file is srv/gitlab/public/assets/webpack/gitlab-web-ide-vscode-workbench-0.0.1-dev-20260106142046/vscode/extensions/npm/package.json, the manifest of a VS Code built-in language extension that GitLab's Web IDE ships (npm @gitlab/web-ide 0.0.1-dev-20260106142046, package/.../vscode/extensions/npm/package.json: name npm, version 1.0.1, publisher vscode, engines.vscode set), not the npm package of that name. The npm package npm is not in the image: the frontend is compiled into public/assets and node_modules is removed at build (apps/gitlab-rails/melange.yaml, install step). The Web IDE reads these manifests at runtime, so they stay."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2016-3956"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/npm@1.0.1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "Measured 2026-11-19 on the image's compiled frontend. The match is a name collision: the file is srv/gitlab/public/assets/webpack/gitlab-web-ide-vscode-workbench-0.0.1-dev-20260106142046/vscode/extensions/npm/package.json, the manifest of a VS Code built-in language extension that GitLab's Web IDE ships (npm @gitlab/web-ide 0.0.1-dev-20260106142046, package/.../vscode/extensions/npm/package.json: name npm, version 1.0.1, publisher vscode, engines.vscode set), not the npm package of that name. The npm package npm is not in the image: the frontend is compiled into public/assets and node_modules is removed at build (apps/gitlab-rails/melange.yaml, install step). The Web IDE reads these manifests at runtime, so they stay."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2018-7408"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/npm@1.0.1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "Measured 2026-11-19 on the image's compiled frontend. The match is a name collision: the file is srv/gitlab/public/assets/webpack/gitlab-web-ide-vscode-workbench-0.0.1-dev-20260106142046/vscode/extensions/npm/package.json, the manifest of a VS Code built-in language extension that GitLab's Web IDE ships (npm @gitlab/web-ide 0.0.1-dev-20260106142046, package/.../vscode/extensions/npm/package.json: name npm, version 1.0.1, publisher vscode, engines.vscode set), not the npm package of that name. The npm package npm is not in the image: the frontend is compiled into public/assets and node_modules is removed at build (apps/gitlab-rails/melange.yaml, install step). The Web IDE reads these manifests at runtime, so they stay."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2019-16775"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/npm@1.0.1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "Measured 2026-11-19 on the image's compiled frontend. The match is a name collision: the file is srv/gitlab/public/assets/webpack/gitlab-web-ide-vscode-workbench-0.0.1-dev-20260106142046/vscode/extensions/npm/package.json, the manifest of a VS Code built-in language extension that GitLab's Web IDE ships (npm @gitlab/web-ide 0.0.1-dev-20260106142046, package/.../vscode/extensions/npm/package.json: name npm, version 1.0.1, publisher vscode, engines.vscode set), not the npm package of that name. The npm package npm is not in the image: the frontend is compiled into public/assets and node_modules is removed at build (apps/gitlab-rails/melange.yaml, install step). The Web IDE reads these manifests at runtime, so they stay."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2019-16776"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/npm@1.0.1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "Measured 2026-11-19 on the image's compiled frontend. The match is a name collision: the file is srv/gitlab/public/assets/webpack/gitlab-web-ide-vscode-workbench-0.0.1-dev-20260106142046/vscode/extensions/npm/package.json, the manifest of a VS Code built-in language extension that GitLab's Web IDE ships (npm @gitlab/web-ide 0.0.1-dev-20260106142046, package/.../vscode/extensions/npm/package.json: name npm, version 1.0.1, publisher vscode, engines.vscode set), not the npm package of that name. The npm package npm is not in the image: the frontend is compiled into public/assets and node_modules is removed at build (apps/gitlab-rails/melange.yaml, install step). The Web IDE reads these manifests at runtime, so they stay."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2019-16777"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/npm@1.0.1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "Measured 2026-11-19 on the image's compiled frontend. The match is a name collision: the file is srv/gitlab/public/assets/webpack/gitlab-web-ide-vscode-workbench-0.0.1-dev-20260106142046/vscode/extensions/npm/package.json, the manifest of a VS Code built-in language extension that GitLab's Web IDE ships (npm @gitlab/web-ide 0.0.1-dev-20260106142046, package/.../vscode/extensions/npm/package.json: name npm, version 1.0.1, publisher vscode, engines.vscode set), not the npm package of that name. The npm package npm is not in the image: the frontend is compiled into public/assets and node_modules is removed at build (apps/gitlab-rails/melange.yaml, install step). The Web IDE reads these manifests at runtime, so they stay."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2020-15095"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/npm@1.0.1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "Measured 2026-11-19 on the image's compiled frontend. The match is a name collision: the file is srv/gitlab/public/assets/webpack/gitlab-web-ide-vscode-workbench-0.0.1-dev-20260106142046/vscode/extensions/npm/package.json, the manifest of a VS Code built-in language extension that GitLab's Web IDE ships (npm @gitlab/web-ide 0.0.1-dev-20260106142046, package/.../vscode/extensions/npm/package.json: name npm, version 1.0.1, publisher vscode, engines.vscode set), not the npm package of that name. The npm package npm is not in the image: the frontend is compiled into public/assets and node_modules is removed at build (apps/gitlab-rails/melange.yaml, install step). The Web IDE reads these manifests at runtime, so they stay."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2021-21353"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/pug@1.0.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "Measured 2026-11-19 on the image's compiled frontend. The match is a name collision: the file is srv/gitlab/public/assets/webpack/gitlab-web-ide-vscode-workbench-0.0.1-dev-20260106142046/vscode/extensions/pug/package.json, the manifest of a VS Code built-in language extension that GitLab's Web IDE ships (npm @gitlab/web-ide 0.0.1-dev-20260106142046, package/.../vscode/extensions/pug/package.json: name pug, version 1.0.0, publisher vscode, engines.vscode set), not the npm package of that name. The npm package pug is not in the image: the frontend is compiled into public/assets and node_modules is removed at build (apps/gitlab-rails/melange.yaml, install step). The Web IDE reads these manifests at runtime, so they stay."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2024-36361"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/pug@1.0.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "Measured 2026-11-19 on the image's compiled frontend. The match is a name collision: the file is srv/gitlab/public/assets/webpack/gitlab-web-ide-vscode-workbench-0.0.1-dev-20260106142046/vscode/extensions/pug/package.json, the manifest of a VS Code built-in language extension that GitLab's Web IDE ships (npm @gitlab/web-ide 0.0.1-dev-20260106142046, package/.../vscode/extensions/pug/package.json: name pug, version 1.0.0, publisher vscode, engines.vscode set), not the npm package of that name. The npm package pug is not in the image: the frontend is compiled into public/assets and node_modules is removed at build (apps/gitlab-rails/melange.yaml, install step). The Web IDE reads these manifests at runtime, so they stay."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-33532"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/yaml@1.0.0"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "Measured 2026-11-19 on the image's compiled frontend. The match is a name collision: the file is srv/gitlab/public/assets/webpack/gitlab-web-ide-vscode-workbench-0.0.1-dev-20260106142046/vscode/extensions/yaml/package.json, the manifest of a VS Code built-in language extension that GitLab's Web IDE ships (npm @gitlab/web-ide 0.0.1-dev-20260106142046, package/.../vscode/extensions/yaml/package.json: name yaml, version 1.0.0, publisher vscode, engines.vscode set), not the npm package of that name. The npm package yaml is not in the image: the frontend is compiled into public/assets and node_modules is removed at build (apps/gitlab-rails/melange.yaml, install step). The Web IDE reads these manifests at runtime, so they stay."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2025-15558"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/docker/cli@v25.0.1%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Measured 2026-11-19 on the devfile gem 0.5.5's Go helper, which the image rebuilds from the gem's own source (ext/) with Go 1.27.4 and floated modules (apps/gitlab-rails/melange.yaml, devfile step). docker/cli v25 and docker/docker v28 stay: docker/cli v29 breaks oras-go v1's registry auth (login.go:102 AuthConfig type), and docker/docker has no v29 under that module path (moby moved to new module paths). devfile uses them only as client libraries for registry credentials through oras-go. CVE-2025-15558 is privilege escalation through CLI plugin binaries in the Docker CLI on Windows; the helper is a Linux binary that never loads or runs CLI plugins."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-33997"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/docker/docker@v28.5.2%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Measured 2026-11-19 on the devfile gem 0.5.5's Go helper, which the image rebuilds from the gem's own source (ext/) with Go 1.27.4 and floated modules (apps/gitlab-rails/melange.yaml, devfile step). docker/cli v25 and docker/docker v28 stay: docker/cli v29 breaks oras-go v1's registry auth (login.go:102 AuthConfig type), and docker/docker has no v29 under that module path (moby moved to new module paths). devfile uses them only as client libraries for registry credentials through oras-go. CVE-2026-33997 is a privilege-validation bypass in the Moby daemon's plugin installation; the helper runs no daemon and installs no plugins, it only uses API types."
     }
   ]
 }

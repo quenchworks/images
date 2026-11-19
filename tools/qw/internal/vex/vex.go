@@ -77,8 +77,10 @@ func checkVexFile(path string) ([]string, *vexDoc) {
 		switch {
 		case cve == "":
 			errs = append(errs, where+": no vulnerability.name")
-		case !(strings.HasPrefix(cve, "CVE-") || strings.HasPrefix(cve, "GHSA-") || strings.HasPrefix(cve, "GO-")):
-			errs = append(errs, fmt.Sprintf("%s: '%s' is not a CVE/GHSA/GO identifier", where, cve))
+		// NSWG-ECO-*: Node Security WG advisories, which Trivy reports under that id when no CVE or GHSA exists.
+		case !(strings.HasPrefix(cve, "CVE-") || strings.HasPrefix(cve, "GHSA-") || strings.HasPrefix(cve, "GO-") ||
+			strings.HasPrefix(cve, "NSWG-ECO-")):
+			errs = append(errs, fmt.Sprintf("%s: '%s' is not a CVE/GHSA/GO/NSWG-ECO identifier", where, cve))
 		}
 		if len(st.Products) == 0 {
 			errs = append(errs, fmt.Sprintf("%s (%s): no products -- a statement must name what it applies to", where, cve))
