@@ -144,6 +144,27 @@ pipeline:
       go version -m "$dfd/out/devfile-$ga-linux" > /tmp/devfile.mods
       grep -q 'golang.org/x/net	v0.62.0' /tmp/devfile.mods
       rm -rf "$dfd/ext"
+      # Rust extensions. gitlab-glfm-markdown builds from its ext Cargo.lock (time 0.3.41, CVE-2026-25727): rebuild the
+      # gem with time 0.3.47 and reinstall it over the bundled copy. gitlab_query_language has no lock beside its
+      # manifest, so its build resolves fresh (bytes >= 1.11.1); its gem-root Cargo.lock drives nothing. A Cargo.lock
+      # with no Cargo.toml beside it is removed, and the locks that remain must carry the fixed versions.
+      bp="$PWD/$(dirname "$(dirname "$dg")")"
+      gfv="$(sed -n 's/^    gitlab-glfm-markdown (\([0-9.]*\))$/\1/p' Gemfile.lock)"
+      t="$(mktemp -d)"
+      (cd "$t" && gem fetch gitlab-glfm-markdown -v "$gfv" --platform ruby && gem unpack "gitlab-glfm-markdown-$gfv.gem" && \
+        gem spec "gitlab-glfm-markdown-$gfv.gem" --ruby > "gitlab-glfm-markdown-$gfv/glfm.gemspec" && \
+        cd "gitlab-glfm-markdown-$gfv/ext/gitlab_glfm_markdown" && cargo update -p time --precise 0.3.47 && \
+        cd "$t/gitlab-glfm-markdown-$gfv" && gem build glfm.gemspec && \
+        GEM_HOME="$bp" GEM_PATH="$bp" gem install "./gitlab-glfm-markdown-$gfv.gem" --install-dir "$bp" --ignore-dependencies --no-document)
+      rm -rf "$t"
+      for g in "$bp"/gems/gitlab-glfm-markdown-* "$bp"/gems/gitlab_query_language-*; do
+        find "$g" -name Cargo.lock > /tmp/locks
+        while read -r l; do [ -e "$(dirname "$l")/Cargo.toml" ] || rm -f "$l"; done < /tmp/locks
+      done
+      awk '/^name = "time"/{getline; print}' "$bp"/gems/gitlab-glfm-markdown-*/ext/gitlab_glfm_markdown/Cargo.lock > /tmp/time.v
+      grep -q 'version = "0.3.4[7-9]"' /tmp/time.v
+      find "$bp"/gems/gitlab_query_language-* -name Cargo.lock -exec awk '/^name = "bytes"/{getline; print}' {} + > /tmp/bytes.v
+      if grep -q '"1.10.1"' /tmp/bytes.v; then echo "gitlab_query_language still locks bytes 1.10.1"; exit 1; fi
 
   - name: frontend assets (no database)
     runs: |
