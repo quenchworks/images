@@ -160,7 +160,7 @@ pipeline:
       find gems vendor/gems -name Gemfile.lock -delete
       # native gem build leftovers (libtool archives, objects, static archives) and the downloaded .gem cache: only
       # the compiled .so files load; melange's lint refuses .la files
-      find vendor/bundle \( -name '*.la' -o -name '*.o' -o -name '*.a' \) -type f -delete
+      find vendor/bundle \( -name '*.la' -o -name '*.o' -o -name '*.a' \) \( -type f -o -type l \) -delete
       rm -rf vendor/bundle/ruby/*/cache
       # the package destdir (melange-out) sits inside the workspace: copy everything but it
       for f in * .[!.]*; do
