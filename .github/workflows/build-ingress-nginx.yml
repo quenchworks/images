@@ -4,6 +4,19 @@ name: build-ingress-nginx
 # `ingress-nginx-controller-1.15` apk. Until 1.15.15-r0 a melange shim rebuilt the controller
 # binary with golang.org/x/net floored; Wolfi now builds it with x/net v0.62.0, so the image is
 # the apk as is.
+#
+# Each matrix entry runs a NATIVE per-arch build (no QEMU), the hard 0-CVE Trivy
+# gate, the boot smoke test, then a per-version merge job that assembles + signs
+# + attests the multi-arch index.
+#
+# The controller is deployed by a chart, so this DOES dispatch the charts repo.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write        # push to GHCR
+  id-token: write        # cosign keyless + attestation signing
+  attestations: write    # SLSA build provenance + SBOM attestation
 
 # one build per app at a time; a newer dispatch replaces an older one still pending (a stuck
 # queued run once ran 40 minutes late and republished a digest the chart had already pinned)
