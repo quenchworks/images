@@ -116,6 +116,11 @@ pipeline:
       pf="$PWD/devise-4.9.4-security.patch"; (cd "$dg" && patch -p1 -i "$pf")
       grep -q 'extract_path_from_location(request.referrer)' "$dg/lib/devise/failure_app.rb"
       grep -q 'devise_unconfirmed_email_will_change!' "$dg/lib/devise/models/confirmable.rb"
+      # graphql moved past 2.6.10; GitLab's serializer backport (a55c33b5, 369383a1) is in graphql 2.6.15 (both commits are ancestors of v2.6.15) and its guard
+      # says to delete it then. Check the installed gem carries the escaping before removing the initializer.
+      gq="$(dirname "$dg")/graphql-$(sed -n 's/^    graphql (\([0-9.]*\))$/\1/p' Gemfile.lock)"
+      grep -q 'RESERVED_KEYS = \[GLOBALID_KEY' "$gq/lib/graphql/subscriptions/serialize.rb"
+      rm config/initializers/graphql_subscriptions_serialize_patch.rb
 
   - name: frontend assets (no database)
     runs: |
