@@ -12,7 +12,7 @@ func init() {
 		if t.Want != "" {
 			t.Match(t.RunEntry("cat", "/srv/gitlab/VERSION"), `^`+regexp.QuoteMeta(t.Want)+`\s*$`, "VERSION file")
 		}
-		gems := `%w[nokogiri grpc re2 pg google/protobuf ffi prometheus/client/formats/text gitlab_glfm_markdown rugged gpgme charlock_holmes oj unf_ext].each { |g| require g }; puts "NATIVE_OK"`
+		gems := `%w[nokogiri grpc re2 pg google/protobuf ffi prometheus/client/formats/text gitlab-glfm-markdown gitlab_query_language rugged gpgme charlock_holmes oj unf_ext].each { |g| require g }; puts "NATIVE_OK"`
 		t.Match(t.Run("ruby", "-e", `require "bundler/setup"; `+gems), `NATIVE_OK`, "native gems")
 		t.Logf("smoke test passed (uid 1001, Rails %s, native gems load)", v)
 	})
