@@ -30,6 +30,32 @@
       "status": "not_affected",
       "justification": "vulnerable_code_not_in_execute_path",
       "impact_statement": "Measured 2026-11-19 on the gitlab-foss v19.6.0 source and rubyzip v2.4.1. The flaw is the destination check in the 3.x extraction path, which compares the entry's expanded path with the destination directory by prefix without a trailing separator; in 2.4.1 that check lives only in Entry#extract_v3 (lib/zip/entry.rb:213-217) and File#extract_v3 (lib/zip/file.rb:387-391). GitLab never calls them: no extract_v3 or destination_directory in app/, lib/, config/, gems/ or vendor/gems/. Its two extraction sites pass an explicit destination to the 2.x API, File#extract -> Entry#extract(dest_path) (lib/zip/file.rb:374-379, lib/zip/entry.rb:191-206): SafeZip (gems/safe_zip/lib/safe_zip/entry.rb:11 computes the path, :55 extracts) only extracts paths that match a target file exactly or a target directory joined with a trailing separator (gems/safe_zip/lib/safe_zip/extract_params.rb:15-23, 38-41), and refuses symlinks and parent directories that resolve elsewhere (entry.rb:62-82); NuGet symbol extraction writes one entry to a temp file path it created (app/services/packages/nuget/symbols/create_symbol_files_service.rb:33). The fix is only in rubyzip 3.4.0, a new major whose extract API differs; GitLab master still locks 2.4.1. Revisit when GitLab moves to rubyzip 3.x or calls extract_v3."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-32700"
+      },
+      "products": [
+        {
+          "@id": "pkg:gem/devise@4.9.4"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "Measured 2026-11-19 on gitlab-foss v19.6.0. GitLab enables Confirmable with email changes (app/models/user.rb:132-133), so the race in postpone_email_change_until_confirmation_and_regenerate_confirmation_token is reachable on an unpatched gem. The fix forces unconfirmed_email into every update (lib/devise/models/confirmable.rb and lib/devise/orm.rb, devise commit 02527772bd). The image builds GitLab's locked devise 4.9.4 (the fixes ship only in the 5.0 line, a major that changes Rails and Ruby support; GitLab master still locks 4.9.4) and applies the upstream library diffs of devise commits 02527772bd (v5.0.3) and 025fe2124f (v5.0.4) as apps/gitlab-rails/devise-4.9.4-security.patch right after bundle install; the build fails unless both fix lines are present in the installed gem (apps/gitlab-rails/melange.yaml, the devise step). The installed gem still reports version 4.9.4, which is why scanners flag it. Revisit when GitLab moves to devise 5."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-40295"
+      },
+      "products": [
+        {
+          "@id": "pkg:gem/devise@4.9.4"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "Measured 2026-11-19 on gitlab-foss v19.6.0. GitLab does not enable Timeoutable, but its session enforcer throws the same :timeout failure (lib/gitlab/auth/session_expire_from_init_enforcer.rb:61) and its failure app inherits Devise::FailureApp#redirect_url (lib/gitlab/devise_failure.rb:4), so the unvalidated non-GET request.referrer redirect is reachable on an unpatched gem. The fix passes the referrer through extract_path_from_location (lib/devise/failure_app.rb and lib/devise/controllers/store_location.rb, devise commit 025fe2124f). The image builds GitLab's locked devise 4.9.4 (the fixes ship only in the 5.0 line, a major that changes Rails and Ruby support; GitLab master still locks 4.9.4) and applies the upstream library diffs of devise commits 02527772bd (v5.0.3) and 025fe2124f (v5.0.4) as apps/gitlab-rails/devise-4.9.4-security.patch right after bundle install; the build fails unless both fix lines are present in the installed gem (apps/gitlab-rails/melange.yaml, the devise step). The installed gem still reports version 4.9.4, which is why scanners flag it. Revisit when GitLab moves to devise 5."
     }
   ]
 }

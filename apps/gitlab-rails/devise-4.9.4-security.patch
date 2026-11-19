@@ -1,0 +1,75 @@
+Backport of devise v5.0.3 (02527772bd, CVE-2026-32700, GHSA-57hq-95w6-v4fc) and v5.0.4 (025fe2124f,
+CVE-2026-40295, GHSA-jp94-3292-c3xv) library fixes to devise 4.9.4, the version GitLab 19.6 locks. Upstream diffs, lib/ only.
+
+diff --git a/lib/devise/controllers/store_location.rb b/lib/devise/controllers/store_location.rb
+index d2e431e..1ae46f7 100644
+--- a/lib/devise/controllers/store_location.rb
++++ b/lib/devise/controllers/store_location.rb
+@@ -56,7 +56,7 @@ module Devise
+       def extract_path_from_location(location)
+         uri = parse_uri(location)
+ 
+-        if uri 
++        if uri && uri.path
+           path = remove_domain_from_uri(uri)
+           path = add_fragment_back_to_path(uri, path)
+ 
+diff --git a/lib/devise/failure_app.rb b/lib/devise/failure_app.rb
+index ff3363f..ecb18f5 100644
+--- a/lib/devise/failure_app.rb
++++ b/lib/devise/failure_app.rb
+@@ -132,7 +132,7 @@ module Devise
+         path = if request.get?
+           attempted_path
+         else
+-          request.referrer
++          extract_path_from_location(request.referrer)
+         end
+ 
+         path || scope_url
+diff --git a/lib/devise/models/confirmable.rb b/lib/devise/models/confirmable.rb
+index 6ce22c3..1930086 100644
+--- a/lib/devise/models/confirmable.rb
++++ b/lib/devise/models/confirmable.rb
+@@ -258,9 +258,11 @@ module Devise
+           generate_confirmation_token && save(validate: false)
+         end
+ 
+-
+         def postpone_email_change_until_confirmation_and_regenerate_confirmation_token
+           @reconfirmation_required = true
++          # Force unconfirmed_email to be updated, even if the value hasn't changed, to prevent a
++          # race condition which could allow an attacker to confirm an email they don't own. See #5783.
++          devise_unconfirmed_email_will_change!
+           self.unconfirmed_email = self.email
+           self.email = self.devise_email_in_database
+           self.confirmation_token = nil
+diff --git a/lib/devise/orm.rb b/lib/devise/orm.rb
+index 75baf2b..e836b96 100644
+--- a/lib/devise/orm.rb
++++ b/lib/devise/orm.rb
+@@ -37,6 +37,10 @@ module Devise
+         will_save_change_to_email?
+       end
+ 
++      def devise_unconfirmed_email_will_change!
++        unconfirmed_email_will_change!
++      end
++
+       def devise_respond_to_and_will_save_change_to_attribute?(attribute)
+         respond_to?("will_save_change_to_#{attribute}?") && send("will_save_change_to_#{attribute}?")
+       end
+@@ -63,6 +67,13 @@ module Devise
+         email_changed?
+       end
+ 
++      def devise_unconfirmed_email_will_change!
++        # Mongoid's will_change! doesn't force unchanged attributes into updates,
++        # so we override changed_attributes to make it see a difference.
++        unconfirmed_email_will_change!
++        changed_attributes["unconfirmed_email"] = nil
++      end
++
+       def devise_respond_to_and_will_save_change_to_attribute?(attribute)
+         respond_to?("#{attribute}_changed?") && send("#{attribute}_changed?")
+       end

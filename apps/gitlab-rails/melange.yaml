@@ -60,6 +60,7 @@ environment:
       - yaml-dev
       - libgit2-dev
       - posix-libc-utils        # getconf for prometheus-client-mmap while Rails loads for the asset compile
+      - patch                   # devise security backport
       - node-gyp                # tree-sitter has no arm64 prebuild; yarn falls back to node-gyp rebuild
       - python3
       - nodejs-22               # build-time only: the image ships compiled assets, not node
@@ -108,6 +109,13 @@ pipeline:
       CC=clang CXX=clang++ gem install grpc -v "$gv" --platform ruby --ignore-dependencies --no-document \
         --install-dir "vendor/bundle/ruby/$(ruby -e 'print RbConfig::CONFIG["ruby_version"]')"
       CC=gcc CXX=g++ bundle install -j4 || { echo "bundle install failed"; exit 1; }
+      # devise 4.9.4 (GitLab's lock; the fixes are only in the 5.0 line): backport the upstream library fixes for
+      # CVE-2026-32700 (confirmable race) and CVE-2026-40295 (timeout open redirect), see vex.openvex.json
+      grep -qx '    devise (4.9.4)' Gemfile.lock
+      dg="vendor/bundle/ruby/$(ruby -e 'print RbConfig::CONFIG["ruby_version"]')/gems/devise-4.9.4"
+      pf="$PWD/devise-4.9.4-security.patch"; (cd "$dg" && patch -p1 -i "$pf")
+      grep -q 'extract_path_from_location(request.referrer)' "$dg/lib/devise/failure_app.rb"
+      grep -q 'devise_unconfirmed_email_will_change!' "$dg/lib/devise/models/confirmable.rb"
 
   - name: frontend assets (no database)
     runs: |
@@ -133,6 +141,8 @@ pipeline:
       # the help pages read it)
       rm -rf node_modules tmp/cache spec qa ee workhorse storybook rubocop danger
       rm -f yarn.lock package.json Pipfile Pipfile.lock Gemfile.next Gemfile.next.lock
+      # the recipe's own files share the workspace with the source tree
+      rm -f build.conf apko.yaml melange.yaml test.sh vex.openvex.json devise-4.9.4-security.patch ./*.rendered.yaml
       find gems vendor/gems -name Gemfile.lock -delete
       # native gem build leftovers (libtool archives, objects, static archives) and the downloaded .gem cache: only
       # the compiled .so files load; melange's lint refuses .la files
