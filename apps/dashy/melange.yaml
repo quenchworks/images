@@ -1,0 +1,63 @@
+# Dashy from the release tag into /app, built like upstream's Dockerfile.
+package:
+  name: quench-dashy
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Dashy dashboard, built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - nodejs-24
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - jq
+      - nodejs-24
+      - yarn
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/Lissy93/dashy/archive/refs/tags/${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - runs: |
+      set -eu
+      export HOME="$(mktemp -d)" YARN_CACHE_FOLDER="$(mktemp -d)"
+      # CVE floors as yarn v1 resolutions (same-line patches; glob 11 -> 14 and minimatch 10 -> 11 still ship
+      # CommonJS); the image scan decides, the lockfile scan alone understates
+      jq 'del(.packageManager) | .resolutions = ((.resolutions // {}) + {"body-parser": "2.4.0", "fast-uri": "3.1.9",
+        "glob": "14.0.2", "minimatch": "11.0.1", "serialize-javascript": "7.1.3"})' \
+        package.json > p.json && mv p.json package.json
+      yarn install --non-interactive --network-timeout 600000
+      yarn build
+      test -f dist/index.html
+      rm -rf node_modules
+      yarn install --production --non-interactive --network-timeout 600000
+      # yarn installs the musl variants of platform packages too; a glibc image cannot load them and melange would
+      # add a dependency on musl
+      find node_modules -type d \( -name '*linuxmusl*' -o -name '*-musl' -o -name '*-musl-*' \) -prune -exec rm -rf {} +
+      if find node_modules -type f \( -name '*.node' -o -name '*.so*' \) -exec readelf -d {} \; 2>/dev/null | grep -q 'libc.musl'; then
+        echo "a musl-linked native module is left"; exit 1
+      fi
+      [ "$(node -p 'require("./package.json").version')" = "${{package.version}}" ]
+      node -e 'require("./services/app"); console.log("app loads"); process.exit(0)'
+      app="${{targets.destdir}}/app"
+      install -d "$app/src/utils/config" "$app/user-data"
+      cp -a node_modules dist public services server.js package.json "$app/"
+      cp src/utils/config/ConfigSchema.json "$app/src/utils/config/"
+      cp user-data/conf.yml "$app/user-data/conf.yml"
+
+test:
+  pipeline:
+    - runs: test -f /app/server.js

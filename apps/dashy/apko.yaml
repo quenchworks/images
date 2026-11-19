@@ -1,0 +1,57 @@
+# Dashy runtime: node runs /app/server.js on 8080 (HTTPS when SSL_PUB_KEY_PATH / SSL_PRIV_KEY_PATH exist).
+# conf.yml and its backups live in /app/user-data (mount the volume there, seeded with a conf.yml). Set
+# BASIC_AUTH_USERNAME / BASIC_AUTH_PASSWORD (or auth in conf.yml): with no auth the config-save API is open.
+# Nonroot uid 1001, multi-arch, shell-free.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-dashy@local
+
+accounts:
+  groups:
+    - groupname: dashy
+      gid: 1001
+  users:
+    - username: dashy
+      uid: 1001
+      gid: 1001
+      homedir: /app
+  run-as: 1001
+
+work-dir: /app
+
+environment:
+  NODE_ENV: production
+  IS_DOCKER: "true"
+  PORT: "8080"
+  HOST: 0.0.0.0
+  TZ: UTC
+
+paths:
+  - path: /app/user-data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+    recursive: true
+
+entrypoint:
+  command: /usr/bin/node /app/server.js
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-dashy"
+  org.opencontainers.image.licenses: "MIT"
