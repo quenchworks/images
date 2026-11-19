@@ -144,6 +144,7 @@ var table = map[string]check{
 	"firefly-iii":                       {src: ghRel("firefly-iii/firefly-iii"), n: 1},
 	"kimai":                             {src: ghRel("kimai/kimai"), n: 1},
 	"snipe-it":                          {src: ghRel("grokability/snipe-it"), n: 1},
+	"leantime":                          {src: ghRel("Leantime/leantime"), n: 1},
 	"koel":                              {src: ghRel("koel/koel"), n: 1},
 	"lychee":                            {src: ghRel("LycheeOrg/Lychee"), n: 1},
 	"shaarli":                           {src: ghRel("shaarli/Shaarli"), n: 1},

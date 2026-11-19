@@ -1,0 +1,344 @@
+# Leantime from the release tag on Wolfi php-8.5-fpm + nginx (nginx comes from the sibling quench-nginx package,
+# installed by apko), built as upstream's makefile does: composer install --no-dev, npm install, npx mix --production.
+package:
+  name: quench-leantime
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Leantime (project management) on Wolfi php-fpm + nginx"
+  copyright:
+    - license: AGPL-3.0-only
+  dependencies:
+    runtime:
+      - php-8.5
+      - php-8.5-config
+      - php-8.5-bcmath
+      - php-8.5-bcmath-config
+      - php-8.5-ctype
+      - php-8.5-ctype-config
+      - php-8.5-curl
+      - php-8.5-curl-config
+      - php-8.5-dom
+      - php-8.5-dom-config
+      - php-8.5-fileinfo
+      - php-8.5-fileinfo-config
+      - php-8.5-gd
+      - php-8.5-gd-config
+      - php-8.5-iconv
+      - php-8.5-iconv-config
+      - php-8.5-intl
+      - php-8.5-intl-config
+      - php-8.5-ldap
+      - php-8.5-ldap-config
+      - php-8.5-mbstring
+      - php-8.5-mbstring-config
+      - php-8.5-mysqlnd
+      - php-8.5-mysqlnd-config
+      - php-8.5-mysqli
+      - php-8.5-mysqli-config
+      - php-8.5-openssl
+      - php-8.5-openssl-config
+      - php-8.5-pcntl
+      - php-8.5-pcntl-config
+      - php-8.5-pdo
+      - php-8.5-pdo-config
+      - php-8.5-pdo_mysql
+      - php-8.5-pdo_mysql-config
+      - php-8.5-pdo_pgsql
+      - php-8.5-pdo_pgsql-config
+      - php-8.5-pgsql
+      - php-8.5-pgsql-config
+      - php-8.5-phar
+      - php-8.5-phar-config
+      - php-8.5-posix
+      - php-8.5-posix-config
+      - php-8.5-simplexml
+      - php-8.5-simplexml-config
+      - php-8.5-sodium
+      - php-8.5-sodium-config
+      - php-8.5-xml
+      - php-8.5-xml-config
+      - php-8.5-xmlreader
+      - php-8.5-xmlreader-config
+      - php-8.5-xmlwriter
+      - php-8.5-xmlwriter-config
+      - php-8.5-zip
+      - php-8.5-zip-config
+      - php-8.5-fpm
+      - php-8.5-fpm-config
+      - supervisor
+      - busybox
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - composer
+      - git
+      - jq
+      - patch                   # console-install-default-project.patch
+      - nodejs-22               # build-time only: the image ships the compiled assets, not node
+      - npm
+      - php-8.5
+      - php-8.5-config
+      - php-8.5-bcmath
+      - php-8.5-bcmath-config
+      - php-8.5-ctype
+      - php-8.5-ctype-config
+      - php-8.5-curl
+      - php-8.5-curl-config
+      - php-8.5-dom
+      - php-8.5-dom-config
+      - php-8.5-fileinfo
+      - php-8.5-fileinfo-config
+      - php-8.5-gd
+      - php-8.5-gd-config
+      - php-8.5-iconv
+      - php-8.5-iconv-config
+      - php-8.5-intl
+      - php-8.5-intl-config
+      - php-8.5-ldap
+      - php-8.5-ldap-config
+      - php-8.5-mbstring
+      - php-8.5-mbstring-config
+      - php-8.5-mysqlnd
+      - php-8.5-mysqlnd-config
+      - php-8.5-mysqli
+      - php-8.5-mysqli-config
+      - php-8.5-openssl
+      - php-8.5-openssl-config
+      - php-8.5-pcntl
+      - php-8.5-pcntl-config
+      - php-8.5-pdo
+      - php-8.5-pdo-config
+      - php-8.5-pdo_mysql
+      - php-8.5-pdo_mysql-config
+      - php-8.5-pdo_pgsql
+      - php-8.5-pdo_pgsql-config
+      - php-8.5-pgsql
+      - php-8.5-pgsql-config
+      - php-8.5-phar
+      - php-8.5-phar-config
+      - php-8.5-posix
+      - php-8.5-posix-config
+      - php-8.5-simplexml
+      - php-8.5-simplexml-config
+      - php-8.5-sodium
+      - php-8.5-sodium-config
+      - php-8.5-xml
+      - php-8.5-xml-config
+      - php-8.5-xmlreader
+      - php-8.5-xmlreader-config
+      - php-8.5-xmlwriter
+      - php-8.5-xmlwriter-config
+      - php-8.5-zip
+      - php-8.5-zip-config
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/Leantime/leantime/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Console install keeps going when the sample project needs a session user
+    runs: |
+      set -eu
+      # bin/leantime db:migrate installs the schema and the admin, then creates a sample project through services that
+      # authorize the session user; a console install has none, so it throws before updateDB() (upstream, unfixed on
+      # master as of 2026-11-19). The patch makes the sample project best-effort.
+      patch -p1 < console-install-default-project.patch
+      grep -q 'Skipped the default project' app/Command/MigrateCommand.php
+
+  - name: Dependencies (composer, production) with the fixed laravel, symfony http and phpseclib releases
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" COMPOSER_HOME="$(mktemp -d)"
+      # a tarball has no git tag, so composer would take the root package as 1.0.0, and roave/security-advisories
+      # (require-dev, still resolved on update) conflicts with leantime/leantime < 3.3
+      export COMPOSER_ROOT_VERSION="${{package.version}}"
+      composer install --no-dev --no-interaction --no-progress --no-scripts --optimize-autoloader
+      # the ranges allow every fixed release (laravel/framework ^12.69, symfony/yaml ^7.2, lightsaml ^4.0 through
+      # socialiteproviders/saml2, jmespath ^2.8 through the aws sdk); -W moves the symfony http stack they pull in
+      composer update --no-dev --no-interaction --no-progress --no-scripts --with-all-dependencies \
+        laravel/framework phpseclib/phpseclib symfony/http-foundation symfony/http-kernel symfony/yaml \
+        litesaml/lightsaml mtdowling/jmespath.php
+      composer dump-autoload --no-dev --optimize --no-scripts
+      for want in laravel/framework=12.71.0 phpseclib/phpseclib=3.0.57 symfony/http-foundation=7.4.22 symfony/http-kernel=7.4.23 \
+                  symfony/yaml=7.4.18 litesaml/lightsaml=4.7.1 mtdowling/jmespath.php=2.9.1; do
+        p=${want%=*} min=${want#*=}
+        have=$(jq -r --arg p "$p" '.packages[] | select(.name == $p) | .version' composer.lock | sed 's/^v//')
+        [ "$(printf '%s\n%s\n' "$min" "$have" | sort -V | head -1)" = "$min" ] || { echo "FATAL: $p $have below $min"; exit 1; }
+      done
+
+  - name: Front end (npx mix --production, the blocklist), as upstream's makefile builds it
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)"
+      npm ci --no-audit --no-fund
+      npx mix --production
+      node generateBlocklist.mjs
+      test -f public/mix-manifest.json
+
+  - name: Lay out /var/www/leantime and the init script
+    runs: |
+      set -eu
+      d="${{targets.destdir}}/var/www/leantime"
+      install -d "$d"
+      cp -a app bin bootstrap config public vendor "$d/"
+      grep -qF "\$appVersion = '${{package.version}}'" "$d/app/Core/Configuration/AppSettings.php"
+      # as upstream's package target: drop the source javascript, the uncompiled bundles, the sample .env, vendor .git
+      find "$d/app/Domain/" -depth -maxdepth 2 -name js -exec rm -rf {} \;
+      find "$d/public/dist/js/" -depth -mindepth 1 ! -name '*compiled*' -exec rm -rf {} \;
+      find "$d/vendor" -type d -name .git -prune -exec rm -rf {} +
+      rm -rf "$d/vendor/aws/aws-sdk-php/build" "$d/vendor/aws/aws-sdk-php/features" "$d/vendor/aws/aws-sdk-php/tests" \
+        "$d/public/dist/images/Screenshots" "$d/config/.env"
+      # storage/, bootstrap/cache, userfiles/ and public/userfiles live on the volume, seeded from skeletons on first start
+      s="${{targets.destdir}}/usr/share/leantime"
+      install -d "$s"
+      cp -a storage "$s/storage-skel"
+      cp -a bootstrap/cache "$s/bootstrap-cache-skel"
+      rm -rf "$d/bootstrap/cache" "$d/public/userfiles"
+      ln -s /var/lib/leantime/storage "$d/storage"
+      ln -s /var/lib/leantime/bootstrap-cache "$d/bootstrap/cache"
+      ln -s /var/lib/leantime/userfiles "$d/userfiles"
+      ln -s /var/lib/leantime/public-userfiles "$d/public/userfiles"
+      install -d "${{targets.destdir}}/usr/libexec"
+      cat > "${{targets.destdir}}/usr/libexec/leantime-init" <<'SH'
+      #!/bin/sh
+      # seeds the volume, waits for the database, installs or updates the schema (bin/leantime db:migrate creates the
+      # admin on the first install from LEAN_ADMIN_*), then runs supervisord (php-fpm + nginx)
+      set -eu
+      [ -n "${LEAN_SESSION_PASSWORD:-}" ] || { echo "LEAN_SESSION_PASSWORD is not set" >&2; exit 1; }
+      V=/var/lib/leantime
+      mkdir -p "$V/storage" "$V/bootstrap-cache" "$V/userfiles" "$V/public-userfiles"
+      [ -n "$(ls -A "$V/storage")" ] || cp -r /usr/share/leantime/storage-skel/. "$V/storage/"
+      [ -n "$(ls -A "$V/bootstrap-cache")" ] || cp -r /usr/share/leantime/bootstrap-cache-skel/. "$V/bootstrap-cache/"
+      mkdir -p "$V/storage/framework/cache/leantime" "$V/storage/framework/cache/avatars" "$V/storage/framework/sessions" \
+        "$V/storage/framework/views" "$V/storage/logs"
+      cd /var/www/leantime
+      i=0
+      until php -r '$c = getenv("LEAN_DB_DEFAULT_CONNECTION") ?: "mysql";
+          $dsn = $c === "pgsql" ? sprintf("pgsql:host=%s;port=%s;dbname=%s", getenv("LEAN_DB_HOST"), getenv("LEAN_DB_PORT") ?: "5432", getenv("LEAN_DB_DATABASE"))
+                                : sprintf("mysql:host=%s;port=%s;dbname=%s", getenv("LEAN_DB_HOST"), getenv("LEAN_DB_PORT") ?: "3306", getenv("LEAN_DB_DATABASE"));
+          new PDO($dsn, getenv("LEAN_DB_USER"), getenv("LEAN_DB_PASSWORD"));' 2>/dev/null; do
+        i=$((i + 1)); [ "$i" -lt 60 ] || { echo "the database (LEAN_DB_HOST) did not answer" >&2; exit 1; }
+        sleep 2
+      done
+      set -- db:migrate --no-interaction
+      [ -n "${LEAN_ADMIN_EMAIL:-}" ] && set -- "$@" --email="$LEAN_ADMIN_EMAIL"
+      [ -n "${LEAN_ADMIN_PASSWORD:-}" ] && set -- "$@" --password="$LEAN_ADMIN_PASSWORD"
+      set -- "$@" --company-name="${LEAN_ADMIN_COMPANY:-Leantime}" --first-name="${LEAN_ADMIN_FIRST_NAME:-Admin}" \
+        --last-name="${LEAN_ADMIN_LAST_NAME:-User}"
+      php bin/leantime "$@"
+      exec /usr/bin/supervisord -c /etc/leantime/supervisord.conf
+      SH
+      chmod 0755 "${{targets.destdir}}/usr/libexec/leantime-init"
+
+  - name: nginx server block (FastCGI to php-fpm on :8080)
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/etc/nginx/conf.d"
+      cat > "$d/etc/nginx/conf.d/leantime.conf" <<'NGINX'
+      server {
+          listen 8080 default_server;
+          listen [::]:8080 default_server;
+          server_name _;
+          root /var/www/leantime/public;
+          index index.php;
+          charset utf-8;
+          client_max_body_size 50M;
+          access_log off;
+
+          location ~ /\. { return 403; }
+          location / { try_files $uri /index.php$is_args$args; }
+          location ~ \.php$ {
+              try_files $uri =404;
+              include        /etc/nginx/fastcgi_params;
+              fastcgi_param  SCRIPT_FILENAME $document_root$fastcgi_script_name;
+              fastcgi_pass   127.0.0.1:9000;
+          }
+          location ~* \.(js|css|png|jpg|svg|ico|woff2?|ttf|eot|map)$ { expires 30d; access_log off; }
+      }
+      NGINX
+  - name: php-fpm pool + php.ini (nonroot, read-only rootfs)
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/etc/php/php-fpm.d" "$d/etc/php/conf.d"
+      cat > "$d/etc/php/php-fpm.d/zzz-leantime.conf" <<'FPM'
+      [global]
+      daemonize = no
+      error_log = /proc/self/fd/2
+
+      [www]
+      listen = 127.0.0.1:9000
+      catch_workers_output = yes
+      decorate_workers_output = no
+      ; LEAN_* settings come from the container environment
+      clear_env = no
+      pm = dynamic
+      pm.max_children = 16
+      pm.start_servers = 2
+      pm.min_spare_servers = 1
+      pm.max_spare_servers = 4
+      FPM
+      cat > "$d/etc/php/conf.d/zzz-leantime.ini" <<'INI'
+      expose_php = Off
+      memory_limit = 256M
+      upload_max_filesize = 50M
+      post_max_size = 50M
+      sys_temp_dir = /tmp
+      upload_tmp_dir = /tmp
+      session.save_path = /tmp
+      display_errors = Off
+      log_errors = On
+      error_log = /proc/self/fd/2
+      date.timezone = UTC
+      opcache.enable = 1
+      opcache.revalidate_freq = 60
+      INI
+
+  - name: supervisord (php-fpm + nginx)
+    runs: |
+      set -eu
+      d="${{targets.destdir}}"
+      install -d "$d/etc/leantime" "$d/etc/supervisor.d"
+      cat > "$d/etc/leantime/supervisord.conf" <<'SUP'
+      [supervisord]
+      nodaemon=true
+      logfile=/dev/stdout
+      logfile_maxbytes=0
+      pidfile=/tmp/supervisord.pid
+
+      [unix_http_server]
+      file=/tmp/supervisor.sock
+
+      [supervisorctl]
+      serverurl=unix:///tmp/supervisor.sock
+
+      [rpcinterface:supervisor]
+      supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+
+      [include]
+      files = /etc/supervisor.d/*.conf
+      SUP
+      printf '%s\n' '[program:php-fpm]' 'command=/usr/bin/php-fpm --nodaemonize --fpm-config /etc/php/php-fpm.conf' \
+        'autostart=true' 'autorestart=true' 'priority=10' 'stdout_logfile=/dev/stdout' 'stdout_logfile_maxbytes=0' \
+        'stderr_logfile=/dev/stderr' 'stderr_logfile_maxbytes=0' > "$d/etc/supervisor.d/php-fpm.conf"
+      printf '%s\n' '[program:nginx]' 'command=/usr/bin/nginx -g "daemon off;"' \
+        'autostart=true' 'autorestart=true' 'priority=20' 'stdout_logfile=/dev/stdout' 'stdout_logfile_maxbytes=0' \
+        'stderr_logfile=/dev/stderr' 'stderr_logfile_maxbytes=0' > "$d/etc/supervisor.d/nginx.conf"
+
+test:
+  pipeline:
+    - runs: |
+        set -eu
+        test -f /var/www/leantime/public/index.php
+        test -L /var/www/leantime/storage
+        test -f /var/www/leantime/public/mix-manifest.json
+        for e in pdo_mysql pdo_pgsql ldap pcntl gd zip; do php -m | grep -qix "$e"; done

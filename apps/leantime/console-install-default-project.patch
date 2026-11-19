@@ -1,0 +1,20 @@
+--- a/app/Command/MigrateCommand.php	2026-11-19 18:15:19.364514970 +0300
++++ b/app/Command/MigrateCommand.php	2026-11-19 18:15:19.511036750 +0300
+@@ -104,8 +104,15 @@
+                     $userId = $getAdminUser['id'];
+                     $usersRepo->patchUser($userId, ['password' => $setupConfig['password'], 'status' => 'a']);
+ 
+-                    $helperService = app()->make(Helper::class);
+-                    $helperService->createDefaultProject($userId, 'owner');
++                    // The sample project goes through services that authorize the session user, and a console
++                    // install has none (AuthorizationException). The schema and the admin are already in place:
++                    // skip the sample project instead of failing the install before updateDB() runs.
++                    try {
++                        $helperService = app()->make(Helper::class);
++                        $helperService->createDefaultProject($userId, 'owner');
++                    } catch (\Throwable $e) {
++                        $io->warning('Skipped the default project: '.$e->getMessage());
++                    }
+                 }
+ 
+                 if ($silent) {

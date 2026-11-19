@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/leantime/2026-11-19",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-19T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2025-45769"
+      },
+      "products": [
+        {
+          "@id": "pkg:composer/firebase/php-jwt@v6.11.1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Measured 2026-11-19 on the Leantime v3.15.3 source and its locked dependencies. The finding is php-jwt accepting HMAC (HS256/384/512) keys shorter than the algorithm needs; 7.0.0, the only fix, enforces a minimum HMAC key length. Leantime never calls php-jwt itself (no Firebase\\\\JWT use in app/ or config/) and sets no JWT algorithm (no default_algorithm, no HS256/384/512). It arrives only through laravel/socialite v5.21.0 and socialiteproviders/microsoft 4.7.0, and both verify with RSA keys from the provider's key set: socialite's src/Two/FacebookProvider.php:119 decodes with the RS256 key built at :151-154, and Microsoft's Provider.php:355 decodes against JWK::parseKeySet of Microsoft's keys with default_algorithm RS256 (:325). No HMAC key is ever handed to php-jwt. Both packages require php-jwt ^6, so 7.0 cannot be installed. Revisit when they allow php-jwt 7 or Leantime uses HMAC JWTs."
+    }
+  ]
+}

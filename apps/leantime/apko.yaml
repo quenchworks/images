@@ -1,0 +1,70 @@
+# Leantime runtime: supervisord runs php-fpm (127.0.0.1:9000) and QuenchWorks' nginx (:8080) after
+# /usr/libexec/leantime-init seeds /var/lib/leantime (storage/, bootstrap/cache, userfiles/: the volume), waits for the
+# database and runs bin/leantime db:migrate (first run: installs and creates the admin from LEAN_ADMIN_*).
+# LEAN_SESSION_PASSWORD and LEAN_DB_* are required. Nonroot uid 1001, writable paths /tmp and /var/lib/leantime.
+# The PHP runtime and extensions come in as quench-leantime's runtime dependencies.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - busybox
+    - supervisor
+    # supervisor needs a supervisor-config provider; docker-selenium-supervisor-config (4.44) also provides it and
+    # wins on version, so pin the real 4.3 line
+    - supervisor-config~4.3
+    - quench-nginx@local          # QuenchWorks' hardened nginx (from source), 8080/nonroot
+    - quench-leantime@local
+
+accounts:
+  groups:
+    - groupname: leantime
+      gid: 1001
+  users:
+    - username: leantime
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+environment:
+  LEAN_DEBUG: "0"
+  LEAN_LOG_PATH: /var/lib/leantime/storage/logs/leantime.log
+
+entrypoint:
+  command: /usr/libexec/leantime-init
+
+work-dir: /var/www/leantime
+
+paths:
+  - path: /tmp
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o1777
+  - path: /var/lib
+    type: directory
+    uid: 0
+    gid: 0
+    permissions: 0o755
+  - path: /var/lib/leantime
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-leantime"
+  org.opencontainers.image.licenses: "AGPL-3.0-only"
+  org.opencontainers.image.version: "__VER__"
