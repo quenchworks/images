@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/gitlab-rails/2026-11-19",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-19T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "GHSA-586r-mm5q-xhg2"
+      },
+      "products": [
+        {
+          "@id": "pkg:gem/lockbox@1.4.1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Measured 2026-11-19 on the gitlab-foss v19.6.0 source. The advisory covers Lockbox's hybrid algorithm (public/private key pair), where holding the encryption key is enough to decrypt. GitLab uses Lockbox only through its CarrierWave integration with a symmetric key and the default algorithm: app/uploaders/ci/secure_file_uploader.rb:10 encrypt(key: :key), app/uploaders/ci/pipeline_artifact_uploader.rb:11 and app/uploaders/terraform/state_uploader.rb:13 encrypt(key: ..., previous_versions: ...), with keys derived by HMAC-SHA256 from db_key_base (lib/gitlab/encryption/db_key_base_lockbox_keys.rb). No file in app/, lib/, config/, gems/ or vendor/gems/ selects algorithm hybrid or generates a key pair. The fix is only in lockbox 2.3.0, a new major; GitLab master still locks 1.4.1. Revisit when GitLab moves to lockbox 2.x or adds hybrid encryption."
+    }
+  ]
+}
