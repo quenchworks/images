@@ -77,32 +77,32 @@ pipeline:
       # writable at runtime (the chart mounts volumes/tmpfs over these): uploads, cache, tmp, logs
       install -d -m 0755 "$app/images" "$app/cache" "$app/tmp" "$app/administrator/cache" "$app/administrator/logs"
 
-  # phpseclib 3.0.55 (vendored by 5.4.9 and 6.1.4) has CVE-2026-84308, fixed in 3.0.57, a
+  # phpseclib 3.0.55 (vendored by 5.4.9 and 6.1.4) has CVE-2026-84308 (fixed in 3.0.57) and PKSA-h7cz-q7zq-mdkt (fixed in 3.0.58), a
   # patch release that adds and removes no class, so the composer classmap stays valid.
   - uses: fetch
     with:
-      uri: https://github.com/phpseclib/phpseclib/archive/refs/tags/3.0.57.tar.gz
-      expected-sha256: 18023e70ca9257e66e289d201d4af4da5d2c91d1de8adc68c23a58dca4f29761
+      uri: https://github.com/phpseclib/phpseclib/archive/refs/tags/3.0.58.tar.gz
+      expected-sha256: 3d3f2c29f87434178ff56782d608cbf9a93d0e03552dd53dc24c52cf6d49e012
       extract: false
 
-  - name: Swap the vendored phpseclib up to 3.0.57 when it is older
+  - name: Swap the vendored phpseclib up to 3.0.58 when it is older
     runs: |
       set -eu
       vendor="${{targets.destdir}}/var/www/html/libraries/vendor"
       have=$(grep -A1 '"name": "phpseclib/phpseclib"' "$vendor/composer/installed.json" | sed -n 's/.*"version": "\([^"]*\)".*/\1/p')
       test -n "$have"
-      if [ "$(printf '%s\n' "$have" 3.0.57 | sort -V | head -1)" = "$have" ] && [ "$have" != 3.0.57 ]; then
+      if [ "$(printf '%s\n' "$have" 3.0.58 | sort -V | head -1)" = "$have" ] && [ "$have" != 3.0.58 ]; then
         mkdir -p /tmp/phpseclib
-        tar -xzf 3.0.57.tar.gz -C /tmp/phpseclib --strip-components=1
+        tar -xzf 3.0.58.tar.gz -C /tmp/phpseclib --strip-components=1
         rm -rf "$vendor/phpseclib/phpseclib/phpseclib"
         cp -a /tmp/phpseclib/phpseclib "$vendor/phpseclib/phpseclib/phpseclib"
         chmod -R u=rwX,go=rX "$vendor/phpseclib/phpseclib/phpseclib"
         diff -r /tmp/phpseclib/phpseclib "$vendor/phpseclib/phpseclib/phpseclib"
         ref=d17e0ddaeaf6f22f7e007cbb437d78792fe2a0e4
-        sed -i "/\"name\": \"phpseclib\/phpseclib\"/,/\"type\": \"library\"/{s/\"$have\"/\"3.0.57\"/;s/\"$have.0\"/\"3.0.57.0\"/;s/[0-9a-f]\{40\}/$ref/g}" "$vendor/composer/installed.json"
-        sed -i "/'phpseclib\/phpseclib' => array(/,/),/{s/'$have'/'3.0.57'/;s/'$have.0'/'3.0.57.0'/;s/[0-9a-f]\{40\}/$ref/}" "$vendor/composer/installed.php"
+        sed -i "/\"name\": \"phpseclib\/phpseclib\"/,/\"type\": \"library\"/{s/\"$have\"/\"3.0.58\"/;s/\"$have.0\"/\"3.0.58.0\"/;s/[0-9a-f]\{40\}/$ref/g}" "$vendor/composer/installed.json"
+        sed -i "/'phpseclib\/phpseclib' => array(/,/),/{s/'$have'/'3.0.58'/;s/'$have.0'/'3.0.58.0'/;s/[0-9a-f]\{40\}/$ref/}" "$vendor/composer/installed.php"
       fi
-      grep -A1 '"name": "phpseclib/phpseclib"' "$vendor/composer/installed.json" | grep -q '"version": "3.0.57"'
+      grep -A1 '"name": "phpseclib/phpseclib"' "$vendor/composer/installed.json" | grep -q '"version": "3.0.58"'
 
   # enshrined/svg-sanitize 0.22.0 (vendored by 5.4.9 and 6.1.4) has CVE-2026-107379/-107380/
   # -107381, fixed in 1.0.0. Upstream calls 1.0.0 a semver relabel; 0.22.0...1.0.0 only

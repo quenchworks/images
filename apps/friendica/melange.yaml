@@ -144,7 +144,7 @@ pipeline:
       php -r '$f="composer.json"; $j=json_decode(file_get_contents($f), true);
         $j["repositories"]=array_values(array_filter($j["repositories"], fn($r) => $r["type"] !== "vcs"));
         file_put_contents($f, json_encode($j, JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)."\n");'
-      want="guzzlehttp/guzzle:7.15.5 guzzlehttp/psr7:2.13.1 guzzlehttp/promises:2.5.3 paragonie/sodium_compat:1.24.2 phpseclib/phpseclib:3.0.57 smarty/smarty:4.5.8 symfony/cache:5.4.53 symfony/process:5.4.51"
+      want="guzzlehttp/guzzle:7.15.5 guzzlehttp/psr7:2.13.1 guzzlehttp/promises:2.5.3 paragonie/sodium_compat:1.24.2 phpseclib/phpseclib:3.0.58 smarty/smarty:4.5.8 symfony/cache:5.4.53 symfony/process:5.4.51"
       have() {
         php -r '$j=json_decode(file_get_contents("vendor/composer/installed.json"), true);
           foreach (($j["packages"] ?? $j) as $p) { if ($p["name"] === $argv[1]) { echo ltrim($p["version"], "v"); exit(0); } }
