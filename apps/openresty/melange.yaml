@@ -35,8 +35,10 @@ environment:
 
 pipeline:
   - uses: fetch
+      # openresty.org refuses TLS from GitHub-hosted runners: fetch the byte-identical mirror (release src-openresty in
+      # this repo); the expected-sha256 below is openresty.org's own, so any difference fails the build
     with:
-      uri: https://openresty.org/download/openresty-${{package.version}}.tar.gz
+      uri: https://github.com/quenchworks/images/releases/download/src-openresty/openresty-${{package.version}}.tar.gz
       expected-sha256: "__SHA256__"
 
   - runs: |

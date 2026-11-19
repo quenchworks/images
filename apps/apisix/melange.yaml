@@ -165,8 +165,10 @@ pipeline:
   # ---- the apisix-runtime roster, version-for-version from
   #      api7/apisix-build-tools @ apisix-runtime/__RUNTIME__ -----------------
   - uses: fetch
+      # openresty.org refuses TLS from GitHub-hosted runners: fetch the byte-identical mirror (release src-openresty in
+      # this repo); the expected-sha256 below is openresty.org's own, so any difference fails the build
     with:
-      uri: https://openresty.org/download/openresty-__OPENRESTY__.tar.gz
+      uri: https://github.com/quenchworks/images/releases/download/src-openresty/openresty-__OPENRESTY__.tar.gz
       expected-sha256: "__OPENRESTY_SHA256__"
       extract: true
       strip-components: 0
