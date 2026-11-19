@@ -60,6 +60,8 @@ environment:
       - yaml-dev
       - libgit2-dev
       - posix-libc-utils        # getconf for prometheus-client-mmap while Rails loads for the asset compile
+      - node-gyp                # tree-sitter has no arm64 prebuild; yarn falls back to node-gyp rebuild
+      - python3
       - nodejs-22               # build-time only: the image ships compiled assets, not node
       - yarn
 
@@ -99,7 +101,8 @@ pipeline:
       set -eu
       export HOME="$(mktemp -d)" BUNDLE_FORCE_RUBY_PLATFORM=true
       cp config/gitlab.yml.example config/gitlab.yml
-      cp config/database.yml.postgresql config/database.yml
+      # the example lists EE databases (geo, embedding) that CE refuses at boot; the compile needs only main
+      printf 'production:\n  main:\n    adapter: postgresql\n    encoding: unicode\n    database: gitlabhq_production\n    host: localhost\n' > config/database.yml
       cp config/resque.yml.example config/resque.yml
       yarn install --frozen-lockfile --non-interactive
       export RAILS_ENV=production NODE_ENV=production USE_DB=false SKIP_STORAGE_VALIDATION=true CI=true
