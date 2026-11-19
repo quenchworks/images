@@ -17,6 +17,19 @@
       "status": "not_affected",
       "justification": "vulnerable_code_not_in_execute_path",
       "impact_statement": "Measured 2026-11-19 on the gitlab-foss v19.6.0 source. The advisory covers Lockbox's hybrid algorithm (public/private key pair), where holding the encryption key is enough to decrypt. GitLab uses Lockbox only through its CarrierWave integration with a symmetric key and the default algorithm: app/uploaders/ci/secure_file_uploader.rb:10 encrypt(key: :key), app/uploaders/ci/pipeline_artifact_uploader.rb:11 and app/uploaders/terraform/state_uploader.rb:13 encrypt(key: ..., previous_versions: ...), with keys derived by HMAC-SHA256 from db_key_base (lib/gitlab/encryption/db_key_base_lockbox_keys.rb). No file in app/, lib/, config/, gems/ or vendor/gems/ selects algorithm hybrid or generates a key pair. The fix is only in lockbox 2.3.0, a new major; GitLab master still locks 1.4.1. Revisit when GitLab moves to lockbox 2.x or adds hybrid encryption."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-85396"
+      },
+      "products": [
+        {
+          "@id": "pkg:gem/rubyzip@2.4.1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Measured 2026-11-19 on the gitlab-foss v19.6.0 source and rubyzip v2.4.1. The flaw is the destination check in the 3.x extraction path, which compares the entry's expanded path with the destination directory by prefix without a trailing separator; in 2.4.1 that check lives only in Entry#extract_v3 (lib/zip/entry.rb:213-217) and File#extract_v3 (lib/zip/file.rb:387-391). GitLab never calls them: no extract_v3 or destination_directory in app/, lib/, config/, gems/ or vendor/gems/. Its two extraction sites pass an explicit destination to the 2.x API, File#extract -> Entry#extract(dest_path) (lib/zip/file.rb:374-379, lib/zip/entry.rb:191-206): SafeZip (gems/safe_zip/lib/safe_zip/entry.rb:11 computes the path, :55 extracts) only extracts paths that match a target file exactly or a target directory joined with a trailing separator (gems/safe_zip/lib/safe_zip/extract_params.rb:15-23, 38-41), and refuses symlinks and parent directories that resolve elsewhere (entry.rb:62-82); NuGet symbol extraction writes one entry to a temp file path it created (app/services/packages/nuget/symbols/create_symbol_files_service.rb:33). The fix is only in rubyzip 3.4.0, a new major whose extract API differs; GitLab master still locks 2.4.1. Revisit when GitLab moves to rubyzip 3.x or calls extract_v3."
     }
   ]
 }
