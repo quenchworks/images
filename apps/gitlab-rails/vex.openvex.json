@@ -69,6 +69,45 @@
       "status": "not_affected",
       "justification": "vulnerable_code_not_in_execute_path",
       "impact_statement": "Measured 2026-11-19 on gitlab-foss v19.6.0 and rack-proxy v0.8.3. The flaw is in Rack::Proxy forwarding a backend response: it drops Transfer-Encoding and keeps the backend's Content-Length (lib/rack/proxy.rb:181 in 0.8.3 has the same pattern as the 1.0.x releases the advisory names). GitLab mounts a Rack::Proxy only in development: Gitlab::Middleware::IamServiceProxy is added only if Rails.env.development? (config/initializers/iam_service_proxy.rb:8-10) and Gitlab::Webpack::DevServerMiddleware only if the webpack dev server is enabled in a dev or test environment (config/initializers/static_files.rb:20-27). The image runs RAILS_ENV=production (apps/gitlab-rails/apko.yaml). The one other use, Rack::Proxy.extract_http_request_headers in lib/gitlab/current/organization.rb:15, reads request headers and proxies nothing. The fix is only in rack-proxy 1.0.3, a new major GitLab pins away from (Gemfile:402 ~> 0.8.0; master still locks 0.8.3). Revisit if GitLab proxies through Rack::Proxy in production."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2023-49090"
+      },
+      "products": [
+        {
+          "@id": "pkg:gem/carrierwave@1.3.4"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Measured 2026-11-19 on gitlab-foss v19.6.0 and carrierwave v1.3.4. The flaw is in carrierwave's own Content-Type allowlist: CarrierWave::Uploader::ContentTypeWhitelist#check_content_type_whitelist! checks the client-supplied content type with a partial match in whitelisted_content_type? (lib/carrierwave/uploader/content_type_whitelist.rb:35-43 in 1.3.4). GitLab replaces both methods: ContentTypeWhitelist::Concern (app/uploaders/content_type_whitelist.rb:28-41) is included in GitlabUploader (app/uploaders/gitlab_uploader.rb:4), the only class in app/, lib/ and gems/ that subclasses CarrierWave::Uploader::Base (gitlab_uploader.rb:3), so it overrides carrierwave's methods for every uploader; GitLab's check runs on the type detected from the file's magic bytes (Gitlab::Utils::MimeType.from_io, content_type_whitelist.rb:43-50), not a type the client sends. The only uploaders that set an allowlist inherit it: AvatarUploader < GitlabUploader (avatar_uploader.rb:3) and FaviconUploader < AttachmentUploader < GitlabUploader (favicon_uploader.rb:3, attachment_uploader.rb:3). The fixes are only in carrierwave 2.2.x / 3.x; GitLab 19.6 and master lock 1.3.4 (its uploaders are written against 1.x), and css_parser 3.x cannot be resolved alongside it (ssrf_filter caps). Revisit when GitLab moves to carrierwave 2 or drops ContentTypeWhitelist::Concern."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2024-29034"
+      },
+      "products": [
+        {
+          "@id": "pkg:gem/carrierwave@1.3.4"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Measured 2026-11-19 on gitlab-foss v19.6.0 and carrierwave v1.3.4. The flaw is in carrierwave's own Content-Type allowlist: CarrierWave::Uploader::ContentTypeWhitelist#check_content_type_whitelist! checks the client-supplied content type with a partial match in whitelisted_content_type? (lib/carrierwave/uploader/content_type_whitelist.rb:35-43 in 1.3.4). GitLab replaces both methods: ContentTypeWhitelist::Concern (app/uploaders/content_type_whitelist.rb:28-41) is included in GitlabUploader (app/uploaders/gitlab_uploader.rb:4), the only class in app/, lib/ and gems/ that subclasses CarrierWave::Uploader::Base (gitlab_uploader.rb:3), so it overrides carrierwave's methods for every uploader; GitLab's check runs on the type detected from the file's magic bytes (Gitlab::Utils::MimeType.from_io, content_type_whitelist.rb:43-50), not a type the client sends. The only uploaders that set an allowlist inherit it: AvatarUploader < GitlabUploader (avatar_uploader.rb:3) and FaviconUploader < AttachmentUploader < GitlabUploader (favicon_uploader.rb:3, attachment_uploader.rb:3). CVE-2024-29034 is the incomplete fix of the same allowlist check (comma-separated types passing it on the way to object storage); the check it concerns is the one GitLab replaces. The fixes are only in carrierwave 2.2.x / 3.x; GitLab 19.6 and master lock 1.3.4 (its uploaders are written against 1.x), and css_parser 3.x cannot be resolved alongside it (ssrf_filter caps). Revisit when GitLab moves to carrierwave 2 or drops ContentTypeWhitelist::Concern."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-44587"
+      },
+      "products": [
+        {
+          "@id": "pkg:gem/carrierwave@1.3.4"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Measured 2026-11-19 on gitlab-foss v19.6.0 and carrierwave v1.3.4. The flaw is carrierwave's content-type denylist not escaping regex metacharacters. GitLab never sets a content-type denylist: no content_type_denylist or content_type_blacklist in app/, lib/, config/, gems/ or vendor/gems/ (the only match is an error-message string in config/locales/carrierwave.en.yml); its uploaders use allowlists, which GitLab implements itself (app/uploaders/content_type_whitelist.rb). The fixes are only in carrierwave 2.2.x / 3.x; GitLab 19.6 and master lock 1.3.4 (its uploaders are written against 1.x), and css_parser 3.x cannot be resolved alongside it (ssrf_filter caps). Revisit when GitLab moves to carrierwave 2 or drops ContentTypeWhitelist::Concern."
     }
   ]
 }
