@@ -116,7 +116,11 @@ pipeline:
       d="${{targets.destdir}}/srv/gitlab"
       install -d "$d"
       rm -rf node_modules tmp/cache spec qa ee
-      cp -a . "$d/"
+      # the package destdir (melange-out) sits inside the workspace: copy everything but it
+      for f in * .[!.]*; do
+        if [ -e "$f" ] && [ "$f" != melange-out ]; then cp -a "$f" "$d/"; fi
+      done
+      test -f "$d/VERSION" && test -d "$d/public/assets" && test ! -e "$d/melange-out"
       install -d "$d/tmp" "$d/log" "$d/shared"
 
 test:
