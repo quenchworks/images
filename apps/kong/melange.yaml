@@ -260,6 +260,12 @@ pipeline:
       [ "$applied" -ge 37 ] || { echo "expected >=37 mandatory patches, applied $applied"; exit 1; }
       [ "$skipped" -le 2 ] || { echo "too many skipped ($skipped) -- upstream changed the patch set"; exit 1; }
 
+      # The nginx 1.25.3 core takes Chainguard's per-CVE backports for nginx 1.27.1 (chainguard-forks/ingress-nginx
+      # controller-v1.15.16) after Kong's patches, without fuzz: CVE-2026-123633 and CVE-2026-123007 (HTTP/2),
+      # -123634, -121810 and -118899 (advisories of 2026-11-18). -125283, -120967 and -123640 do not apply here.
+      ( cd "$OR/bundle/nginx-1.25.3" && patch -p1 --fuzz=0 -i "$WORK/nginx-1.25.3-security.patch" )
+      grep -q 'h2c->send_window - h2c->send_queued' "$OR/bundle/nginx-1.25.3/src/http/v2/ngx_http_v2.c"
+
       # ---- atc-router (Rust) ----------------------------------------------------
       # Kong loads this through FFI at runtime, so it ships as a shared object.
       ( cd "$WORK/mod/atc-router"
