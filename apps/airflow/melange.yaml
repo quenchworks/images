@@ -33,7 +33,7 @@ package:
       # wheels bundle their own where the scan cannot see them: psycopg2-binary and
       # psycopg-binary each carried OpenSSL 3.5.8 in a .libs dir, grpcio a static
       # BoringSSL, cryptography a static OpenSSL. See the install step.
-      - py3.12-grpcio-1.84     # Wolfi's 1.83 line stops at 1.83.1 (CVE-2026-84445, fixed 1.83.2); 1.84.2 is clean.
+      - py3.12-grpcio-1.85     # airflow 3.4 constraints want grpcio 1.85.1; 1.85 also satisfies 3.3 (1.84).
                                # The build asserts it is not below the constraints' grpcio.
       - py3.12-cryptography
       - libpq-18               # psycopg2 (rebuilt from source) and psycopg's python impl
@@ -49,7 +49,7 @@ environment:
       - ca-certificates-bundle
       - python-3.12
       - py3.12-pip
-      - py3.12-grpcio-1.84
+      - py3.12-grpcio-1.85
       - py3.12-cryptography
       - python-3.12-dev        # Python.h for the psycopg2-binary source build
       - postgresql-18-dev      # pg_config and libpq headers for the psycopg2-binary source build

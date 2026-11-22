@@ -42,7 +42,7 @@
 # Wolfi: that apk is rebuilt continuously (5.8.1-r10) and scans clean.
 #
 # ---------------------------------------------------------------------------
-# go.mod declares go 1.26.3 (3.5) / 1.26.0 (3.4) / 1.25.5 (3.3); we build with go-1.26
+# go.mod declares go 1.27.0 (3.6) / 1.26.3 (3.5) / 1.26.0 (3.4); we build with go-1.27
 # (1.26.5, newest, clears stdlib advisories) and GOTOOLCHAIN=local so the
 # directive does not trigger a toolchain download. GOFLAGS=-mod=mod lets the
 # module graph resolve the floated deps for the 0-CVE gate.
@@ -106,7 +106,7 @@ environment:
       - curl                # fetches the pinned helm source tarball
       - git                 # yarn resolves a handful of deps from git refs
       - ca-certificates-bundle
-      - go-1.26
+      - go-1.27
       # UI toolchain (upstream Dockerfile argocd-ui stage uses node 23 + yarn
       # classic; nodejs-24 is the closest Wolfi major). Build-only.
       - nodejs-24
@@ -200,7 +200,7 @@ pipeline:
       set -eu
       export CGO_ENABLED=0
       export GOFLAGS=-mod=mod
-      export GOTOOLCHAIN=local   # use the installed go-1.26, don't fetch go.mod's toolchain
+      export GOTOOLCHAIN=local   # use the installed go-1.27, don't fetch go.mod's toolchain
       export GO111MODULE=on
       SRC="$PWD"
 
