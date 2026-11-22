@@ -1,9 +1,9 @@
 {
   "@context": "https://openvex.dev/ns/v0.2.0",
-  "@id": "https://quench-works.com/vex/gitlab-rails/2026-11-19",
+  "@id": "https://quench-works.com/vex/gitlab-rails/2026-11-23",
   "author": "QuenchWorks <info@quench-works.com>",
-  "timestamp": "2026-11-19T00:00:00Z",
-  "version": 1,
+  "timestamp": "2026-11-23T00:00:00Z",
+  "version": 2,
   "statements": [
     {
       "vulnerability": {
@@ -485,6 +485,32 @@
       "status": "not_affected",
       "justification": "vulnerable_code_not_in_execute_path",
       "impact_statement": "Measured 2026-11-19 on the devfile gem 0.5.5's Go helper, which the image rebuilds from the gem's own source (ext/) with Go 1.27.4 and floated modules (apps/gitlab-rails/melange.yaml, devfile step). docker/cli v25 and docker/docker v28 stay: docker/cli v29 breaks oras-go v1's registry auth (login.go:102 AuthConfig type), and docker/docker has no v29 under that module path (moby moved to new module paths). devfile uses them only as client libraries for registry credentials through oras-go. CVE-2026-33997 is a privilege-validation bypass in the Moby daemon's plugin installation; the helper runs no daemon and installs no plugins, it only uses API types."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-pf75-2v58-7mxg"
+      },
+      "products": [
+        {
+          "@id": "pkg:gem/rack-protection@2.2.2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "GHSA-pf75-2v58-7mxg is in the CookieTossing protection, none of which GitLab mounts. rack-protection 2.2.2 is in the GitLab 19.6.1 bundle only as a dependency of omniauth (Gemfile.lock: omniauth is its sole dependent). omniauth 2.2.0 touches it in one file, lib/omniauth/authenticity_token_protection.rb (AuthenticityTokenProtection < Rack::Protection::AuthenticityToken), used only as omniauth's default request_validation_phase; GitLab replaces that default with its own Gitlab::RequestForgeryProtection (config/initializers/omniauth.rb:17-19). Verified 2026-11-23 by grepping the gitlab-foss v19.6.1 source tree (app, lib, config, gems) for Rack::Protection and rack/protection: 0 matches outside that initializer, so no Rack::Protection middleware is ever mounted. The fixed release (4.2.2) requires rack >= 3.0 while GitLab is on rack 2.2.24, and no 2.x or 3.x fix exists."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-vvhm-j6m8-64cw"
+      },
+      "products": [
+        {
+          "@id": "pkg:gem/rack-protection@2.2.2"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "GHSA-vvhm-j6m8-64cw is in the JsonCsrf, RemoteToken and RemoteReferrer protections, none of which GitLab mounts. rack-protection 2.2.2 is in the GitLab 19.6.1 bundle only as a dependency of omniauth (Gemfile.lock: omniauth is its sole dependent). omniauth 2.2.0 touches it in one file, lib/omniauth/authenticity_token_protection.rb (AuthenticityTokenProtection < Rack::Protection::AuthenticityToken), used only as omniauth's default request_validation_phase; GitLab replaces that default with its own Gitlab::RequestForgeryProtection (config/initializers/omniauth.rb:17-19). Verified 2026-11-23 by grepping the gitlab-foss v19.6.1 source tree (app, lib, config, gems) for Rack::Protection and rack/protection: 0 matches outside that initializer, so no Rack::Protection middleware is ever mounted. The fixed release (4.2.2) requires rack >= 3.0 while GitLab is on rack 2.2.24, and no 2.x or 3.x fix exists."
     }
   ]
 }
