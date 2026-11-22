@@ -249,13 +249,15 @@ pipeline:
       # the packages live solely in lib/Vendor/. Restore that layout.
       find vendor -mindepth 1 -maxdepth 1 ! -name composer ! -name autoload.php -exec rm -rf {} +
       # Prefixed runtime classes must resolve after the re-compose.
-      php -r 'spl_autoload_register(function ($c) {
+      # 34 (web-push 10) prefixes the Guzzle client; 35 (web-push 11) prefixes only guzzlehttp/psr7
+      guzzle='GuzzleHttp\Client'; grep -q '"minishlink/web-push": "^10' composer.json || guzzle='GuzzleHttp\Psr7\Request'
+      GUZZLE="$guzzle" php -r 'spl_autoload_register(function ($c) {
           $p = "lib/" . str_replace(["OCA\\Notifications\\", "\\"], ["", "/"], $c) . ".php";
           if (file_exists($p)) { require $p; }
         });
         foreach (["OCA\\Notifications\\Vendor\\Minishlink\\WebPush\\WebPush",
                   "OCA\\Notifications\\Vendor\\Jose\\Component\\Core\\JWK",
-                  "OCA\\Notifications\\Vendor\\GuzzleHttp\\Client"] as $c) {
+                  "OCA\\Notifications\\Vendor\\" . getenv("GUZZLE")] as $c) {
           if (!class_exists($c)) { fwrite(STDERR, "missing prefixed: $c\n"); exit(1); }
         }'
       cd ../../..
