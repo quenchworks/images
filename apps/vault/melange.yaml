@@ -113,6 +113,9 @@ pipeline:
       export CGO_ENABLED=0
       export GOTOOLCHAIN=local
       export GOFLAGS=-mod=mod
+      # 2.2 ships a go.work, and -mod=mod is refused in workspace mode. go.mod already replaces the in-tree
+      # modules the build uses, so the build resolves as it did before the workspace.
+      export GOWORK=off
 
       # go-jose v3 has no fixed release for CVE-2026-116587, -116585 and -116586 (fixed in v4 4.1.6
       # only). Port upstream 644e857134 + 17daa72acd (main, 2026-11-02 and 2026-11-05: wrapping,
