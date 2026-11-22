@@ -187,7 +187,12 @@ echo classpath-ok`)
 		t.Docker("network", "create", net_)
 		t.Cleanup(func() { docker("network", "rm", net_) })
 		t.Cleanup(func() { docker("rm", "-f", os_) })
-		t.Docker("run", "-d", "--name", os_, "--network", net_, "--network-alias", "opensearch", envOr("OPENSEARCH_IMAGE", "ghcr.io/quenchworks/images/opensearch:3.8.0"))
+		t.Docker("run", "-d", "--name", os_, "--network", net_, "--network-alias", "opensearch", "-p", "127.0.0.1:19207:9200", envOr("OPENSEARCH_IMAGE", "ghcr.io/quenchworks/images/opensearch:3.8.0"))
+		// OAP exits when its storage does not answer within a few seconds, so OpenSearch must be up first
+		t.waitFor(90, 2*time.Second, os_, "opensearch did not become ready", func() bool {
+			_, h := Get("http://127.0.0.1:19207/_cluster/health")
+			return regexp.MustCompile(`"status":"(green|yellow)"`).MatchString(h)
+		})
 		t.Start(name, []string{"--network", net_, "-e", "SW_STORAGE=elasticsearch", "-e", "SW_STORAGE_ES_CLUSTER_NODES=opensearch:9200"})
 		t.waitFor(180, 2*time.Second, name, "OAP did not bind its gRPC receiver", func() bool {
 			return regexp.MustCompile(`(?i)listening on 11800`).MatchString(t.Logs(name))
