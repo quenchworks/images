@@ -56,6 +56,8 @@ environment:
   DD_UWSGI_ENDPOINT: 0.0.0.0:3031
   DD_UWSGI_NUM_OF_PROCESSES: "2"
   DD_UWSGI_NUM_OF_THREADS: "4"
+  # uWSGI sizes its tables from RLIMIT_NOFILE (containerd sets ~1e9, which OOM-kills it): cap it
+  DD_UWSGI_MAX_FD: "4096"
 
 work-dir: /app
 
