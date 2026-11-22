@@ -11,7 +11,6 @@ package:
       - bash                 # the agent executes shell commands via bash
       - busybox              # /bin/sh and core utilities for the agent's tool execution
       - ca-certificates-bundle
-      - nuclei               # the one recon tool bundled from Wolfi (maintained, CVE-gated); others operator-supplied
       - tzdata
 
 environment:
@@ -25,6 +24,7 @@ environment:
       - build-base
       - busybox
       - ca-certificates-bundle
+      - curl                 # fetches the pinned nuclei source
       - git
       - go-1.26
       - nodejs-24
@@ -54,6 +54,44 @@ pipeline:
       install -d "${{targets.destdir}}/opt/artex"
       cp -a /opt/artex/artex "${{targets.destdir}}/opt/artex/artex"
       cp -a skills "${{targets.destdir}}/opt/artex/skills"
+
+  # The one bundled recon tool, nuclei, is built here from its tag with the same floors as apps/nuclei: Wolfi's
+  # nuclei apk (3.11.1-r21) still links x/crypto v0.58.0 (GO-2026-5932, 2026-11-22 scan).
+  - name: nuclei
+    runs: |
+      set -eu
+      NV=3.11.1
+      d="$(mktemp -d)"; cd "$d"
+      curl -fsSL -o n.tgz "https://github.com/projectdiscovery/nuclei/archive/refs/tags/v$NV.tar.gz"
+      echo "64c6e21eb8cd141d39cbb0241228fb40fd4370dbe39dc9f13e1069c718b711f9  n.tgz" | sha256sum -c -
+      tar -xzf n.tgz && cd "nuclei-$NV"
+      export CGO_ENABLED=0
+      export GOFLAGS=-mod=mod
+      export GO111MODULE=on
+      export GOTOOLCHAIN=local   # use the installed go, don't fetch go.mod's toolchain
+      # Bump vulnerable Go modules to their Trivy-listed fixed versions (0-CVE gate).
+      # 0-CVE FLOORS, not pins (docs/go-module-float.md): raise a module only where go.mod has it
+      # below the floor; a module absent from the graph is skipped. Bare `go get` pins downgraded
+      # newer upstream releases (found 2026-10-05).
+      FLOOR="github.com/moby/sys/user@v0.4.1 golang.org/x/net@v0.62.0 golang.org/x/sys@v0.49.0 google.golang.org/grpc@v1.83.2 golang.org/x/text@v0.43.0 golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/mod@v0.41.0 github.com/klauspost/compress@v1.19.1 github.com/go-chi/chi/v5@v5.4.0 github.com/getkin/kin-openapi@v0.149.0 github.com/go-git/go-git/v5@v5.19.2 github.com/go-jose/go-jose/v4@v4.1.6"
+      # CVE-2026-128085 (otel 1.47.0): floor every otel v1 module the build uses, as one family
+      for m in $(go list -mod=mod -m -e -f '{{.Path}} {{.Version}}' all | awk '($1 ~ /^go\.opentelemetry\.io\/otel(\/|$)/ || $1 ~ /^go\.opentelemetry\.io\/contrib\/bridges\/otel(zap|logrus|slog)$/) && $1 !~ /\/exporters\/jaeger$/ { if ($1 ~ /\/contrib\/bridges\//) print $1"@v0.21.0"; else if ($1 ~ /\/exporters\/(otlp\/otlplog\/|stdout\/stdoutlog$)/) print $1"@v0.23.0"; else if ($1 ~ /\/exporters\/prometheus$/) print $1"@v0.69.0"; else if ($2 ~ /^v1\./ || $1 ~ /\/(sdk\/)?log$/) print $1"@v1.47.0" }'); do
+        FLOOR="$FLOOR $m"
+      done
+      # Go semver order (a release outranks its prereleases); busybox sort -V does not.
+      vlt() { awk -v a="${1#v}" -v b="${2#v}" 'function pp(s,  p){sub(/\+.*/,"",s);p=index(s,"-");if(p){C=substr(s,1,p-1);P=substr(s,p+1)}else{C=s;P=""}} function cmp(x,y,  i,n,m,X,Y){n=split(x,X,".");m=split(y,Y,".");for(i=1;i<=n&&i<=m;i++){if(X[i]==Y[i])continue;if(X[i]~/^[0-9]+$/&&Y[i]~/^[0-9]+$/)return (X[i]+0<Y[i]+0)?-1:1;if(X[i]~/^[0-9]+$/)return -1;if(Y[i]~/^[0-9]+$/)return 1;return (X[i]<Y[i])?-1:1}return (n<m)?-1:(n>m)?1:0} BEGIN{pp(a);ca=C;pa=P;pp(b);cb=C;pb=P;c=cmp(ca,cb);if(c==0){if(pa==pb)c=0;else if(pa=="")c=1;else if(pb=="")c=-1;else c=cmp(pa,pb)}exit !(c<0)}'; }
+      need=""
+      for mv in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${mv%@*}" 2>/dev/null)"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        vlt "$have" "${mv#*@}" && need="$need $mv"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
+      go mod tidy || true
+      install -d "${{targets.destdir}}/usr/bin"
+      go build -trimpath -ldflags "-s -w" -o "${{targets.destdir}}/usr/bin/nuclei" ./cmd/nuclei
+      grep -q "Version = \`v$NV\`" pkg/catalog/config/constants.go
 
 test:
   pipeline:
