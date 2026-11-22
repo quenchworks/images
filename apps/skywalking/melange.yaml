@@ -83,9 +83,17 @@ pipeline:
           echo "note: dist already ships $2-$4; the swap line for $3 is dead, remove it"
           return 0
         else
-          echo "FATAL: $2: neither $3 nor $4 is shipped -- dist moved, re-audit this line"
-          ls "$dest/oap-libs/" | grep -F "$2" || true
-          exit 1
+          # another version is shipped (11.1 moved most jars past 11.0's): keep it at or above $4, else replace it
+          have="$(ls "$dest/oap-libs" | sed -nE "s/^$2-([0-9][0-9.]*(-jre)?)\.jar$/\1/p" | sort -V | tail -1)"
+          if [ -n "$have" ] && [ "$(printf '%s\n%s\n' "$4" "$have" | sort -V | head -1)" = "$4" ]; then
+            echo "keep $2 $have (>= $4)"; return 0
+          elif [ -n "$have" ]; then
+            oldf="$dest/oap-libs/$2-$have.jar"
+          else
+            echo "FATAL: $2: neither $3 nor $4 is shipped -- dist moved, re-audit this line"
+            ls "$dest/oap-libs/" | grep -F "$2" || true
+            exit 1
+          fi
         fi
         # download BEFORE removing the old jar: a 404 leaves the dist intact and fails
         # the build instead of silently deleting a classpath entry.
@@ -103,8 +111,14 @@ pipeline:
       # line, not flagged, and stays.
       NETTY_OLD=4.2.15.Final
       NETTY_NEW=4.2.18.Final
+      # 11.1 already ships netty 4.2.19 and tcnative 2.0.84: both steps keep what is at or above their target
+      nh="$(ls "$dest/oap-libs" | sed -n 's/^netty-common-\([0-9.]*\)\.Final\.jar$/\1/p')"
+      if [ "$(printf '%s\n%s\n' "${NETTY_NEW%.Final}" "$nh" | sort -V | head -1)" = "${NETTY_NEW%.Final}" ]; then
+        echo "keep netty $nh (>= $NETTY_NEW)"; NETTY_OLD=none
+      fi
       n=0
       for f in "$dest"/oap-libs/netty-*-"$NETTY_OLD"*.jar; do
+        [ -e "$f" ] || continue
         b="$(basename "$f")"
         art="${b%%-$NETTY_OLD*}"          # netty-codec-http
         cls="${b#"$art"-$NETTY_OLD}"      # ".jar", or "-linux-x86_64.jar"
@@ -114,7 +128,7 @@ pipeline:
         rm -f "$f"
         n=$((n + 1))
       done
-      [ "$n" -eq 31 ] || {
+      [ "$NETTY_OLD" = none ] || [ "$n" -eq 31 ] || {
         echo "FATAL: expected 31 netty $NETTY_OLD jars in the dist, swapped $n --"
         echo "       upstream changed its netty module set; re-audit the lockstep list."
         exit 1
@@ -138,7 +152,7 @@ pipeline:
         rm -f "$f"
         t=$((t + 1))
       done
-      [ "$t" -ge 2 ] || { echo "FATAL: expected netty-tcnative jars to move, moved $t"; exit 1; }
+      [ "$NETTY_OLD" = none ] || [ "$t" -ge 2 ] || { echo "FATAL: expected netty-tcnative jars to move, moved $t"; exit 1; }
       echo "netty-tcnative: swapped $t jars -> $TCN_NEW"
 
       # ---- (2) the standalone jars ---------------------------------------------------
