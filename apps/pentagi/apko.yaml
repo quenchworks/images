@@ -1,0 +1,57 @@
+# PentAGI runtime: the Go server serves the API (/api/v1) and the frontend (STATIC_DIR) on 8443 (upstream's port; HTTP
+# unless SERVER_USE_SSL with SERVER_SSL_KEY/CRT). State (DATA_DIR) lives on one volume at /var/lib/pentagi. Needs
+# DATABASE_URL (PostgreSQL with pgvector) and DOCKER_HOST for the agents' tool containers. Upstream seeds the admin
+# admin@pentagi.com with a default password and password_change_required: change it on first sign-in (the chart does).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-pentagi@local
+
+accounts:
+  groups:
+    - groupname: pentagi
+      gid: 1001
+  users:
+    - username: pentagi
+      uid: 1001
+      gid: 1001
+      homedir: /var/lib/pentagi
+  run-as: 1001
+
+environment:
+  SERVER_PORT: "8443"
+  SERVER_HOST: 0.0.0.0
+  STATIC_DIR: /opt/pentagi/fe
+  DATA_DIR: /var/lib/pentagi
+  TZ: UTC
+
+paths:
+  - path: /var/lib/pentagi
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+work-dir: /opt/pentagi
+
+entrypoint:
+  command: /opt/pentagi/bin/pentagi
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-pentagi"
+  org.opencontainers.image.licenses: "MIT"
+  org.opencontainers.image.version: "__VER__"
