@@ -60,7 +60,7 @@ pipeline:
       # the `prisma dev` server and drivers, never started by migrate deploy; @prisma/config calls only deepmerge(),
       # unchanged in deepmerge-ts 8 (CVE-2026-40345), which still ships a require build
       printf '%s\n' 'allowBuilds:' "  '@prisma/engines': true" "  prisma: true" 'overrides:' \
-        "  '@hono/node-server': 2.1.6" "  deepmerge-ts: 8.0.0" "  mysql2: ^3.23.1" "  valibot: ^1.4.2" > "$c/pnpm-workspace.yaml"
+        "  '@hono/node-server': 2.1.6" "  deepmerge-ts: 8.0.0" "  mysql2: ^3.23.1" "  valibot: ^1.4.2" "  effect: 3.22.1" > "$c/pnpm-workspace.yaml"
       (cd "$c" && pnpm install --prod && rm -f pnpm-workspace.yaml)
       for p in '@hono+node-server@2.1.6*' 'deepmerge-ts@8.0.0*' 'mysql2@3.2[3-9].*' 'valibot@1.[4-9].*'; do
         ls -d "$c"/node_modules/.pnpm/$p >/dev/null || { echo "FATAL: override $p did not apply"; ls "$c"/node_modules/.pnpm; exit 1; }

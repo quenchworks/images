@@ -49,7 +49,7 @@ pipeline:
       # rewrites the lock, so the install cannot be frozen.
       # upstream already keeps a top-level overrides: block; add next under it
       grep -q '^overrides:$' pnpm-workspace.yaml
-      awk '{ print } /^overrides:$/ { print "  next: 16.4.5" }' pnpm-workspace.yaml > pw.tmp && mv pw.tmp pnpm-workspace.yaml
+      awk '{ print } /^overrides:$/ { print "  next: 16.4.5"; print "  effect: 3.22.1" }' pnpm-workspace.yaml > pw.tmp && mv pw.tmp pnpm-workspace.yaml
       pnpm install --no-frozen-lockfile
       test "$(node -p 'require("next/package.json").version')" = 16.4.5
       cp docker/proxy.ts src/
