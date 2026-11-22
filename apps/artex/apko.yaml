@@ -1,0 +1,65 @@
+# ARTEX runtime: the single Go binary serves the embedded UI and API on 8787. It needs PostgreSQL (ARTEX_PG_DSN;
+# the schema auto-creates). Writable state lives on one volume at /var/lib/artex (data/, keys/, and the agent's
+# working dir); skills are read-only at /opt/artex/skills. The agent runs shell commands, so the hardened
+# container (read-only rootfs, nonroot uid 1001, dropped caps, seccomp) is the containment boundary; ARTEX's own
+# root-to-uid privilege drop is off (--exec-uid=-1) because a nonroot process cannot setuid.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-artex@local
+
+accounts:
+  groups:
+    - groupname: artex
+      gid: 1001
+  users:
+    - username: artex
+      uid: 1001
+      gid: 1001
+      homedir: /var/lib/artex
+  run-as: 1001
+
+work-dir: /var/lib/artex
+
+environment:
+  ARTEX_JWT_KEY_DIR: /var/lib/artex/keys
+  ARTEX_SKILL_DIR: /opt/artex/skills
+  TZ: UTC
+
+paths:
+  - path: /var/lib/artex
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+  - path: /var/lib/artex/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+  - path: /var/lib/artex/keys
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+entrypoint:
+  command: /opt/artex/artex --addr=0.0.0.0:8787 --data=/var/lib/artex/data --proxy= --exec-uid=-1 --exec-gid=-1
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-artex"
+  org.opencontainers.image.licenses: "AGPL-3.0-or-later"

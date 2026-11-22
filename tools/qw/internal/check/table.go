@@ -29,6 +29,7 @@ var table = map[string]check{
 	"argo-events":                       {src: ghRel("argoproj/argo-events"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
 	"argo-rollouts":                     {src: ghRel("argoproj/argo-rollouts"), lines: 2, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
 	"argo-workflows":                    {src: ghRel("argoproj/argo-workflows"), lines: 2},
+	"artex":                             {src: ghRel("BaaRai/ARTEX"), n: 1},
 	"argocd":                            {src: ghRel("argoproj/argo-cd"), lines: 2},
 	"atlantis":                          {src: ghRel("runatlantis/atlantis")},
 	"authelia":                          {src: ghRel("authelia/authelia")},
