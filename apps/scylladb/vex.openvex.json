@@ -1,9 +1,9 @@
 {
   "@context": "https://openvex.dev/ns/v0.2.0",
-  "@id": "https://quench-works.com/vex/scylladb/2026-10-13",
+  "@id": "https://quench-works.com/vex/scylladb/2026-11-23",
   "author": "QuenchWorks <info@quench-works.com>",
-  "timestamp": "2026-10-13T00:00:00Z",
-  "version": 1,
+  "timestamp": "2026-11-23T00:00:00Z",
+  "version": 2,
   "statements": [
     {
       "vulnerability": {
@@ -30,6 +30,32 @@
       "status": "not_affected",
       "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
       "impact_statement": "CVE-2026-58494 (GHSA-4ch3-9j33-3pmj) lets a guest overwrite a host file exposed read-only in one preopened directory by hard-linking or renaming it into a second preopen that allows writes; it needs at least two preopened directories with different FilePerms. wasmtime-wasi 24.0.9 is in /opt/scylladb/libexec/scylla only for WASM user-defined functions (an experimental feature, off unless enabled). At release commit d80b3d6ca26b5457c1b59b47046fab27fa1953f3, rust/wasmtime_bindings/src/lib.rs:194 builds the only WASI context as WasiCtxBuilder::new().build_p1() with no preopened_dir, and grep -n 'preopen' over that file returns 0 matches, so a guest has no host directory capability at all and no file to link, rename or open. The recipe pins the lock per scylla build and fails on any new build until this is re-checked. Verified 2026-10-19."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-115889"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/wasmtime@24.0.9"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "CVE-2026-115889 is a Cranelift bit-packing miscompilation in the code wasmtime generates for guest WASM. wasmtime 24.0.9 is linked into /opt/scylladb/libexec/scylla only for WASM user-defined functions. At release commit 1d295571137f1abae70c70a73bf38f83a4a2b5b3 (2026.3.6), main.cc:1367 builds lang_config.wasm only when enable_user_defined_functions() and check_experimental(UDF) are both true, and lang/manager.cc:22-26 calls wasmtime::create_engine only when cfg.wasm is set; with no engine, no WASM module is ever compiled, so Cranelift never runs. enable_user_defined_functions defaults to false (db/config.cc:1586) and the image seeds upstream's conf/scylla.yaml, where experimental_features is commented out (line 278); the image's entrypoint adds neither. Verified 2026-11-23 by reading those files at that commit. An operator who enables UDFs must treat this finding as live."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-115893"
+      },
+      "products": [
+        {
+          "@id": "pkg:cargo/wasmtime@24.0.9"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "CVE-2026-115893 is a Cranelift aarch64 code-generation bug that can jump to the wrong target in the code wasmtime generates for guest WASM. wasmtime 24.0.9 is linked into /opt/scylladb/libexec/scylla only for WASM user-defined functions. At release commit 1d295571137f1abae70c70a73bf38f83a4a2b5b3 (2026.3.6), main.cc:1367 builds lang_config.wasm only when enable_user_defined_functions() and check_experimental(UDF) are both true, and lang/manager.cc:22-26 calls wasmtime::create_engine only when cfg.wasm is set; with no engine, no WASM module is ever compiled, so Cranelift never runs. enable_user_defined_functions defaults to false (db/config.cc:1586) and the image seeds upstream's conf/scylla.yaml, where experimental_features is commented out (line 278); the image's entrypoint adds neither. Verified 2026-11-23 by reading those files at that commit. An operator who enables UDFs must treat this finding as live."
     }
   ]
 }
