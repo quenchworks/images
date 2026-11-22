@@ -201,11 +201,15 @@ pipeline:
 
       # --- 3rdparty/ (vendor-dir = the tree itself) --------------------------
       cd nextcloud/3rdparty
+      # phpseclib stays on the major the release requires: 34 is on ^2.0.55, 35 on ^3.0.57 (already the fix
+      # for CVE-2026-84308). A fixed ^2 constraint would downgrade 35 and leave core without phpseclib3\* (#131).
+      PHPSECLIB="$(php -r 'echo json_decode(file_get_contents("composer.json"), true)["require"]["phpseclib/phpseclib"];')"
+      case "$PHPSECLIB" in ^2.*|^3.*) echo "phpseclib constraint: $PHPSECLIB" ;; *) echo "unexpected phpseclib constraint: $PHPSECLIB"; exit 1 ;; esac
       composer require --no-scripts --update-with-all-dependencies \
         'web-auth/webauthn-lib:^5.3.5' \
         'guzzlehttp/guzzle:^7.12.1' \
         'guzzlehttp/psr7:^2.12.1' \
-        'phpseclib/phpseclib:^2.0.55' \
+        "phpseclib/phpseclib:$PHPSECLIB" \
         'symfony/dom-crawler:^6.4.40' \
         'symfony/http-foundation:^6.4.50' \
         'symfony/serializer:^6.4.50' \
@@ -272,6 +276,10 @@ pipeline:
       # upstream-identical; finishRegister/finishAuthentication are ported to
       # the 5.x ceremony API; serialization helpers are added for the
       # controllers (5.x removed jsonSerialize/createFromString/createFromArray).
+      # 35 changed finishAuthentication() to return the AuthenticatorData (its login controller calls
+      # isUserVerified() on it); the original's signature decides which shape the port takes.
+      NC_AUTHDATA=0
+      grep -q 'string $uid): AuthenticatorData {' lib/private/Authentication/WebAuthn/Manager.php && NC_AUTHDATA=1
       cat > lib/private/Authentication/WebAuthn/Manager.php <<'NCEOF'
       <?php
 
@@ -542,6 +550,15 @@ pipeline:
       	}
       }
       NCEOF
+      if [ "$NC_AUTHDATA" = 1 ]; then
+        m=lib/private/Authentication/WebAuthn/Manager.php
+        sed -i -e '/^use Webauthn\\AuthenticatorAssertionResponseValidator;$/a use Webauthn\\AuthenticatorData;' \
+          -e '/public function finishAuthentication(/s|string $uid) {|string $uid): AuthenticatorData {|' \
+          -e '/public function finishAuthentication(/,/^[[:space:]]}$/s|return true;|return $response->authenticatorData;|' "$m"
+        grep -q '^use Webauthn\\AuthenticatorData;$' "$m"
+        grep -q 'string $uid): AuthenticatorData {' "$m"
+        grep -q 'return $response->authenticatorData;' "$m"
+      fi
 
       # ---- lib/private/Authentication/WebAuthn/CredentialRepository.php ------
       # 5.x removed the Webauthn\PublicKeyCredentialSourceRepository interface;
