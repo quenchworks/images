@@ -1,0 +1,52 @@
+# Assembles the Nuclei runtime image. Minimal, nonroot, multi-arch, SBOM by apko. The entrypoint is the binary, so
+# `docker run ...nuclei -u https://example.com -t <templates>` works. Nuclei keeps its config, cache and fetched
+# templates under $HOME (/home/nuclei): mount a volume there for `-ut` on a read-only root filesystem, plus a
+# writable /tmp (the dialer makes a temp dir at start; without one it exits "could not create dialer").
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-nuclei@local
+
+accounts:
+  groups:
+    - groupname: nuclei
+      gid: 1001
+  users:
+    - username: nuclei
+      uid: 1001
+      gid: 1001
+      homedir: /home/nuclei
+  run-as: 1001
+
+environment:
+  HOME: /home/nuclei
+
+paths:
+  - path: /home/nuclei
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+work-dir: /home/nuclei
+
+entrypoint:
+  command: /usr/bin/nuclei
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-nuclei"
+  org.opencontainers.image.licenses: "MIT"
