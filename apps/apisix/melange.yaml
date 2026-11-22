@@ -279,8 +279,11 @@ pipeline:
       # nginx 1.31.9's security fixes (10 advisories of 2026-11-18, among them CVE-2026-123007 and CVE-2026-123633,
       # both HTTP/2) backported to the nginx 1.31.8 core after api7's patches: nginx's own 1.31.8..1.31.9 src/ diff
       # without the version bump, applied without fuzz; the 1.29.2 core (3.19.0) does not take it cleanly
+      # apisix-nginx-module 1.20.4 (runtime 1.4.3, APISIX 3.21.0) applies the same 1.31.9 diff itself, so only
+      # patch a core that does not have it yet; the grep asserts the fix either way
       if [ -d "$OR/bundle/nginx-1.31.8" ]; then
-        ( cd "$OR/bundle/nginx-1.31.8" && patch -p1 --fuzz=0 -i "$WORK/nginx-1.31.9-security.patch" )
+        grep -q 'h2c->send_window - h2c->send_queued' "$OR/bundle/nginx-1.31.8/src/http/v2/ngx_http_v2.c" ||
+          ( cd "$OR/bundle/nginx-1.31.8" && patch -p1 --fuzz=0 -i "$WORK/nginx-1.31.9-security.patch" )
         grep -q 'h2c->send_window - h2c->send_queued' "$OR/bundle/nginx-1.31.8/src/http/v2/ngx_http_v2.c"
       fi
       # 3.19.0's 1.29.2 core takes Chainguard's per-CVE backports for nginx 1.27.1 (chainguard-forks/ingress-nginx
