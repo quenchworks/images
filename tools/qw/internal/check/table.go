@@ -619,7 +619,7 @@ var table = map[string]check{
 	"vllm":                      {src: pypiPkg("vllm"), f: filter{keep: numDots}},
 	"mongo-express": {src: jsonList("https://registry.npmjs.org/mongo-express",
 		func(d any) []string { return []string{common.Str(common.Path(d, "dist-tags", "latest"))} }), n: 1},
-	"mysql":  {src: jsonList("https://endoflife.date/api/mysql.json", endoflifeLatest), lines: 2},
+	"mysql":  {src: jsonList("https://endoflife.date/api/mysql.json", endoflifeLatest), lines: 3}, // 8.4 LTS, 9.7 LTS, newest Innovation (#128)
 	"neo4j":  {src: ghTags("neo4j/neo4j"), lines: 2, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
 	"nessie": {src: ghRel("projectnessie/nessie"), n: 1, f: group(`nessie-(\d+\.\d+\.\d+)`)},
 	"nifi":   {src: ghTags("apache/nifi"), n: 1, f: group(`rel/nifi-(\d+\.\d+\.\d+)`)},
