@@ -42,7 +42,7 @@ environment:
 work-dir: /data
 
 entrypoint:
-  command: /usr/lib/jvm/java-__JDK__-openjdk/bin/java -Djava.awt.headless=true -XX:+UseG1GC -XX:G1ReservePercent=25 -XX:InitiatingHeapOccupancyPercent=30 -XX:+UseCompactObjectHeaders -Djdk.tls.rejectClientInitiatedRenegotiation=true -Dfile.encoding=UTF-8 -Dlog4j.shutdownHookEnabled=false -Dlog4j2.disable.jmx=true -Dlog4j.skipJansi=true -Dio.netty.recycler.maxCapacityPerThread=0 --sun-misc-unsafe-memory-access=allow --enable-native-access=ALL-UNNAMED --add-modules jdk.incubator.vector -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/data -cp /opt/crate/lib/* io.crate.bootstrap.CrateDB -Cpath.home=/opt/crate
+  command: /usr/lib/jvm/java-__JDK__-openjdk/bin/java -Djava.library.path=/opt/crate/lib -Djava.awt.headless=true -XX:+UseG1GC -XX:G1ReservePercent=25 -XX:InitiatingHeapOccupancyPercent=30 -XX:+UseCompactObjectHeaders -Djdk.tls.rejectClientInitiatedRenegotiation=true -Dfile.encoding=UTF-8 -Dlog4j.shutdownHookEnabled=false -Dlog4j2.disable.jmx=true -Dlog4j.skipJansi=true -Dio.netty.recycler.maxCapacityPerThread=0 --sun-misc-unsafe-memory-access=allow --enable-native-access=ALL-UNNAMED --add-modules jdk.incubator.vector -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/data -cp /opt/crate/lib/* io.crate.bootstrap.CrateDB -Cpath.home=/opt/crate
 cmd: -Cpath.data=/data -Cnetwork.host=_site_
 
 archs:
