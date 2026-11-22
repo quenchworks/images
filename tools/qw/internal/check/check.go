@@ -33,6 +33,12 @@ func ghRel(r string) func() ([]string, error) {
 	return func() ([]string, error) { return core.Github(r) }
 }
 
+// ghLatest reads only GitHub's "latest release", for repos whose release list is crowded by prereleases (ZAP's
+// weekly builds) and whose tags include ones never released (ZAP's v2.17.1).
+func ghLatest(r string) func() ([]string, error) {
+	return func() ([]string, error) { return core.Gh("repos/"+r+"/releases/latest", ".tag_name") }
+}
+
 func ghTags(r string) func() ([]string, error) {
 	return func() ([]string, error) { return core.GithubTags(r) }
 }

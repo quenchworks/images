@@ -1,0 +1,67 @@
+# Packages OWASP ZAP onto Wolfi: the upstream Linux distribution under /opt/zap on the Wolfi JRE, with the
+# flagged log4j jars swapped for the same-major fix pinned by sha256 from Maven Central.
+package:
+  name: quench-zap
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened OWASP ZAP, packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-21-jre
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - curl
+      - unzip
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/zaproxy/zaproxy/releases/download/v${{package.version}}/ZAP_${{package.version}}_Linux.tar.gz
+      expected-sha256: "__SHA256__"
+      strip-components: 1
+  - runs: |
+      set -eu
+      dest="${{targets.destdir}}/opt/zap"
+      install -d "$dest"
+      cp -r "zap-${{package.version}}.jar" lib plugin lang xml db license README "$dest/"
+      ln -s "zap-${{package.version}}.jar" "$dest/zap.jar"
+      lib="$dest/lib"
+
+      # The network add-on is what keeps commons-httpclient's TLS sender out of the execute path (see the VEX):
+      # it calls HttpSender.setImpl at start. Fail the build if a release stops bundling it.
+      ls "$dest"/plugin/network-*.zap >/dev/null
+
+      # log4j 2.25.2 -> 2.26.1 (log4j-core CVEs fixed in 2.25.3/2.25.4, log4j-api in 2.25.5), same major, every
+      # module of the family moved together. Assert the originals so a renamed jar cannot survive beside its fix.
+      for m in log4j-api log4j-core log4j-1.2-api log4j-jul; do
+        test -f "$lib/$m-2.25.2.jar" || { echo "$m-2.25.2.jar not shipped; re-audit the swap" >&2; exit 1; }
+        rm -f "$lib/$m-2.25.2.jar"
+      done
+      base="https://repo1.maven.org/maven2/org/apache/logging/log4j"
+      for row in \
+        "log4j-api f1810a4704ccce019d02bba029dc02a4f2ac0c997f647b465e7d409c1927f822" \
+        "log4j-core 2ec8c3bf5a6d7c89be8620116a2fc973f7dda1ad0261ad393c4d4726edfd3dcb" \
+        "log4j-1.2-api 6f063c9c533788cb548d88ddb4bc7c59fbdb830182fc23d19e8d16ed0d8e2986" \
+        "log4j-jul 6ac54ce38bdf0334d36b9ff30433c2a650e37747b907d6e040e9d47d12659e9f"; do
+        set -- $row
+        curl -fsSL -o "$lib/$1-2.26.1.jar" "$base/$1/2.26.1/$1-2.26.1.jar"
+        echo "$2  $lib/$1-2.26.1.jar" | sha256sum -c -
+      done
+      # zap.jar's manifest Class-Path names the 2.25.2 jars; the image puts lib/* on -cp instead (see apko.yaml), so
+      # the swapped jars load and the stale manifest entries are skipped.
+      test "$(ls "$lib"/log4j-core-*.jar)" = "$lib/log4j-core-2.26.1.jar"
+
+test:
+  pipeline:
+    - runs: |
+        test -f /opt/zap/zap.jar

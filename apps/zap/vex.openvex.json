@@ -1,0 +1,22 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://quench-works.com/vex/zap/2026-11-22",
+  "author": "QuenchWorks <info@quench-works.com>",
+  "timestamp": "2026-11-22T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2012-5783"
+      },
+      "products": [
+        {
+          "@id": "pkg:maven/commons-httpclient/commons-httpclient@3.1"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "CVE-2012-5783 is commons-httpclient 3.1's TLS socket factory not checking the server hostname against the certificate. In ZAP 2.17.0 only the legacy sender uses it: org.parosproxy.paros.network.HttpSender defaults to HttpSenderParos (commons-httpclient) and exposes setImpl (zaproxy zap/src/main/java/org/parosproxy/paros/network/HttpSender.java:165-182, tag v2.17.0). The bundled network add-on (plugin/network-beta-0.25.0.zap) replaces it on start with its own httpclient5-based sender (zap-extensions addOns/network/src/main/java/org/zaproxy/addon/network/ExtensionNetwork.java:254, HttpSender.setImpl(httpSenderNetwork), tag network-v0.25.0), so requests do not go through the vulnerable factory. Verified on 2026-11-22 by reading both files at those tags, and on every build by the smoke test, which requires the running daemon to serve the network add-on's API component. The deprecated Paros path also trusts every certificate on purpose, as an attack proxy must reach targets with any certificate (SSLConnector.java:271, RelaxedX509TrustManager). The melange recipe fails the build if a release stops bundling the network add-on. The only fixed line is the httpclient 4.x rewrite, which ZAP's core API still depends on."
+    }
+  ]
+}

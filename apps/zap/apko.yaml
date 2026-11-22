@@ -1,0 +1,59 @@
+# OWASP ZAP runtime: the Wolfi JRE runs ZAP's main class with zap.jar plus lib/* on the classpath (zap.jar's own
+# manifest names the pre-swap log4j jars; java expands the lib/* wildcard itself, no shell needed). The default
+# command starts the API daemon on 8080 with its home in /home/zap/.ZAP (mount a volume there on a read-only root
+# filesystem, plus a writable /tmp) and no update checks. The API needs a key: pass -config api.key=<key>, or
+# override the command for a one-shot scan (for example -cmd -quickurl https://target -quickout /home/zap/r.html).
+# ZAP treats a request as an API call only when it is addressed to its own host:port; anything else is proxied. Keep
+# the published port equal to -port (or call it through ZAP as a proxy with the host name "zap").
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - openjdk-21-jre
+    - quench-zap@local
+
+accounts:
+  groups:
+    - groupname: zap
+      gid: 1001
+  users:
+    - username: zap
+      uid: 1001
+      gid: 1001
+      homedir: /home/zap
+  run-as: 1001
+
+environment:
+  HOME: /home/zap
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+
+paths:
+  - path: /home/zap
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+work-dir: /opt/zap
+
+entrypoint:
+  command: /usr/lib/jvm/java-21-openjdk/bin/java -Djava.awt.headless=true -XX:+ExitOnOutOfMemoryError -cp /opt/zap/zap.jar:/opt/zap/lib/* org.zaproxy.zap.ZAP
+cmd: -daemon -host 0.0.0.0 -port 8080 -dir /home/zap/.ZAP -config start.checkForUpdates=false -config start.checkAddonUpdates=false -config api.addrs.addr.name=.* -config api.addrs.addr.regex=true
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-zap"
+  org.opencontainers.image.licenses: "Apache-2.0"
+  org.opencontainers.image.version: "__VER__"

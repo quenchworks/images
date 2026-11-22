@@ -73,6 +73,7 @@ var table = map[string]check{
 	"cosign":                            {src: ghRel("sigstore/cosign")},
 	"nuclei":                            {src: ghRel("projectdiscovery/nuclei"), n: 1},
 	"promptfoo":                         {src: npmPkg("promptfoo"), n: 1, f: filter{keep: noDash}},
+	"zap":                               {src: ghLatest("zaproxy/zaproxy"), n: 1},
 	"cosmian-kms":                       {src: ghRel("Cosmian/kms")},
 	"crane":                             {src: wolfiPkg("crane"), n: 1},
 	"cratedb":                           {src: ghRel("crate/crate"), lines: 2},
