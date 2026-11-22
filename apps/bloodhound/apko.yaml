@@ -1,0 +1,50 @@
+# BloodHound CE runtime, laid out like upstream's image: /bloodhound reads /bloodhound.config.json, and bhe_* variables
+# override any key (bhe_database_connection, bhe_graph_driver, bhe_neo4j_connection, bhe_root_url, bhe_default_admin_*).
+# The graph can live in PostgreSQL (bhe_graph_driver=pg, needs pg_trgm) or Neo4j. Work files go to
+# /opt/bloodhound/work (writable). HTTP on 8080, metrics on 2112.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-bloodhound@local
+
+accounts:
+  groups:
+    - groupname: bloodhound
+      gid: 1001
+  users:
+    - username: bloodhound
+      uid: 1001
+      gid: 1001
+      homedir: /opt/bloodhound
+  run-as: 1001
+
+paths:
+  - path: /opt/bloodhound
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+work-dir: /opt/bloodhound
+
+entrypoint:
+  command: /bloodhound -configfile /bloodhound.config.json
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-bloodhound"
+  org.opencontainers.image.licenses: "Apache-2.0"
+  org.opencontainers.image.version: "__VER__"

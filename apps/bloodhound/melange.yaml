@@ -1,0 +1,80 @@
+# BloodHound CE from the release tag: the UI build embedded into the Go API binary, laid out like upstream's image
+# (/bloodhound, /bloodhound.config.json, /opt/bloodhound/work).
+package:
+  name: quench-bloodhound
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened BloodHound Community Edition, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go-1.27
+      - nodejs-22
+      - npm                # doodle-ui's build script calls npx
+      - python3
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/SpecterOps/BloodHound/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: UI
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" YARN_ENABLE_TELEMETRY=0 CI=true
+      # yarn 4.13.0 is vendored (.yarnrc.yml yarnPath); install and build the bloodhound-ui workspace
+      node .yarn/releases/yarn-4.13.0.cjs install --immutable
+      node .yarn/releases/yarn-4.13.0.cjs build
+      test -f cmd/ui/dist/index.html
+      rm -rf cmd/api/src/api/static/assets && mkdir -p cmd/api/src/api/static/assets
+      cp -a cmd/ui/dist/. cmd/api/src/api/static/assets/
+
+  - name: API
+    runs: |
+      set -eu
+      export CGO_ENABLED=0 GOFLAGS=-mod=mod GO111MODULE=on GOTOOLCHAIN=local
+      # Bump vulnerable Go modules to their Trivy-listed fixed versions (0-CVE gate).
+      # 0-CVE FLOORS, not pins (docs/go-module-float.md): raise a module only where go.mod has it
+      # below the floor; a module absent from the graph is skipped. Bare `go get` pins downgraded
+      # newer upstream releases (found 2026-10-05).
+      FLOOR="github.com/moby/sys/user@v0.4.1 golang.org/x/net@v0.62.0 golang.org/x/sys@v0.49.0 google.golang.org/grpc@v1.83.2 golang.org/x/text@v0.43.0 golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/mod@v0.41.0 github.com/klauspost/compress@v1.19.1"
+      # CVE-2026-128085 (otel 1.47.0): floor every otel v1 module the build uses, as one family
+      for m in $(go list -mod=mod -m -e -f '{{.Path}} {{.Version}}' all | awk '($1 ~ /^go\.opentelemetry\.io\/otel(\/|$)/ || $1 ~ /^go\.opentelemetry\.io\/contrib\/bridges\/otel(zap|logrus|slog)$/) && $1 !~ /\/exporters\/jaeger$/ { if ($1 ~ /\/contrib\/bridges\//) print $1"@v0.21.0"; else if ($1 ~ /\/exporters\/(otlp\/otlplog\/|stdout\/stdoutlog$)/) print $1"@v0.23.0"; else if ($1 ~ /\/exporters\/prometheus$/) print $1"@v0.69.0"; else if ($2 ~ /^v1\./ || $1 ~ /\/(sdk\/)?log$/) print $1"@v1.47.0" }'); do
+        FLOOR="$FLOOR $m"
+      done
+      # Go semver order (a release outranks its prereleases); busybox sort -V does not.
+      vlt() { awk -v a="${1#v}" -v b="${2#v}" 'function pp(s,  p){sub(/\+.*/,"",s);p=index(s,"-");if(p){C=substr(s,1,p-1);P=substr(s,p+1)}else{C=s;P=""}} function cmp(x,y,  i,n,m,X,Y){n=split(x,X,".");m=split(y,Y,".");for(i=1;i<=n&&i<=m;i++){if(X[i]==Y[i])continue;if(X[i]~/^[0-9]+$/&&Y[i]~/^[0-9]+$/)return (X[i]+0<Y[i]+0)?-1:1;if(X[i]~/^[0-9]+$/)return -1;if(Y[i]~/^[0-9]+$/)return 1;return (X[i]<Y[i])?-1:1}return (n<m)?-1:(n>m)?1:0} BEGIN{pp(a);ca=C;pa=P;pp(b);cb=C;pb=P;c=cmp(ca,cb);if(c==0){if(pa==pb)c=0;else if(pa=="")c=1;else if(pb=="")c=-1;else c=cmp(pa,pb)}exit !(c<0)}'; }
+      need=""
+      for mv in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${mv%@*}" 2>/dev/null)"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        vlt "$have" "${mv#*@}" && need="$need $mv"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
+      go mod tidy || true
+      V="${{package.version}}"; PKG=github.com/specterops/bloodhound/cmd/api/src/version
+      LD="-s -w -X '$PKG.majorVersion=${V%%.*}' -X '$PKG.minorVersion=$(echo $V | cut -d. -f2)' -X '$PKG.patchVersion=${V##*.}'"
+      go build -C cmd/api/src -trimpath -ldflags "$LD" -o "${{targets.destdir}}/bloodhound" github.com/specterops/bloodhound/cmd/api/src/cmd/bhapi
+      "${{targets.destdir}}/bloodhound" -version | grep -q "v$V" || { "${{targets.destdir}}/bloodhound" -version; echo "version not stamped"; exit 1; }
+      install -Dm0644 dockerfiles/configs/bloodhound.config.json "${{targets.destdir}}/bloodhound.config.json"
+      install -d "${{targets.destdir}}/opt/bloodhound" "${{targets.destdir}}/etc/bloodhound/collectors"
+
+test:
+  pipeline:
+    - runs: |
+        /bloodhound -version
