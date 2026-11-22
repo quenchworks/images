@@ -66,6 +66,11 @@ pipeline:
       # x86 runner at "Generating static pages" (run 44366808411). One worker keeps the peak at one heap.
       sed -i 's/^  experimental: {$/  experimental: {\n    cpus: 1,/' apps/sim/next.config.ts
       grep -q '^    cpus: 1,$' apps/sim/next.config.ts
+      # 0.9.63's x86 build starved the runner into "lost communication" twice (8 GB heap + Turbopack's native memory
+      # thrashing the swapfile). A 6 GB heap leaves room for the native side, and a real overflow now fails as a
+      # readable heap error instead of a dead runner.
+      sed -i "s/--max-old-space-size=8192/--max-old-space-size=6144/" apps/sim/package.json
+      grep -q -- "--max-old-space-size=6144" apps/sim/package.json
       export NEXT_TELEMETRY_DISABLED=1 VERCEL_TELEMETRY_DISABLED=1 DOCKER_BUILD=1 \
         DATABASE_URL=postgresql://user:pass@localhost:5432/dummy NEXT_PUBLIC_APP_URL=http://localhost:3000
       bun run build
