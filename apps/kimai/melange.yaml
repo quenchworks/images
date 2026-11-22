@@ -130,7 +130,8 @@ pipeline:
       printf '%s\n' 'APP_ENV=prod' 'MAILER_FROM=kimai@example.com' 'MAILER_URL=null://null' 'CORS_ALLOW_ORIGIN=^https?://localhost(:[0-9]+)?$' > "$d/.env"
       # var/ (cache, logs, sessions, data, plugins) lives on the volume
       ln -s /var/lib/kimai/var "$d/var"
-      grep -qF "'${{package.version}}'" src/Constants.php
+      # major.minor only: the 2.72.1 tag still says VERSION = '2.72.0' in Constants.php (upstream missed the bump)
+      v="${{package.version}}"; grep -qF "VERSION = '${v%.*}." src/Constants.php
       install -d "${{targets.destdir}}/usr/libexec"
       cat > "${{targets.destdir}}/usr/libexec/kimai-init" <<'SH'
       #!/bin/sh
