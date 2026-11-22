@@ -135,6 +135,12 @@ pipeline:
         grep -q "\"$n\"" composer.json || continue
         specs="$specs $spec"; names="$names $n"
       done
+      # Release tarballs can ship a vendor tree one patch behind core (1.46.3: core composer.json requires parsoid
+      # 0.23.3, vendor holds 0.23.2) and update.php refuses to run on that. Require core's exact pin for those too.
+      lag=$(php -r '$r=json_decode(file_get_contents("../composer.json"),true)["require"]??[]; $j=json_decode(file_get_contents("composer/installed.json"),true);
+        foreach(($j["packages"]??$j) as $p){ $w=$r[$p["name"]]??null; if($w!==null && preg_match("/^v?[0-9.]+$/",$w) && version_compare(ltrim($w,"v"),ltrim($p["version"],"v"),">")) echo $p["name"],":",ltrim($w,"v")," "; }')
+      echo "vendor behind core: ${lag:-none}"
+      for spec in $lag; do specs="$specs $spec"; names="$names ${spec%%:*}"; done
       composer require --no-update --no-plugins --no-scripts $specs
       composer update --no-plugins --no-scripts --no-dev --optimize-autoloader $names
       # Assert what the scanner will read: every floated package is at or above
