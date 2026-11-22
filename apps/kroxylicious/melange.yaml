@@ -48,9 +48,18 @@ pipeline:
       # swap <shipped jar> <maven path of the fixed jar> <its sha256, from a download checked
       # against Maven Central's .sha1>. Each swap asserts the old jar is shipped, so a release
       # that moves a library fails loudly instead of gaining a second copy.
+      # A newer release that already ships the artifact at or above the fixed version needs no swap
+      # (0.26.0: lz4-java 1.12.1, snappy-java 1.1.10.12); anything else missing is still fatal.
       swap() {
-        test -f "$lib/$1" || { echo "FATAL: $1 not shipped; re-audit the swaps"; exit 1; }
         new="$(basename "$2")"
+        if [ ! -f "$lib/$1" ]; then
+          fixed="${new##*-}"; fixed="${fixed%.jar}"; art="${new%-"$fixed".jar}"
+          have="$(ls "$lib" | sed -n "s/^${art}-\([0-9][0-9.]*\)\.jar$/\1/p" | head -1)"
+          if [ -n "$have" ] && [ "$(printf '%s\n%s\n' "$fixed" "$have" | sort -V | head -1)" = "$fixed" ]; then
+            echo "skip $1: upstream ships $art $have (>= $fixed)"; return 0
+          fi
+          echo "FATAL: $1 not shipped; re-audit the swaps"; exit 1
+        fi
         curl -fsSL -o "$lib/$new" "$M/$2"
         echo "$3  $lib/$new" | sha256sum -c -
         rm -f "$lib/$1"
