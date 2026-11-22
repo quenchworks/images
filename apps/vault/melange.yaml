@@ -119,6 +119,8 @@ pipeline:
       # audit, agent test helper, PKI ACME JWS, OIDC provider move to v4; no release carries them
       # yet). vault-plugin-auth-jwt v0.27.3 and cap v0.15.0 (FLOOR) drop the plugin's v3 too. GNU
       # patch, not busybox: the audit hunk needs fuzz.
+      # 2.2+ ships the v4 migration itself (acme_jws.go imports go-jose/v4): apply the port only to older lines
+      if grep -q '"github.com/go-jose/go-jose/v3"' builtin/logical/pki/acme_jws.go; then
       patch -p1 --forward <<'PATCH'
       diff --git a/audit/entry_formatter.go b/audit/entry_formatter.go
       --- a/audit/entry_formatter.go
@@ -316,6 +318,7 @@ pipeline:
        		t.Fatal(err)
        	}
       PATCH
+      fi
       # ---- 0-CVE module float (docs/go-module-float.md) ----------------------
       # FLOOR is a FLOOR, not a pin. A bare `go get mod@vX` fails silently in two
       # directions: it is a NO-OP when an upstream `replace` overrides it, and it

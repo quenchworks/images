@@ -1,4 +1,4 @@
-# Assembles the CrateDB runtime image on Wolfi's openjdk-25 JRE. Nonroot, multi-arch,
+# Assembles the CrateDB runtime image on Wolfi's openjdk-__JDK__ JRE. Nonroot, multi-arch,
 # SBOM by apko. HTTP/SQL API on :4200, PostgreSQL wire protocol on :5432, transport
 # on :4300; data under /data. The entrypoint is bin/crate's JVM command without the
 # shell (GC file logging left out); heap comes from JDK_JAVA_OPTIONS. Pass -C<setting>
@@ -34,7 +34,7 @@ paths:
     permissions: 0o755
 
 environment:
-  JAVA_HOME: /usr/lib/jvm/java-25-openjdk
+  JAVA_HOME: /usr/lib/jvm/java-__JDK__-openjdk
   CRATE_HOME: /opt/crate
   # CrateDB's guidance: heap at most half of the memory, the rest for Lucene's page cache
   JDK_JAVA_OPTIONS: "-Xms256m -XX:MaxRAMPercentage=50.0"
@@ -42,7 +42,7 @@ environment:
 work-dir: /data
 
 entrypoint:
-  command: /usr/lib/jvm/java-25-openjdk/bin/java -Djava.awt.headless=true -XX:+UseG1GC -XX:G1ReservePercent=25 -XX:InitiatingHeapOccupancyPercent=30 -XX:+UseCompactObjectHeaders -Djdk.tls.rejectClientInitiatedRenegotiation=true -Dfile.encoding=UTF-8 -Dlog4j.shutdownHookEnabled=false -Dlog4j2.disable.jmx=true -Dlog4j.skipJansi=true -Dio.netty.recycler.maxCapacityPerThread=0 --sun-misc-unsafe-memory-access=allow --enable-native-access=ALL-UNNAMED --add-modules jdk.incubator.vector -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/data -cp /opt/crate/lib/* io.crate.bootstrap.CrateDB -Cpath.home=/opt/crate
+  command: /usr/lib/jvm/java-__JDK__-openjdk/bin/java -Djava.awt.headless=true -XX:+UseG1GC -XX:G1ReservePercent=25 -XX:InitiatingHeapOccupancyPercent=30 -XX:+UseCompactObjectHeaders -Djdk.tls.rejectClientInitiatedRenegotiation=true -Dfile.encoding=UTF-8 -Dlog4j.shutdownHookEnabled=false -Dlog4j2.disable.jmx=true -Dlog4j.skipJansi=true -Dio.netty.recycler.maxCapacityPerThread=0 --sun-misc-unsafe-memory-access=allow --enable-native-access=ALL-UNNAMED --add-modules jdk.incubator.vector -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/data -cp /opt/crate/lib/* io.crate.bootstrap.CrateDB -Cpath.home=/opt/crate
 cmd: -Cpath.data=/data -Cnetwork.host=_site_
 
 archs:
