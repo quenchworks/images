@@ -89,9 +89,13 @@ pipeline:
       sed -i -e "s/^gem 'mail', '= 2.9.0'/gem 'mail', '= 2.9.1'/" \
              -e "s/^gem 'view_component', '~> 4.12.0'/gem 'view_component', '~> 4.14.0'/" \
              -e "s/^gem 'omniauth', '~> 2.1.0'/gem 'omniauth', '~> 2.2.0'/" Gemfile
+      # graphql 2.6.16 (GHSA-5f8h-c2xc-j37j, 2026-11-17) sits inside the Gemfile's 7-day cooldown; 3 days lets the
+      # named security floats through (--conservative --patch: nothing else moves). Put it back once 7 clears them.
+      sed -i "s/^source 'https:\/\/rubygems.org', cooldown: 7$/source 'https:\/\/rubygems.org', cooldown: 3/" Gemfile
+      grep -q "^source 'https://rubygems.org', cooldown: 3$" Gemfile
       bundle lock --conservative --patch --update addressable graphql mail msgpack net-ssh puma rack resolv rubyntlm sanitize
       bundle lock --conservative --minor --update faraday-http-cache view_component omniauth
-      for want in 'addressable 2.9.[1-9]' 'faraday-http-cache 2.[89]' 'graphql 2.6.1[4-9]' 'mail 2.9.[1-9]' \
+      for want in 'addressable 2.9.[1-9]' 'faraday-http-cache 2.[89]' 'graphql 2.6.1[6-9]' 'mail 2.9.[1-9]' \
                   'msgpack 1.8.[7-9]' 'net-ssh 7.3.([5-9]|[1-9][0-9])' 'rack 2.2.(2[5-9]|[3-9][0-9])' 'resolv 0.7.[2-9]' \
                   'rubyntlm 0.6.[6-9]' 'sanitize 7.0.[2-9]' 'view_component 4.1[4-9]' 'omniauth 2.2'; do
         set -- $want
