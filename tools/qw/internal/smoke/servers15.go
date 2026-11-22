@@ -181,12 +181,18 @@ echo classpath-ok`)
 		if err != nil || !strings.Contains(out, "classpath-ok") {
 			t.Fatalf("JRE, classpath or config check failed:\n%s", out)
 		}
-		name := t.Name("")
-		t.Start(name, nil)
-		t.waitFor(60, time.Second, name, "OAP did not bind its gRPC receiver", func() bool {
+		// 11.1 dials its storage while it prepares the modules, before the gRPC receiver binds, so OAP gets the
+		// backend the chart runs it on: the catalog's OpenSearch through the elasticsearch selector.
+		net_, os_, name := t.Name("net"), t.Name("os"), t.Name("")
+		t.Docker("network", "create", net_)
+		t.Cleanup(func() { docker("network", "rm", net_) })
+		t.Cleanup(func() { docker("rm", "-f", os_) })
+		t.Docker("run", "-d", "--name", os_, "--network", net_, "--network-alias", "opensearch", envOr("OPENSEARCH_IMAGE", "ghcr.io/quenchworks/images/opensearch:3.8.0"))
+		t.Start(name, []string{"--network", net_, "-e", "SW_STORAGE=elasticsearch", "-e", "SW_STORAGE_ES_CLUSTER_NODES=opensearch:9200"})
+		t.waitFor(180, 2*time.Second, name, "OAP did not bind its gRPC receiver", func() bool {
 			return regexp.MustCompile(`(?i)listening on 11800`).MatchString(t.Logs(name))
 		})
-		t.Logf("smoke test passed (nonroot uid: %s; OAP bound gRPC 11800)", u)
+		t.Logf("smoke test passed (nonroot uid: %s; OAP on OpenSearch storage bound gRPC 11800)", u)
 	})
 	register("spark", func(t *T) {
 		ro := []string{"--read-only", "--tmpfs", "/tmp", "--tmpfs", "/opt/spark/work-dir:uid=1001,gid=1001"}
