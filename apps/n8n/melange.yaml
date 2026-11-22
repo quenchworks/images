@@ -620,7 +620,8 @@ pipeline:
       # 4. @napi-rs/canvas (pdfjs-dist DOMMatrix/Path2D): upstream commits no Cargo.lock and
       #    a Skia build is out of reach, so ship a lock built from the crate source paths in
       #    the binary (a lower bound: only crates that left a path string).
-      for so in $(find node_modules -path '*/@napi-rs/canvas-linux-*-gnu/*.node'); do
+      #    2.48 adds @napi-rs/image (image resize/convert), the same kind of prebuilt napi-rs module: same treatment.
+      for so in $(find node_modules -path '*/@napi-rs/canvas-linux-*-gnu/*.node' -o -path '*/@napi-rs/image-linux-*-gnu/*.node'); do
         lock="$(dirname "$so")/Cargo.lock"
         LC_ALL=C grep -aoE 'registry/src/[^/]+/[A-Za-z0-9_-]+-[0-9]+\.[0-9]+\.[0-9]+[^/]*' "$so" | sed 's|.*/||' | sort -u \
           | awk 'BEGIN{print "version = 4"} match($0,/-[0-9]+\.[0-9]+\.[0-9]+/){printf "\n[[package]]\nname = \"%s\"\nversion = \"%s\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n",substr($0,1,RSTART-1),substr($0,RSTART+1)}' > "$lock"
