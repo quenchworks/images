@@ -1,0 +1,83 @@
+# Strix from the release tag: the locked dependencies (uv.lock) in a Python 3.13 venv, the project wheel built by
+# upstream's hatch hook (which compiles the Go TUI sidecar), and floors for the advisories the 2026-11-23 sizing found.
+package:
+  name: quench-strix
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Strix, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - python-3.13
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - unzip
+      - ca-certificates-bundle
+      - git
+      - go-1.27
+      - python-3.13
+      - python-3.13-dev
+      - uv
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/usestrix/strix/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: TUI floors
+    runs: |
+      set -eu
+      # the hatch hook runs `go build ./cmd/strix-tui` here; floor its modules first (go 1.24 line in go.mod is
+      # only a minimum: Wolfi Go 1.27 builds it, which clears the stdlib advisories)
+      cd strix/interface/tui
+      export GOFLAGS=-mod=mod GOTOOLCHAIN=local CGO_ENABLED=0
+      for mv in golang.org/x/sys@v0.49.0 golang.org/x/text@v0.43.0; do
+        have="$(go list -m -e -f '{{.Version}}' "${mv%@*}")"
+        case "$have" in v[0-9]*) [ "$(printf '%s\n%s\n' "${have#v}" "${mv#*@v}" | sort -V | head -1)" = "${mv#*@v}" ] || go get "$mv" ;; esac
+      done
+      go mod tidy
+
+  - name: Venv
+    runs: |
+      set -eu
+      grep -q "^version = \"${{package.version}}\"" pyproject.toml
+      export UV_PYTHON=/usr/bin/python3.13 UV_PYTHON_DOWNLOADS=never UV_CACHE_DIR="$(mktemp -d)" UV_LINK_MODE=copy
+      export UV_PROJECT_ENVIRONMENT=/opt/strix/venv GOTOOLCHAIN=local
+      uv sync --frozen --no-dev --no-install-project
+      # the project as a real wheel, so upstream's hatch hook compiles the TUI sidecar into it (strix/bin/strix-tui)
+      uv build --wheel --out-dir dist
+      unzip -l dist/*.whl | grep -q 'strix/bin/strix-tui' || { unzip -l dist/*.whl | tail -5; echo "wheel has no strix/bin/strix-tui"; exit 1; }
+      uv pip install --python /opt/strix/venv/bin/python --no-deps dist/*.whl
+      # floors over upstream's lock (sizing 2026-11-23); pillow 13 and filelock 4 are transitive majors
+      uv pip install --python /opt/strix/venv/bin/python \
+        'pypdf>=6.21.4,<7' 'pyjwt>=2.15.0' 'urllib3>=2.8.0' 'cryptography>=50.0.0' 'mcp>=1.30.0,<2' \
+        'litellm>=1.101.3,<1.102' 'anyio>=4.14.2' 'certifi>=2026.10.18' 'multidict>=6.9.1,<7' 'pyasn1>=0.6.5' \
+        'filelock>=4.2.1' 'pillow>=13.0.0'
+      /opt/strix/venv/bin/strix --version
+      # -I: with -c the cwd (the source checkout) would shadow the installed package. strix spawns the sidecar
+      # directly, so it must be executable
+      tui="$(/opt/strix/venv/bin/python -I -c 'import strix,os;print(os.path.join(os.path.dirname(strix.__file__),"bin","strix-tui"))')"
+      test -f "$tui" || { echo "no TUI sidecar at $tui"; exit 1; }
+      chmod 0755 "$tui"
+      test -x "$tui"
+      /opt/strix/venv/bin/python -m pip --version >/dev/null 2>&1 && /opt/strix/venv/bin/python -m pip uninstall -y pip || true
+      install -d "${{targets.destdir}}/opt/strix"
+      cp -a /opt/strix/venv "${{targets.destdir}}/opt/strix/venv"
+      # uv's venv lock file is mode 0666 (melange's worldwrite linter refuses it) and is not needed at runtime
+      rm -f "${{targets.destdir}}/opt/strix/venv/.lock"
+
+test:
+  pipeline:
+    - runs: |
+        /opt/strix/venv/bin/strix --version

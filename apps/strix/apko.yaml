@@ -1,0 +1,54 @@
+# Strix CLI runtime. The agents need an LLM (STRIX_LLM plus a provider key, e.g. LLM_API_KEY) and a Docker API for
+# their Kali sandbox (DOCKER_HOST, image STRIX_IMAGE). Runs, reports and settings go to $HOME (/home/strix): mount a
+# volume there on a read-only root filesystem.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-strix@local
+
+accounts:
+  groups:
+    - groupname: strix
+      gid: 1001
+  users:
+    - username: strix
+      uid: 1001
+      gid: 1001
+      homedir: /home/strix
+  run-as: 1001
+
+environment:
+  HOME: /home/strix
+  PATH: /opt/strix/venv/bin:/usr/sbin:/sbin:/usr/bin:/bin
+  PYTHONUNBUFFERED: "1"
+
+paths:
+  - path: /home/strix
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+work-dir: /home/strix
+
+entrypoint:
+  command: /opt/strix/venv/bin/strix
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-strix"
+  org.opencontainers.image.licenses: "Apache-2.0"
+  org.opencontainers.image.version: "__VER__"
