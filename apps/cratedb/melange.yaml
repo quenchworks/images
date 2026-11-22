@@ -47,9 +47,11 @@ pipeline:
       # finding and stays.
       # A release that already ships the artifact at or above the fixed version needs no swap (6.5.1: jackson 2.22.2,
       # log4j 2.26.1); any other missing old jar is still fatal.
-      swap() {  # <old jar> <maven path> <artifact> <version> <sha256>
+      swap() {  # <old jar> <maven path> <artifact> <version> <sha256> [same-line]
         if [ ! -f "$home/lib/$1" ]; then
           have="$(ls "$home/lib" | sed -n "s/^$3-\([0-9][0-9.]*\)\.jar$/\1/p" | sort -V | tail -1)"
+          # same-line: only move a jar already on this fix's major.minor (2.22.3 for 6.5's 2.22.2, never for 6.4's 2.21)
+          if [ "${6:-}" = same-line ] && [ "${have%.*}" != "${4%.*}" ]; then echo "skip $3 $have (not on ${4%.*})"; return 0; fi
           if [ -n "$have" ] && [ "$(printf '%s\n%s\n' "$4" "$have" | sort -V | head -1)" = "$4" ]; then
             echo "keep $3 $have (>= $4)"; return 0
           fi
@@ -64,6 +66,9 @@ pipeline:
       swap jackson-dataformat-csv-2.21.1.jar com/fasterxml/jackson/dataformat jackson-dataformat-csv 2.21.5 b278bd22805093e1b3e31c9ad7fa2773d3ac9e250da8cb566bd914334cc51a96
       swap jackson-dataformat-smile-2.21.1.jar com/fasterxml/jackson/dataformat jackson-dataformat-smile 2.21.5 193b7a7c0c2a2a663f805a8222dfe03ce94de2cee07254c85a696e64b12194f2
       swap jackson-dataformat-yaml-2.21.1.jar com/fasterxml/jackson/dataformat jackson-dataformat-yaml 2.21.5 c26143ac5503fd545bd5e9063f45a2499be89971559875e47cc868ef9359d10b
+      # jackson 2.22.2 (cratedb 6.5): CVE-2026-89407 (core) and CVE-2026-91776/91777 (databind), fixed in 2.22.3
+      swap jackson-core-2.22.2.jar com/fasterxml/jackson/core jackson-core 2.22.3 8a501126a385b25841915d839508f8a66e2a0dbc8a6709d055ef3b3e852b094c same-line
+      swap jackson-databind-2.22.2.jar com/fasterxml/jackson/core jackson-databind 2.22.3 556db5439e206114346043f68d200497dc96a0bca62a360a81784092ebd0e0a9 same-line
       swap log4j-api-2.26.0.jar org/apache/logging/log4j log4j-api 2.26.1 f1810a4704ccce019d02bba029dc02a4f2ac0c997f647b465e7d409c1927f822
       swap log4j-core-2.26.0.jar org/apache/logging/log4j log4j-core 2.26.1 2ec8c3bf5a6d7c89be8620116a2fc973f7dda1ad0261ad393c4d4726edfd3dcb
       # drop the rolling file appender entirely: even unreferenced, log4j builds it and

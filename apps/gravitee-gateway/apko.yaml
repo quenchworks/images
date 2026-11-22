@@ -24,16 +24,16 @@ accounts:
   run-as: 1001
 
 environment:
-  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  JAVA_HOME: /usr/lib/jvm/java-__JDK__-openjdk
   GRAVITEE_HOME: /opt/gravitee-gateway
-  PATH: /usr/lib/jvm/java-21-openjdk/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  PATH: /usr/lib/jvm/java-__JDK__-openjdk/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 work-dir: /opt/gravitee-gateway
 
 # The upstream bin/gravitee launcher is a shell script; this is the java line it execs.
 # Heap follows the container limit (JAVA_TOOL_OPTIONS overrides it).
 entrypoint:
-  command: /usr/lib/jvm/java-21-openjdk/bin/java -XX:MaxRAMPercentage=70 -XX:+DisableExplicitGC -Djava.awt.headless=true -Dfile.encoding=UTF-8 -Dvertx.disableFileCaching=true -Dvertx.disableFileCPResolving=true -Dvertx.disableContextTiming=true -Dvertx.logger-delegate-factory-class-name=io.vertx.core.logging.SLF4JLogDelegateFactory -Dgravitee.home=/opt/gravitee-gateway -Dplugins.workDir=/tmp/gravitee/plugins -cp /opt/gravitee-gateway/gravitee-bootstrap.jar io.gravitee.gateway.standalone.boostrap.Bootstrap
+  command: /usr/lib/jvm/java-__JDK__-openjdk/bin/java -XX:MaxRAMPercentage=70 -XX:+DisableExplicitGC -Djava.awt.headless=true -Dfile.encoding=UTF-8 -Dvertx.disableFileCaching=true -Dvertx.disableFileCPResolving=true -Dvertx.disableContextTiming=true -Dvertx.logger-delegate-factory-class-name=io.vertx.core.logging.SLF4JLogDelegateFactory -Dgravitee.home=/opt/gravitee-gateway -Dplugins.workDir=/tmp/gravitee/plugins -cp /opt/gravitee-gateway/gravitee-bootstrap.jar io.gravitee.gateway.standalone.boostrap.Bootstrap
 
 archs:
   - x86_64
