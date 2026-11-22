@@ -1,0 +1,55 @@
+# promptfoo runtime: node runs the CLI directly (the shebang wants /usr/bin/env, which this image does not ship).
+# Results, the local database and the cache live in $HOME/.promptfoo (/home/promptfoo): mount a volume there on a
+# read-only root filesystem. `promptfoo view` serves the web viewer on 15500. Telemetry and update checks are off.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-promptfoo@local
+
+accounts:
+  groups:
+    - groupname: promptfoo
+      gid: 1001
+  users:
+    - username: promptfoo
+      uid: 1001
+      gid: 1001
+      homedir: /home/promptfoo
+  run-as: 1001
+
+environment:
+  HOME: /home/promptfoo
+  NODE_ENV: production
+  PROMPTFOO_DISABLE_TELEMETRY: "1"
+  PROMPTFOO_DISABLE_UPDATE: "1"
+
+paths:
+  - path: /home/promptfoo
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+work-dir: /home/promptfoo
+
+entrypoint:
+  command: /usr/bin/node /opt/promptfoo/dist/src/entrypoint.js
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-promptfoo"
+  org.opencontainers.image.licenses: "MIT"
+  org.opencontainers.image.version: "__VER__"

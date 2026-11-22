@@ -1,0 +1,52 @@
+# promptfoo from its npm release tarball with production dependencies, laid out under /opt/promptfoo.
+package:
+  name: quench-promptfoo
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened promptfoo, built from the npm release on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - nodejs-24
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - nodejs-24
+      - npm
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://registry.npmjs.org/promptfoo/-/promptfoo-${{package.version}}.tgz
+      expected-sha256: __SHA256__
+
+  - name: Production install
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" npm_config_cache="$(mktemp -d)"
+      grep -q "\"version\": \"${{package.version}}\"" package.json
+      # no lockfile ships in the npm tarball: the CVE gate checks what this resolves to
+      npm install --omit=dev --no-audit --no-fund --no-update-notifier
+      d="${{targets.destdir}}/opt/promptfoo"
+      install -d "$d" "${{targets.destdir}}/usr/bin"
+      cp -a dist node_modules package.json LICENSE README.md "$d/"
+      # musl builds of the libsql binding would make melange add so:libc.musl
+      find "$d/node_modules" -maxdepth 2 -type d -name '*musl*' -exec rm -rf {} +
+      test -n "$(find "$d/node_modules/@libsql" -maxdepth 1 -name 'linux-*-gnu' -print -quit)"
+      ln -s /opt/promptfoo/dist/src/entrypoint.js "${{targets.destdir}}/usr/bin/promptfoo"
+      chmod 0755 "$d/dist/src/entrypoint.js"
+      head -1 "$d/dist/src/entrypoint.js" | grep -q '^#!/usr/bin/env node'
+
+test:
+  pipeline:
+    - runs: |
+        test -x /opt/promptfoo/dist/src/entrypoint.js
