@@ -32,7 +32,7 @@ pipeline:
   # and verify the same checksum either way.
   - runs: |
       f=kafka_2.13-${{package.version}}.tgz
-      for base in https://archive.apache.org/dist/kafka https://archive.apache.org/dist/kafka; do
+      for base in https://dlcdn.apache.org/kafka https://archive.apache.org/dist/kafka; do
         curl -fsSL -o "$f" "$base/${{package.version}}/$f" && break
         rm -f "$f"
       done
@@ -74,9 +74,17 @@ pipeline:
       # different jackson AND the same-CVE jline 3.x, so they cannot pass as-is.
       if [ "${{package.version}}" = "4.3.1" ]; then
       M=https://repo1.maven.org/maven2
-      swap() { # newfile sha256 url oldglob
-        local nf="$1" sha="$2" url="$3" oldglob="$4"
-        rm -f "$dest"/libs/$oldglob
+      # swap <newfile> <sha256> <url> [legacy oldglob]: replaces every shipped version of the artifact, unless the
+      # release already ships it at or above the fixed version (4.4.0 moved several jars past our pins). An exact
+      # old filename used to miss a newer release's jar and leave two copies on the classpath.
+      swap() {
+        local nf="$1" sha="$2" url="$3" fixed art have
+        fixed="${nf##*-}"; fixed="${fixed%.jar}"; art="${nf%-"$fixed".jar}"
+        have="$(ls "$dest/libs" | sed -n "s/^${art}-\([0-9][0-9.]*\)\.jar$/\1/p" | sort -V | tail -1)"
+        if [ -n "$have" ] && [ "$(printf '%s\n%s\n' "$fixed" "$have" | sort -V | head -1)" = "$fixed" ]; then
+          echo "keep $art $have (>= $fixed)"; return 0
+        fi
+        rm -f "$dest/libs/${art}-"[0-9]*.jar
         curl -fsSL -o "$dest/libs/$nf" "$url"
         echo "$sha  $dest/libs/$nf" | sha256sum -c - >/dev/null
       }
@@ -89,6 +97,8 @@ pipeline:
       swap jackson-jakarta-rs-json-provider-2.21.5.jar c176333dd1edb820698fd3376e6f376919e3b6a208b37d112ce32192e9e787d6 "$M/com/fasterxml/jackson/jakarta/rs/jackson-jakarta-rs-json-provider/2.21.5/jackson-jakarta-rs-json-provider-2.21.5.jar" 'jackson-jakarta-rs-json-provider-2.21.2.jar'
       swap jackson-module-blackbird-2.21.5.jar 6e1aac3aed140a3defec385083bba339d52eebb3f940582f03f64ad43ef3c433 "$M/com/fasterxml/jackson/module/jackson-module-blackbird/2.21.5/jackson-module-blackbird-2.21.5.jar" 'jackson-module-blackbird-2.21.2.jar'
       swap jackson-module-jakarta-xmlbind-annotations-2.21.5.jar 5cb2cc2bf59faccf412ed6cba8588724b23c6145e5bda8d5ebee26db6d4dd12a "$M/com/fasterxml/jackson/module/jackson-module-jakarta-xmlbind-annotations/2.21.5/jackson-module-jakarta-xmlbind-annotations-2.21.5.jar" 'jackson-module-jakarta-xmlbind-annotations-2.21.2.jar'
+      # snappy-java 1.1.10.9 (CVE-2026-108106, -116590, -93451): 4.4.0 bundles 1.1.10.7
+      swap snappy-java-1.1.10.9.jar 35228628442e4b9797681c7cbd3b26594f6da3379159dbd0cb07094ed3aece0d "$M/org/xerial/snappy/snappy-java/1.1.10.9/snappy-java-1.1.10.9.jar"
       swap lz4-java-1.11.4.jar 58c8e0b813960d2a248e050c353baea73139b48a2ffc55382d42c69707e17325 "$M/at/yawk/lz4/lz4-java/1.11.4/lz4-java-1.11.4.jar" 'lz4-java-1.10.2.jar'
       # jline 4.2.1 (the first target) is itself flagged since 2026-09: CVE-2026-77420/77421/
       # 77422 in the bundled reader/builtins, fixed in 4.3.1 on the 4.x line.
