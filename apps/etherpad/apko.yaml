@@ -1,0 +1,57 @@
+# Etherpad runtime: node runs the server through tsx (as upstream's image does) from /opt/etherpad/src, on 9001.
+# Writable state is one volume at /var/lib/etherpad (var/ links there): dirty.db when DB_TYPE=dirty, the minified
+# cache, and APIKEY.txt / SESSIONKEY.txt (moved there by the flags below; their default is the read-only app root).
+# Settings come from the environment through settings.json (upstream's settings.json.docker): DB_TYPE, DB_HOST, ...,
+# ADMIN_PASSWORD. UPDATES_TIER defaults to off: this image is updated by rebuilds, not by Etherpad's GitHub check.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-etherpad@local
+
+accounts:
+  groups:
+    - groupname: etherpad
+      gid: 1001
+  users:
+    - username: etherpad
+      uid: 1001
+      gid: 1001
+      homedir: /var/lib/etherpad
+  run-as: 1001
+
+environment:
+  NODE_ENV: production
+  ETHERPAD_PRODUCTION: "true"
+  UPDATES_TIER: "off"
+  TZ: UTC
+
+paths:
+  - path: /var/lib/etherpad
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+work-dir: /opt/etherpad/src
+
+entrypoint:
+  command: /usr/bin/node --require tsx/cjs node/server.ts --apikey /var/lib/etherpad/APIKEY.txt --sessionkey /var/lib/etherpad/SESSIONKEY.txt
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-etherpad"
+  org.opencontainers.image.licenses: "Apache-2.0"
+  org.opencontainers.image.version: "__VER__"

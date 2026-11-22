@@ -1,0 +1,111 @@
+# Etherpad from the release tag, laid out like upstream's production image under /opt/etherpad.
+package:
+  name: quench-etherpad
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Etherpad, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - nodejs-24
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - bash
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - git
+      - nodejs-24
+      - npm
+      - python3
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/ether/etherpad-lite/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - name: Build the admin UI (full workspace, dev dependencies)
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" npm_config_cache="$(mktemp -d)" CI=true
+      npm install -g --prefix "$HOME/.npm-global" pnpm@12.4.2
+      export PATH="$HOME/.npm-global/bin:$PATH"
+      pnpm --version
+      pnpm install --frozen-lockfile
+      pnpm run build:ui
+      test -d src/templates/admin
+      test -d src/static/oidc
+
+  - name: Production install (src + bin) with CVE floors
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" npm_config_cache="$(mktemp -d)" CI=true
+      npm install -g --prefix "$HOME/.npm-global" pnpm@12.4.2
+      export PATH="$HOME/.npm-global/bin:$PATH"
+      # Upstream's production stage installs only src and bin. Keep its overrides, move basic-ftp to the fixed 6.x
+      # (6.0 only stops separate FTP transfer hosts by default) and add the floors the lockfile scan found
+      # (sized on 3.3.21, images#129). @azure/identity 4.14.1 is the release that moves msal-node to 7.
+      # image-size: html-to-docx requires none of it at runtime (its dist bundles its own copy), so 2.x is safe.
+      awk '
+        /^packages:$/ { print; print "  - src"; print "  - bin"; skip = 1; next }
+        skip && /^  - / { next }
+        skip && /^  #/ { next }
+        { skip = 0 }
+        /^  basic-ftp@<5.3.1:/ { print "  basic-ftp: \x27>=6.2.4 <7.0.0\x27"; next }
+        { print }
+        /^overrides:$/ {
+          print "  undici@>=7.0.0 <7.30.1: \x27>=7.30.1 <8.0.0\x27"
+          print "  qs@<6.16.1: \x27>=6.16.1\x27"
+          print "  engine.io@<6.6.10: \x27>=6.6.10\x27"
+          print "  socket.io-parser@<4.2.7: \x27>=4.2.7\x27"
+          print "  fast-uri@>=3.0.0 <3.1.9: \x27>=3.1.9 <4.0.0\x27"
+          print "  nanoid@>=3.0.0 <3.3.18: \x27>=3.3.18 <4.0.0\x27"
+          print "  ip-address@<10.7.4: \x27>=10.7.4\x27"
+          print "  body-parser@>=2.0.0 <2.4.0: \x27>=2.4.0\x27"
+          print "  \x27@azure/identity@<4.14.1\x27: \x274.14.1\x27"
+          print "  image-size@<2.0.3: \x272.0.3\x27"
+        }
+      ' pnpm-workspace.yaml > pw.tmp && mv pw.tmp pnpm-workspace.yaml
+      grep -q "^  basic-ftp: '>=6.2.4 <7.0.0'$" pnpm-workspace.yaml
+      sed -i "/^  tar@<7.5.16:/s/.*/  tar@<7.5.21: '>=7.5.21'/" pnpm-workspace.yaml
+      grep -q "^  tar@<7.5.21:" pnpm-workspace.yaml
+      sed -n '/^packages:/,/^[a-z]/p' pnpm-workspace.yaml
+      rm -rf node_modules */node_modules admin/tools/openapi-codegen/node_modules
+      ETHERPAD_PRODUCTION=true pnpm --recursive install --prod --no-frozen-lockfile
+      # floors reached the tree
+      for pv in undici:7.30.1 qs:6.16.1 engine.io:6.6.10 socket.io-parser:4.2.7 basic-ftp:6.2.4 @azure/msal-node:7.1.0; do
+        p="${pv%:*}"; want="${pv##*:}"
+        for f in $(find node_modules/.pnpm -path "*/node_modules/$p/package.json" 2>/dev/null); do
+          have="$(node -p "require('./$f').version")"
+          [ "$(printf '%s\n%s\n' "$want" "$have" | sort -V | head -1)" = "$want" ] || { echo "$p $have below $want ($f)"; exit 1; }
+        done
+      done
+
+  - name: Lay out /opt/etherpad
+    runs: |
+      set -eu
+      d="${{targets.destdir}}/opt/etherpad"
+      install -d "$d" "${{targets.destdir}}/var/lib/etherpad"
+      cp -a src bin node_modules package.json pnpm-workspace.yaml "$d/"
+      cp settings.json.docker "$d/settings.json"
+      # runtime state on the volume: dirty.db, the minified cache and the plugin state
+      ln -s /var/lib/etherpad "$d/var"
+      grep -q "\"version\": \"${{package.version}}\"" src/package.json
+      # musl variants of platform packages would make melange add so:libc.musl
+      find "$d/node_modules/.pnpm" -maxdepth 1 -name '*musl*' -exec rm -rf {} +
+
+test:
+  pipeline:
+    - runs: |
+        test -f /opt/etherpad/src/node/server.ts
+        test -L /opt/etherpad/var
