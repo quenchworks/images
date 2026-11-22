@@ -17,6 +17,7 @@ environment:
       - https://packages.wolfi.dev/os
     packages:
       - busybox
+      - ca-certificates-bundle
       - unzip
 
 pipeline:
@@ -35,6 +36,19 @@ pipeline:
       cp -a "graviteeio-full-$v/graviteeio-apim-console-ui-$v/." "$html/"
       # source maps are build debris, not part of the served app
       find "$html" -name '*.map' -delete
+      # 4.13 ships monaco-editor's own DOMPurify package (3.4.8: CVE-2026-65898, GHSA-55q2/6688 and more, fixed by
+      # 3.4.16) under assets/: replace it with 3.4.18, same 3.4 API and file names. 4.12 bundles none there.
+      dp="$html/assets/monaco-editor/node_modules/dompurify"
+      if [ -d "$dp" ]; then
+        have="$(sed -n 's/^  "version": "\(.*\)",$/\1/p' "$dp/package.json")"
+        if [ "$(printf '%s\n%s\n' 3.4.16 "$have" | sort -V | head -1)" != 3.4.16 ]; then
+          wget -q -O dp.tgz https://registry.npmjs.org/dompurify/-/dompurify-3.4.18.tgz
+          echo "8b86f79c6481fec23dd81d4de32179422668912ed033c0c47e786a6e70cb3379  dp.tgz" | sha256sum -c -
+          rm -rf "$dp" && install -d "$dp" && tar -xzf dp.tgz -C "$dp" --strip-components=1 && rm -f dp.tgz
+          find "$dp" -name '*.map' -delete
+          grep -q '"version": "3.4.18"' "$dp/package.json"
+        fi
+      fi
       test -f "$html/index.html"
       test -f "$html/constants.json"
       chmod -R a+rX "$html"
