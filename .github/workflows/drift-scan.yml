@@ -98,6 +98,14 @@ jobs:
             echo
             echo "_Updated by drift-scan on $(date -u +%F)._"
           } > body.md
+          # GitHub refuses an issue body over 65,536 characters; keep whole lines up to 60,000 bytes and point at the run
+          if [ "$(wc -c < body.md)" -gt 60000 ]; then
+            head -c 60000 body.md | sed '$d' > body.cut
+            printf '\n\n_List cut at 60,000 bytes; the full list is in the run log: %s/%s/actions/runs/%s_\n' \
+              "${GITHUB_SERVER_URL}" "${GITHUB_REPOSITORY}" "${GITHUB_RUN_ID}" >> body.cut
+            cat body.md
+            mv body.cut body.md
+          fi
 
           if [ -n "${EXISTING}" ]; then
             gh issue edit "${EXISTING}" --repo "${GITHUB_REPOSITORY}" --body-file body.md
