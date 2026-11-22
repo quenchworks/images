@@ -199,7 +199,9 @@ pipeline:
       ln -s "lib/$boot" "$d/gravitee-bootstrap.jar"
       chmod -R a+rX "$d"
       # the release is the one the bootstrap jar was built as
-      test "$boot" = "gravitee-apim-gateway-standalone-bootstrap-$v.jar"
+      # 4.13+ versions the jars by the core release in core.version (4.13.6 ships core 4.13.11); older dists use $v
+      want="$v"; [ -f "$src/core.version" ] && want="$(tr -d ' \n' < "$src/core.version")"
+      test "$boot" = "gravitee-apim-gateway-standalone-bootstrap-$want.jar"
 
 test:
   pipeline:

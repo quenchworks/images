@@ -45,7 +45,16 @@ pipeline:
       # log4j 2.26.0 (CVE-2026-49844): each family moves as a unit. jackson-annotations
       # is versioned 2.21 without a patch and stays; dataformat-cbor 2.17.2 has no
       # finding and stays.
+      # A release that already ships the artifact at or above the fixed version needs no swap (6.5.1: jackson 2.22.2,
+      # log4j 2.26.1); any other missing old jar is still fatal.
       swap() {  # <old jar> <maven path> <artifact> <version> <sha256>
+        if [ ! -f "$home/lib/$1" ]; then
+          have="$(ls "$home/lib" | sed -n "s/^$3-\([0-9][0-9.]*\)\.jar$/\1/p" | sort -V | tail -1)"
+          if [ -n "$have" ] && [ "$(printf '%s\n%s\n' "$4" "$have" | sort -V | head -1)" = "$4" ]; then
+            echo "keep $3 $have (>= $4)"; return 0
+          fi
+          echo "FATAL: $1 not shipped; re-audit the swaps"; exit 1
+        fi
         rm "$home/lib/$1"
         wget -q -O "$home/lib/$3-$4.jar" "https://repo1.maven.org/maven2/$2/$3/$4/$3-$4.jar"
         echo "$5  $home/lib/$3-$4.jar" | sha256sum -c -

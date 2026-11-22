@@ -96,7 +96,16 @@ pipeline:
       lib="$dest/lib"
       swap() {
         old="$1"; new="$2"; url="$3"; sha="$4"
-        test -f "$lib/$old" || { echo "swap: $old is not in this dist, re-check the pair"; exit 1; }
+        # A release that ships the artifact at or above the fixed version, or no longer ships it at all
+        # (2026.10.2: jline 3.30.17, jackson-core 2.22.3, no jline-terminal-jansi), needs no swap.
+        if [ ! -f "$lib/$old" ]; then
+          art="$(echo "$new" | sed -E 's/-[0-9][0-9.]*(-[a-z]+)?\.jar$//')"
+          fixed="$(echo "$new" | sed -E 's/^.*-([0-9][0-9.]*)(-[a-z]+)?\.jar$/\1/')"
+          have="$(ls "$lib" | sed -nE "s/^${art}-([0-9][0-9.]*)(-[a-z]+)?\.jar$/\1/p" | sort -V | tail -1)"
+          if [ -z "$have" ]; then echo "swap: $art is gone from this dist"; return 0; fi
+          if [ "$(printf '%s\n%s\n' "$fixed" "$have" | sort -V | head -1)" = "$fixed" ]; then echo "keep $art $have (>= $fixed)"; return 0; fi
+          echo "swap: $old is not in this dist and $art $have is below $fixed, re-check the pair"; exit 1
+        fi
         rm "$lib/$old"
         curl -fsSL -o "$lib/$new" "$url"
         echo "$sha  $lib/$new" | sha256sum -c -
