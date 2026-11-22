@@ -1,0 +1,17 @@
+--- a/src/static/js/pluginfw/installer.ts
++++ b/src/static/js/pluginfw/installer.ts
+@@ -66,8 +66,13 @@
+   //     that are not included in `package.json` (which is expected to not exist).
+   //     (pnpm 12 renamed `--no-production` to `--no-prod`.)
+   const cmd = ['pnpm', 'ls', '--long', '--json', '--depth=0', '--no-prod'];
++  // QuenchWorks: the hardened image ships no pnpm (and no plugins in node_modules), so a fresh volume has nothing to
++  // migrate; without this the first start dies on `spawn pnpm ENOENT` before writing installed_plugins.json.
+   const [{dependencies = {}}] = JSON.parse(await runCmd(cmd,
+-      {stdio: [null, 'string']}));
++      {stdio: [null, 'string']}).catch((err: any) => {
++        if (err.code === 'ENOENT') return '[{}]';
++        throw err;
++      }));
+ 
+   await Promise.all(Object.entries(dependencies)
+       .filter(([pkg, info]) => pkg.startsWith(plugins.prefix) && pkg !== 'ep_etherpad-lite')

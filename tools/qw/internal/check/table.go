@@ -188,7 +188,7 @@ var table = map[string]check{
 	"derper":                            {src: ghRel("tailscale/tailscale"), n: 1},
 	"yopass":                            {src: ghRel("jhaals/yopass")},
 	"etcd":                              {src: ghRel("etcd-io/etcd")},
-	"etherpad":                          {src: ghRel("ether/etherpad-lite"), n: 1},
+	"etherpad":                          {src: ghRel("ether/etherpad"), n: 1},
 	"excalidraw":                        {src: ghRel("excalidraw/excalidraw")},
 	"chartdb":                           {src: ghRel("chartdb/chartdb"), n: 1},
 	"psitransfer":                       {src: ghRel("psi-4ward/psitransfer"), n: 1},

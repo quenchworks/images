@@ -25,22 +25,30 @@ environment:
       - ca-certificates-bundle
       - git
       - nodejs-24
+      - patch
       - npm
       - python3
 
 pipeline:
   - uses: fetch
     with:
-      uri: https://github.com/ether/etherpad-lite/archive/refs/tags/v${{package.version}}.tar.gz
+      uri: https://github.com/ether/etherpad/archive/refs/tags/v${{package.version}}.tar.gz
       expected-sha256: __SHA256__
 
   - name: Build the admin UI (full workspace, dev dependencies)
     runs: |
       set -eu
+      # no pnpm at runtime: the first start's plugin migration must not need it (see the patch header)
+      patch -p1 --fuzz=0 -i installer-no-pnpm.patch
       export HOME="$(mktemp -d)" npm_config_cache="$(mktemp -d)" CI=true
       npm install -g --prefix "$HOME/.npm-global" pnpm@12.4.2
       export PATH="$HOME/.npm-global/bin:$PATH"
       pnpm --version
+      # npm leaves pnpm's placeholder launcher (a shell script without a shebang; pnpm's install.js would swap in the
+      # native binary), so a direct exec of `pnpm` fails with ENOEXEC. Every pnpm call here goes through a shell except
+      # the admin's gen-api, which spawns it bare off Windows: give it the shell too.
+      sed -i "s/shell: process.platform === 'win32',/shell: true,/" admin/scripts/gen-api.mjs
+      grep -q "shell: true," admin/scripts/gen-api.mjs
       pnpm install --frozen-lockfile
       pnpm run build:ui
       test -d src/templates/admin
