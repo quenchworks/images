@@ -75,6 +75,7 @@ var table = map[string]check{
 	"bloodhound":                        {src: ghRel("SpecterOps/BloodHound"), n: 1},
 	"nuclei":                            {src: ghRel("projectdiscovery/nuclei"), n: 1},
 	"promptfoo":                         {src: npmPkg("promptfoo"), n: 1, f: filter{keep: noDash}},
+	"scylla-operator":                   {src: ghRel("scylladb/scylla-operator"), n: 1},
 	"strix":                             {src: ghRel("usestrix/strix"), n: 1},
 	"zap":                               {src: ghLatest("zaproxy/zaproxy"), n: 1},
 	"cosmian-kms":                       {src: ghRel("Cosmian/kms")},
