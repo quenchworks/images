@@ -71,6 +71,7 @@ var table = map[string]check{
 	"coredns":                           {src: ghRel("coredns/coredns")},
 	"coroot":                            {src: ghRel("coroot/coroot"), n: 1},
 	"cosign":                            {src: ghRel("sigstore/cosign")},
+	"defectdojo":                        {src: ghRel("DefectDojo/django-DefectDojo"), n: 1},
 	"nuclei":                            {src: ghRel("projectdiscovery/nuclei"), n: 1},
 	"promptfoo":                         {src: npmPkg("promptfoo"), n: 1, f: filter{keep: noDash}},
 	"zap":                               {src: ghLatest("zaproxy/zaproxy"), n: 1},

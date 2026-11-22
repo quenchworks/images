@@ -1,0 +1,75 @@
+# DefectDojo runtime, laid out like upstream's image. The default entrypoint is uWSGI (/entrypoint-uwsgi.sh): the
+# uWSGI socket on 3031 plus its HTTP router on 8081, where whitenoise (DD_WHITENOISE) serves the collected static
+# files, so no nginx image is needed. The same image runs /entrypoint-celery-worker.sh, /entrypoint-celery-beat.sh and
+# /entrypoint-initializer.sh (migrations, the admin user, fixtures). Settings are DD_* variables: DD_DATABASE_URL,
+# DD_CELERY_BROKER_URL, DD_SECRET_KEY, DD_CREDENTIAL_AES_256_KEY, DD_ALLOWED_HOSTS. Writable paths: /app/media
+# (uploads), /var/run/defectdojo and /tmp.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - libpq-18             # before the app: libpq-19 otherwise wins the plain libpq provider (psql pulls it)
+    - quench-defectdojo@local
+
+accounts:
+  groups:
+    - groupname: defectdojo
+      gid: 1001
+  users:
+    - username: defectdojo
+      uid: 1001
+      gid: 1001
+      homedir: /app
+  run-as: 1001
+
+paths:
+  - path: /app/media
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/run/defectdojo
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+environment:
+  PATH: /app/venv/bin:/usr/sbin:/sbin:/usr/bin:/bin
+  VIRTUAL_ENV: /app/venv
+  PYTHONUNBUFFERED: "1"
+  DD_WHITENOISE: "true"
+  DD_ADMIN_USER: admin
+  DD_ADMIN_MAIL: admin@defectdojo.local
+  DD_ADMIN_FIRST_NAME: Admin
+  DD_ADMIN_LAST_NAME: User
+  DD_CELERY_LOG_LEVEL: INFO
+  DD_CELERY_WORKER_POOL_TYPE: solo
+  DD_INITIALIZE: "true"
+  DD_UWSGI_MODE: socket
+  DD_UWSGI_ENDPOINT: 0.0.0.0:3031
+  DD_UWSGI_NUM_OF_PROCESSES: "2"
+  DD_UWSGI_NUM_OF_THREADS: "4"
+
+work-dir: /app
+
+entrypoint:
+  command: /entrypoint-uwsgi.sh
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-defectdojo"
+  org.opencontainers.image.licenses: "BSD-3-Clause"
+  org.opencontainers.image.version: "__VER__"
