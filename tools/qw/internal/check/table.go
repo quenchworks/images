@@ -371,7 +371,7 @@ var table = map[string]check{
 	"openfga":                           {src: ghRel("openfga/openfga"), n: 1},
 	"openldap":                          {wolfiPrefix: "openldap-", lines: 2, lineOnly: false},
 	"openscap":                          {src: wolfiPkg("openscap"), n: 1},
-	"opensearch-dashboards":             {src: ghRel("opensearch-project/OpenSearch-Dashboards"), n: 1},
+	"opensearch-dashboards":             {src: ghTags("opensearch-project/OpenSearch-Dashboards"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}}, // releases lag the tags (3.10.0 tagged 2026-11-12, no release object)
 	"opensearch":                        {src: ghRel("opensearch-project/OpenSearch")},
 	"openssl":                           {wolfiPrefix: "openssl-", lines: 2, lineOnly: false},
 	"opentelemetry-operator":            {src: ghRel("open-telemetry/opentelemetry-operator"), lines: 2, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
