@@ -1,0 +1,59 @@
+# Assembles the Langflow runtime image: the server and React UI in a venv on Wolfi Python 3.13. Nonroot (1001),
+# multi-arch. Listens on 7860. Config, the default SQLite database, logs and caches live under LANGFLOW_CONFIG_DIR
+# (/home/langflow/.langflow): mount a volume at /home/langflow, or point LANGFLOW_DATABASE_URL at PostgreSQL.
+# Langflow 1.13 has auto-login off and will not start without LANGFLOW_SUPERUSER_PASSWORD (LANGFLOW_SUPERUSER: admin).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - libpq-18           # before the app: keeps the solver off the libpq-19 provider
+    - quench-langflow@local
+
+accounts:
+  groups:
+    - groupname: langflow
+      gid: 1001
+  users:
+    - username: langflow
+      uid: 1001
+      gid: 1001
+      homedir: /home/langflow
+  run-as: 1001
+
+paths:
+  - path: /home/langflow
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /opt/langflow/venv/bin/langflow run --host 0.0.0.0 --port 7860
+
+environment:
+  HOME: /home/langflow
+  LANGFLOW_CONFIG_DIR: /home/langflow/.langflow
+  LANGFLOW_SAVE_DB_IN_CONFIG_DIR: "true"   # the default SQLite DB, else it goes next to the (read-only) package
+  DO_NOT_TRACK: "true"
+  PATH: /opt/langflow/venv/bin:/usr/bin:/bin
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+
+work-dir: /home/langflow
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-langflow"
+  org.opencontainers.image.licenses: "MIT"

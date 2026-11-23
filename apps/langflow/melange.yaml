@@ -1,0 +1,251 @@
+# langflow: the 19 workspace members from the source tag, the locked pure set, Wolfi's builds of every compiled
+# dependency Wolfi carries, Rust and C extensions rebuilt from sdist where the wheel hides code, the React UI.
+package:
+  name: quench-langflow
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Langflow, built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - libgcc
+      - libpq-18
+      - libstdc++
+      - python-3.13          # the venv references the system interpreter
+      - sqlite-libs          # apsw, rebuilt against it
+      - yajl                 # ijson's C backend, rebuilt against it
+      # compiled deps from Wolfi (system site-packages); requirements.lock pins these versions
+      - py3.13-aiohttp
+      - py3.13-bcrypt
+      - py3.13-cassandra-driver<3.31
+      - py3.13-cffi
+      - py3.13-charset-normalizer
+      - py3.13-cryptography
+      - py3.13-fastavro
+      - py3.13-frozenlist
+      - py3.13-google-crc32c
+      - py3.13-greenlet
+      - py3.13-grpcio-1.85
+      - py3.13-hf-xet
+      - py3.13-jiter
+      - py3.13-lxml
+      - py3.13-lz4
+      - py3.13-multidict<7
+      - py3.13-numpy-2.2
+      - py3.13-orjson
+      - py3.13-pillow
+      - py3.13-propcache
+      - py3.13-psutil
+      - py3.13-psycopg2
+      - py3.13-pyarrow
+      - py3.13-pydantic-core
+      - py3.13-pymongo
+      - py3.13-pyyaml
+      - py3.13-rapidfuzz
+      - py3.13-regex
+      - py3.13-rpds-py
+      - py3.13-safetensors
+      - py3.13-scipy
+      - py3.13-tiktoken
+      - py3.13-tokenizers
+      - py3.13-tomli
+      - py3.13-yarl
+      - py3.13-zstandard
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - cargo-auditable
+      - nodejs-24
+      - npm
+      - postgresql-18-dev
+      - python-3.13
+      - python-3.13-dev
+      - rust
+      - sqlite-dev
+      - yajl-dev
+      - py3.13-aiohttp
+      - py3.13-bcrypt
+      - py3.13-cassandra-driver<3.31
+      - py3.13-cffi
+      - py3.13-charset-normalizer
+      - py3.13-cryptography
+      - py3.13-fastavro
+      - py3.13-frozenlist
+      - py3.13-google-crc32c
+      - py3.13-greenlet
+      - py3.13-grpcio-1.85
+      - py3.13-hf-xet
+      - py3.13-jiter
+      - py3.13-lxml
+      - py3.13-lz4
+      - py3.13-multidict<7
+      - py3.13-numpy-2.2
+      - py3.13-orjson
+      - py3.13-pillow
+      - py3.13-propcache
+      - py3.13-psutil
+      - py3.13-psycopg2
+      - py3.13-pyarrow
+      - py3.13-pydantic-core
+      - py3.13-pymongo
+      - py3.13-pyyaml
+      - py3.13-rapidfuzz
+      - py3.13-regex
+      - py3.13-rpds-py
+      - py3.13-safetensors
+      - py3.13-scipy
+      - py3.13-tiktoken
+      - py3.13-tokenizers
+      - py3.13-tomli
+      - py3.13-yarl
+      - py3.13-zstandard
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/langflow-ai/langflow/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+      strip-components: 1
+
+  - name: Patch the workspace
+    runs: |
+      set -eu
+      grep -q '^version = "${{package.version}}"' pyproject.toml
+      python3.13 patch-pyprojects.py
+      ! find . -name pyproject.toml -exec grep -l -e 'postgresql_psycopg2binary' -e '"lfx-ibm' {} + | grep -q .
+
+  - name: Frontend
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" npm_config_cache="$(mktemp -d)"
+      cd src/frontend
+      PUPPETEER_SKIP_DOWNLOAD=true npm ci --no-audit --no-fund
+      ESBUILD_BINARY_PATH="" NODE_OPTIONS="--max-old-space-size=4096" JOBS=1 npm run build
+      mkdir -p ../backend/base/langflow/frontend
+      cp -a build/. ../backend/base/langflow/frontend/
+      test -f ../backend/base/langflow/frontend/index.html
+      rm -rf node_modules
+
+  - name: venv
+    runs: |
+      set -eu
+      V=/opt/langflow/venv
+      python3.13 -m venv --system-site-packages $V
+      export PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+      $V/bin/pip install --no-compile --no-deps -r requirements.lock
+      for m in src/sdk src/lfx src/backend/base src/bundles/amazon src/bundles/anthropic src/bundles/azure \
+               src/bundles/cohere src/bundles/datastax src/bundles/docling src/bundles/google src/bundles/microsoft \
+               src/bundles/ollama src/bundles/openai src/bundles/openai-compatible src/bundles/oracle src/bundles/slack \
+               src/bundles/toolguard src/bundles/vllm .; do
+        $V/bin/pip install --no-compile --no-deps "./$m"
+      done
+      $V/bin/pip check
+
+  - name: Rebuild hidden native code from source
+    runs: |
+      set -eu
+      V=/opt/langflow/venv
+      SITE=$V/lib/python3.13/site-packages
+      export PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+      # sdist from PyPI at the installed version, checked against the sha256 PyPI publishes; prints the unpacked dir
+      sdist() {
+        $V/bin/python -I - "$1" <<'PY'
+      import hashlib, importlib.metadata as m, io, json, sys, tarfile, tempfile, urllib.request as u
+      name = sys.argv[1]; ver = m.version(name)
+      d = json.load(u.urlopen(f"https://pypi.org/pypi/{name}/{ver}/json", timeout=60))
+      s = next(x for x in d["urls"] if x["packagetype"] == "sdist")
+      b = u.urlopen(s["url"], timeout=600).read()
+      assert hashlib.sha256(b).hexdigest() == s["digests"]["sha256"], f"{name} sdist sha256 mismatch"
+      out = tempfile.mkdtemp()
+      tarfile.open(fileobj=io.BytesIO(b)).extractall(out, filter="data")
+      print(f"{out}/{name}-{ver}")
+      PY
+      }
+      # apsw fetches and compiles its own SQLite: build it against Wolfi's sqlite-libs instead
+      A=$(sdist apsw)
+      test -d "$A"
+      printf '%s\n' '[build]' 'fetch = False' \
+        '[build_ext]' 'use_system_sqlite_config = True' > "$A/setup.apsw"
+      $V/bin/pip install --no-compile --no-deps --force-reinstall "$A"
+      readelf -d $SITE/apsw/__init__*.so | grep -q "libsqlite3"
+      # ijson bundles yajl: rebuild so its C backend links Wolfi's yajl
+      $V/bin/pip install --no-compile --no-deps --force-reinstall --no-binary ijson "ijson==$($V/bin/python -c 'import importlib.metadata as m; print(m.version("ijson"))')"
+      # Rust extensions whose crates need floors (found once cargo auditable made them visible, images#159):
+      #   fastuuid 0.14.0: pyo3 0.26 -> 0.29 (downcast -> cast, #[pyclass] opts in to from_py_object), rand 0.8.6
+      #   watchfiles 1.2.0: pyo3 0.28 -> 0.29
+      #   litellm 1.103.10 rust bridge: the AWS SDK's legacy rustls 0.21 client -> default-https-client
+      #     (rustls 0.23), serde_with pin =3.16.1 lifted, rustls/rustls-webpki floated
+      CW=$(mktemp -d)
+      printf '#!/bin/sh\ncase "$1" in build|rustc) exec /usr/bin/cargo auditable "$@";; esac\nexec /usr/bin/cargo "$@"\n' > "$CW/cargo"
+      chmod +x "$CW/cargo"
+      F=$(sdist fastuuid)
+      sed -i -E '/^\[dependencies\.pyo3\]/{n;s/^version = .*/version = "0.29"/}' "$F/Cargo.toml"
+      sed -i 's/\.downcast::</.cast::</g; s/#\[pyclass(subclass, freelist = 1000)\]/#[pyclass(subclass, freelist = 1000, from_py_object)]/' "$F/src/lib.rs"
+      (cd "$F" && cargo update -p pyo3 && cargo update -p rand@0.8.5 --precise 0.8.6)
+      W=$(sdist watchfiles)
+      sed -i -E 's/^(pyo3 = \{ ?version = )"0\.28[.0-9]*"/\1"0.29"/' "$W/Cargo.toml"
+      (cd "$W" && cargo update -p pyo3)
+      LL=$(sdist litellm)
+      R="$LL/litellm-rust"
+      sed -i 's/serde_with = { version = "=3.16.1"/serde_with = { version = "3.21"/' "$R/Cargo.toml"
+      sed -i 's/features = \["rustls", "rt-tokio"\]/features = ["default-https-client", "rt-tokio"]/' "$R/crates/auth-aws/Cargo.toml"
+      grep -q default-https-client "$R/crates/auth-aws/Cargo.toml"
+      (cd "$R" && cargo update -p serde_with -p aws-config -p aws-sdk-sts -p aws-smithy-http-client && cargo update -p rustls -p rustls-webpki)
+      ! grep -A1 'name = "rustls"$' "$R/Cargo.lock" | grep -q 'version = "0.2[0-2]\.'
+      for d in "$F" "$W" "$LL"; do
+        PATH="$CW:$PATH" $V/bin/pip install --no-compile --no-deps --force-reinstall "$d"
+      done
+      # Rust extensions without cargo-auditable data are invisible to the scan: rebuild those from sdist
+      RUSTSO='
+      import importlib.metadata as m, os, sys
+      for d in m.distributions(path=[sys.argv[1]]):
+          for f in d.files or ():
+              p = str(f.locate())
+              if ".so" not in f.name or os.path.islink(p):
+                  continue
+              b = open(p, "rb").read()
+              if (b"rustc version" in b or b"/cargo/registry/src/" in b) and b".dep-v0" not in b:
+                  print(d.metadata["Name"] + "==" + d.version)
+                  break
+      '
+      for spec in $($V/bin/python -c "$RUSTSO" "$SITE"); do
+        echo "rebuilding $spec with cargo auditable"
+        PATH="$CW:$PATH" $V/bin/pip install --no-compile --no-deps --force-reinstall --no-binary "${spec%%==*}" "$spec"
+      done
+      left=$($V/bin/python -c "$RUSTSO" "$SITE")
+      [ -z "$left" ] || { echo "Rust extensions without .dep-v0: $left"; exit 1; }
+      # no wheel may bring its own native libraries; onnxruntime's libonnxruntime is its own library
+      for d in "$SITE"/*.libs; do [ -e "$d" ] || continue; echo "bundled native libs: $d"; exit 1; done
+      libs=$(find "$SITE" -name 'lib*.so*' -not -name '*.cpython-*' -not -name '*.abi3.so' -not -path "$SITE/onnxruntime/*")
+      [ -z "$libs" ] || { echo "bundled shared libraries:"; echo "$libs"; exit 1; }
+      for m in numpy grpc cryptography PIL pyarrow psycopg2 scipy tokenizers pydantic_core; do
+        test ! -e "$SITE/$m" || { echo "$m installed into the venv instead of from Wolfi"; exit 1; }
+      done
+      $V/bin/pip check
+      $V/bin/python -I -c "import langflow, lfx, psycopg2, pyarrow, numpy; from importlib.metadata import version; print('langflow', version('langflow'), 'numpy', numpy.__file__)"
+
+  - name: Install
+    runs: |
+      set -eu
+      D="${{targets.destdir}}/opt/langflow"
+      install -d "$D"
+      /opt/langflow/venv/bin/pip uninstall -y pip
+      find /opt/langflow/venv -name __pycache__ -prune -exec rm -rf {} +
+      cp -a /opt/langflow/venv "$D/venv"
+      cp LICENSE "$D/"
+      case "$(head -1 "$D/venv/bin/langflow")" in '#!/opt/langflow/venv/bin/python'*) ;; *) echo "langflow shebang is not the venv" >&2; exit 1 ;; esac
+
+test:
+  pipeline:
+    - runs: |
+        /opt/langflow/venv/bin/python -I -c "import langflow"
