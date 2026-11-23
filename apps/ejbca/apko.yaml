@@ -1,0 +1,50 @@
+# Assembles the EJBCA image: WildFly with ejbca.ear deployed on Wolfi's openjdk-21 JRE.
+# Nonroot (uid 1001), multi-arch, read-only-rootfs friendly (mount a writable /tmp).
+# HTTP on 8080, the EJB remoting listener for the CLI on 4447 (loopback by default),
+# management on 9990 (loopback). Set DATABASE_JDBC_URL, DATABASE_USER and
+# DATABASE_PASSWORD for PostgreSQL.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - openjdk-21-jre
+    - busybox
+    - quench-ejbca@local
+
+accounts:
+  groups:
+    - groupname: ejbca
+      gid: 1001
+  users:
+    - username: ejbca
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/ejbca-entrypoint.sh
+
+environment:
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  JBOSS_HOME: /opt/wildfly
+  EJBCA_HOME: /opt/ejbca
+  PATH: /usr/lib/jvm/java-21-openjdk/bin:/usr/bin:/bin:/opt/wildfly/bin
+
+work-dir: /opt/ejbca
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-ejbca"
+  org.opencontainers.image.licenses: "LGPL-2.1-or-later"
