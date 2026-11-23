@@ -73,6 +73,7 @@ var table = map[string]check{
 	"cosign":                            {src: ghRel("sigstore/cosign")},
 	"defectdojo":                        {src: ghRel("DefectDojo/django-DefectDojo"), n: 1},
 	"netbox":                            {src: ghRel("netbox-community/netbox"), n: 1},
+	"nautobot":                          {src: pypiPkg("nautobot"), n: 1, f: filter{keep: numDots}},
 	"ejbca":                             {src: ghRel("Keyfactor/ejbca-ce"), n: 1, f: filter{keep: prefix("r"), clean: trim("r")}},
 	"bloodhound":                        {src: ghRel("SpecterOps/BloodHound"), n: 1},
 	"nuclei":                            {src: ghRel("projectdiscovery/nuclei"), n: 1},

@@ -1,0 +1,70 @@
+package:
+  name: quench-nautobot
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Nautobot, packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - busybox
+      - ca-certificates-bundle
+      - git                # Git repositories as data sources
+      - libpq-18           # psycopg2
+      - python-3.14        # the venv references the system interpreter
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - curl
+      - git                # GitPython needs the binary at import (collectstatic loads it)
+      - postgresql-18-dev
+      - python-3.14
+      - python-3.14-dev
+
+pipeline:
+  - name: Python venv
+    runs: |
+      set -eu
+      W=/tmp/nautobot-${{package.version}}-py3-none-any.whl
+      curl -fsSL -o "$W" "https://files.pythonhosted.org/packages/py3/n/nautobot/nautobot-${{package.version}}-py3-none-any.whl"
+      echo "__SHA256__  $W" | sha256sum -c -
+      python3.14 -m venv /opt/nautobot/venv
+      export PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+      /opt/nautobot/venv/bin/pip install --no-compile "$W[postgresql]"
+      /opt/nautobot/venv/bin/python -I -c "import nautobot, psycopg2; print('nautobot', nautobot.__version__)"
+      test -x /opt/nautobot/venv/bin/uwsgi
+      grep -q '^Version: ${{package.version}}$' /opt/nautobot/venv/lib/python3.14/site-packages/nautobot-${{package.version}}.dist-info/METADATA
+
+  - name: Static files
+    runs: |
+      set -eu
+      install -m 0644 nautobot_config.py /opt/nautobot/nautobot_config.py
+      NAUTOBOT_ROOT=/opt/nautobot NAUTOBOT_CONFIG=/opt/nautobot/nautobot_config.py \
+        NAUTOBOT_SECRET_KEY=build-only-build-only-build-only-build-only-build-only-0 \
+        /opt/nautobot/venv/bin/nautobot-server collectstatic --no-input --verbosity 0
+      test -d /opt/nautobot/static/dist
+
+  - name: Install
+    runs: |
+      set -eu
+      D="${{targets.destdir}}/opt/nautobot"
+      install -d "$D" "${{targets.destdir}}/var/lib/nautobot"
+      /opt/nautobot/venv/bin/pip uninstall -y pip setuptools
+      cp -a /opt/nautobot/venv /opt/nautobot/static /opt/nautobot/nautobot_config.py "$D/"
+      install -m 0644 uwsgi.ini "$D/uwsgi.ini"
+      find "$D" -name __pycache__ -prune -exec rm -rf {} +
+      case "$(head -1 "$D/venv/bin/nautobot-server")" in '#!/opt/nautobot/venv/bin/python'*) ;; *) echo "nautobot-server shebang is not the venv" >&2; exit 1 ;; esac
+
+test:
+  pipeline:
+    - runs: |
+        /opt/nautobot/venv/bin/python -I -c "import nautobot; print(nautobot.__version__)"
