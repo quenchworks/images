@@ -45,6 +45,7 @@ var table = map[string]check{
 	"caddy":                             {src: ghRel("caddyserver/caddy")},
 	"cadence":                           {src: ghRel("uber/cadence"), n: 1},
 	"cadvisor":                          {src: ghRel("google/cadvisor")},
+	"caldera":                           {src: ghRel("mitre/caldera"), n: 1},
 	"camel-k":                           {src: ghRel("apache/camel-k"), lines: 2, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
 	"centrifugo":                        {src: ghRel("centrifugal/centrifugo"), n: 1},
 	"ceph-csi-operator":                 {src: ghRel("ceph/ceph-csi-operator"), n: 1},

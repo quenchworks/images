@@ -1,0 +1,73 @@
+# Assembles the MITRE Caldera runtime image: the server, its plugins, the magma UI and the agents
+# built from source, on a Python 3.13 venv. Nonroot (1001), multi-arch. The server listens on 8888.
+# No --insecure: on first start Caldera writes conf/local.yml with random credentials and API keys
+# (mount your own conf/local.yml to set them). It writes its object store and backups under data/ and
+# saves its configs on shutdown, so conf/, data/ and plugins/ belong to 1001.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - busybox
+    - quench-caldera@local
+
+accounts:
+  groups:
+    - groupname: caldera
+      gid: 1001
+  users:
+    - username: caldera
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  - path: /opt/caldera/conf
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+    recursive: true
+  - path: /opt/caldera/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+    recursive: true
+  - path: /opt/caldera/ftp_dir     # the FTP contact's home (app.contact.ftp.server.dir)
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /opt/caldera/plugins
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+    recursive: true
+
+entrypoint:
+  command: /opt/caldera/venv/bin/python server.py
+
+environment:
+  PATH: /opt/caldera/venv/bin:/usr/bin:/bin
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+
+work-dir: /opt/caldera
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-caldera"
+  org.opencontainers.image.licenses: "Apache-2.0"

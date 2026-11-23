@@ -1,0 +1,209 @@
+# caldera: core tag + pinned plugin commits, Python venv on Wolfi's cryptography/lxml, magma UI, agents from source.
+package:
+  name: quench-caldera
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened MITRE Caldera, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - busybox              # sandcat's enable step runs /bin/sh
+      - ca-certificates-bundle
+      - python-3.13          # the venv references the system interpreter
+      - py3.13-cryptography  # Wolfi build on its scanned OpenSSL; the wheel links its own statically
+      - py3.13-lxml          # Wolfi build on its libxml2; the wheel bundles its own
+      - py3.13-pillow        # reportlab needs it; the wheel bundles libjpeg, libpng, freetype
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go
+      - nodejs-24
+      - npm
+      - python-3.13
+      - python-3.13-dev
+      - py3.13-cryptography
+      - py3.13-lxml
+      - py3.13-pillow
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/mitre/caldera/archive/refs/tags/${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+      strip-components: 1
+
+  # The plugin commits the tag pins as git submodules (git ls-tree ${{package.version}} plugins/).
+  - runs: mkdir -p plugins-src/access plugins-src/atomic plugins-src/compass plugins-src/debrief plugins-src/fieldmanual plugins-src/magma plugins-src/manx plugins-src/response plugins-src/sandcat plugins-src/stockpile plugins-src/training
+  - uses: fetch
+    with:
+      uri: https://github.com/mitre/access/archive/775181bf056b2f1cbf09c4f12d1f069b03953812.tar.gz
+      expected-sha256: befa2cb46bb4bc9b58fa9dc11f8e1a0eb5b92fead44ae892bb06670aec9a1388
+      directory: plugins-src/access
+      strip-components: 1
+  - uses: fetch
+    with:
+      uri: https://github.com/mitre/atomic/archive/b90958810ffae1d328124f9e8af75f524616b27f.tar.gz
+      expected-sha256: ddc81c082e8b8e7022b8d918f712ed28e8f9031a6f74e9abc6df4adb312b302a
+      directory: plugins-src/atomic
+      strip-components: 1
+  - uses: fetch
+    with:
+      uri: https://github.com/mitre/compass/archive/85e2ebf2f9486973db5824bfed27c290c93a7b66.tar.gz
+      expected-sha256: 9cabf8ac2ae63f0d93aba3ba37d750c43ef8e36fd1c53897132cc15a769661c7
+      directory: plugins-src/compass
+      strip-components: 1
+  - uses: fetch
+    with:
+      uri: https://github.com/mitre/debrief/archive/eba44d5de9eed8a620bf3c23279bf3885d9d327e.tar.gz
+      expected-sha256: 11c410e796749a9d5e3d232025ef0521827139a9954fcb5e45edfcde5686414c
+      directory: plugins-src/debrief
+      strip-components: 1
+  - uses: fetch
+    with:
+      uri: https://github.com/mitre/fieldmanual/archive/83da7cbfaf8a971130b5ec9569c4e93d6d3af7df.tar.gz
+      expected-sha256: 2fa7f4a8f6764f8a1ac24dde1dff8cc8f92c5b1da15ae110cd9ae67452a809ed
+      directory: plugins-src/fieldmanual
+      strip-components: 1
+  - uses: fetch
+    with:
+      uri: https://github.com/mitre/magma/archive/66ebf0d89adba630137b56fe16aa712ca9d32a8e.tar.gz
+      expected-sha256: 045380e62b724c78d70b11f23f63048bab610845f59e118394e358f08a81204a
+      directory: plugins-src/magma
+      strip-components: 1
+  - uses: fetch
+    with:
+      uri: https://github.com/mitre/manx/archive/261f10b344638e1b3ee36337f4fbb68571ec4a78.tar.gz
+      expected-sha256: df08c21eba37dbe311ec03ef335ccfa91014597868d1e0d0fabe0e8b8cc5c83e
+      directory: plugins-src/manx
+      strip-components: 1
+  - uses: fetch
+    with:
+      uri: https://github.com/mitre/response/archive/8ea6ab5e0f341aba8facf29ba0301643e3d6a3b4.tar.gz
+      expected-sha256: 52ac03c26df3ec2dfbaf30d129648d7a2306dfe4ca23374618b73572c4e078ed
+      directory: plugins-src/response
+      strip-components: 1
+  - uses: fetch
+    with:
+      uri: https://github.com/mitre/sandcat/archive/0a35cd525f1cfabfcf602282428055c41f144513.tar.gz
+      expected-sha256: 23ef1f8f59a157bbf25564f2b9650367f2c51cd7825dfd4c2f902ed33315b724
+      directory: plugins-src/sandcat
+      strip-components: 1
+  - uses: fetch
+    with:
+      uri: https://github.com/mitre/stockpile/archive/08f37d8c1c5325910176d9fbaf9a83efccafd96c.tar.gz
+      expected-sha256: 54ad2b3669790e60d4380fb3d6080bba9e5fa42795052a623693f8c96714833b
+      directory: plugins-src/stockpile
+      strip-components: 1
+  - uses: fetch
+    with:
+      uri: https://github.com/mitre/training/archive/d4d19a2f1f829d5fea904a44e52a8ba5d7e07696.tar.gz
+      expected-sha256: 24896f5a41301cd5e0e3d32dee21aaf5e35fc81b77f991304801456a4365e1cb
+      directory: plugins-src/training
+      strip-components: 1
+
+  - name: Plugins
+    runs: |
+      set -eu
+      grep -qx "__version__ = '${{package.version}}'" app/version.py
+      # server.py exits 0 when any directory under plugins/ lacks hook.py: keep only what ships
+      rm -rf plugins
+      mv plugins-src plugins
+      for p in access atomic compass debrief fieldmanual magma manx response sandcat stockpile training; do
+        test -f plugins/$p/hook.py
+      done
+      # atomic git-clones atomic-red-team at startup (no git here): shipped, not enabled
+      sed -i '/^plugins:/,/^[a-z]/{/^- atomic$/d}' conf/default.yml
+      ! grep -qx -- '- atomic' conf/default.yml
+      # the generated local.yml randomizes the API keys and users but keeps default.yml's FTP password (caldera)
+      sed -i "s/secret_options = ('api_key_blue', 'api_key_red', 'crypt_salt', 'encryption_key')/secret_options = ('api_key_blue', 'api_key_red', 'crypt_salt', 'encryption_key', 'app.contact.ftp.pword')/" app/utility/config_generator.py
+      grep -q "'encryption_key', 'app.contact.ftp.pword')" app/utility/config_generator.py
+      # prebuilt binaries: every ELF/PE/Mach-O under a payloads/ dir goes (sandcat and manx are rebuilt below;
+      # stockpile's Windows tools and sshpass have no source in the repo), then nothing binary may remain
+      isbin='case "$(head -c4 "$1" | od -An -tx1 | tr -d " \n")" in 7f454c46*|4d5a*|cffaedfe*|cefaedfe*|cafebabe*) exit 0;; esac; exit 1'
+      find plugins -path '*/payloads/*' -type f -exec sh -c "$isbin" _ {} \; -print -delete
+      left=$(find . -type f -exec sh -c "$isbin" _ {} \; -print)
+      [ -z "$left" ] || { echo "prebuilt binaries left:"; echo "$left"; exit 1; }
+
+  - name: Agents from source
+    runs: |
+      set -eu
+      export GOTOOLCHAIN=local CGO_ENABLED=0 GOFLAGS=-trimpath
+      cd plugins/sandcat/gocat
+      # house golang.org/x floor (x/text 0.43 needs x/mod 0.41)
+      go get golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/net@v0.62.0 \
+        golang.org/x/sys@v0.49.0 golang.org/x/text@v0.43.0 golang.org/x/mod@v0.41.0
+      go mod tidy
+      grep -q 'golang.org/x/net v0.62.0' go.mod
+      # GOARCH pinned per target: upstream ships amd64 agents (plus darwin arm64), whatever the build host is
+      GOOS=windows GOARCH=amd64 go build -o ../payloads/sandcat.go-windows -ldflags="-s -w" sandcat.go
+      GOOS=linux GOARCH=amd64 go build -o ../payloads/sandcat.go-linux -ldflags="-s -w" sandcat.go
+      GOOS=darwin GOARCH=amd64 go build -o ../payloads/sandcat.go-darwin -ldflags="-s -w" sandcat.go
+      GOOS=darwin GOARCH=arm64 go build -o ../payloads/sandcat.go-darwin-arm64 -ldflags="-s -w" sandcat.go
+      cd ../../manx/shells
+      GOOS=windows GOARCH=amd64 go build -o ../payloads/manx.go-windows -ldflags="-s -w" manx.go
+      GOOS=linux GOARCH=amd64 go build -o ../payloads/manx.go-linux -ldflags="-s -w" manx.go
+      GOOS=darwin GOARCH=amd64 go build -o ../payloads/manx.go-darwin -ldflags="-s -w" manx.go
+
+  - name: magma UI
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" npm_config_cache="$(mktemp -d)"
+      cd plugins/magma
+      # floors for the libs that end up in the bundle; vite/rollup/esbuild/postcss are build-only
+      node -e '
+        const fs = require("fs"); const p = JSON.parse(fs.readFileSync("package.json"));
+        Object.assign(p.dependencies, { axios: "^0.34.0", echarts: "^6.1.0", prismjs: "^1.30.0", pug: "^3.0.3" });
+        p.overrides = { axios: "$axios", echarts: "$echarts", prismjs: "$prismjs", pug: "$pug",
+          lodash: "^4.18.0", "lodash-es": "^4.18.0", "@babel/runtime": "^7.26.10", "follow-redirects": "^1.16.0",
+          nanoid: "^3.3.8", "pug-code-gen": "^3.0.3", "@vue/server-renderer": "^3.5.42" };
+        fs.writeFileSync("package.json", JSON.stringify(p, null, 2));'
+      npm install --no-audit --no-fund
+      npm ls axios echarts | grep -E 'axios@0\.3[4-9]|axios@0\.[4-9]' 
+      npm run build
+      test -f dist/index.html
+      rm -rf node_modules src/plugins
+
+  - name: Python venv
+    runs: |
+      set -eu
+      # Wolfi provides cryptography and lxml (system site-packages); docs-only Sphinx stays (fieldmanual builds at start)
+      sed -e 's/^aiohttp==.*/aiohttp==3.14.4/' -e 's/^asyncssh==.*/asyncssh==2.24.0/' \
+          -e 's/^setuptools==.*/setuptools==84.1.0/' -e 's/^dnspython==.*/dnspython==2.9.2/' \
+          -e 's/^svglib==.*/svglib==2.3.1/' -e 's/^marshmallow==.*/marshmallow==3.26.2/' \
+          -e 's/^Markdown==.*/Markdown==3.8.1/' -e 's/^reportlab==.*/reportlab>=4.4/' \
+          -e '/^cryptography==/d' -e '/^lxml/d' requirements.txt > /tmp/req.txt
+      grep -qx 'aiohttp==3.14.4' /tmp/req.txt
+      python3.13 -m venv --system-site-packages /opt/caldera/venv
+      export PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+      /opt/caldera/venv/bin/pip install --no-compile -r /tmp/req.txt
+      SITE=/opt/caldera/venv/lib/python3.13/site-packages
+      if ls -d "$SITE"/*.libs 2>/dev/null | grep -q .; then echo "bundled native libs:"; ls -d "$SITE"/*.libs; exit 1; fi
+      test ! -e "$SITE/cryptography" && test ! -e "$SITE/lxml" && test ! -e "$SITE/PIL"
+      /opt/caldera/venv/bin/python -I -c "import aiohttp, cryptography, lxml, svglib; print('aiohttp', aiohttp.__version__, 'cryptography', cryptography.__version__)"
+
+  - name: Install
+    runs: |
+      set -eu
+      D="${{targets.destdir}}/opt/caldera"
+      install -d "$D"
+      /opt/caldera/venv/bin/pip uninstall -y pip
+      cp -a /opt/caldera/venv "$D/venv"
+      cp -a app conf data plugins static templates server.py LICENSE "$D/"
+      find "$D" -name __pycache__ -prune -exec rm -rf {} +
+      find "$D" -name '.git*' -prune -exec rm -rf {} +
+
+test:
+  pipeline:
+    - runs: |
+        test -f /opt/caldera/plugins/magma/dist/index.html
+        test -f /opt/caldera/plugins/sandcat/payloads/sandcat.go-linux
+        /opt/caldera/venv/bin/python -I -c "import aiohttp; print(aiohttp.__version__)"
