@@ -1,0 +1,45 @@
+# Assembles the CommaFeed image: the Quarkus fast-jar under /usr/lib/commafeed on Wolfi's
+# openjdk-25 JRE. Nonroot (uid 1001), multi-arch, read-only-rootfs friendly (writable /tmp).
+# HTTP on 8082. Point it at PostgreSQL with QUARKUS_DATASOURCE_JDBC_URL, _USERNAME and
+# _PASSWORD; set QUARKUS_HTTP_AUTH_SESSION_ENCRYPTION_KEY so sessions survive restarts.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - openjdk-25-jre
+    - quench-commafeed@local
+
+accounts:
+  groups:
+    - groupname: commafeed
+      gid: 1001
+  users:
+    - username: commafeed
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/lib/jvm/java-25-openjdk/bin/java -Djava.io.tmpdir=/tmp -jar /usr/lib/commafeed/quarkus-run.jar
+
+environment:
+  JAVA_HOME: /usr/lib/jvm/java-25-openjdk
+
+work-dir: /usr/lib/commafeed
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-commafeed"
+  org.opencontainers.image.licenses: "Apache-2.0"

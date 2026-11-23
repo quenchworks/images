@@ -1,0 +1,344 @@
+# commafeed: the release's postgresql-jvm distribution (Quarkus fast-jar) on a Wolfi JRE, with
+# vulnerable libraries swapped in place under the same file names and the fast-jar index rebuilt.
+package:
+  name: quench-commafeed
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened CommaFeed RSS reader, packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-25-jre     # class file major 69
+      - ca-certificates-bundle
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - curl
+      - go                 # build-only: the fast-jar index rewrite (qidx)
+      - unzip
+      - zip
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/Athou/commafeed/releases/download/${{package.version}}/commafeed-${{package.version}}-postgresql-jvm.zip
+      expected-sha256: __SHA256__
+      extract: false
+  - runs: |
+      set -eu
+      mkdir -p dist && unzip -q commafeed-${{package.version}}-postgresql-jvm.zip -d /tmp/cfz
+      mv /tmp/cfz/commafeed-${{package.version}}-postgresql dist/root
+      D="$PWD/dist"
+      cat > /tmp/qidx.go <<'GO'
+      // qidx re-indexes quarkus-application.dat (Quarkus 3.x fast-jar, format version 3) after jars
+      // were swapped in place: it adds the package directories a new jar has and the index lacks,
+      // and drops from a swapped jar any fully-indexed resource (top level, META-INF,
+      // META-INF/services) the build-time index never served from it.
+      // Usage: qidx <app root> <changed lib path>...
+      package main
+
+      import (
+      	"archive/zip"
+      	"bytes"
+      	"encoding/binary"
+      	"fmt"
+      	"io"
+      	"os"
+      	"sort"
+      	"strings"
+      )
+
+      func fail(f string, a ...any) {
+      	fmt.Fprintf(os.Stderr, f+"\n", a...)
+      	os.Exit(1)
+      }
+
+      type rd struct {
+      	b []byte
+      	p int
+      }
+
+      func (r *rd) take(n int) []byte { v := r.b[r.p : r.p+n]; r.p += n; return v }
+      func (r *rd) u16() int          { return int(binary.BigEndian.Uint16(r.take(2))) }
+      func (r *rd) i32() int32        { return int32(binary.BigEndian.Uint32(r.take(4))) }
+      func (r *rd) utf() string       { return string(r.take(r.u16())) }
+
+      func wutf(s string) []byte { return append(binary.BigEndian.AppendUint16(nil, uint16(len(s))), s...) }
+
+      func names(path string) []string {
+      	z, err := zip.OpenReader(path)
+      	if err != nil {
+      		fail("%v", err)
+      	}
+      	defer z.Close()
+      	var n []string
+      	for _, f := range z.File {
+      		n = append(n, f.Name)
+      	}
+      	return n
+      }
+
+      // dirsOf: the package directories of the file entries, in first-seen order, plus the
+      // versioned directory a META-INF/versions/N/ entry stands for
+      func dirsOf(ns []string) []string {
+      	var out []string
+      	seen := map[string]bool{}
+      	add := func(d string) {
+      		if !seen[d] {
+      			seen[d] = true
+      			out = append(out, d)
+      		}
+      	}
+      	for _, n := range ns {
+      		if strings.HasSuffix(n, "/") {
+      			continue
+      		}
+      		d := ""
+      		if i := strings.LastIndex(n, "/"); i >= 0 {
+      			d = n[:i]
+      		}
+      		add(d)
+      		if strings.HasPrefix(n, "META-INF/versions/") {
+      			part := n[len("META-INF/versions/"):]
+      			s := strings.Index(part, "/")
+      			if s != -1 && strings.LastIndex(part, "/") != s {
+      				add(part[s+1 : strings.LastIndex(part, "/")])
+      			}
+      		}
+      	}
+      	return out
+      }
+
+      func fully(ns []string) map[string]bool {
+      	r := map[string]bool{}
+      	for _, n := range ns {
+      		if strings.HasSuffix(n, "/") {
+      			continue
+      		}
+      		r[strings.SplitN(n, "/", 2)[0]] = true
+      		for _, pre := range []string{"META-INF", "META-INF/services"} {
+      			sp := pre + "/"
+      			if !strings.HasPrefix(n, sp) {
+      				continue
+      			}
+      			if n == sp {
+      				r[pre] = true
+      				continue
+      			}
+      			if j := strings.Index(n[len(sp):], "/"); j != -1 {
+      				r[n[:len(sp)+j]] = true
+      			} else {
+      				r[n] = true
+      			}
+      		}
+      	}
+      	return r
+      }
+
+      func main() {
+      	root := os.Args[1]
+      	changed := map[string]bool{}
+      	for _, c := range os.Args[2:] {
+      		changed[c] = true
+      	}
+      	dat := root + "/quarkus/quarkus-application.dat"
+      	b, err := os.ReadFile(dat)
+      	if err != nil {
+      		fail("%v", err)
+      	}
+      	r := &rd{b: b}
+      	if r.i32() != int32(-0x0FCEABCE) || r.i32() != 3 {
+      		fail("unexpected index format")
+      	}
+      	var out bytes.Buffer
+      	out.Write(b[:8])
+      	out.Write(wutf(r.utf()))
+      	n := r.u16()
+      	out.Write(binary.BigEndian.AppendUint16(nil, uint16(n)))
+      	var jars []string
+      	added := 0
+      	for k := 0; k < n; k++ {
+      		path := r.utf()
+      		jars = append(jars, path)
+      		out.Write(wutf(path))
+      		s := r.p
+      		if r.take(1)[0] != 0 {
+      			for j := 0; j < 6; j++ {
+      				if r.take(1)[0] != 0 {
+      					r.utf()
+      				}
+      			}
+      		}
+      		gen, tr := r.take(1)[0], r.take(1)[0]
+      		out.Write(b[s:r.p])
+      		cnt := r.u16()
+      		old := make([]string, cnt)
+      		have := map[string]bool{}
+      		for j := range old {
+      			old[j] = r.utf()
+      			have[old[j]] = true
+      		}
+      		nw := old
+      		if changed[path] {
+      			nw = append([]string{}, old...)
+      			for _, d := range dirsOf(names(root + "/" + path)) {
+      				if !have[d] {
+      					nw = append(nw, d)
+      				}
+      			}
+      		}
+      		added += len(nw) - len(old)
+      		out.Write(binary.BigEndian.AppendUint16(nil, uint16(len(nw))))
+      		for _, d := range nw {
+      			out.Write(wutf(d))
+      		}
+      		if gen != 0 || tr != 0 {
+      			s := r.p
+      			c := int(r.i32())
+      			for j := 0; j < c; j++ {
+      				r.utf()
+      			}
+      			out.Write(b[s:r.p])
+      		}
+      	}
+      	s := r.p
+      	for j, c := 0, r.u16(); j < c; j++ {
+      		r.utf()
+      	}
+      	fi := map[int]map[string]bool{}
+      	for j, c := 0, r.u16(); j < c; j++ {
+      		res := r.utf()
+      		for k, cc := 0, r.u16(); k < cc; k++ {
+      			i := r.u16()
+      			if fi[i] == nil {
+      				fi[i] = map[string]bool{}
+      			}
+      			fi[i][res] = true
+      		}
+      	}
+      	if r.p != len(b) {
+      		fail("trailing bytes in the index")
+      	}
+      	for i, path := range jars {
+      		if !changed[path] {
+      			continue
+      		}
+      		var extra []string
+      		for res := range fully(names(root + "/" + path)) {
+      			if !fi[i][res] {
+      				extra = append(extra, res)
+      			}
+      		}
+      		if len(extra) == 0 {
+      			continue
+      		}
+      		sort.Strings(extra)
+      		drop := map[string]bool{}
+      		for _, e := range extra {
+      			drop[e] = true
+      		}
+      		src := root + "/" + path
+      		z, err := zip.OpenReader(src)
+      		if err != nil {
+      			fail("%v", err)
+      		}
+      		of, err := os.Create(src + ".new")
+      		if err != nil {
+      			fail("%v", err)
+      		}
+      		w := zip.NewWriter(of)
+      		for _, f := range z.File {
+      			if drop[f.Name] {
+      				continue
+      			}
+      			h := f.FileHeader
+      			h.Method = zip.Deflate
+      			dst, err := w.CreateHeader(&h)
+      			if err != nil {
+      				fail("%v", err)
+      			}
+      			rc, _ := f.Open()
+      			io.Copy(dst, rc)
+      			rc.Close()
+      		}
+      		w.Close()
+      		of.Close()
+      		z.Close()
+      		if err := os.Rename(src+".new", src); err != nil {
+      			fail("%v", err)
+      		}
+      		fmt.Printf("dropped from %s: %v\n", path, extra)
+      	}
+      	out.Write(b[s:])
+      	if err := os.WriteFile(dat, out.Bytes(), 0o644); err != nil {
+      		fail("%v", err)
+      	}
+      	for c := range changed {
+      		found := false
+      		for _, j := range jars {
+      			if j == c {
+      				found = true
+      			}
+      		}
+      		if !found {
+      			fail("not in the index: %s", c)
+      		}
+      	}
+      	fmt.Printf("quarkus-application.dat: %d jars, %d changed, %d package dirs added\n", n, len(changed), added)
+      }
+      GO
+      go build -o /tmp/qidx /tmp/qidx.go
+      M=https://repo1.maven.org/maven2
+      CH=""
+      # jswap <lib name prefix> <maven path> <version> <sha256>: whole-jar swap under the SAME file
+      # name (the fast-jar index keys jars by path), only where the bundled version is older.
+      jswap() {
+        hit=0
+        for j in "$D"/*/lib/main/"$1"-*.jar; do
+          [ -f "$j" ] || continue
+          have="${j##*/$1-}"; have="${have%.jar}"
+          case "$have" in [0-9]*) ;; *) continue ;; esac
+          hit=1
+          [ "$have" = "$3" ] && continue
+          [ "$(printf '%s\n%s\n' "$have" "$3" | sort -V | head -1)" = "$have" ] || continue
+          [ -f "/tmp/jswap-$3-${2##*/}.jar" ] || {
+            curl -fsSL -o "/tmp/jswap-$3-${2##*/}.jar" "$M/$2/$3/${2##*/}-$3.jar"
+            echo "$4  /tmp/jswap-$3-${2##*/}.jar" | sha256sum -c -
+          }
+          # the Quarkus index cannot take new top-level or META-INF resources (guava 33.7 adds
+          # module-info.class): keep only those the replaced jar had; classes are untouched
+          rx='^[^/]+$|^META-INF/[^/]+$|^META-INF/(services|versions)/'
+          { unzip -Z1 "$j" | grep -E "$rx" || true; } | sort > /tmp/jswap.old
+          cp "/tmp/jswap-$3-${2##*/}.jar" "$j"; chmod 644 "$j"
+          { unzip -Z1 "$j" | grep -E "$rx" || true; } | sort | comm -13 /tmp/jswap.old - > /tmp/jswap.extra
+          [ ! -s /tmp/jswap.extra ] || zip -q -d "$j" -@ < /tmp/jswap.extra
+          CH="$CH $j"
+          echo "swapped ${j#$D/} -> $3"
+        done
+        [ "$hit" = 1 ] || { echo "no $1 jar in the dist; re-audit"; exit 1; }
+      }
+
+      # guava 33.6.0-jre -> 33.7.2-jre (2026-11-23 scan); failureaccess stays 1.0.1 (as in apps/apache-polaris)
+      jswap com.google.guava.guava com/google/guava/guava 33.7.2-jre b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c
+
+      a="$D/root"
+      rel=""
+      for j in $CH; do case "$j" in "$a"/*) rel="$rel ${j#$a/}" ;; esac; done
+      /tmp/qidx "$a" $rel
+      mkdir -p "${{targets.destdir}}/usr/lib/commafeed"
+      cp -a "$a"/. "${{targets.destdir}}/usr/lib/commafeed/"
+      chmod -R a+rX "${{targets.destdir}}/usr/lib/commafeed"
+
+test:
+  pipeline:
+    - runs: |
+        test -f /usr/lib/commafeed/quarkus-run.jar
