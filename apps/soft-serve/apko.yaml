@@ -1,0 +1,52 @@
+# Assembles the Soft Serve image: the soft binary and git on Wolfi. Nonroot (uid 1001),
+# multi-arch. Data (repositories, the database, keys) in /soft-serve (a volume). SSH on 23231,
+# HTTP on 23232, the git daemon on 9418, stats on 23233. Set SOFT_SERVE_INITIAL_ADMIN_KEYS to an
+# SSH public key on the first start.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-soft-serve@local
+
+accounts:
+  groups:
+    - groupname: soft
+      gid: 1001
+  users:
+    - username: soft
+      uid: 1001
+      gid: 1001
+      homedir: /soft-serve
+  run-as: 1001
+
+paths:
+  - path: /soft-serve
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+entrypoint:
+  command: /usr/bin/soft serve
+
+environment:
+  SOFT_SERVE_DATA_PATH: /soft-serve
+
+work-dir: /soft-serve
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-soft-serve"
+  org.opencontainers.image.licenses: "MIT"

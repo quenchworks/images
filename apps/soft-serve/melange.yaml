@@ -1,0 +1,63 @@
+# soft-serve from the release tag, CGO-free, with the dependency floors and go-jose moved to v4.
+package:
+  name: quench-soft-serve
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Soft Serve Git server, built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - bash               # the repository hooks are #!/usr/bin/env bash scripts
+      - busybox            # /usr/bin/env for those hooks
+      - ca-certificates-bundle
+      - git                # Soft Serve shells out to git for receive-pack, upload-pack and hooks
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - go-1.27
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/charmbracelet/soft-serve/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - runs: |
+      set -eu
+      export CGO_ENABLED=0 GOTOOLCHAIN=local GOFLAGS=-mod=mod
+      # go-jose v3 (CVE-2026-116585/-116586/-116587) is fixed only in v4; its one importer uses
+      # JSONWebKey, which v4 keeps unchanged
+      find . -name '*.go' -exec grep -l 'github.com/go-jose/go-jose/v3' {} + > /tmp/jose.lst || true
+      [ "$(cat /tmp/jose.lst)" = "./pkg/jwk/jwk.go" ] || { echo "go-jose v3 importers changed: $(cat /tmp/jose.lst)"; exit 1; }
+      sed -i 's|"github.com/go-jose/go-jose/v3"|"github.com/go-jose/go-jose/v4"|' pkg/jwk/jwk.go
+      go get github.com/go-jose/go-jose/v4@v4.1.9
+      # floors, raised only when below (a bare go get downgrades once upstream passes it); the
+      # golang.org/x set moves together, as in the other recipes
+      FLOOR="golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 golang.org/x/net@v0.62.0 golang.org/x/text@v0.43.0 golang.org/x/sys@v0.49.0"
+      need=""
+      for f in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${f%@*}")"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        [ "$(printf '%s\n%s\n' "$have" "${f#*@}" | sort -V | head -1)" = "${f#*@}" ] || need="$need $f"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || go get $need
+      go mod tidy
+      if grep -q 'go-jose/go-jose/v3' go.mod; then echo "go-jose v3 still in go.mod"; exit 1; fi
+      go build -trimpath -ldflags "-s -w -X main.Version=${{package.version}}" -o "${{targets.destdir}}/usr/bin/soft" ./cmd/soft
+      "${{targets.destdir}}/usr/bin/soft" --version > /tmp/v.txt
+      grep -F "${{package.version}}" /tmp/v.txt
+
+test:
+  pipeline:
+    - runs: |
+        soft --version

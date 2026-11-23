@@ -256,6 +256,7 @@ var table = map[string]check{
 	"gogs":                              {src: ghRel("gogs/gogs"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
 	"goalert":                           {src: ghRel("target/goalert"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
 	"gost":                              {src: ghRel("go-gost/gost"), n: 1},
+	"soft-serve":                        {src: ghRel("charmbracelet/soft-serve"), n: 1},
 	"librespeed":                        {src: ghRel("librespeed/speedtest-go"), n: 1},
 	"mox":                               {src: ghRel("mjl-/mox"), n: 1},
 	"gotenberg":                         {src: ghRel("gotenberg/gotenberg"), n: 1},
