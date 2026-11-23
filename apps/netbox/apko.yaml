@@ -1,0 +1,56 @@
+# Assembles the NetBox image: the venv and app under /opt/netbox on Wolfi's python-3.14.
+# Nonroot (uid 1001), multi-arch, read-only-rootfs friendly (writable /tmp, and
+# /opt/netbox/media for uploads). gunicorn on 8080. Other roles run the same image:
+#   manage.py migrate | createsuperuser --no-input | rqworker high default low
+# Configuration comes from the environment: see /opt/netbox/netbox/netbox/configuration.py.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - libpq-18           # before the app: keeps the solver off the libpq-19 provider
+    - busybox
+    - quench-netbox@local
+
+accounts:
+  groups:
+    - groupname: netbox
+      gid: 1001
+  users:
+    - username: netbox
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  - path: /opt/netbox/media
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /opt/netbox/venv/bin/gunicorn --config /opt/netbox/gunicorn.py quench_wsgi
+
+environment:
+  PATH: /opt/netbox/venv/bin:/usr/bin:/bin
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+
+work-dir: /opt/netbox/netbox
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-netbox"
+  org.opencontainers.image.licenses: "Apache-2.0"
