@@ -643,6 +643,9 @@ var table = map[string]check{
 	"pgbouncer": {src: ghRel("pgbouncer/pgbouncer"), f: filter{clean: func(t string) string {
 		return strings.ReplaceAll(strings.ReplaceAll(t, "pgbouncer_", ""), "_", ".")
 	}}},
+	"pgadmin4": {src: ghTags("pgadmin-org/pgadmin4"), n: 1, f: filter{keep: full(`REL-\d+_\d+`), clean: func(t string) string {
+		return strings.ReplaceAll(strings.TrimPrefix(t, "REL-"), "_", ".")
+	}}},
 	"phpmyadmin": {src: jsonList("https://www.phpmyadmin.net/home_page/version.json",
 		func(d any) []string { return []string{common.Str(common.Path(d, "version"))} }), n: 1},
 	"postgres-documentdb": {src: ghRel("FerretDB/documentdb"), f: filter{clean: func(t string) string { return strings.SplitN(t, "-ferretdb", 2)[0] }}},

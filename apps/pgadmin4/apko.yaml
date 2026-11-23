@@ -1,0 +1,56 @@
+# Assembles the pgAdmin 4 image: the venv and web app under /opt/pgadmin on Wolfi's
+# python-3.14, with the PostgreSQL 18 client tools. Nonroot (uid 1001), multi-arch,
+# read-only-rootfs friendly: mount a writable /tmp and a volume at /var/lib/pgadmin.
+# gunicorn on 8080. Set PGADMIN_DEFAULT_EMAIL and PGADMIN_DEFAULT_PASSWORD(_FILE);
+# PGADMIN_CONFIG_<NAME> sets any pgAdmin config value.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - libpq-18           # before the app: keeps the solver off the libpq-19 provider
+    - busybox
+    - quench-pgadmin4@local
+
+accounts:
+  groups:
+    - groupname: pgadmin
+      gid: 1001
+  users:
+    - username: pgadmin
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  - path: /var/lib/pgadmin
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o700
+
+entrypoint:
+  command: /usr/bin/pgadmin-entrypoint.sh
+
+environment:
+  PATH: /opt/pgadmin/venv/bin:/usr/bin:/bin
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+
+work-dir: /opt/pgadmin/web
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-pgadmin4"
+  org.opencontainers.image.licenses: "PostgreSQL"

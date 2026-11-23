@@ -1,0 +1,102 @@
+package:
+  name: quench-pgadmin4
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened pgAdmin 4, built from source on Wolfi"
+  copyright:
+    - license: PostgreSQL
+  dependencies:
+    runtime:
+      - busybox
+      - ca-certificates-bundle
+      - krb5-libs          # gssapi
+      - libpq-18           # psycopg[c]
+      - postgresql-18-client   # pg_dump, pg_restore, psql for the backup and restore tools
+      - python-3.14        # the venv references the system interpreter
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - autoconf
+      - automake
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - krb5-dev
+      - libjpeg-turbo-dev
+      - libpng-dev
+      - libtool
+      - nasm
+      - nodejs-24
+      - npm
+      - postgresql-18-dev
+      - python-3.14
+      - python-3.14-dev
+      - zlib-dev
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/pgadmin-org/pgadmin4/archive/refs/tags/__TAG__.tar.gz
+      expected-sha256: __SHA256__
+      strip-components: 1
+
+  - name: Python venv
+    runs: |
+      set -eu
+      v=${{package.version}}
+      grep -qx "APP_RELEASE = ${v%%.*}" web/version.py && grep -qx "APP_REVISION = ${v#*.}" web/version.py
+      # CVE-2026-44405: paramiko is fixed only in 5.0.0; sshtunnel 0.5.1 (its only caller)
+      # guards every DSSKey use, which paramiko 4+ removed.
+      sed -i 's/^paramiko==3\.5\.1$/paramiko==5.0.0/' requirements.txt
+      grep -qx 'paramiko==5.0.0' requirements.txt
+      echo 'gunicorn==26.2.0' >> requirements.txt
+      python3.14 -m venv /opt/pgadmin/venv
+      export PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+      /opt/pgadmin/venv/bin/pip install --no-compile -r requirements.txt
+      /opt/pgadmin/venv/bin/python -I -c "import flask, psycopg, gssapi, paramiko, sshtunnel, gunicorn; print('flask', flask.__version__, 'psycopg', psycopg.pq.__impl__, 'paramiko', paramiko.__version__)"
+
+  - name: Web bundle
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" npm_config_cache="$(mktemp -d)" CPPFLAGS="-DPNG_ARM_NEON_OPT=0"
+      npm install -g --prefix "$HOME/.g" corepack
+      export PATH="$HOME/.g/bin:$PATH" COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+      cd web
+      corepack yarn install --immutable
+      # "yarn run bundle" lints, runs webpack, then writes commit_hash from git log; the
+      # release tarball has no .git, so run webpack directly and write the tag instead.
+      NODE_ENV=production NODE_OPTIONS=--max-old-space-size=3072 corepack yarn run webpacker
+      printf '%s\n' "__TAG__" > commit_hash
+      test -d pgadmin/static/js/generated
+      rm -rf node_modules pgadmin/static/js/generated/.cache
+
+  - name: Install
+    runs: |
+      set -eu
+      D="${{targets.destdir}}/opt/pgadmin"
+      install -d "$D" "${{targets.destdir}}/var/lib/pgadmin" "${{targets.destdir}}/usr/bin"
+      /opt/pgadmin/venv/bin/pip uninstall -y pip setuptools
+      cp -a /opt/pgadmin/venv "$D/venv"
+      cd web
+      rm -rf regression pgadmin/static/js/generated/.cache yarn.lock package.json .yarn .yarnrc.yml \
+        babel.cfg webpack.* jest.config.js babel.* eslint.config.* karma.conf.js
+      find . -type d -name tests -prune -exec rm -rf {} +
+      cd ..
+      cp -a web "$D/web"
+      install -m 0644 config_distro.py "$D/web/config_distro.py"
+      install -m 0644 pkg/docker/run_pgadmin.py pkg/docker/gunicorn_config.py "$D/web/"
+      install -m 0755 entrypoint.sh "${{targets.destdir}}/usr/bin/pgadmin-entrypoint.sh"
+      cp LICENSE "$D/"
+      find "$D" -name __pycache__ -prune -exec rm -rf {} +
+      case "$(head -1 "$D/venv/bin/gunicorn")" in '#!/opt/pgadmin/venv/bin/python'*) ;; *) echo "gunicorn shebang is not the venv" >&2; exit 1 ;; esac
+
+test:
+  pipeline:
+    - runs: |
+        /opt/pgadmin/venv/bin/python -I -c "import flask, paramiko; print(flask.__version__, paramiko.__version__)"
