@@ -75,6 +75,7 @@ var table = map[string]check{
 	"defectdojo":                        {src: ghRel("DefectDojo/django-DefectDojo"), n: 1},
 	"garak":                             {src: ghRel("NVIDIA/garak"), n: 1},
 	"it-tools":                          {src: ghRel("CorentinTh/it-tools"), n: 1, f: group(`^v?(\d{4}\.\d+\.\d+)-[0-9a-f]+$`)},
+	"it-tools-sharevb":                  {src: ghRel("sharevb/it-tools"), n: 1},
 	"langflow":                          {src: ghRel("langflow-ai/langflow"), n: 1},
 	"pairdrop":                          {src: ghRel("schlagmichdoch/PairDrop"), n: 1},
 	"glances":                           {src: pypiPkg("glances"), n: 1, f: filter{keep: numDots}},
