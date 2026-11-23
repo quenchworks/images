@@ -1,0 +1,45 @@
+# Assembles the PairDrop image: the server, public assets and production dependencies under
+# /usr/lib/pairdrop on Wolfi's Node 24. Nonroot (uid 1001), multi-arch, read-only-rootfs
+# friendly. HTTP and the WebSocket signaling on 3000. Settings by environment: RTC_CONFIG (a
+# STUN/TURN JSON file), RATE_LIMIT, WS_FALLBACK, the *_BUTTON_* links.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-pairdrop@local
+
+accounts:
+  groups:
+    - groupname: pairdrop
+      gid: 1001
+  users:
+    - username: pairdrop
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/node /usr/lib/pairdrop/server/index.js
+
+environment:
+  NODE_ENV: production
+  PORT: "3000"
+
+work-dir: /usr/lib/pairdrop
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-pairdrop"
+  org.opencontainers.image.licenses: "GPL-3.0-only"
