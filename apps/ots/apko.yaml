@@ -1,0 +1,40 @@
+# Assembles the OTS image: one Go binary with the frontend embedded, on Wolfi. Nonroot (uid
+# 1001), multi-arch, read-only-rootfs friendly. HTTP on 3000. STORAGE_TYPE mem (default) or redis
+# with REDIS_URL; SECRET_EXPIRY caps how long secrets live.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-ots@local
+
+accounts:
+  groups:
+    - groupname: ots
+      gid: 1001
+  users:
+    - username: ots
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/ots
+
+work-dir: /tmp
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-ots"
+  org.opencontainers.image.licenses: "Apache-2.0"
