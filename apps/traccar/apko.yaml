@@ -1,0 +1,63 @@
+# Assembles the Traccar runtime image: the server, its web UI and libraries on a Wolfi OpenJDK 21 JRE. Nonroot
+# (1001), multi-arch. The web UI and API listen on 8082; device protocols each take their own port (OsmAnd on
+# 5055, see traccar.org/devices). The default config uses H2 under /opt/traccar/data: mount a volume there, or
+# mount your own conf/traccar.xml pointing at PostgreSQL or MySQL. Writable: /opt/traccar/data, /opt/traccar/logs (the log file),
+# /opt/traccar/override (web.override) and /tmp.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-traccar@local
+
+accounts:
+  groups:
+    - groupname: traccar
+      gid: 1001
+  users:
+    - username: traccar
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  - path: /opt/traccar/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /opt/traccar/override   # web.override: the web server creates it at startup
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /opt/traccar/logs
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /usr/lib/jvm/java-21-openjdk/bin/java -Djava.io.tmpdir=/tmp -jar /opt/traccar/tracker-server.jar /opt/traccar/conf/traccar.xml
+
+environment:
+  JAVA_HOME: /usr/lib/jvm/java-21-openjdk
+  PATH: /usr/lib/jvm/java-21-openjdk/bin:/usr/bin:/bin
+
+work-dir: /opt/traccar
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-traccar"
+  org.opencontainers.image.licenses: "Apache-2.0"

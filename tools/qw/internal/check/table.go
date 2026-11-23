@@ -87,6 +87,7 @@ var table = map[string]check{
 	"promptfoo":                         {src: npmPkg("promptfoo"), n: 1, f: filter{keep: noDash}},
 	"scylla-operator":                   {src: ghRel("scylladb/scylla-operator"), n: 1},
 	"strix":                             {src: ghRel("usestrix/strix"), n: 1},
+	"traccar":                           {src: ghRel("traccar/traccar"), n: 1},
 	"zap":                               {src: ghLatest("zaproxy/zaproxy"), n: 1},
 	"cosmian-kms":                       {src: ghRel("Cosmian/kms")},
 	"crane":                             {src: wolfiPkg("crane"), n: 1},

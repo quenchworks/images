@@ -1,0 +1,93 @@
+# traccar: the official traccar-other zip, jar swaps for the CVE floors, on a Wolfi OpenJDK 21 JRE.
+package:
+  name: quench-traccar
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Traccar GPS tracking server on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - openjdk-21-jre     # class file major 65
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - curl
+      - unzip
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/traccar/traccar/releases/download/v${{package.version}}/traccar-other-${{package.version}}.zip
+      expected-sha256: __SHA256__
+      extract: false
+
+  - name: Unpack
+    runs: |
+      set -eu
+      mkdir dist
+      unzip -q traccar-other-${{package.version}}.zip -d dist
+      test -f dist/tracker-server.jar && test -f dist/web/index.html
+
+  - name: Jar swaps
+    runs: |
+      set -eu
+      # <artifact> <version> <maven path> <sha256>: replace the one lib/<artifact>-<x>.jar by content, file name kept
+      # (tracker-server.jar's manifest Class-Path names every jar). The artifact must match exactly once.
+      M=https://repo1.maven.org/maven2
+      printf '%s %s %s %s\n' \
+        logback-core 1.5.38 ch/qos/logback/logback-core/1.5.38/logback-core-1.5.38.jar a855a0fc97b1d06f4efb1c3bba5ebd0eb508d8b58e68e89e4bbc23a85135c883 \
+        poi 5.5.1 org/apache/poi/poi/5.5.1/poi-5.5.1.jar 6c52e876ca75775a11b56e4b36a7541f682827f56406725fcd87560b792ee3d8 \
+        poi-ooxml 5.5.1 org/apache/poi/poi-ooxml/5.5.1/poi-ooxml-5.5.1.jar bd7be2fdfe3fd2c1684fa813351c2798fd636b44f6236e0674500d4f8ff1c2f9 \
+        poi-ooxml-lite 5.5.1 org/apache/poi/poi-ooxml-lite/5.5.1/poi-ooxml-lite-5.5.1.jar e6e37adeb6d6ee8b40ec491ad955d934d8f99827ab050f105b18286e59b1d9e7 \
+        xmlbeans 5.3.0 org/apache/xmlbeans/xmlbeans/5.3.0/xmlbeans-5.3.0.jar 6cc69da3b4d35b83c5e477cd4daba204e44109833e34af2b9a8a2c8788289917 \
+        commons-compress 1.28.0 org/apache/commons/commons-compress/1.28.0/commons-compress-1.28.0.jar e1522945218456f3649a39bc4afd70ce4bd466221519dba7d378f2141a4642ca \
+        log4j-api 2.26.1 org/apache/logging/log4j/log4j-api/2.26.1/log4j-api-2.26.1.jar f1810a4704ccce019d02bba029dc02a4f2ac0c997f647b465e7d409c1927f822 \
+        commons-beanutils 1.11.0 commons-beanutils/commons-beanutils/1.11.0/commons-beanutils-1.11.0.jar 9e44ba68ec9a3f21286fa2a8bbb003b735c0f69101bb43144b79f4f8aaa74709 \
+        SparseBitSet 1.3 com/zaxxer/SparseBitSet/1.3/SparseBitSet-1.3.jar f76b85adb0c00721ae267b7cfde4da7f71d3121cc2160c9fc00c0c89f8c53c8a \
+        curvesapi 1.08 com/github/virtuald/curvesapi/1.08/curvesapi-1.08.jar ad95b08b8bbf9d7d17e5e00814898fa23324f32bc5b62f1a37801e6a56ce0079 \
+        opentelemetry-sdk-logs 1.67.0 io/opentelemetry/opentelemetry-sdk-logs/1.67.0/opentelemetry-sdk-logs-1.67.0.jar dd0f0b625e08787af49d7e270abc6def4c2eabc2f18f5f145b7924024a3311e3 \
+        opentelemetry-sdk-metrics 1.67.0 io/opentelemetry/opentelemetry-sdk-metrics/1.67.0/opentelemetry-sdk-metrics-1.67.0.jar c157ff10da59a87a57e5236d9f3290792d9b749433be5e5b449a7d1604c320a9 \
+        opentelemetry-sdk-trace 1.67.0 io/opentelemetry/opentelemetry-sdk-trace/1.67.0/opentelemetry-sdk-trace-1.67.0.jar 14d9615c8a5dcf471dcbb74902b771dcfa8656b755ac38dce904042289ccd198 \
+        opentelemetry-sdk-extension-autoconfigure-spi 1.67.0 io/opentelemetry/opentelemetry-sdk-extension-autoconfigure-spi/1.67.0/opentelemetry-sdk-extension-autoconfigure-spi-1.67.0.jar 41eb19f6caf2c655ac3139d331f5c34283f2efdb0f0b0e58765a6cc9e27f66bc \
+        opentelemetry-api 1.67.0 io/opentelemetry/opentelemetry-api/1.67.0/opentelemetry-api-1.67.0.jar 538d1dff2f9a37aecbc0ef98fd17273a3affb058e734e6763a3a07a38a5fdc59 \
+        opentelemetry-common 1.67.0 io/opentelemetry/opentelemetry-common/1.67.0/opentelemetry-common-1.67.0.jar da97bdb395418e16ecdcbe7ad3497f45b9e767ceda4ae7e86133e7a757ac377f \
+        opentelemetry-context 1.67.0 io/opentelemetry/opentelemetry-context/1.67.0/opentelemetry-context-1.67.0.jar 40fb813fb5e27ec2691daa29c81b572b5b1541ef9b41e62490c3ee3e6407c55e \
+        opentelemetry-sdk 1.67.0 io/opentelemetry/opentelemetry-sdk/1.67.0/opentelemetry-sdk-1.67.0.jar 52a8f599a368a3d62185e37053f6a53175d6fbe3ecc1d565baba13b1a854267f \
+        opentelemetry-sdk-common 1.67.0 io/opentelemetry/opentelemetry-sdk-common/1.67.0/opentelemetry-sdk-common-1.67.0.jar 628a4c00db9561ff4c608a650d5e7fd66a1e153ccdf1ba3cdc5ac0b7c6518fea \
+        guava 33.7.2-jre com/google/guava/guava/33.7.2-jre/guava-33.7.2-jre.jar b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c \
+        snappy-java 1.1.10.9 org/xerial/snappy/snappy-java/1.1.10.9/snappy-java-1.1.10.9.jar 35228628442e4b9797681c7cbd3b26594f6da3379159dbd0cb07094ed3aece0d \
+        lz4-java 1.11.4 at/yawk/lz4/lz4-java/1.11.4/lz4-java-1.11.4.jar 58c8e0b813960d2a248e050c353baea73139b48a2ffc55382d42c69707e17325 \
+        jackson-core 2.22.3 com/fasterxml/jackson/core/jackson-core/2.22.3/jackson-core-2.22.3.jar 8a501126a385b25841915d839508f8a66e2a0dbc8a6709d055ef3b3e852b094c > swaps.txt
+      while read -r a v p sha; do
+        n=$(find dist/lib -maxdepth 1 -name "$a-[0-9]*.jar" | grep -E "/$a-[0-9][^/]*\.jar$" || true)
+        [ "$(echo "$n" | grep -c .)" = 1 ] || { echo "$a: expected one jar, found: $n"; exit 1; }
+        j=$(mktemp)
+        curl -fsSL -o "$j" "$M/$p"
+        echo "$sha  $j" | sha256sum -c - >/dev/null
+        chmod 644 "$j"   # mktemp is 0600 and cp keeps the mode: uid 1001 could not read it
+        cp "$j" "$n"; rm -f "$j"
+        echo "  $(basename "$n") <- $v"
+      done < swaps.txt
+
+  - name: Install
+    runs: |
+      set -eu
+      D="${{targets.destdir}}/opt/traccar"
+      install -d "$D"
+      cp -a dist/tracker-server.jar dist/lib dist/web dist/templates dist/schema dist/conf "$D/"
+      install -d "$D/data" "$D/logs"
+
+test:
+  pipeline:
+    - runs: |
+        test -f /opt/traccar/tracker-server.jar
+        test -f /opt/traccar/web/index.html
