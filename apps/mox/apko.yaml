@@ -1,0 +1,51 @@
+# Assembles the mox image: the binary on Wolfi with busybox. Nonroot (uid 1001), multi-arch.
+# mox serve runs in /mox: config/mox.conf and config/domains.conf, data in the DataDir they
+# name (a volume). Started as uid 1001 it binds directly (the image patch), so listeners use
+# unprivileged ports (2525, 4465, 2587, 1143, 9993, 8080...) mapped to 25/465/587/993 by a
+# Service.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - busybox
+    - quench-mox@local
+
+accounts:
+  groups:
+    - groupname: mox
+      gid: 1001
+  users:
+    - username: mox
+      uid: 1001
+      gid: 1001
+      homedir: /mox
+  run-as: 1001
+
+paths:
+  - path: /mox
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o750
+
+entrypoint:
+  command: /usr/bin/mox serve
+
+work-dir: /mox
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-mox"
+  org.opencontainers.image.licenses: "MIT"

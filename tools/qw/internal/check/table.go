@@ -252,6 +252,7 @@ var table = map[string]check{
 	"gogs":                              {src: ghRel("gogs/gogs"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
 	"goalert":                           {src: ghRel("target/goalert"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
 	"gost":                              {src: ghRel("go-gost/gost"), n: 1},
+	"mox":                               {src: ghRel("mjl-/mox"), n: 1},
 	"gotenberg":                         {src: ghRel("gotenberg/gotenberg"), n: 1},
 	"gotify":                            {src: ghRel("gotify/server"), n: 1},
 	"gradle":                            {src: wolfiPkg("gradle-9"), n: 1},
