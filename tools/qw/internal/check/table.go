@@ -106,6 +106,7 @@ var table = map[string]check{
 	"dependency-track-frontend":         {src: ghRel("DependencyTrack/frontend"), lines: 2},
 	"dependency-track":                  {src: ghRel("DependencyTrack/dependency-track"), lines: 2},
 	"dashy":                             {src: ghRel("Lissy93/dashy"), n: 1},
+	"homer":                             {src: ghRel("bastienwirtz/homer"), n: 1},
 	"dex":                               {src: ghRel("dexidp/dex")},
 	"distribution":                      {src: ghRel("distribution/distribution")},
 	"dive":                              {src: ghRel("wagoodman/dive"), n: 1},

@@ -1,0 +1,93 @@
+# homer: vite build with pnpm (the version package.json pins), served by nginx as nonroot.
+package:
+  name: quench-homer
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Homer dashboard, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - nginx
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - nodejs-24
+      - npm
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/bastienwirtz/homer/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+
+  - runs: |
+      set -eu
+      export HOME="$(mktemp -d)" npm_config_cache="$(mktemp -d)"
+      # package.json pins pnpm@11.9.0 (packageManager)
+      grep -q '"packageManager": "pnpm@11.9.0' package.json
+      npm install -g --prefix "$HOME/.g" pnpm@11.9.0
+      export PATH="$HOME/.g/bin:$PATH"
+      pnpm install --frozen-lockfile
+      NODE_ENV=production pnpm run build
+      test -f dist/index.html
+      # the default configuration (upstream's image copies it on first start); a mount replaces it
+      cp dist/assets/config.yml.dist dist/assets/config.yml
+
+      D="${{targets.destdir}}"
+      install -d "$D/usr/share/nginx/html" "$D/etc/homer"
+      cp -a dist/. "$D/usr/share/nginx/html/"
+      cat > "$D/etc/homer/nginx.conf" <<'EOF'
+      daemon off;
+      worker_processes auto;
+      pid /tmp/nginx.pid;
+      error_log /dev/stderr notice;
+
+      events {
+          worker_connections 1024;
+      }
+
+      http {
+          include       /etc/nginx/mime.types;
+          default_type  application/octet-stream;
+          types { application/yaml yml yaml; }
+
+          client_body_temp_path /tmp/client_body_temp;
+          proxy_temp_path       /tmp/proxy_temp;
+          fastcgi_temp_path     /tmp/fastcgi_temp;
+          uwsgi_temp_path       /tmp/uwsgi_temp;
+          scgi_temp_path        /tmp/scgi_temp;
+
+          access_log /dev/stdout;
+          sendfile      on;
+          gzip          on;
+          server_tokens off;
+
+          server {
+              listen      8080;
+              server_name _;
+              root        /usr/share/nginx/html;
+              index       index.html;
+
+              # the configuration changes without a rebuild: never cache it
+              location /assets/ {
+                  add_header Cache-Control "no-store";
+              }
+              location / {
+                  try_files $uri $uri/ /index.html;
+              }
+          }
+      }
+      EOF
+
+test:
+  pipeline:
+    - runs: |
+        test -f /usr/share/nginx/html/assets/config.yml
