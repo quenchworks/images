@@ -1,0 +1,58 @@
+# Assembles the Kestra image: the uber-jar on Wolfi's openjdk-25 JRE. Nonroot (uid 1001),
+# multi-arch. API and UI on 8080, health and metrics on 8081. Configure with
+# KESTRA_CONFIGURATION (YAML: datasources, kestra.repository/queue/storage, basic auth), which
+# the entrypoint writes to a file and passes with --config.
+# The default command, server local, runs everything in one process with an embedded H2 database
+# and local storage under /app (mount a volume); server standalone uses PostgreSQL.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - openjdk-25-jre
+    - busybox
+    - quench-kestra@local
+
+accounts:
+  groups:
+    - groupname: kestra
+      gid: 1001
+  users:
+    - username: kestra
+      uid: 1001
+      gid: 1001
+      homedir: /app
+  run-as: 1001
+
+paths:
+  - path: /app
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /usr/bin/kestra
+
+cmd: server local
+
+environment:
+  JAVA_HOME: /usr/lib/jvm/java-25-openjdk
+
+work-dir: /app
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-kestra"
+  org.opencontainers.image.licenses: "Apache-2.0"

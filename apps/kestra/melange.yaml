@@ -1,0 +1,96 @@
+# kestra: the release uber-jar with the posthog-shaded org.json rebuilt from a fixed release.
+package:
+  name: quench-kestra
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Kestra orchestration platform, packaged on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - openjdk-25-jre     # class file major 69
+      - busybox            # the entrypoint script
+      - ca-certificates-bundle
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - curl
+      - maven-3.9          # build-only: relocate org.json with maven-shade
+      - openjdk-25
+      - unzip
+      - zip
+
+pipeline:
+  - runs: |
+      set -eu
+      curl -fsSL -o /tmp/kestra https://github.com/kestra-io/kestra/releases/download/v${{package.version}}/kestra-${{package.version}}
+      echo "__SHA256__  /tmp/kestra" | sha256sum -c -
+      # the release file is a shell/batch self-runner with the jar appended: drop the prefix
+      cp /tmp/kestra /tmp/kestra.jar
+      zip -q -J /tmp/kestra.jar
+      unzip -p /tmp/kestra.jar META-INF/MANIFEST.MF > /tmp/manifest && grep -q 'Main-Class: io.kestra.cli.Kestra' /tmp/manifest
+
+      # org.json 20231013 (CVE fixed in 20260719) lives relocated in posthog-java 1.2.0, the newest
+      # posthog-java, under com/posthog/java/shaded/org/json. Rebuild 20260814 with that relocation.
+      unzip -p /tmp/kestra.jar META-INF/maven/org.json/json/pom.properties > /tmp/oj.old && grep -qx 'version=20231013' /tmp/oj.old
+      export JAVA_HOME=/usr/lib/jvm/java-25-openjdk PATH="/usr/lib/jvm/java-25-openjdk/bin:$PATH"
+      mkdir -p /tmp/oj && cat > /tmp/oj/pom.xml <<'POM'
+      <project xmlns="http://maven.apache.org/POM/4.0.0">
+        <modelVersion>4.0.0</modelVersion>
+        <groupId>quench</groupId><artifactId>oj</artifactId><version>1</version>
+        <dependencies>
+          <dependency><groupId>org.json</groupId><artifactId>json</artifactId><version>20260814</version></dependency>
+        </dependencies>
+        <build><plugins><plugin>
+          <groupId>org.apache.maven.plugins</groupId><artifactId>maven-shade-plugin</artifactId><version>3.6.2</version>
+          <executions><execution><phase>package</phase><goals><goal>shade</goal></goals><configuration>
+            <createDependencyReducedPom>false</createDependencyReducedPom>
+            <artifactSet><includes><include>org.json:json</include></includes></artifactSet>
+            <filters><filter><artifact>*:*</artifact><excludes><exclude>META-INF/versions/**</exclude><exclude>module-info.class</exclude></excludes></filter></filters>
+            <relocations><relocation><pattern>org.json</pattern><shadedPattern>com.posthog.java.shaded.org.json</shadedPattern></relocation></relocations>
+          </configuration></execution></executions>
+        </plugin></plugins></build>
+      </project>
+      POM
+      (cd /tmp/oj && mvn -B -q -C -Dmaven.repo.local=/tmp/m2 package)
+      echo "7dd2de1533e766e2b6c07d8194da85145ad313a167a4760050f5c9b6839604fe  /tmp/m2/org/json/json/20260814/json-20260814.jar" | sha256sum -c -
+      rm -rf /tmp/oj/x && mkdir /tmp/oj/x && (cd /tmp/oj/x && unzip -q /tmp/oj/target/oj-1.jar 'com/posthog/java/shaded/org/json/*' 'META-INF/maven/org.json/*')
+      test -f /tmp/oj/x/com/posthog/java/shaded/org/json/JSONObject.class
+      grep -qx 'version=20260814' /tmp/oj/x/META-INF/maven/org.json/json/pom.properties
+      # every class the old copy had is in the new one (posthog calls them by these names)
+      unzip -Z1 /tmp/kestra.jar > /tmp/oj/all.lst && grep '^com/posthog/java/shaded/org/json/.*\.class$' /tmp/oj/all.lst | sort > /tmp/oj/old.lst
+      (cd /tmp/oj/x && find com -name '*.class' | sort) > /tmp/oj/new.lst
+      missing="$(comm -23 /tmp/oj/old.lst /tmp/oj/new.lst)"
+      [ -z "$missing" ] || { echo "classes missing from org.json 20260814: $missing"; exit 1; }
+      zip -q -d /tmp/kestra.jar 'com/posthog/java/shaded/org/json/*' 'META-INF/maven/org.json/*'
+      (cd /tmp/oj/x && zip -q -r /tmp/kestra.jar com META-INF)
+      unzip -p /tmp/kestra.jar META-INF/maven/org.json/json/pom.properties > /tmp/oj.new && grep -qx 'version=20260814' /tmp/oj.new
+
+      install -d "${{targets.destdir}}/usr/lib/kestra" "${{targets.destdir}}/usr/bin"
+      install -m 0644 /tmp/kestra.jar "${{targets.destdir}}/usr/lib/kestra/kestra.jar"
+      # The jar reads its configuration from --config (default ~/.kestra/config.yml), not from
+      # $KESTRA_CONFIGURATION: write that variable to a file and pass it, as the upstream image does.
+      cat > "${{targets.destdir}}/usr/bin/kestra" <<'EOS'
+      #!/bin/sh
+      set -eu
+      if [ -n "${KESTRA_CONFIGURATION:-}" ]; then
+        mkdir -p /tmp/kestra
+        printf '%s\n' "$KESTRA_CONFIGURATION" > /tmp/kestra/config.yml
+        set -- "$@" --config /tmp/kestra/config.yml
+      fi
+      exec /usr/lib/jvm/java-25-openjdk/bin/java -Djava.io.tmpdir=/tmp ${JAVA_OPTS:-} -jar /usr/lib/kestra/kestra.jar "$@"
+      EOS
+      chmod 0755 "${{targets.destdir}}/usr/bin/kestra"
+
+test:
+  pipeline:
+    - runs: |
+        test -f /usr/lib/kestra/kestra.jar
