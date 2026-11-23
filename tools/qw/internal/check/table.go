@@ -73,6 +73,7 @@ var table = map[string]check{
 	"coroot":                            {src: ghRel("coroot/coroot"), n: 1},
 	"cosign":                            {src: ghRel("sigstore/cosign")},
 	"defectdojo":                        {src: ghRel("DefectDojo/django-DefectDojo"), n: 1},
+	"garak":                             {src: ghRel("NVIDIA/garak"), n: 1},
 	"pairdrop":                          {src: ghRel("schlagmichdoch/PairDrop"), n: 1},
 	"glances":                           {src: pypiPkg("glances"), n: 1, f: filter{keep: numDots}},
 	"kestra":                            {src: ghRel("kestra-io/kestra"), n: 1},

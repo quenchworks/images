@@ -1,0 +1,55 @@
+# Assembles the garak runtime image: the CLI in a venv on Wolfi Python 3.13. Nonroot (1001), multi-arch.
+# garak writes run reports to $HOME/.local/share/garak/garak_runs and caches models and NLTK data under
+# $HOME/.cache: mount a volume at /home/garak to keep them. Credentials for the model under test come from
+# the environment (OPENAI_API_KEY, HF_INFERENCE_TOKEN, REST endpoints in a --generator_option_file, ...).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-garak@local
+
+accounts:
+  groups:
+    - groupname: garak
+      gid: 1001
+  users:
+    - username: garak
+      uid: 1001
+      gid: 1001
+      homedir: /home/garak
+  run-as: 1001
+
+paths:
+  - path: /home/garak
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /opt/garak/venv/bin/garak
+
+environment:
+  HOME: /home/garak
+  PATH: /opt/garak/venv/bin:/usr/bin:/bin
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+
+work-dir: /home/garak
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-garak"
+  org.opencontainers.image.licenses: "Apache-2.0"

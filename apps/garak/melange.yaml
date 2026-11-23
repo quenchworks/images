@@ -1,0 +1,130 @@
+# garak: venv on Wolfi Python 3.13 + Wolfi's compiled deps, the locked pure set, torch from the CPU index.
+package:
+  name: quench-garak
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened garak LLM vulnerability scanner, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - libgcc
+      - libmagic             # python-magic
+      - libstdc++
+      - python-3.13          # the venv references the system interpreter
+      # compiled deps from Wolfi (system site-packages); requirements.lock is constrained to these versions
+      - py3.13-aiohttp
+      - py3.13-multidict<7    # aiohttp needs <7; unbounded, the solver takes 7.x for yarl first
+      - py3.13-cffi
+      - py3.13-charset-normalizer
+      - py3.13-cryptography
+      - py3.13-frozenlist
+      - py3.13-grpcio-1.85
+      - py3.13-grpcio-tools
+      - py3.13-hf-xet
+      - py3.13-jiter
+      - py3.13-markupsafe
+      - py3.13-numpy-2.2
+      - py3.13-orjson
+      - py3.13-pandas
+      - py3.13-pillow
+      - py3.13-propcache
+      - py3.13-protobuf
+      - py3.13-psutil
+      - py3.13-pyarrow
+      - py3.13-pydantic-core
+      - py3.13-pyyaml
+      - py3.13-regex
+      - py3.13-rpds-py
+      - py3.13-safetensors
+      - py3.13-sentencepiece
+      - py3.13-tiktoken
+      - py3.13-tokenizers
+      - py3.13-yarl
+      - py3.13-zstandard
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - libmagic
+      - python-3.13
+      - py3.13-aiohttp        # pulls py3.13-multidict 6.x (it needs <7)
+      - py3.13-cffi
+      - py3.13-charset-normalizer
+      - py3.13-cryptography
+      - py3.13-frozenlist
+      - py3.13-grpcio-1.85
+      - py3.13-grpcio-tools
+      - py3.13-hf-xet
+      - py3.13-jiter
+      - py3.13-markupsafe
+      - py3.13-numpy-2.2
+      - py3.13-orjson
+      - py3.13-pandas
+      - py3.13-pillow
+      - py3.13-propcache
+      - py3.13-protobuf
+      - py3.13-psutil
+      - py3.13-pyarrow
+      - py3.13-pydantic-core
+      - py3.13-pyyaml
+      - py3.13-regex
+      - py3.13-rpds-py
+      - py3.13-safetensors
+      - py3.13-sentencepiece
+      - py3.13-tiktoken
+      - py3.13-tokenizers
+      - py3.13-yarl
+      - py3.13-zstandard
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/NVIDIA/garak/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+      strip-components: 1
+
+  - name: venv
+    runs: |
+      set -eu
+      grep -q "^version = \"${{package.version}}\"" pyproject.toml
+      V=/opt/garak/venv
+      python3.13 -m venv --system-site-packages $V
+      export PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+      $V/bin/pip install --no-compile --no-deps -r requirements.lock
+      $V/bin/pip install --no-compile --no-deps --index-url https://download.pytorch.org/whl/cpu "torch==__TORCH__"
+      $V/bin/pip install --no-compile --no-deps .
+      $V/bin/pip check
+      SITE=$V/lib/python3.13/site-packages
+      # no wheel may bring its own native libraries, except torch's CPU wheel (libgomp in torch.libs)
+      for d in "$SITE"/*.libs; do [ -e "$d" ] || continue; [ "$(basename "$d")" = torch.libs ] || { echo "bundled native libs: $d"; exit 1; }; done
+      libs=$(find "$SITE" -name 'lib*.so*' -not -path "$SITE/torch/*" -not -path "$SITE/torch.libs/*")
+      [ -z "$libs" ] || { echo "bundled shared libraries:"; echo "$libs"; exit 1; }
+      # the compiled set must come from Wolfi, not from a wheel in the venv
+      for m in numpy grpc cryptography PIL tokenizers safetensors pyarrow pydantic_core jiter; do
+        test ! -e "$SITE/$m" || { echo "$m installed into the venv instead of from Wolfi"; exit 1; }
+      done
+      $V/bin/python -I -c "import garak, torch, transformers, numpy; print('garak', garak.__version__, 'torch', torch.__version__, 'numpy', numpy.__file__)"
+
+  - name: Install
+    runs: |
+      set -eu
+      D="${{targets.destdir}}/opt/garak"
+      install -d "$D"
+      /opt/garak/venv/bin/pip uninstall -y pip
+      find /opt/garak/venv -name __pycache__ -prune -exec rm -rf {} +
+      cp -a /opt/garak/venv "$D/venv"
+      cp LICENSE "$D/"
+      case "$(head -1 "$D/venv/bin/garak")" in '#!/opt/garak/venv/bin/python'*) ;; *) echo "garak shebang is not the venv" >&2; exit 1 ;; esac
+
+test:
+  pipeline:
+    - runs: |
+        /opt/garak/venv/bin/garak --version
