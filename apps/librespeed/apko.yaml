@@ -1,0 +1,40 @@
+# Assembles the LibreSpeed image: speedtest-go (the frontend embedded) on Wolfi. Nonroot (uid
+# 1001), multi-arch, read-only-rootfs friendly. HTTP on 8989. Settings in
+# /etc/librespeed/settings.toml (mount your own; results telemetry is off by default).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-librespeed@local
+
+accounts:
+  groups:
+    - groupname: librespeed
+      gid: 1001
+  users:
+    - username: librespeed
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/speedtest -c /etc/librespeed/settings.toml
+
+work-dir: /tmp
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-librespeed"
+  org.opencontainers.image.licenses: "LGPL-3.0-only"
