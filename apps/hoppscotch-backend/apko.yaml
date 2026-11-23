@@ -1,0 +1,47 @@
+# Assembles the Hoppscotch backend runtime image: the NestJS API on Wolfi Node 24. Nonroot (1001), multi-arch,
+# read-only-rootfs friendly. Listens on 3170 (GraphQL at /graphql, REST at /v1, health at /ping). Run the migrations
+# first with the same image: --entrypoint /usr/bin/node, args quench-migrate.mjs (Prisma's migrations and
+# _prisma_migrations bookkeeping on the pg driver; Prisma's Rust schema engine is not shipped).
+# Required env: DATABASE_URL, DATA_ENCRYPTION_KEY (32 chars), WHITELISTED_ORIGINS, VITE_BASE_URL,
+# VITE_SHORTCODE_BASE_URL, VITE_ADMIN_URL, VITE_BACKEND_GQL_URL, VITE_BACKEND_WS_URL, VITE_BACKEND_API_URL.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-hoppscotch-backend@local
+
+accounts:
+  groups:
+    - groupname: hoppscotch
+      gid: 1001
+  users:
+    - username: hoppscotch
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/node /opt/hoppscotch-backend/dist/src/main.js
+
+environment:
+  NODE_ENV: production
+  PRODUCTION: "true"
+
+work-dir: /opt/hoppscotch-backend
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-hoppscotch-backend"
+  org.opencontainers.image.licenses: "MIT"
