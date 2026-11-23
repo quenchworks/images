@@ -1,0 +1,47 @@
+# Assembles the Glances image: the venv under /opt/glances on Wolfi's python-3.14. Nonroot
+# (uid 1001), multi-arch, read-only-rootfs friendly. Web UI and REST API on 61208. In a
+# container it sees the container's own processes; give it hostPID and the host's /proc and /sys
+# (read-only) to watch a node.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-glances@local
+
+accounts:
+  groups:
+    - groupname: glances
+      gid: 1001
+  users:
+    - username: glances
+      uid: 1001
+      gid: 1001
+      homedir: /tmp
+  run-as: 1001
+
+entrypoint:
+  command: /opt/glances/venv/bin/glances -w --bind 0.0.0.0 --port 61208 --disable-check-update
+
+environment:
+  PATH: /opt/glances/venv/bin:/usr/bin:/bin
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+
+work-dir: /tmp
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-glances"
+  org.opencontainers.image.licenses: "LGPL-3.0-only"

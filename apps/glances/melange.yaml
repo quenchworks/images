@@ -1,0 +1,49 @@
+package:
+  name: quench-glances
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Glances system monitor, packaged on Wolfi"
+  copyright:
+    - license: LGPL-3.0-only
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - python-3.14        # the venv references the system interpreter
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - curl
+      - python-3.14
+      - python-3.14-dev
+
+pipeline:
+  - runs: |
+      set -eu
+      W=/tmp/glances-${{package.version}}-py3-none-any.whl
+      curl -fsSL -o "$W" "https://files.pythonhosted.org/packages/py3/g/glances/glances-${{package.version}}-py3-none-any.whl"
+      echo "__SHA256__  $W" | sha256sum -c -
+      python3.14 -m venv /opt/glances/venv
+      export PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+      /opt/glances/venv/bin/pip install --no-compile "$W[web]"
+      /opt/glances/venv/bin/glances -V > /tmp/v.txt
+      grep -q "Glances version:.*${{package.version}}" /tmp/v.txt
+      test -f /opt/glances/venv/lib/python3.14/site-packages/glances/outputs/static/public/glances.js
+      /opt/glances/venv/bin/pip uninstall -y pip setuptools
+      find /opt/glances/venv -name __pycache__ -prune -exec rm -rf {} +
+      install -d "${{targets.destdir}}/opt/glances"
+      cp -a /opt/glances/venv "${{targets.destdir}}/opt/glances/venv"
+      case "$(head -1 "${{targets.destdir}}/opt/glances/venv/bin/glances")" in '#!/opt/glances/venv/bin/python'*) ;; *) echo "glances shebang is not the venv" >&2; exit 1 ;; esac
+
+test:
+  pipeline:
+    - runs: |
+        /opt/glances/venv/bin/glances -V
