@@ -33,10 +33,15 @@ pipeline:
   - runs: |
       set -eu
       export CARGO_HOME="$(mktemp -d)"
-      grep -q '^version = "${{package.version}}"' backend/Cargo.toml
+      # 7.11.8 made the repo a Cargo workspace: the version moved to the root Cargo.toml ([workspace.package]) and the
+      # build output to the root target/; earlier tags keep both under backend/
+      ok=
+      for f in Cargo.toml backend/Cargo.toml; do grep -q '^version = "${{package.version}}"' "$f" 2>/dev/null && ok=1; done
+      [ -n "$ok" ] || { echo "no Cargo.toml carries version ${{package.version}}"; exit 1; }
       (cd backend && cargo auditable build --release --locked --bin chhoto-url)
+      b=backend/target/release/chhoto-url; [ -x "$b" ] || b=target/release/chhoto-url
       d="${{targets.destdir}}/app"
-      install -Dm755 backend/target/release/chhoto-url "$d/chhoto-url"
+      install -Dm755 "$b" "$d/chhoto-url"
       readelf -S "$d/chhoto-url" | grep -q '\.dep-v0'
       # upstream's layout: frontend/base is served; frontend/final receives a copy when a custom title is set
       install -d "$d/frontend"
