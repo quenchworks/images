@@ -56,3 +56,52 @@ func init() {
 		t.Logf("smoke test passed (hoppscotch-backend %s: migrations applied, second run a no-op, read-only boot, /ping, GraphQL; user %s)", t.Want, u)
 	})
 }
+
+// hoppscotchFrontend: on a read-only rootfs with only /tmp writable, quench-run.mjs copies the build under /tmp and
+// writes the VITE_* env into it, Caddy as 1001 serves the app shell and an SPA deep link, and the injected copy
+// carries the backend URL. The web image also runs webapp-server (the desktop app bundle) on 3200.
+func hoppscotchFrontend(port string, webapp bool) func(t *T) {
+	return func(t *T) {
+		const gql = "http://quench.smoke:3170/graphql"
+		base := "http://127.0.0.1:1" + port
+		u := t.User("1001")
+		name := t.Name("")
+		flags := []string{"--read-only", "--tmpfs", "/tmp:rw,mode=1777", "-p", "127.0.0.1:1" + port + ":" + port,
+			"-e", "VITE_BASE_URL=http://localhost:3000", "-e", "VITE_SHORTCODE_BASE_URL=http://localhost:3000",
+			"-e", "VITE_ADMIN_URL=http://localhost:3100", "-e", "VITE_BACKEND_GQL_URL=" + gql,
+			"-e", "VITE_BACKEND_WS_URL=ws://quench.smoke:3170/graphql", "-e", "VITE_BACKEND_API_URL=http://quench.smoke:3170/v1"}
+		if webapp {
+			flags = append(flags, "-p", "127.0.0.1:13200:3200")
+		}
+		t.Start(name, flags)
+		t.waitCode(base+"/", 60, time.Second, name, 200)
+		_, page := restDo("GET", base+"/", "", "", "")
+		t.ContainsFold(page, "hoppscotch", "the app shell")
+		if c, b := restDo("GET", base+"/settings", "", "", ""); c != 200 || !strings.Contains(strings.ToLower(b), "hoppscotch") {
+			t.Fatalf("deep link /settings got %d", c)
+		}
+		out, err := docker("exec", name, "/usr/bin/node", "-e", `const fs=require("fs");
+			const hit=fs.readdirSync("/tmp/hoppscotch-site",{recursive:true}).some(f=>{const p="/tmp/hoppscotch-site/"+f;
+			return fs.statSync(p).isFile()&&fs.readFileSync(p,"utf8").includes(process.argv[1])});console.log(hit?"injected":"missing")`, gql)
+		if err != nil || !strings.Contains(out, "injected") {
+			t.Fatalf("VITE_BACKEND_GQL_URL not written into the site: %v %s\n%s", err, out, t.Logs(name))
+		}
+		what := "read-only boot, app shell, SPA deep link, VITE_* injected"
+		if webapp {
+			t.waitCode("http://127.0.0.1:13200/health", 30, time.Second, name, 200)
+			if c, _ := restDo("GET", "http://127.0.0.1:13200/api/v1/manifest", "", "", ""); c != 200 {
+				t.Fatalf("webapp-server manifest got %d\n%s", c, t.Logs(name))
+			}
+			what += ", webapp-server health and manifest"
+		}
+		if logs := t.Logs(name); strings.Contains(logs, `"level":"error"`) {
+			t.Fatalf("errors in the log:\n%s", logs)
+		}
+		t.Logf("smoke test passed (%s: %s; user %s)", t.Want, what, u)
+	}
+}
+
+func init() {
+	register("hoppscotch-web", hoppscotchFrontend("3000", true))
+	register("hoppscotch-admin", hoppscotchFrontend("3100", false))
+}

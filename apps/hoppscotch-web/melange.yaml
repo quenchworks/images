@@ -1,0 +1,90 @@
+# hoppscotch-web: pnpm workspace build of the self-hosted web app, webapp-server from source, on Wolfi Node 24.
+package:
+  name: quench-hoppscotch-web
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Hoppscotch web app, built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - caddy
+      - ca-certificates-bundle
+      - nodejs-24
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - git
+      - go
+      - nodejs-24
+      - npm
+      - python-3
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/hoppscotch/hoppscotch/archive/refs/tags/${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+      strip-components: 1
+
+  - name: Build the web app
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" npm_config_cache="$(mktemp -d)"
+      npm install -g --prefix "$HOME/.g" pnpm@10.34.9
+      export PATH="$HOME/.g/bin:$PATH"
+      cp .env.example .env
+      pnpm install --frozen-lockfile
+      cd packages/hoppscotch-selfhost-web
+      HOPP_ALLOW_RUNTIME_ENV=true pnpm run generate
+      test -f dist/index.html
+      install -d /opt/hoppscotch
+      cp -a dist /opt/hoppscotch/selfhost-web
+
+  - name: webapp-server
+    runs: |
+      set -eu
+      cd packages/hoppscotch-selfhost-web/webapp-server
+      CGO_ENABLED=0 GOTOOLCHAIN=local go build -trimpath -ldflags "-s -w" -o /usr/bin/webapp-server .
+
+  - name: import-meta-env CLI
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" npm_config_cache="$(mktemp -d)"
+      # upstream's own floors for the CLI's bundled glob (CVE-2025-64756) and serialize-javascript
+      install -d /opt/hoppscotch/cli
+      cd /opt/hoppscotch/cli
+      printf '%s\n' '{"private":true,"dependencies":{"@import-meta-env/cli":"0.7.4"},' \
+        '"overrides":{"glob":"11.1.0","serialize-javascript":"7.1.4"}}' > package.json
+      npm install --omit=dev --no-audit --no-fund
+      rm -f package-lock.json
+
+  - name: Install
+    runs: |
+      set -eu
+      D="${{targets.destdir}}"
+      install -d "$D/opt" "$D/usr/bin" "$D/etc/caddy"
+      cp -a /opt/hoppscotch "$D/opt/hoppscotch"
+      install -m644 quench-run.mjs "$D/opt/hoppscotch/quench-run.mjs"
+      install -m755 /usr/bin/webapp-server "$D/usr/bin/webapp-server"
+      install -m644 Caddyfile "$D/etc/caddy/Caddyfile"
+      # /site is where Caddy and webapp-server look; quench-run.mjs fills its /tmp target at startup
+      ln -s /tmp/hoppscotch-site "$D/site"
+      # self-check: import-meta-env writes a value into a copy of the build
+      T=$(mktemp -d) && cp -a /opt/hoppscotch/selfhost-web "$T/s" && echo 'VITE_BACKEND_GQL_URL="http://quench.check/graphql"' > "$T/e"
+      node /opt/hoppscotch/cli/node_modules/@import-meta-env/cli/bin/import-meta-env.js -x "$T/e" -e "$T/e" -p "$T/s/**/*"
+      grep -rqF http://quench.check/graphql "$T/s"
+
+test:
+  pipeline:
+    - runs: |
+        test -f /opt/hoppscotch/selfhost-web/index.html
+        test -x /usr/bin/webapp-server

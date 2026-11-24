@@ -1,0 +1,44 @@
+# Assembles the Hoppscotch admin runtime image: the static admin dashboard served by Caddy on 3100, on Wolfi Node 24
+# for the startup env injection. Nonroot (1001), multi-arch, read-only-rootfs friendly: mount a writable /tmp.
+# Env: VITE_BASE_URL, VITE_ADMIN_URL, VITE_BACKEND_GQL_URL, VITE_BACKEND_WS_URL, VITE_BACKEND_API_URL.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-hoppscotch-admin@local
+
+accounts:
+  groups:
+    - groupname: hoppscotch
+      gid: 1001
+  users:
+    - username: hoppscotch
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/node /opt/hoppscotch/quench-run.mjs
+
+environment:
+  XDG_DATA_HOME: /tmp
+  XDG_CONFIG_HOME: /tmp
+
+work-dir: /opt/hoppscotch
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-hoppscotch-admin"
+  org.opencontainers.image.licenses: "MIT"
