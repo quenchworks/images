@@ -57,7 +57,9 @@ pipeline:
         });
         fs.writeFileSync("package.json", JSON.stringify(p, null, 2));
       '
-      npm install --engine-strict=false --no-audit --no-fund
+      # --legacy-peer-deps: 2.18.2's dev test libs conflict (@testing-library/jest-dom 8 wants vitest >=5, the
+      # project uses 4.1.12); upstream's `npm ci` does not re-check peers, but editing package.json makes npm resolve.
+      npm install --engine-strict=false --no-audit --no-fund --legacy-peer-deps
       # The vite bundle is invisible to the scanner (no package.json survives into it), so the
       # client tree carries its own gate. braces has no fixed release (GHSA-vfj7-8cjw-p6xm,
       # <=3.0.3 and 3.0.3 is the newest); it reaches the tree only through tailwind's chokidar
