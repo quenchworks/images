@@ -1,5 +1,5 @@
-# Assembles the Hoppscotch web runtime image: the static web app served by Caddy on 3000 and webapp-server (the
-# desktop app's signed bundle) on 3200, on Wolfi Node 24 for the startup env injection. Nonroot (1001), multi-arch,
+# Assembles the Hoppscotch web runtime image: the static web app on 3000 and webapp-server (the
+# desktop app's signed bundle) on 3200, served by Node 24 (quench-run.mjs). Nonroot (1001), multi-arch,
 # read-only-rootfs friendly: mount a writable /tmp; mount /data/webapp-server to keep the bundle signing key across
 # restarts (or set WEBAPP_SERVER_SIGNING_KEY). Env: VITE_BASE_URL, VITE_SHORTCODE_BASE_URL, VITE_ADMIN_URL,
 # VITE_BACKEND_GQL_URL, VITE_BACKEND_WS_URL, VITE_BACKEND_API_URL (and any other VITE_* upstream documents).
@@ -39,10 +39,6 @@ paths:
 
 entrypoint:
   command: /usr/bin/node /opt/hoppscotch/quench-run.mjs
-
-environment:
-  XDG_DATA_HOME: /tmp
-  XDG_CONFIG_HOME: /tmp
 
 work-dir: /opt/hoppscotch
 

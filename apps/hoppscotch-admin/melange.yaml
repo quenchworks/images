@@ -8,7 +8,6 @@ package:
     - license: MIT
   dependencies:
     runtime:
-      - caddy
       - ca-certificates-bundle
       - nodejs-24
 
@@ -55,9 +54,7 @@ pipeline:
       install -d "$D/opt"
       cp -a /opt/hoppscotch "$D/opt/hoppscotch"
       install -m644 quench-run.mjs "$D/opt/hoppscotch/quench-run.mjs"
-      # not /etc/caddy/Caddyfile: Wolfi's caddy package owns that path
-      install -m644 Caddyfile "$D/opt/hoppscotch/Caddyfile"
-      # /site is where Caddy looks; quench-run.mjs fills its /tmp target at startup
+      # /site keeps upstream's layout; quench-run.mjs fills its /tmp target at startup
       ln -s /tmp/hoppscotch-site "$D/site"
       # self-check: quench-run.mjs replaces every VITE_* placeholder the build left
       node --input-type=module -e '

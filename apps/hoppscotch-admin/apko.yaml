@@ -1,4 +1,4 @@
-# Assembles the Hoppscotch admin runtime image: the static admin dashboard served by Caddy on 3100, on Wolfi Node 24
+# Assembles the Hoppscotch admin runtime image: the static admin dashboard on 3100, on Wolfi Node 24
 # for the startup env injection. Nonroot (1001), multi-arch, read-only-rootfs friendly: mount a writable /tmp.
 # Env: VITE_BASE_URL, VITE_ADMIN_URL, VITE_BACKEND_GQL_URL, VITE_BACKEND_WS_URL, VITE_BACKEND_API_URL.
 contents:
@@ -25,10 +25,6 @@ accounts:
 
 entrypoint:
   command: /usr/bin/node /opt/hoppscotch/quench-run.mjs
-
-environment:
-  XDG_DATA_HOME: /tmp
-  XDG_CONFIG_HOME: /tmp
 
 work-dir: /opt/hoppscotch
 

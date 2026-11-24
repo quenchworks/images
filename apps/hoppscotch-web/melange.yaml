@@ -8,7 +8,6 @@ package:
     - license: MIT
   dependencies:
     runtime:
-      - caddy
       - ca-certificates-bundle
       - nodejs-24
 
@@ -52,8 +51,12 @@ pipeline:
   - name: webapp-server
     runs: |
       set -eu
+      export GOTOOLCHAIN=local CGO_ENABLED=0
       cd packages/hoppscotch-selfhost-web/webapp-server
-      CGO_ENABLED=0 GOTOOLCHAIN=local go build -trimpath -ldflags "-s -w" -o /usr/bin/webapp-server .
+      # 0-CVE floor (raise only): klauspost/compress v1.18.0 -> v1.18.7 (CVE-2026-63209)
+      go get github.com/klauspost/compress@v1.18.7
+      go mod tidy
+      go build -trimpath -ldflags "-s -w" -o /usr/bin/webapp-server .
 
   - name: Install
     runs: |
@@ -63,9 +66,7 @@ pipeline:
       cp -a /opt/hoppscotch "$D/opt/hoppscotch"
       install -m644 quench-run.mjs "$D/opt/hoppscotch/quench-run.mjs"
       install -m755 /usr/bin/webapp-server "$D/usr/bin/webapp-server"
-      # not /etc/caddy/Caddyfile: Wolfi's caddy package owns that path
-      install -m644 Caddyfile "$D/opt/hoppscotch/Caddyfile"
-      # /site is where Caddy and webapp-server look; quench-run.mjs fills its /tmp target at startup
+      # /site is where webapp-server looks; quench-run.mjs fills its /tmp target at startup
       ln -s /tmp/hoppscotch-site "$D/site"
       # self-check: quench-run.mjs replaces every VITE_* placeholder the build left
       node --input-type=module -e '
