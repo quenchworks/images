@@ -1,0 +1,55 @@
+# Assembles the Plausible Analytics CE runtime image: the mix release (ERTS included) on Wolfi, nonroot (1001),
+# multi-arch, read-only-rootfs friendly (RELEASE_TMP=/tmp; mount a writable /tmp and /var/lib/plausible). Port 8000.
+# Required env: BASE_URL, SECRET_KEY_BASE (64+ characters), DATABASE_URL, CLICKHOUSE_DATABASE_URL. Before the first
+# start and on upgrade: bin/plausible eval Plausible.Release.createdb, then Plausible.Release.interweave_migrate.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-plausible@local
+
+accounts:
+  groups:
+    - groupname: plausible
+      gid: 1001
+  users:
+    - username: plausible
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  - path: /var/lib/plausible
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /opt/plausible/bin/plausible start
+
+environment:
+  LANG: C.UTF-8
+  MIX_ENV: ce
+  LISTEN_IP: 0.0.0.0
+  DEFAULT_DATA_DIR: /var/lib/plausible
+  RELEASE_TMP: /tmp
+
+work-dir: /opt/plausible
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-plausible"
+  org.opencontainers.image.licenses: "AGPL-3.0-or-later"

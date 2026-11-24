@@ -1,0 +1,101 @@
+# plausible: mix release of Plausible CE (MIX_ENV=ce) without extra/, on Wolfi Erlang 28 + Elixir 1.19.
+package:
+  name: quench-plausible
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Plausible Analytics CE, built from source on Wolfi"
+  copyright:
+    - license: AGPL-3.0-or-later
+  dependencies:
+    runtime:
+      - busybox
+      - ca-certificates-bundle
+      - libgcc
+      - libstdc++
+      - ncurses
+      - openssl
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - brotli               # phoenix_bakery precompresses static assets with the brotli CLI (upstream apk-adds it)
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - erlang-27
+      - erlang-27-dev
+      - git
+      - nodejs-24
+      - npm
+      - python-3
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/plausible/analytics/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+      strip-components: 1
+
+  # Elixir 1.19.4 on OTP 27, upstream's own image toolchain (hexpm/elixir:1.19.4-erlang-27). Wolfi ships Elixir only
+  # for OTP 28, where Plausible's locked deps (x509 0.9.1, gen_smtp 1.2.0) do not compile.
+  - runs: mkdir -p elixir-src
+  - uses: fetch
+    with:
+      uri: https://github.com/elixir-lang/elixir/archive/refs/tags/v1.19.4.tar.gz
+      expected-sha256: a2df9d5411fc53d97ec17c069765c8fb781f8dc36c4e06ec1cd4b189340d364b
+      directory: elixir-src
+      strip-components: 1
+
+  - name: Build Elixir
+    runs: |
+      set -eu
+      make -C elixir-src install PREFIX=/opt/elixir
+      /opt/elixir/bin/elixir --version | grep -q 'Elixir 1.19.4'
+
+  - name: Drop the proprietary extra/
+    runs: |
+      set -eu
+      # the modules extra/ defines (none shares a name with lib/), to prove the release carries none of them
+      grep -rhoE '^\s*defmodule [A-Za-z0-9_.]+' extra/lib | awk '$2 ~ /\./ {print $2}' | sort -u > extra-modules.txt
+      test -s extra-modules.txt
+      rm -rf extra
+      sed -i '\|@source "../../extra/|d' assets/css/app.css
+      if grep -rn 'extra/' assets/css; then echo "assets still reference extra/"; exit 1; fi
+
+  - name: Build the release
+    runs: |
+      set -eu
+      export HOME="$(mktemp -d)" npm_config_cache="$(mktemp -d)"
+      export PATH=/opt/elixir/bin:$PATH
+      export MIX_ENV=ce NODE_ENV=production NODE_OPTIONS=--openssl-legacy-provider LANG=C.UTF-8 LC_ALL=C.UTF-8
+      mix local.hex --force
+      mix local.rebar --force
+      mix deps.get --only ce
+      mix deps.compile
+      npm install --prefix ./assets
+      npm install --prefix ./tracker
+      npm run deploy --prefix ./tracker
+      mix assets.deploy
+      mix phx.digest priv/static
+      mix download_country_database
+      mix sentry.package_source_code
+      mix release plausible
+      test -x _build/ce/rel/plausible/bin/plausible
+
+  - name: Install
+    runs: |
+      set -eu
+      install -d "${{targets.destdir}}/opt"
+      cp -a _build/ce/rel/plausible "${{targets.destdir}}/opt/plausible"
+      # the CE release must carry no module from extra/
+      left=$(while read -r m; do find "${{targets.destdir}}/opt/plausible/lib" -name "Elixir.$m.beam"; done < extra-modules.txt)
+      [ -z "$left" ] || { echo "extra/ modules in the release:"; echo "$left"; exit 1; }
+
+test:
+  pipeline:
+    - runs: |
+        test -x /opt/plausible/bin/plausible
