@@ -59,11 +59,12 @@ pipeline:
     runs: |
       set -eu
       D="${{targets.destdir}}"
-      install -d "$D/opt" "$D/usr/bin" "$D/etc/caddy"
+      install -d "$D/opt" "$D/usr/bin"
       cp -a /opt/hoppscotch "$D/opt/hoppscotch"
       install -m644 quench-run.mjs "$D/opt/hoppscotch/quench-run.mjs"
       install -m755 /usr/bin/webapp-server "$D/usr/bin/webapp-server"
-      install -m644 Caddyfile "$D/etc/caddy/Caddyfile"
+      # not /etc/caddy/Caddyfile: Wolfi's caddy package owns that path
+      install -m644 Caddyfile "$D/opt/hoppscotch/Caddyfile"
       # /site is where Caddy and webapp-server look; quench-run.mjs fills its /tmp target at startup
       ln -s /tmp/hoppscotch-site "$D/site"
       # self-check: quench-run.mjs replaces every VITE_* placeholder the build left

@@ -38,7 +38,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     if (code.includes("import_meta_env_placeholder")) fs.writeFileSync(f, inject(code, env))
   }
 
-  const kids = [spawn("/usr/bin/caddy", ["run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"], { stdio: "inherit" })]
+  const kids = [spawn("/usr/bin/caddy", ["run", "--config", `${SRC}/Caddyfile`, "--adapter", "caddyfile"], { stdio: "inherit" })]
   if (fs.existsSync("/usr/bin/webapp-server")) kids.push(spawn("/usr/bin/webapp-server", [], { stdio: "inherit" }))
   for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => kids.forEach((k) => k.kill(sig)))
   for (const k of kids) {
