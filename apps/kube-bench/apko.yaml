@@ -1,0 +1,33 @@
+# Assembles the kube-bench runtime image: the CIS benchmark runner with its cfg/ and audit tools on Wolfi, multi-arch.
+# Runs as root (the audits read host files and processes); mount the host paths read-only and use hostPID, as
+# upstream's job.yaml does. Example: kube-bench run --targets node --benchmark cis-1.12
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-kube-bench@local
+
+accounts:
+  run-as: 0
+
+entrypoint:
+  command: /usr/bin/kube-bench
+
+work-dir: /opt/kube-bench
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-kube-bench"
+  org.opencontainers.image.licenses: "Apache-2.0"

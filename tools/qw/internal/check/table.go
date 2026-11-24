@@ -329,6 +329,7 @@ var table = map[string]check{
 	"kube-state-metrics":                {src: ghRel("kubernetes/kube-state-metrics")},
 	"kube-vip":                          {src: ghRel("kube-vip/kube-vip"), lines: 2},
 	"kubectl":                           {wolfiPrefix: "kubectl-", lines: 2, lineOnly: false},
+	"kube-bench":                        {src: ghRel("aquasecurity/kube-bench"), n: 1},
 	"kuberay":                           {src: ghRel("ray-project/kuberay")},
 	"kubescape-node-agent":              {src: ghRel("kubescape/node-agent"), n: 1},
 	"kubescape-operator":                {src: ghRel("kubescape/operator"), n: 1},
