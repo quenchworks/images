@@ -149,6 +149,15 @@ pipeline:
         n=$((n+1))
       done
       [ "$n" -gt 0 ] || { echo "no basic-ftp in the tree; drop this patch"; exit 1; }
+      # i18next 26.3.1 -> 26.3.4 (CVE-2026-63402, 2026-11-24 scan; same line, no dependencies on either). Every
+      # copy; one off the 26.x line stops the build instead of taking a major jump.
+      n=0
+      for d in $(find "$dest" -type d -path '*/node_modules/i18next'); do
+        case "$(sed -n 's/^  "version": "\([^"]*\)".*/\1/p' "$d/package.json")" in 26.*) ;; *) echo "i18next off 26.x at $d"; exit 1 ;; esac
+        patch_pkg "$(dirname "$d")" i18next https://registry.npmjs.org/i18next/-/i18next-26.3.4.tgz cdf8b5644ea2abde63e67985edf500ae8b6fdcc483b1d9e26db58d650b601988
+        n=$((n+1))
+      done
+      [ "$n" -gt 0 ] || { echo "no i18next in the tree; drop this patch"; exit 1; }
       # follow-redirects -> 1.16.2 (CVE-2026-111755/-111756 fixed 1.16.1, 2026-10-22; CVE-2026-116689
       # fixed 1.16.2, 2026-11-01; no deps, CJS as
       # before). Every copy older than the fix; the build fails if none is found.
