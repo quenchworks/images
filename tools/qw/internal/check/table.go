@@ -234,6 +234,7 @@ var table = map[string]check{
 	"fabric-orderer":                    {src: ghRel("hyperledger/fabric"), lines: 2, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
 	"fabric-peer":                       {src: ghRel("hyperledger/fabric"), lines: 2, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
 	"falco":                             {src: ghRel("falcosecurity/falco"), n: 1},
+	"falcosidekick":                     {src: ghRel("falcosecurity/falcosidekick"), n: 1},
 	"ferretdb":                          {src: ghRel("FerretDB/FerretDB")},
 	"filebrowser":                       {src: ghRel("filebrowser/filebrowser")},
 	"flink":                             {src: scrapeSrc("https://dlcdn.apache.org/flink/", `href="flink-(\d+\.\d+\.\d+)/"`), n: 1},

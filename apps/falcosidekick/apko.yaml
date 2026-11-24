@@ -1,0 +1,37 @@
+# Assembles the Falcosidekick runtime image: one static binary on Wolfi, nonroot (1001), multi-arch, read-only-rootfs
+# friendly. Listens on 2801 (/ping, /healthz, /metrics; Falco posts events to /). Configure with env vars or -c <file>.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-falcosidekick@local
+
+accounts:
+  groups:
+    - groupname: falcosidekick
+      gid: 1001
+  users:
+    - username: falcosidekick
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/falcosidekick
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-falcosidekick"
+  org.opencontainers.image.licenses: "Apache-2.0"
