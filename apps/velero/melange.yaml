@@ -28,9 +28,8 @@ environment:
       - build-base
       - busybox
       - ca-certificates-bundle
-      # go-1.26: stdlib 1.25.12 findings are fixed only in 1.25.13/1.26.6+, and Wolfi's
-      # go-1.25 line tops out at 1.25.12 (same reasoning as cadence, harbor-registry).
-      - go-1.26
+      # per-line Go from build.conf GOPKG: go.mod's go directive moved to 1.27 in velero 1.19
+      - __GOPKG__
 
 pipeline:
   - uses: fetch
@@ -63,7 +62,9 @@ pipeline:
       echo "raising:${need:- nothing}"
       [ -z "$need" ] || go get $need
       go mod tidy
-      PKG=github.com/vmware-tanzu/velero
+      # the module path, from go.mod: 1.19 moved it from github.com/vmware-tanzu/velero to github.com/velero-io/velero
+      PKG=$(awk '/^module /{print $2; exit}' go.mod)
+      case "$PKG" in */velero) ;; *) echo "unexpected module path: $PKG"; exit 1 ;; esac
       go build -trimpath -installsuffix static \
         -ldflags "-s -w \
           -X ${PKG}/pkg/buildinfo.Version=v${{package.version}} \
