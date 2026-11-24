@@ -58,8 +58,9 @@ func init() {
 }
 
 // hoppscotchFrontend: on a read-only rootfs with only /tmp writable, quench-run.mjs copies the build under /tmp and
-// writes the VITE_* env into it, Caddy as 1001 serves the app shell and an SPA deep link, and the injected copy
-// carries the backend URL. The web image also runs webapp-server (the desktop app bundle) on 3200.
+// writes the VITE_* env into it, Caddy as 1001 serves the app shell and an SPA deep link, and the copy carries the
+// backend host with no placeholder left (values are written JSON-escaped, "/" as \u002F, so the check matches the
+// host). The web image also runs webapp-server (the desktop app bundle) on 3200.
 func hoppscotchFrontend(port string, webapp bool) func(t *T) {
 	return func(t *T) {
 		const gql = "http://quench.smoke:3170/graphql"
@@ -80,9 +81,9 @@ func hoppscotchFrontend(port string, webapp bool) func(t *T) {
 		if c, b := restDo("GET", base+"/settings", "", "", ""); c != 200 || !strings.Contains(strings.ToLower(b), "hoppscotch") {
 			t.Fatalf("deep link /settings got %d", c)
 		}
-		out, err := docker("exec", name, "/usr/bin/node", "-e", `const fs=require("fs");
-			const hit=fs.readdirSync("/tmp/hoppscotch-site",{recursive:true}).some(f=>{const p="/tmp/hoppscotch-site/"+f;
-			return fs.statSync(p).isFile()&&fs.readFileSync(p,"utf8").includes(process.argv[1])});console.log(hit?"injected":"missing")`, gql)
+		out, err := docker("exec", name, "/usr/bin/node", "-e", `const fs=require("fs"),d="/tmp/hoppscotch-site";
+			const t=fs.readdirSync(d,{recursive:true}).map(f=>d+"/"+f).filter(p=>fs.statSync(p).isFile()).map(p=>fs.readFileSync(p,"utf8"));
+			console.log(t.some(c=>c.includes(process.argv[1]))&&!t.some(c=>c.includes("import_meta_env_placeholder"))?"injected":"missing")`, "quench.smoke:3170")
 		if err != nil || !strings.Contains(out, "injected") {
 			t.Fatalf("VITE_BACKEND_GQL_URL not written into the site: %v %s\n%s", err, out, t.Logs(name))
 		}
