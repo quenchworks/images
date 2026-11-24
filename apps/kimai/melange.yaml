@@ -117,6 +117,12 @@ pipeline:
       set -eu
       export HOME="$(mktemp -d)" COMPOSER_HOME="$(mktemp -d)"
       php -m | grep -qix tokenizer
+      # twig/twig below 3.31.1 carries five sandbox __toString bypasses (CVE-2026-133763..133767): move the lock
+      # to the newest twig kimai's constraint allows, then assert it (a no-op on lines that already have it)
+      composer update --no-install --no-dev --no-interaction --no-progress --no-scripts --with-dependencies twig/twig
+      php -r '$l=json_decode(file_get_contents("composer.lock"),true);
+        foreach($l["packages"] as $p) if($p["name"]==="twig/twig") exit(version_compare(ltrim($p["version"],"v"),"3.31.1","<")?1:0);
+        exit(1);' || { echo "twig/twig still below 3.31.1"; exit 1; }
       composer install --no-dev --no-interaction --no-progress --optimize-autoloader --no-scripts
       composer dump-autoload --no-dev --optimize --classmap-authoritative --no-scripts
 
