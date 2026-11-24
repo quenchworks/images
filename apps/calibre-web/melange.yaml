@@ -44,18 +44,19 @@ pipeline:
       uri: https://github.com/janeczku/calibre-web/archive/refs/tags/${{package.version}}.tar.gz
       expected-sha256: __SHA256__
 
-  - name: venv over Wolfi natives, five upstream caps lifted
+  - name: venv over Wolfi natives, six upstream caps lifted
     runs: |
       set -eu
       export HOME="$(mktemp -d)" PIP_NO_CACHE_DIR=1
       grep -qE "^STABLE_VERSION *= *'${{package.version}}'" cps/constants.py
       # the upper bounds that hold these below their fixes: pypdf (<6.11), cryptography (<48), tornado (<6.6),
-      # certifi (<2026.5.21), regex (<2026.1.16); every other bound stays
+      # certifi (<2026.5.21), regex (<2026.1.16), lxml (<6.2.0: Wolfi's py3.13-lxml moved to 6.2.0 on 2026-11-24, so pip
+      # pulled an older lxml into the venv); every other bound stays
       # pypdf stays on 6.x (all fixes are there; 7 is a new major the app was not built for)
-      for p in PyPDF cryptography tornado certifi regex; do
+      for p in PyPDF cryptography tornado certifi regex lxml; do
         sed -i -E "s/^($p>=[^,]+),<[^;]+/\1/I" requirements.txt
       done
-      ! grep -iE "^(pypdf|cryptography|tornado|certifi|regex)>=[^,]+,<" requirements.txt
+      ! grep -iE "^(pypdf|cryptography|tornado|certifi|regex|lxml)>=[^,]+,<" requirements.txt
       grep -vE "python_version<'3.12'|win32" requirements.txt > req.txt
       a="${{targets.destdir}}/app"
       install -d "$a"
