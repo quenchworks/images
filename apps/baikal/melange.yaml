@@ -104,6 +104,14 @@ pipeline:
       expected-sha256: f54acbce8b86f9e56aca0de7f9209e9b9d8ef72e6b40992772b9103c4dbb8f3a
       strip-components: 0
 
+  # twig/twig v3.31.1 (CVE-2026-133763..133767 sandbox bypasses; the zip bundles v3.27.1). Same requires
+  # (php, deprecation-contracts, polyfill-mbstring, polyfill-ctype), swapped in place like symfony/yaml.
+  - uses: fetch
+    with:
+      uri: https://github.com/twigphp/Twig/archive/refs/tags/v3.31.1.tar.gz
+      expected-sha256: 1b21dd33599bf03e39541c58dfcd6e4cb9d28e312c55af75e47e4e1fcb112b1c
+      strip-components: 0
+
   - name: Lay out /var/www/baikal and the setup step
     runs: |
       set -eu
@@ -120,6 +128,18 @@ pipeline:
       grep -q '"version": "v7.4.23"' baikal/vendor/composer/installed.json
       sed -i "/'symfony\/yaml' => array(/,/),/{s/'v7.4.21'/'v7.4.23'/;s/'7.4.21.0'/'7.4.23.0'/;s/'reference' => '[0-9a-f]*'/'reference' => '1e601207ffe627a2e621faa9d661f1d32dcf1cec'/}" baikal/vendor/composer/installed.php
       grep -A3 "'symfony/yaml' => array(" baikal/vendor/composer/installed.php | grep -q "'v7.4.23'"
+      t=baikal/vendor/twig/twig
+      grep -q '"version": "v3.27.1"' baikal/vendor/composer/installed.json
+      rm -rf "$t" && mv Twig-3.31.1 "$t"
+      php -r '$f="baikal/vendor/composer/installed.json"; $j=json_decode(file_get_contents($f), true);
+        foreach ($j["packages"] as &$p) { if ($p["name"] !== "twig/twig") continue;
+          $p["version"]="v3.31.1"; $p["version_normalized"]="3.31.1.0";
+          $p["source"]["reference"]=$p["dist"]["reference"]="6f6ec372231b53d1d564567a78beb8844cafa132";
+          $p["dist"]["url"]="https://api.github.com/repos/twigphp/Twig/zipball/6f6ec372231b53d1d564567a78beb8844cafa132"; }
+        file_put_contents($f, json_encode($j, JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)."\n");'
+      grep -q '"version": "v3.31.1"' baikal/vendor/composer/installed.json
+      sed -i "/'twig\/twig' => array(/,/),/{s/'v3.27.1'/'v3.31.1'/;s/'3.27.1.0'/'3.31.1.0'/;s/'reference' => '[0-9a-f]*'/'reference' => '6f6ec372231b53d1d564567a78beb8844cafa132'/}" baikal/vendor/composer/installed.php
+      grep -A3 "'twig/twig' => array(" baikal/vendor/composer/installed.php | grep -q "'v3.31.1'"
       cd baikal
       grep -qF 'define("BAIKAL_VERSION", "${{package.version}}")' Core/Distrib.php
       d="${{targets.destdir}}/var/www/baikal"
