@@ -25,6 +25,13 @@
       "status": "not_affected",
       "justification": "vulnerable_code_cannot_be_controlled_by_adversary",
       "impact_statement": "The advisory needs an attacker-controlled glob pattern with **/.. segments. In the grist 1.7.21 production tree minimatch 9.0.9 is reached only through glob 10.5.0 (its other dependents, typescript-estree and mocha, are dev dependencies). glob 10.5.0 is called by typeorm with the TypeORM entity, migration and subscriber globs built from a code constant in app/server/lib/dbUtils.ts:183-191 (`${codeRoot}/app/gen-server/entity/*.js` and siblings), and archiver-utils' glob path is never called (zip-stream 6.0.1 uses only defaults, sanitizePath and dateify). No request or document value reaches a glob pattern. Verified 2026-11-01 by grep over the grist v1.7.21 source and the npm tarballs of typeorm 0.3.31, archiver-utils 5.0.2 and zip-stream 6.0.1."
+    },
+    {
+      "vulnerability": { "name": "CVE-2026-63402" },
+      "products": [ { "@id": "pkg:npm/i18next@21.9.1" } ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The advisory: i18next before 26.3.4 recurses through inherited built-ins in deepExtend (src/utils.js), reached only when an application passes attacker-controlled data to addResourceBundle(lng, ns, data, deep, overwrite) with deep and overwrite both true. grist 1.7.22 calls addResourceBundle with three arguments only, so deep and overwrite stay false and deepExtend never runs: app/server/localization.ts:85 (locale files read from the app's own static/locales directory) and app/client/lib/localization.ts:53 (the same files fetched from the Grist server). Verified 2026-11-24 on the gristlabs/grist-core v1.7.22 sources."
     }
   ]
 }

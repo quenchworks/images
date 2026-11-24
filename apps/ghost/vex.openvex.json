@@ -11,6 +11,13 @@
       "status": "not_affected",
       "justification": "vulnerable_code_not_present",
       "impact_statement": "The advisory: minimatch before 11.0.1 expands attacker-controlled **/.. segments in firstPhasePreProcess() and compares them pairwise in secondPhasePreProcess(), run at optimizationLevel 2 or higher. Those functions and the optimizationLevel option arrived with the minimatch 7+ rewrite; 3.1.5 is the old single-file implementation. Verified 2026-11-01 on the npm tarball minimatch-3.1.5.tgz: grep -c 'firstPhasePreProcess\\|optimizationLevel' package/minimatch.js returned 0. The 10.x copies in this image are overridden to 11.0.1 instead (melange.yaml)."
+    },
+    {
+      "vulnerability": { "name": "CVE-2026-63402" },
+      "products": [ { "@id": "pkg:npm/i18next@23.16.8" } ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The advisory: i18next before 26.3.4 recurses through inherited built-ins in deepExtend (src/utils.js), reached only when an application passes attacker-controlled data to addResourceBundle(lng, ns, data, deep, overwrite) with deep and overwrite both true. Ghost 6.67.0 and 6.78.0 call addResourceBundle with three arguments only (packages/i18n/src/i18n-core.ts:103, resources from Ghost's own generated locale files), so deep and overwrite stay false and deepExtend never runs. Theme locale files are parsed into flat string records (packages/i18n/src/theme-resources.ts) and never deep-merged. Verified 2026-11-24 on the TryGhost/Ghost v6.67.0 and v6.78.0 sources."
     }
   ]
 }
