@@ -55,6 +55,8 @@ pipeline:
       #  - USE_LUA: Lua scripting. Wolfi ships lua5.4 with headers under
       #    /usr/include/lua5.4 and a static liblua.a under /usr/lib/lua5.4, linked
       #    via LUA_LIB_NAME=lua / LUA_INC / LUA_LIB so the runtime needs no lua pkg.
+      #  - USE_PROMEX: the built-in Prometheus exporter (http-request use-service prometheus-exporter), as upstream's
+      #    images build it; the HAProxy Kubernetes Ingress base config serves /metrics with it.
       # SBINDIR=/usr/bin: Wolfi's usrmerge policy keeps all binaries under /usr/bin
       # (no /usr/sbin), so the haproxy binary lands at /usr/bin/haproxy.
       make -j"$(nproc)" \
@@ -64,6 +66,7 @@ pipeline:
         USE_PCRE2_JIT=1 \
         USE_ZLIB=1 \
         USE_LUA=1 \
+        USE_PROMEX=1 \
         LUA_LIB_NAME=lua \
         LUA_INC=/usr/include/lua5.4 \
         LUA_LIB=/usr/lib/lua5.4
