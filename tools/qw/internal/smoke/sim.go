@@ -10,6 +10,16 @@ import (
 // simDB starts our PostgreSQL (it ships pgvector) on a fresh network and runs the given sim-migrations image against
 // it twice (the second run proves the migrations are idempotent). It returns the network, the DATABASE_URL and the
 // postgres container name (its password is the name's "pw" twin, see simPSQL).
+// simKV starts a Valkey on net_ and returns its URL: 0.9.66+ refuses to boot without REDIS_URL (sim's instrumentation
+// hook and realtime's env schema both require it).
+func (t *T) simKV(net_ string) string {
+	kv := t.Name("kv")
+	t.Cleanup(func() { docker("rm", "-f", kv) })
+	// the catalog's Valkey runs protected mode: without a password it closes every non-loopback client
+	t.Docker("run", "-d", "--name", kv, "--network", net_, "ghcr.io/quenchworks/images/valkey:9.1.3", "--requirepass", "smoke-kv-pw")
+	return "redis://:smoke-kv-pw@" + kv + ":6379"
+}
+
 func (t *T) simDB(migrations string) (string, string, string) {
 	net_, pg, pw := t.Name("net"), t.Name("pg"), t.Name("pw")
 	t.Docker("network", "create", net_)
@@ -60,8 +70,9 @@ func init() {
 			ver = t.LabelVersion()
 		}
 		net_, url, _ := t.simDB("ghcr.io/quenchworks/images/sim-migrations:" + ver)
+		redis := t.simKV(net_)
 		name := t.Name("")
-		t.Start(name, []string{"--network", net_, "--read-only", "--tmpfs", "/tmp:rw,mode=1777", "-p", "127.0.0.1:13302:3002",
+		t.Start(name, []string{"--network", net_, "--read-only", "--tmpfs", "/tmp:rw,mode=1777", "-p", "127.0.0.1:13302:3002", "-e", "REDIS_URL=" + redis,
 			"-e", "DATABASE_URL=" + url, "-e", "NEXT_PUBLIC_APP_URL=http://localhost:3000", "-e", "BETTER_AUTH_URL=http://localhost:3000",
 			"-e", "BETTER_AUTH_SECRET=" + strings.Repeat("a", 64), "-e", "INTERNAL_API_SECRET=" + strings.Repeat("i", 64)})
 		t.waitCode(b+"/health", 60, time.Second, name, 200)
@@ -80,17 +91,14 @@ func init() {
 			ver = t.LabelVersion()
 		}
 		net_, url, pg := t.simDB("ghcr.io/quenchworks/images/sim-migrations:" + ver)
-		// 0.9.66+ refuses to boot without REDIS_URL (lib/core/config/redis.ts, loaded by the instrumentation hook)
-		kv := t.Name("kv")
-		t.Cleanup(func() { docker("rm", "-f", kv) })
-		t.Docker("run", "-d", "--name", kv, "--network", net_, "ghcr.io/quenchworks/images/valkey:9.1.3")
+		redis := t.simKV(net_)
 		name := t.Name("")
 		t.Start(name, []string{"--network", net_, "--read-only", "--tmpfs", "/tmp:rw,mode=1777",
 			"--tmpfs", "/app/apps/sim/.next/cache:uid=1001,gid=1001", "--tmpfs", "/app/apps/sim/.next/server/route-cache:uid=1001,gid=1001",
 			"-p", "127.0.0.1:13300:3000",
 			"-e", "DATABASE_URL=" + url, "-e", "NEXT_PUBLIC_APP_URL=http://localhost:3000", "-e", "BETTER_AUTH_URL=http://localhost:3000",
 			"-e", "BETTER_AUTH_SECRET=" + strings.Repeat("a", 64), "-e", "ENCRYPTION_KEY=" + strings.Repeat("e", 64),
-			"-e", "INTERNAL_API_SECRET=" + strings.Repeat("i", 64), "-e", "REDIS_URL=redis://" + kv + ":6379"})
+			"-e", "INTERNAL_API_SECRET=" + strings.Repeat("i", 64), "-e", "REDIS_URL=" + redis})
 		t.waitCode(b+"/api/health", 120, time.Second, name, 200)
 		if code, _ := Get(b + "/login"); code != 200 {
 			t.Fatalf("/login answered %d\n%s", code, t.Logs(name))
