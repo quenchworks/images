@@ -68,9 +68,10 @@ pipeline:
       grep -q '^    cpus: 1,$' apps/sim/next.config.ts
       # 0.9.63's x86 build starved the runner into "lost communication" twice (8 GB heap + Turbopack's native memory
       # thrashing the swapfile). A 6 GB heap leaves room for the native side, and a real overflow now fails as a
-      # readable heap error instead of a dead runner.
-      sed -i "s/--max-old-space-size=8192/--max-old-space-size=6144/" apps/sim/package.json
-      grep -q -- "--max-old-space-size=6144" apps/sim/package.json
+      # readable heap error instead of a dead runner. 0.9.66 starved it again at 6 GB (run 45524241857, twice, 48 min
+      # in); 5 GB leaves more for the native side.
+      sed -i "s/--max-old-space-size=8192/--max-old-space-size=5120/" apps/sim/package.json
+      grep -q -- "--max-old-space-size=5120" apps/sim/package.json
       export NEXT_TELEMETRY_DISABLED=1 VERCEL_TELEMETRY_DISABLED=1 DOCKER_BUILD=1 \
         DATABASE_URL=postgresql://user:pass@localhost:5432/dummy NEXT_PUBLIC_APP_URL=http://localhost:3000
       bun run build
