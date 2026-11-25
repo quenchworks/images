@@ -1,0 +1,94 @@
+# Suricata from the OISF release tarball (configure and vendored crates included), with suricata-update.
+package:
+  name: quench-suricata
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Suricata IDS/IPS, built from source on Wolfi"
+  copyright:
+    - license: GPL-2.0-only
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+      - python-3.13
+      - py3.13-pyyaml
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - cbindgen
+      - jansson-dev
+      - libcap-ng-dev
+      - libmagic-dev
+      - libnet-dev
+      - libpcap-dev
+      - lz4-dev
+      - pcre2-dev
+      - pkgconf
+      - pkgconf-dev
+      - py3.13-pyyaml
+      - python-3.13
+      - rust-1.96
+      - yaml-dev
+      - zlib-dev
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://www.openinfosecfoundation.org/download/suricata-${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+      strip-components: 1
+
+  - name: Build
+    runs: |
+      set -eu
+      ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-static --disable-gccmarch-native \
+        --enable-af-packet --enable-nfqueue=no
+      # 0-CVE floors for the vendored crates (raise only): time 0.3.47 (CVE-2026-25727; upstream pins it exactly, at
+      # =0.3.41 in 8.0 and =0.3.13 in 7.0) and rand 0.8.6 (GHSA-cq8v-f236-94qc). Re-resolve and re-vendor with the
+      # vendored-sources replacement set aside, then build offline from the refreshed vendor dir as usual.
+      (
+        cd rust
+        sed -i 's/^time = "=0\.3\.[0-9]*"/time = "=0.3.47"/' Cargo.toml
+        grep -q '^time = "=0.3.47"' Cargo.toml
+        mv .cargo/config.toml .cargo/config.toml.vendored
+        cargo update -p time --precise 0.3.47
+        if grep -A1 '^name = "rand"$' Cargo.lock | grep -q '^version = "0\.8\.5"$'; then cargo update -p rand@0.8.5 --precise 0.8.6; fi
+        rm -rf vendor && cargo vendor --locked vendor >/dev/null
+        mv .cargo/config.toml.vendored .cargo/config.toml
+        grep -A1 '^name = "time"$' Cargo.lock | grep -q '^version = "0.3.47"$'
+        # an explicit exit: set -e does not stop on a command negated with !
+        if grep -A1 '^name = "rand"$' Cargo.lock | grep -q '^version = "0\.8\.5"$'; then echo "rand 0.8.5 still locked"; exit 1; fi
+      )
+      make -j"$(nproc)"
+
+  - name: Install
+    runs: |
+      set -eu
+      D="${{targets.destdir}}"
+      make install install-conf DESTDIR="$D"
+      # install-conf writes suricata.yaml 0600 root: the runtime user (1001) must read it; nothing in it is secret
+      chmod -R u=rwX,go=rX "$D/etc/suricata"
+      # what scanners read for the statically linked Rust parsers
+      install -Dm644 rust/Cargo.lock "$D/usr/share/doc/suricata/Cargo.lock"
+      rm -rf "$D/usr/include" "$D/usr/share/man" "$D/usr/share/doc/suricata/"*.html
+      find "$D" -name '*.la' -delete
+      strip "$D/usr/bin/suricata" || true
+      # default logs and rules locations (volumes in the chart)
+      install -d "$D/var/log/suricata" "$D/var/lib/suricata/rules" "$D/var/lib/suricata/update"
+      # melange's tempdir lint refuses packages that ship run dirs; apko creates /run/suricata (apko.yaml paths)
+      rm -rf "$D/var/run" "$D/run" "$D/tmp" "$D/var/tmp"
+      LD_LIBRARY_PATH="$D/usr/lib" "$D/usr/bin/suricata" -V | grep -F "${{package.version}}"
+
+test:
+  pipeline:
+    - runs: |
+        suricata -V
+        suricata --build-info | grep -q AF_PACKET

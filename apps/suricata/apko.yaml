@@ -1,0 +1,68 @@
+# Suricata runtime: suricata is the entrypoint, suricata-update fetches rules (Emerging Threats open by default) into
+# /var/lib/suricata/rules. Runs as 1001, which is enough for pcap files (-r) and rule updates. Live capture on
+# AF_PACKET needs root with NET_RAW/NET_ADMIN/SYS_NICE; start it as root with --user suricata --group suricata so it
+# drops privileges once the capture sockets are open (the chart's DaemonSet does). Writable: /var/log/suricata,
+# /var/lib/suricata, /run/suricata (volumes on a read-only rootfs).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-suricata@local
+
+accounts:
+  groups:
+    - groupname: suricata
+      gid: 1001
+  users:
+    - username: suricata
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  - path: /var/log/suricata
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/lib/suricata
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/lib/suricata/rules
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/lib/suricata/update
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /run/suricata
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /usr/bin/suricata
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-suricata"
+  org.opencontainers.image.licenses: "GPL-2.0-only"
+  org.opencontainers.image.version: "__VER__"

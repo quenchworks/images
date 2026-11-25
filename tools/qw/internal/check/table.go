@@ -267,6 +267,7 @@ var table = map[string]check{
 	"tinyproxy":                         {src: ghRel("tinyproxy/tinyproxy"), n: 1},
 	"haproxy-kubernetes-ingress":        {src: ghRel("haproxytech/kubernetes-ingress"), n: 1},
 	"coraza-spoa":                       {src: ghRel("corazawaf/coraza-spoa"), n: 1},
+	"suricata":                          {src: ghTags("OISF/suricata"), f: filter{keep: full(`suricata-\d+\.\d+\.\d+`), clean: trim("suricata-")}, lines: 2},
 	"goaccess":                          {src: ghTags("allinurl/goaccess"), n: 1},
 	"gokapi":                            {src: ghRel("Forceu/Gokapi"), n: 1},
 	"gogs":                              {src: ghRel("gogs/gogs"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},
