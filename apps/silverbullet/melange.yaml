@@ -49,15 +49,33 @@ pipeline:
       set -eu
       export CARGO_HOME="$(mktemp -d)"
       # zip 8 has no fixed release; 9 keeps the API SilverBullet uses
-      sed -i 's/^zip = { version = "8", default-features = false, features = \["deflate"\] }$/zip = { version = "9", default-features = false, features = ["deflate"] }/' Cargo.toml
+      # only the version: 3.0.0 renamed the feature (deflate -> deflate-flate2-zlib-rs)
+      sed -i 's/^zip = { version = "8",/zip = { version = "9",/' Cargo.toml
       grep -q '^zip = { version = "9"' Cargo.toml || { echo "FATAL: zip requirement not raised"; exit 1; }
+      # zip 9 made ZipFile::name() fallible: 3.0.0's starter-archive extractor calls .to_string() on it directly.
+      # Route the error through the function's own archive_err, as for every other entry error there.
+      f=server-common/src/git_starting_point.rs
+      if [ -f "$f" ] && grep -q 'let name = entry.name().to_string();' "$f"; then
+        sed -i 's/let name = entry.name().to_string();/let name = entry.name().map_err(|e| archive_err("could not read archive entry name", \&e))?.to_string();/' "$f"
+        grep -q 'entry.name().map_err' "$f" || { echo "FATAL: zip 9 name() patch not applied"; exit 1; }
+      fi
       # zip 9's ZipFile::name() returns a Result (the self-upgrade unzip is the one caller)
       sed -i 's|let name = entry.name().to_string();|let name = entry.name().map_err(\|e\| format!("failed to read zip entry {i} name: {e}"))?.to_string();|' server-common/src/upgrade.rs
       grep -q 'entry.name().map_err' server-common/src/upgrade.rs || { echo "FATAL: zip 9 name() patch did not apply"; exit 1; }
+      # 3.0.0 pins candle-core/candle-nn to a git commit (2026-10-02) that still requires zip ^8.6.0, so a second zip 8
+      # (CVE-2026-115905, CRITICAL) linked in next to ours; crates.io 0.11.1 (2026-10-31, after that commit) requires
+      # zip ^9.1.3. Only when the git pin is there.
+      if grep -q '^candle-core = { git = "https://github.com/huggingface/candle"' Cargo.toml; then
+        sed -i -E 's|^(candle-(core\|nn)) = \{ git = "https://github.com/huggingface/candle", rev = "[0-9a-f]+",|\1 = { version = "0.11.1",|' Cargo.toml
+        grep -q '^candle-core = { version = "0.11.1"' Cargo.toml && grep -q '^candle-nn = { version = "0.11.1"' Cargo.toml \
+          || { echo "FATAL: candle git pin not replaced"; exit 1; }
+      fi
       cargo update
       cargo auditable build --release --locked -p silverbullet
       install -Dm755 target/release/silverbullet "${{targets.destdir}}/usr/bin/silverbullet"
       readelf -S "${{targets.destdir}}/usr/bin/silverbullet" | grep -q '\.dep-v0'
+      # every zip in the lock must be 9.x (a second, older copy is what the candle pin pulled in)
+      if awk '/^name = "zip"$/{getline; print}' Cargo.lock | grep -v '"9\.'; then echo "FATAL: a zip below 9 is still in Cargo.lock"; exit 1; fi
 
 test:
   pipeline:

@@ -27,6 +27,10 @@ func init() {
 	// wrong-token write is refused, the token writes a page and reads it back, shell commands are refused, and the
 	// page survives a restart.
 	register("silverbullet", func(t *T) {
+		if !strings.HasPrefix(t.Want, "2.") {
+			sb3(t)
+			return
+		}
 		const base = "http://127.0.0.1:18101"
 		const token = "quench-smoke-token-0123456789abcdef"
 		const page = "# Quench smoke\n\nwritten by the smoke test\n"
