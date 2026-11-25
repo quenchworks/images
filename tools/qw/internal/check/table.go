@@ -264,6 +264,7 @@ var table = map[string]check{
 	"glauth":                            {src: ghRel("glauth/glauth"), n: 1, f: filter{keep: prefix("GLAuth-v"), clean: trim("GLAuth-v")}},
 	"go":                                {wolfiPrefix: "go-", lines: 2, lineOnly: false},
 	"yara":                              {src: ghRel("VirusTotal/yara"), n: 2},
+	"tinyproxy":                         {src: ghRel("tinyproxy/tinyproxy"), n: 1},
 	"goaccess":                          {src: ghTags("allinurl/goaccess"), n: 1},
 	"gokapi":                            {src: ghRel("Forceu/Gokapi"), n: 1},
 	"gogs":                              {src: ghRel("gogs/gogs"), n: 1, f: filter{keep: full(`\d+\.\d+\.\d+`)}},

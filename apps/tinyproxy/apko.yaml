@@ -1,0 +1,38 @@
+# Tinyproxy runtime: tinyproxy in the foreground on 8888, config at /etc/tinyproxy/tinyproxy.conf, logs on stdout.
+# Nonroot 1001, no shell. Mount a config over /etc/tinyproxy/tinyproxy.conf to change ports, ACLs or filters.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-tinyproxy@local
+
+accounts:
+  groups:
+    - groupname: tinyproxy
+      gid: 1001
+  users:
+    - username: tinyproxy
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/tinyproxy -d -c /etc/tinyproxy/tinyproxy.conf
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-tinyproxy"
+  org.opencontainers.image.licenses: "GPL-2.0-or-later"
+  org.opencontainers.image.version: "__VER__"

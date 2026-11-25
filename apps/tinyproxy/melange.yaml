@@ -1,0 +1,60 @@
+# Tinyproxy from the release tarball, with a container config: port 8888, no user switch (it only drops
+# privileges when started as root), no pid file, logs on stdout, private networks allowed.
+package:
+  name: quench-tinyproxy
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Tinyproxy HTTP proxy, built from source on Wolfi"
+  copyright:
+    - license: GPL-2.0-or-later
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/tinyproxy/tinyproxy/releases/download/${{package.version}}/tinyproxy-${{package.version}}.tar.xz
+      expected-sha256: __SHA256__
+
+  - runs: |
+      set -eu
+      ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-manpage_support
+      make -j"$(nproc)"
+      make install DESTDIR="${{targets.destdir}}"
+      rm -rf "${{targets.destdir}}/usr/share" "${{targets.destdir}}/etc/tinyproxy/tinyproxy.conf"
+      strip "${{targets.destdir}}/usr/bin/tinyproxy"
+      install -Dm644 /dev/stdin "${{targets.destdir}}/etc/tinyproxy/tinyproxy.conf" <<'CONF'
+      # Container defaults. Mount your own file over this one to change them.
+      Port 8888
+      Timeout 600
+      MaxClients 100
+      LogLevel Info
+      ViaProxyName "tinyproxy"
+      # loopback and the private ranges pod and node networks use
+      Allow 127.0.0.1
+      Allow ::1
+      Allow 10.0.0.0/8
+      Allow 172.16.0.0/12
+      Allow 192.168.0.0/16
+      Allow fc00::/7
+      ConnectPort 443
+      ConnectPort 563
+      CONF
+      "${{targets.destdir}}/usr/bin/tinyproxy" -v | grep -F "tinyproxy ${{package.version}}"
+
+test:
+  pipeline:
+    - runs: |
+        tinyproxy -v
