@@ -115,6 +115,11 @@ jobs:
         # next build (8 GB heap plus Turbopack's native memory) outgrows the runner's 16 GB: both arches died at exit 143
         # six minutes in (run 44349837773). A 16 GB swapfile carries the peak.
         run: |
+          # x86 runners died mid next build with no log three times on 2026-11-25 (runs 45524241857, 45537532539,
+          # 45542110106) while arm64 never did. Free the preinstalled toolchains first (~30 GB) so a swapfile on / cannot
+          # fill the disk, and print the layout so the next failure has numbers.
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL || true
+          df -h / /mnt 2>/dev/null || df -h /
           d=/; [ -d /mnt ] && [ "$(df --output=avail -B1G /mnt | tail -1)" -gt 20 ] && d=/mnt
           sudo fallocate -l 16G "$d/qw-swap" && sudo chmod 600 "$d/qw-swap" && sudo mkswap "$d/qw-swap" >/dev/null && sudo swapon "$d/qw-swap"
           free -g
