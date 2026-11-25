@@ -160,6 +160,9 @@ pipeline:
       # a tarball has no git tag, so composer would take the root package as 1.0.0, and roave/security-advisories
       # (require-dev, still resolved on update) conflicts with leantime/leantime < 3.3
       export COMPOSER_ROOT_VERSION="${{package.version}}"
+      # composer.json lists leantime-documentor as an ssh VCS repo; when the GitHub dist API is rate-limited, composer
+      # falls back to `git clone git@github.com:...`, and the build has no ssh
+      git config --global url."https://github.com/".insteadOf "git@github.com:"
       composer install --no-dev --no-interaction --no-progress --no-scripts --optimize-autoloader
       # the ranges allow every fixed release (laravel/framework ^12.69, symfony/yaml ^7.2, lightsaml ^4.0 through
       # socialiteproviders/saml2, jmespath ^2.8 through the aws sdk); -W moves the symfony http stack they pull in
