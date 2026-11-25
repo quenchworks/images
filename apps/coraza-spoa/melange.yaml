@@ -1,0 +1,65 @@
+# coraza-spoa from the source tag, static Go, with a default config at /etc/coraza-spoa/config.yaml.
+package:
+  name: quench-coraza-spoa
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened Coraza WAF SPOE agent for HAProxy, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - ca-certificates-bundle
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/corazawaf/coraza-spoa/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+      strip-components: 1
+
+  - runs: |
+      set -eu
+      export CGO_ENABLED=0 GOTOOLCHAIN=local GOFLAGS=-mod=mod
+      # 0-CVE floors (raise only; the falcosidekick/crowdsec set): 0.9.1 sits below x/net 0.62.0 (CVE-2026-78661,
+      # -78659, -78660, -78663, -78669, -97032, -97045)
+      FLOOR="golang.org/x/net@v0.62.0 golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 github.com/go-jose/go-jose/v4@v4.1.6"
+      # CVE-2026-128085 (otel 1.47.0): floor every otel v1 module the build uses, as one family
+      for m in $(go list -mod=mod -m -e -f '{{.Path}} {{.Version}}' all | awk '($1 ~ /^go\.opentelemetry\.io\/otel(\/|$)/ || $1 ~ /^go\.opentelemetry\.io\/contrib\/bridges\/otel(zap|logrus|slog)$/) && $1 !~ /\/exporters\/jaeger$/ { if ($1 ~ /\/contrib\/bridges\//) print $1"@v0.21.0"; else if ($1 ~ /\/exporters\/(otlp\/otlplog\/|stdout\/stdoutlog$)/) print $1"@v0.23.0"; else if ($1 ~ /\/exporters\/prometheus$/) print $1"@v0.69.0"; else if ($2 ~ /^v1\./ || $1 ~ /\/(sdk\/)?log$/) print $1"@v1.47.0" }'); do
+        FLOOR="$FLOOR $m"
+      done
+      # Go semver order (a release outranks its prereleases); busybox sort -V does not.
+      vlt() { awk -v a="${1#v}" -v b="${2#v}" 'function pp(s,  p){sub(/\+.*/,"",s);p=index(s,"-");if(p){C=substr(s,1,p-1);P=substr(s,p+1)}else{C=s;P=""}} function cmp(x,y,  i,n,m,X,Y){n=split(x,X,".");m=split(y,Y,".");for(i=1;i<=n&&i<=m;i++){if(X[i]==Y[i])continue;if(X[i]~/^[0-9]+$/&&Y[i]~/^[0-9]+$/)return (X[i]+0<Y[i]+0)?-1:1;if(X[i]~/^[0-9]+$/)return -1;if(Y[i]~/^[0-9]+$/)return 1;return (X[i]<Y[i])?-1:1}return (n<m)?-1:(n>m)?1:0} BEGIN{pp(a);ca=C;pa=P;pp(b);cb=C;pb=P;c=cmp(ca,cb);if(c==0){if(pa==pb)c=0;else if(pa=="")c=1;else if(pb=="")c=-1;else c=cmp(pa,pb)}exit !(c<0)}'; }
+      need=""
+      for mv in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${mv%@*}" 2>/dev/null)"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        vlt "$have" "${mv#*@}" && need="$need $mv"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || { GOFLAGS=-mod=mod go get $need; go mod tidy; }
+      go build -trimpath -ldflags "-s -w -X main.version=v${{package.version}}" -o "${{targets.destdir}}/usr/bin/coraza-spoa" .
+      # upstream's example config: the recommended engine settings, CRS setup and every CRS rule, blocking. The
+      # application name "default" is what HAProxy sends in txn.coraza.app.
+      install -d "${{targets.destdir}}/etc/coraza-spoa"
+      sed -e 's/sample_app/default/g' -e 's|^log_file: .*|log_file: /dev/stdout|' example/coraza-spoa.yaml \
+        > "${{targets.destdir}}/etc/coraza-spoa/config.yaml"
+      grep -q '^bind: 0.0.0.0:9000$' "${{targets.destdir}}/etc/coraza-spoa/config.yaml"
+      grep -q 'Include @owasp_crs/\*.conf' "${{targets.destdir}}/etc/coraza-spoa/config.yaml"
+      "${{targets.destdir}}/usr/bin/coraza-spoa" --config "${{targets.destdir}}/etc/coraza-spoa/config.yaml" --validate
+      "${{targets.destdir}}/usr/bin/coraza-spoa" --version | grep -F "v${{package.version}}"
+
+test:
+  pipeline:
+    - runs: |
+        coraza-spoa --version

@@ -1,0 +1,40 @@
+# Coraza SPOA runtime: the SPOE agent on 9000 (HAProxy's spoe backend points here), config at
+# /etc/coraza-spoa/config.yaml with the OWASP CRS compiled in. Nonroot 1001, no shell. Needs a writable /tmp (body
+# buffering; it checks at start), so a read-only rootfs needs a tmpfs or emptyDir there. --metrics-addr adds Prometheus
+# metrics and health checks; mount a config over the default to change rules or applications.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-coraza-spoa@local
+
+accounts:
+  groups:
+    - groupname: coraza-spoa
+      gid: 1001
+  users:
+    - username: coraza-spoa
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/coraza-spoa --config /etc/coraza-spoa/config.yaml
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-coraza-spoa"
+  org.opencontainers.image.licenses: "Apache-2.0"
+  org.opencontainers.image.version: "__VER__"
