@@ -90,6 +90,7 @@ pipeline:
       set -eu
       vendor="${{targets.destdir}}/var/www/html/libraries/vendor"
       have=$(grep -A1 '"name": "phpseclib/phpseclib"' "$vendor/composer/installed.json" | sed -n 's/.*"version": "\([^"]*\)".*/\1/p')
+      echo "vendored svg-sanitize: ${have:-none}"
       test -n "$have"
       if [ "$(printf '%s\n' "$have" 3.0.58 | sort -V | head -1)" = "$have" ] && [ "$have" != 3.0.58 ]; then
         mkdir -p /tmp/phpseclib
@@ -132,7 +133,9 @@ pipeline:
         sed -i "/\"name\": \"enshrined\/svg-sanitize\"/,/\"type\": \"library\"/{s/\"$have\"/\"1.0.0\"/;s/\"$have.0\"/\"1.0.0.0\"/;s/[0-9a-f]\{40\}/$ref/g}" "$vendor/composer/installed.json"
         sed -i "/'enshrined\/svg-sanitize' => array(/,/),/{s/'$have'/'1.0.0'/;s/'$have.0'/'1.0.0.0'/;s/[0-9a-f]\{40\}/$ref/}" "$vendor/composer/installed.php"
       fi
-      grep -A1 '"name": "enshrined/svg-sanitize"' "$vendor/composer/installed.json" | grep -q '"version": "1.0.0"'
+      # a floor, not a pin: a release that already ships a newer svg-sanitize keeps it
+      now=$(grep -A1 '"name": "enshrined/svg-sanitize"' "$vendor/composer/installed.json" | sed -n 's/.*"version": "\([^"]*\)".*/\1/p')
+      [ "$(printf '%s\n' "$now" 1.0.0 | sort -V | head -1)" = 1.0.0 ]
 
   # Vendored Symfony components behind the 2026-11-05 Symfony security release, swapped to the
   # newest patch of the line each Joomla version ships (patch releases only, and composer.json
