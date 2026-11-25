@@ -1,0 +1,99 @@
+# crowdsec: Go build with cgo SQLite (mattn, upstream default) and re2 on wasm, from the source tag, with upstream's docker layout staged.
+package:
+  name: quench-crowdsec
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened CrowdSec (agent, local API, cscli), built from source on Wolfi"
+  copyright:
+    - license: MIT
+  dependencies:
+    runtime:
+      - bash
+      - busybox
+      - ca-certificates-bundle
+      - rsync
+      - tzdata
+      - yq
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - bash
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - gettext
+      - git
+      - go
+      - yq
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/crowdsecurity/crowdsec/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+      strip-components: 1
+
+  - name: Build
+    runs: |
+      set -eu
+      # cgo for mattn/go-sqlite3, upstream's production SQLite driver (the pure-Go modernc one is marked untested)
+      export CGO_ENABLED=1 GOTOOLCHAIN=local HOME="$(mktemp -d)"
+      # 0-CVE floors (raise only; same set and otel 1.47 train as the falcosidekick recipe): 1.8.2 sits below
+      # x/net 0.62.0 (CVE-2026-78661) and otel 1.47.0 (CVE-2026-128085)
+      FLOOR="golang.org/x/net@v0.62.0 golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 github.com/go-jose/go-jose/v4@v4.1.6"
+      # CVE-2026-128085 (otel 1.47.0): floor every otel v1 module the build uses, as one family
+      for m in $(go list -mod=mod -m -e -f '{{.Path}} {{.Version}}' all | awk '($1 ~ /^go\.opentelemetry\.io\/otel(\/|$)/ || $1 ~ /^go\.opentelemetry\.io\/contrib\/bridges\/otel(zap|logrus|slog)$/) && $1 !~ /\/exporters\/jaeger$/ { if ($1 ~ /\/contrib\/bridges\//) print $1"@v0.21.0"; else if ($1 ~ /\/exporters\/(otlp\/otlplog\/|stdout\/stdoutlog$)/) print $1"@v0.23.0"; else if ($1 ~ /\/exporters\/prometheus$/) print $1"@v0.69.0"; else if ($2 ~ /^v1\./ || $1 ~ /\/(sdk\/)?log$/) print $1"@v1.47.0" }'); do
+        FLOOR="$FLOOR $m"
+      done
+      # Go semver order (a release outranks its prereleases); busybox sort -V does not.
+      vlt() { awk -v a="${1#v}" -v b="${2#v}" 'function pp(s,  p){sub(/\+.*/,"",s);p=index(s,"-");if(p){C=substr(s,1,p-1);P=substr(s,p+1)}else{C=s;P=""}} function cmp(x,y,  i,n,m,X,Y){n=split(x,X,".");m=split(y,Y,".");for(i=1;i<=n&&i<=m;i++){if(X[i]==Y[i])continue;if(X[i]~/^[0-9]+$/&&Y[i]~/^[0-9]+$/)return (X[i]+0<Y[i]+0)?-1:1;if(X[i]~/^[0-9]+$/)return -1;if(Y[i]~/^[0-9]+$/)return 1;return (X[i]<Y[i])?-1:1}return (n<m)?-1:(n>m)?1:0} BEGIN{pp(a);ca=C;pa=P;pp(b);cb=C;pb=P;c=cmp(ca,cb);if(c==0){if(pa==pb)c=0;else if(pa=="")c=1;else if(pb=="")c=-1;else c=cmp(pa,pb)}exit !(c<0)}'; }
+      need=""
+      for mv in $FLOOR; do
+        have="$(go list -m -e -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "${mv%@*}" 2>/dev/null)"
+        case "$have" in v[0-9]*) ;; *) continue ;; esac
+        vlt "$have" "${mv#*@}" && need="$need $mv"
+      done
+      echo "raising:${need:- nothing}"
+      [ -z "$need" ] || { GOFLAGS=-mod=mod go get $need; go mod tidy; }
+      make clean release DOCKER_BUILD=1 BUILD_RE2_WASM=1 \
+        BUILD_VERSION=v${{package.version}} BUILD_TAG=__COMMIT__ BUILD_TIMESTAMP=2026-01-01_00:00:00
+
+  - name: Install
+    runs: |
+      # What wizard.sh --docker-mode does, into the package instead of /: the wizard needs root and writes to /etc.
+      # No hub content is baked in: docker_start.sh updates the hub at start (state dirs on volumes) and installs
+      # COLLECTIONS / PARSERS / SCENARIOS from env, so hub items never go stale inside the image.
+      set -eu
+      R="crowdsec-v${{package.version}}"
+      D="${{targets.destdir}}"
+      C="$D/staging/etc/crowdsec"
+      install -Dm755 "$R/cmd/crowdsec/crowdsec" "$D/usr/bin/crowdsec"
+      install -Dm755 "$R/cmd/crowdsec-cli/cscli" "$D/usr/bin/cscli"
+      install -d "$C/acquis.d" "$C/hub" "$C/notifications" "$D/staging/var/lib/crowdsec/data" \
+        "$D/etc/crowdsec" "$D/var/lib/crowdsec/data" "$D/usr/local/lib/crowdsec/plugins"
+      cp -r "$R/config/patterns" "$C/" && chmod -R u=rwX,go=rX "$C/patterns"
+      for f in config.yaml dev.yaml user.yaml profiles.yaml simulation.yaml console.yaml; do install -m644 "$R/config/$f" "$C/"; done
+      install -m600 "$R/config/online_api_credentials.yaml" "$C/"
+      install -m600 "$R/config/detect.yaml" "$D/staging/var/lib/crowdsec/data/"
+      DATA=/var/lib/crowdsec/data CFG=/etc/crowdsec envsubst '$CFG $DATA' < "$R/config/user.yaml" > "$C/user.yaml"
+      for n in http slack splunk email sentinel file; do
+        install -m755 "$R/cmd/notification-$n/notification-$n" "$D/usr/local/lib/crowdsec/plugins/"
+        install -m600 "$R/cmd/notification-$n/$n.yaml" "$C/notifications/"
+      done
+      # the container layout: upstream's docker config, a placeholder acquisition (the agent exits with no datasource), LAPI on 0.0.0.0:8080
+      install -m644 build/docker/config.yaml "$C/config.yaml"
+      echo '{"source": "file", "filename": "/does/not/exist", "labels": {"type": "syslog"}}' > "$C/acquis.yaml"
+      yq -n '.url="http://0.0.0.0:8080"' | install -m600 /dev/stdin "$C/local_api_credentials.yaml"
+      install -m755 build/docker/docker_start.sh "$D/docker_start.sh"
+      "$D/usr/bin/cscli" version 2>&1 | grep -q "v${{package.version}}"
+
+test:
+  pipeline:
+    - runs: |
+        crowdsec -version 2>&1 | grep -q "v${{package.version}}"
+        test -f /staging/etc/crowdsec/config.yaml

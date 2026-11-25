@@ -1,0 +1,38 @@
+# YARA runtime: yara is the entrypoint (yarac compiles rules). Mount rules and targets read-only, for example
+# docker run -v $PWD:/scan:ro <image> -r /scan/rules.yar /scan/samples. Nonroot 1001, no shell.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-yara@local
+
+accounts:
+  groups:
+    - groupname: yara
+      gid: 1001
+  users:
+    - username: yara
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+entrypoint:
+  command: /usr/bin/yara
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-yara"
+  org.opencontainers.image.licenses: "BSD-3-Clause"
+  org.opencontainers.image.version: "__VER__"

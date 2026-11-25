@@ -1,0 +1,103 @@
+# Assembles the CrowdSec runtime image: crowdsec and cscli (Go, cgo SQLite) with upstream's docker entrypoint on bash, yq and
+# rsync. Nonroot (1001), multi-arch. /etc/crowdsec and /var/lib/crowdsec/data are written at start (from /staging):
+# mount volumes there. LAPI on 8080, Prometheus metrics on 6060. Configure with upstream's env (DISABLE_AGENT,
+# DISABLE_LOCAL_API, AGENT_USERNAME, AGENT_PASSWORD, LOCAL_API_URL, COLLECTIONS, BOUNCER_KEY_<name>, ...).
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-crowdsec@local
+
+accounts:
+  groups:
+    - groupname: crowdsec
+      gid: 1001
+  users:
+    - username: crowdsec
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  - path: /etc/crowdsec
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/lib/crowdsec
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /var/lib/crowdsec/data
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  # The 0600 templates docker_start.sh rsyncs into /etc/crowdsec: credentials land in them at start, so they stay 0600
+  # and belong to the runtime user instead of root (who would make them unreadable to it).
+  - path: /staging/etc/crowdsec/local_api_credentials.yaml
+    type: permissions
+    uid: 1001
+    gid: 1001
+    permissions: 0o600
+  - path: /staging/etc/crowdsec/online_api_credentials.yaml
+    type: permissions
+    uid: 1001
+    gid: 1001
+    permissions: 0o600
+  - path: /staging/var/lib/crowdsec/data/detect.yaml
+    type: permissions
+    uid: 1001
+    gid: 1001
+    permissions: 0o600
+  - path: /staging/etc/crowdsec/notifications/http.yaml
+    type: permissions
+    uid: 1001
+    gid: 1001
+    permissions: 0o600
+  - path: /staging/etc/crowdsec/notifications/slack.yaml
+    type: permissions
+    uid: 1001
+    gid: 1001
+    permissions: 0o600
+  - path: /staging/etc/crowdsec/notifications/splunk.yaml
+    type: permissions
+    uid: 1001
+    gid: 1001
+    permissions: 0o600
+  - path: /staging/etc/crowdsec/notifications/email.yaml
+    type: permissions
+    uid: 1001
+    gid: 1001
+    permissions: 0o600
+  - path: /staging/etc/crowdsec/notifications/sentinel.yaml
+    type: permissions
+    uid: 1001
+    gid: 1001
+    permissions: 0o600
+  - path: /staging/etc/crowdsec/notifications/file.yaml
+    type: permissions
+    uid: 1001
+    gid: 1001
+    permissions: 0o600
+
+entrypoint:
+  command: /bin/bash /docker_start.sh
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-crowdsec"
+  org.opencontainers.image.licenses: "MIT"
