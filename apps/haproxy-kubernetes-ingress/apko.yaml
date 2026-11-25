@@ -1,0 +1,68 @@
+# HAProxy Kubernetes Ingress runtime: gopherd (PID 1) supervises HAProxy (through haproxy_wrapper, which preloads
+# libblock_secrets.so) and the controller, as upstream's image does. Nonroot 1001: HTTP 8080, HTTPS 8443, stats 1024,
+# healthz 1042 (the controller's defaults). The controller rewrites /etc/haproxy and needs /run and /var/state/haproxy:
+# on a read-only rootfs mount emptyDirs there (the chart does). Controller flags go after the entrypoint, as upstream.
+contents:
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    - ./melange.rsa.pub
+  repositories:
+    - https://packages.wolfi.dev/os
+    - "@local ./packages"
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - quench-haproxy@local
+    - quench-haproxy-kubernetes-ingress@local
+
+accounts:
+  groups:
+    - groupname: haproxy
+      gid: 1001
+  users:
+    - username: haproxy
+      uid: 1001
+      gid: 1001
+  run-as: 1001
+
+paths:
+  - path: /etc/haproxy
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /etc/haproxy/haproxy.cfg
+    type: permissions
+    uid: 1001
+    gid: 1001
+    permissions: 0o644
+  - path: /var/state
+    type: directory
+    uid: 0
+    gid: 0
+    permissions: 0o755
+  - path: /var/state/haproxy
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+  - path: /run
+    type: directory
+    uid: 1001
+    gid: 1001
+    permissions: 0o755
+
+entrypoint:
+  command: /usr/local/sbin/gopherd
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.source: "https://github.com/quenchworks/images"
+  org.opencontainers.image.url: "https://quench-works.com"
+  org.opencontainers.image.vendor: "Quenchworks"
+  org.opencontainers.image.title: "quench-haproxy-kubernetes-ingress"
+  org.opencontainers.image.licenses: "Apache-2.0"
+  org.opencontainers.image.version: "__VER__"

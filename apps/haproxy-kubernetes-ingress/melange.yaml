@@ -1,0 +1,86 @@
+# HAProxy Kubernetes Ingress: controller + gopherd (Go) + haproxy_wrapper and libblock_secrets.so (C), laid out as
+# upstream's build/Dockerfile does. HAProxy comes from the sibling quench-haproxy package, installed by apko.
+package:
+  name: quench-haproxy-kubernetes-ingress
+  version: __VER__
+  epoch: 0
+  description: "Quenchworks hardened HAProxy Kubernetes Ingress Controller, built from source on Wolfi"
+  copyright:
+    - license: Apache-2.0
+  dependencies:
+    runtime:
+      - busybox
+      - ca-certificates-bundle
+      - tzdata
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+      - go
+
+pipeline:
+  - uses: fetch
+    with:
+      uri: https://github.com/haproxytech/kubernetes-ingress/archive/refs/tags/v${{package.version}}.tar.gz
+      expected-sha256: __SHA256__
+      extract: true
+      strip-components: 0
+
+  - uses: fetch
+    with:
+      uri: https://github.com/haproxytech/gopherd/archive/refs/tags/v__GOPHERD_VER__.tar.gz
+      expected-sha256: __GOPHERD_SHA__
+      extract: true
+      strip-components: 0
+
+  - name: Build
+    runs: |
+      set -eu
+      export CGO_ENABLED=0 GOTOOLCHAIN=local GOFLAGS=-mod=mod
+      D="${{targets.destdir}}"
+      (cd kubernetes-ingress-${{package.version}} && go build -trimpath -ldflags "-s -w \
+        -X github.com/haproxytech/kubernetes-ingress/pkg/version.GitTag=v${{package.version}} \
+        -X github.com/haproxytech/kubernetes-ingress/pkg/version.GitCommit=$(echo __COMMIT__ | cut -c1-8)" \
+        -o "$D/haproxy-ingress-controller" .)
+      (cd gopherd-__GOPHERD_VER__ && go build -trimpath -ldflags "-s -w \
+        -X github.com/haproxytech/gopherd/version.Version=v__GOPHERD_VER__ \
+        -X github.com/haproxytech/gopherd/version.Tag=v__GOPHERD_VER__" \
+        -o "$D/usr/local/sbin/gopherd" .)
+      # upstream's flags for the two C pieces (build/Dockerfile, builder-c)
+      cd kubernetes-ingress-${{package.version}}/pkg/protection
+      F="-O2 -std=c11 -pipe -Wall -Wextra -D_FORTIFY_SOURCE=2 -fstack-protector-strong -fstack-clash-protection -s -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack"
+      install -d "$D/usr/local/lib" "$D/usr/local/sbin"
+      gcc $F -fPIC -shared -Wl,-z,defs -o "$D/usr/local/lib/libblock_secrets.so" block_secrets.c -ldl
+      gcc $F -fPIE -pie -o "$D/usr/local/sbin/haproxy_wrapper" haproxy_wrapper.c
+
+  - name: Install
+    runs: |
+      set -eu
+      D="${{targets.destdir}}"
+      S=kubernetes-ingress-${{package.version}}
+      # quench-haproxy owns /etc/haproxy/haproxy.cfg, so the controller's base config ships at upstream's
+      # /usr/local/etc/haproxy path and a gopherd oneshot copies it into /etc/haproxy (the dir the controller
+      # manages) before HAProxy starts; that also seeds an emptyDir mounted there on a read-only rootfs
+      install -Dm644 "$S/fs/usr/local/etc/haproxy/haproxy.cfg" "$D/usr/local/etc/haproxy/haproxy.cfg"
+      install -Dm644 "$S/fs/etc/gopherd/gopherd.yml" "$D/etc/gopherd/gopherd.yml"
+      g="$D/etc/gopherd/gopherd.yml"
+      grep -q '^  - name: aux-cfg$' "$g" && grep -q '^    after: \[aux-cfg, mem-info\]$' "$g"
+      sed -i 's|^  - name: aux-cfg$|  - name: main-cfg\n    command: /bin/cp\n    args: ["/usr/local/etc/haproxy/haproxy.cfg", "/etc/haproxy/haproxy.cfg"]\n    startup: oneshot\n\n  - name: aux-cfg|; s|^    after: \[aux-cfg, mem-info\]$|    after: [main-cfg, aux-cfg, mem-info]|' "$g"
+      grep -q 'after: \[main-cfg, aux-cfg, mem-info\]' "$g"
+      install -d "$D/var/state/haproxy" "$D/run"
+      # haproxy_wrapper execs /usr/local/sbin/haproxy; quench-haproxy installs /usr/bin/haproxy
+      ln -s /usr/bin/haproxy "$D/usr/local/sbin/haproxy"
+      "$D/haproxy-ingress-controller" --version | grep -F "v${{package.version}}"
+
+test:
+  pipeline:
+    - runs: |
+        /haproxy-ingress-controller --version
+        test -x /usr/local/sbin/gopherd
