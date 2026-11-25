@@ -80,13 +80,17 @@ func init() {
 			ver = t.LabelVersion()
 		}
 		net_, url, pg := t.simDB("ghcr.io/quenchworks/images/sim-migrations:" + ver)
+		// 0.9.66+ refuses to boot without REDIS_URL (lib/core/config/redis.ts, loaded by the instrumentation hook)
+		kv := t.Name("kv")
+		t.Cleanup(func() { docker("rm", "-f", kv) })
+		t.Docker("run", "-d", "--name", kv, "--network", net_, "ghcr.io/quenchworks/images/valkey:9.1.3")
 		name := t.Name("")
 		t.Start(name, []string{"--network", net_, "--read-only", "--tmpfs", "/tmp:rw,mode=1777",
 			"--tmpfs", "/app/apps/sim/.next/cache:uid=1001,gid=1001", "--tmpfs", "/app/apps/sim/.next/server/route-cache:uid=1001,gid=1001",
 			"-p", "127.0.0.1:13300:3000",
 			"-e", "DATABASE_URL=" + url, "-e", "NEXT_PUBLIC_APP_URL=http://localhost:3000", "-e", "BETTER_AUTH_URL=http://localhost:3000",
 			"-e", "BETTER_AUTH_SECRET=" + strings.Repeat("a", 64), "-e", "ENCRYPTION_KEY=" + strings.Repeat("e", 64),
-			"-e", "INTERNAL_API_SECRET=" + strings.Repeat("i", 64)})
+			"-e", "INTERNAL_API_SECRET=" + strings.Repeat("i", 64), "-e", "REDIS_URL=redis://" + kv + ":6379"})
 		t.waitCode(b+"/api/health", 120, time.Second, name, 200)
 		if code, _ := Get(b + "/login"); code != 200 {
 			t.Fatalf("/login answered %d\n%s", code, t.Logs(name))
